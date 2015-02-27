@@ -1,6 +1,7 @@
 """Main agent module."""
 
 import datetime
+import time
 import uuid
 
 from core.actions import *
@@ -19,7 +20,6 @@ class Representation(object):
 
 class BasicAgent(object):
     """Implements the basic Agent object."""
-
     def __init__(self, **kwargs):        
         self.props = {
                       'born': datetime.datetime.utcnow(), 'ag_state': 'idle',
@@ -33,11 +33,11 @@ class BasicAgent(object):
     
     def register(self):
         if not 'pos' in self.props.keys(): 
-            raise KeyError('No position (tupple of 3 floats) provided for the agent.')
+            raise KeyError("No position provided for the agent.")
         position = self.props['pos']
-        _type = self.props['type']
         oID = self.props['oID']
-        return position, oID, self
+        type_ = self.props['type']
+        return position, oID, self, type_
     
     def state(self):
         return self.props['ag_state']
@@ -48,14 +48,16 @@ class BasicAgent(object):
     def evaluate(self):
         """Evaluates the environment and creates an internal representation
         based on this 'perception'.        
-        """        
-        # Registers the representations and keep them
+        """
+        set_percept_mode = self.props['percept_mode']
+        percept = eval_routines(self, set_percept_mode)
+        reg = float(time.time())
+        self.percepts[reg] = percept
         
-    def action(self, act=None):        
-        check_action_routines(act, self.props['ag_state'],
-                              self.props['env_state'])
-    
-    
+    def action(self, act):
+        set_eval_mode = self.props['eval_mode']
+        action_routines(self, set_eval_mode, act)
+        
 class Institution(object):
     """Institutions are social constructs of different types.
     They are defined by the type of organisation, members and
@@ -70,12 +72,16 @@ class BalanceSheet(dict):
     agents and institutions.
     """
         
-    def add(self, item=None, quant=None, **kwargs):
+    def add(self, item=None, quant=None, value=None, **kwargs):
         if item != None and quant != None:
-            self[item] = quant
+            self[item] = (quant, value)
         self.update(kwargs)
     
     def remove(self, item):
         del self[item]
     
+    def valuation(self, item, value):
+        old_values = self[item]
+        new_values = self[item] = (old_values[0], value)
+        self[item]  = new_values
     
