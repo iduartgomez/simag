@@ -1,0 +1,26 @@
+<config cfg='agents'>
+	<agent id='Nacho' type='instance'>
+	    <properties
+		    type='b_ag'
+		    state='idle'
+		    percept_mode='std'
+		    eval_mode='std'
+		    name='Nacho'
+	    />
+	    <position>(0.0, 0.0, 0.0)</position>
+	    <assets>
+	    	<pepperoni val='5' quant='1000'/>
+	    	<espaguetis val='2' quant='1000'/>
+	    </assets>
+	    <liabilities>
+	    </liabilities>
+	</agent>
+	<agent id='cfg_01' type='setup'>
+	    <properties
+		    type='b_ag'
+		    state='idle'
+		    percept_mode='std'
+		    eval_mode='std'
+	    />
+	</agent>
+</config>

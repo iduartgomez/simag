@@ -4,7 +4,7 @@ import datetime
 import time
 import uuid
 
-from core.actions import *
+from core.actions import eval_routines, action_routines
 
 
 prop_list = ['name','born', 'ag_state', 'pos']
@@ -20,11 +20,16 @@ class Representation(object):
 
 class BasicAgent(object):
     """Implements the basic Agent object."""
-    def __init__(self, **kwargs):        
+    def __init__(self, config=None, **kwargs):        
         self.props = {
-                      'born': datetime.datetime.utcnow(), 'ag_state': 'idle',
-                      'type': 'b_ag', 'oID': str(uuid.uuid4())
+                      'oID': str(uuid.uuid4()),
+                      'type': 'b_ag', 
+                      'born': datetime.datetime.utcnow(), 
+                      'ag_state': 'idle',
+                      'percept_mode': 'std',
+                      'eval_mode': 'std'
                       }
+        self.percepts = {}
         self.assets = BalanceSheet()
         self.liabilities = BalanceSheet()
         for prop, val in kwargs.items():
@@ -42,8 +47,10 @@ class BasicAgent(object):
     def state(self):
         return self.props['ag_state']
     
-    def update_prop(self, prop, val):
+    def update(self, prop=None, val=None, **kwargs):
         self.props[prop] = val
+        for prop, val in kwargs.items():
+            self.props[prop] = val
         
     def evaluate(self):
         """Evaluates the environment and creates an internal representation
@@ -70,8 +77,7 @@ class Institution(object):
 class BalanceSheet(dict):
     """This object represents the assets and liabilities of
     agents and institutions.
-    """
-        
+    """            
     def add(self, item=None, quant=None, value=None, **kwargs):
         if item != None and quant != None:
             self[item] = (quant, value)
