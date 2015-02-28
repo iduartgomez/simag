@@ -4,8 +4,7 @@ import datetime
 import time
 import uuid
 
-from core.actions import eval_routines, action_routines
-
+from core.actions import percept_routines, action_routines
 
 prop_list = ['name','born', 'ag_state', 'pos']
 
@@ -20,26 +19,33 @@ class Representation(object):
 
 class BasicAgent(object):
     """Implements the basic Agent object."""
-    def __init__(self, config=None, **kwargs):        
+    def __init__(self, config=None, load=None, **kwargs):        
         self.props = {
                       'oID': str(uuid.uuid4()),
                       'type': 'b_ag', 
                       'born': datetime.datetime.utcnow(), 
                       'ag_state': 'idle',
-                      'percept_mode': 'std',
-                      'eval_mode': 'std'
+                      'percept_modes': ['std'],
+                      'eval_modes': ['std']
                       }
         self.percepts = {}
         self.assets = BalanceSheet()
         self.liabilities = BalanceSheet()
+        if load != None:
+            self.props = load['properties']
+            self.assets.add(**load['assets'])
+            self.liabilities.add(**load['liabilities'])
+            self.props['position'] = load['position']
+            if not 'oID' in load.keys():
+                self.props['oID'] = str(uuid.uuid4())
         for prop, val in kwargs.items():
             self.props[prop] = val
         self.register()
     
     def register(self):
-        if not 'pos' in self.props.keys(): 
+        if not 'position' in self.props.keys(): 
             raise KeyError("No position provided for the agent.")
-        position = self.props['pos']
+        position = self.props['position']
         oID = self.props['oID']
         type_ = self.props['type']
         return position, oID, self, type_
@@ -52,12 +58,12 @@ class BasicAgent(object):
         for prop, val in kwargs.items():
             self.props[prop] = val
         
-    def evaluate(self):
+    def perceive(self, eval_funcs, optimal=None):
         """Evaluates the environment and creates an internal representation
         based on this 'perception'.        
         """
-        set_percept_mode = self.props['percept_mode']
-        percept = eval_routines(self, set_percept_mode)
+        set_percept_modes = self.props['percept_modes']
+        percept = percept_routines(self, set_percept_modes, eval_funcs, optimal)
         reg = float(time.time())
         self.percepts[reg] = percept
         

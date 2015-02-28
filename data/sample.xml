@@ -1,12 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
 <config cfg='agents'>
 	<agent id='Nacho' type='instance'>
 	    <properties
 		    type='b_ag'
 		    state='idle'
-		    percept_mode='std'
-		    eval_mode='std'
 		    name='Nacho'
 	    />
+	    <percept_modes>perc_std, perc_01</percept_modes>
+	    <eval_modes>eval_std</eval_modes>
 	    <position>(0.0, 0.0, 0.0)</position>
 	    <assets>
 	    	<pepperoni val='5' quant='1000'/>
@@ -19,8 +20,8 @@
 	    <properties
 		    type='b_ag'
 		    state='idle'
-		    percept_mode='std'
-		    eval_mode='std'
 	    />
+	    <percept_modes>std,mode_01</percept_modes>
+	    <eval_modes>std</eval_modes>
 	</agent>
 </config>

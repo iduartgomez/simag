@@ -1,27 +1,26 @@
 import random
 
 from core.env import Env
-from core.agents import *
+from core.agents import BasicAgent, datetime
+from core.actions import *
 from core.tools import *
 
 env = Env()
+eval_funcs = PerceptionFuncs()
 cfg_file = '/home/nacho/workspace/simag/data/sample.xml'
+
+def perc_std():
+    return 'Placeholder percept: func => std mode'
 
 if __name__ == '__main__':
     d1 = datetime.datetime.now()
     
+    eval_funcs.add(perc_std)    
     agents, configs = import_configs(cfg_file)
-    for x in range(0,1000):
-        props = configs['cfg_01'][0]        
-        props['name'] = 'ag_' + str(x)
-        props['pos'] = [random.random(), random.random(), random.random()]
-        ag = BasicAgent(**props)
-        env.register(ag)
-    agents = []
-    #for k, v in env.agents.items():
-    #    agents.append(k)
-    #ag = env.agents[agents[0]][1]
-    #ag.update(**{'ag_state': 'tired'})
+    ag = BasicAgent(load=agents['Nacho'])
+    env.register(ag)
+    ag.perceive(eval_funcs)
+    print(ag.percepts.items())
     
     d2 = datetime.datetime.now()
     print(d2-d1)
