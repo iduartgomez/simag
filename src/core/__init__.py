@@ -1,5 +1,3 @@
-import random
-
 from core.env import Env
 from core.agents import BasicAgent, datetime
 from core.actions import *

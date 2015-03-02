@@ -3,6 +3,7 @@
 import datetime
 import time
 import uuid
+import re
 
 from core.actions import percept_routines, action_routines
 
@@ -83,13 +84,12 @@ class Representation(object):
     a local notation. The class includes methods to encode and decode
     the representations to/from machine language.
     """
+    def __init__(self):
+        self.others = {}    
+    
     def encode(self, sentence):
-        comp = []
-        logsymb = [':=', '=>', '<=>', '~', ':AND:', ':NAND:', ':OR:',
-                   ':XOR:', ':FORALL:', ':EXIST:', ':TRUE:', ':FALSE:',
-                   ':PROVABLE:', ':THEREFOR:']
 
-        def decomp_par(s):
+        def decomp_par(s, f=0, loop=0):
             initpar = []
             endpar = []
             idx = 0
@@ -103,25 +103,79 @@ class Representation(object):
             for i in initpar:
                 for e in endpar:
                     diff = abs(e - i)
-                    if diff < min_:
+                    if diff < min_ and i < e:
                         min_ = diff
                         par = (i, e)
             if len(initpar) == 0 and len(endpar) == 0:
+                comp.append(s[:])
+                s = s.replace(s[:], '{'+str(f)+'}')
                 return s
             elif (len(initpar) == 0 and len(endpar) != 0) or \
                  (len(initpar) != 0 and len(endpar) == 0):
-                print(s)
                 raise ValueError('Incorrect use of parentheses.')
             else:
-                comp.append(s[par[0]+1:par[1]])
-                print(s[par[0]+1:par[1]])
-                #return decomp_par(s)
+                elem = s[par[0]+1:par[1]]
+                comp.append(elem)
+                s = s.replace(s[par[0]:par[1]+1], '{'+str(f)+'}')
+                f += 1
+                return decomp_par(s, f)
+        
+        def iter_childs(ls):
+            for n in range(0,ls):
+                exp = comp[n]
+                childs = rgx.findall(exp)
+                childs = [int(x) for x in childs]
+                if childs != ():
+                    hier[n] = {'childs': childs, 'parent': -1}                        
+                else:
+                    hier[n] = {'childs': -1, 'parent': -1}
+            for n in range(0,ls):
+                childs = hier[n]['childs']
+                if childs != -1:
+                    for c in childs:
+                        hier[c]['parent'] = n
+        
+        comp = []
+        hier = {}
+        # logsymb = ['::=', '=>', '<=>', ':nand:', ':xor:', ':forall::',
+        #            ':exists::', ':true:', ':false:',':provable:', ':therefor:']
         s = decomp_par(sentence.replace(' ', ''))
-        return comp
+        rgx = re.compile('(?<={)[^}]*(?=})')
+        idx = len(comp)
+        iter_childs(idx)
+        for i, prop in enumerate(comp):
+            if '&' in prop:
+                prop = (':and:', prop.split('&'))
+                comp[i] = prop
+            elif '||' in prop:
+                prop = (':or:', prop.split('||'))
+                comp[i] = prop
+            elif ':exists::' in prop:
+                prop = prop.replace(':exists::','')
+                par = hier[i]['parent']
+                brothers = hier[par]['childs']
+                for x, b in enumerate(brothers):
+                    if b == i:
+                        brothers.pop(x)
+                p_prop = comp[par]
+                if p_prop.find('=') != -1:
+                    p_prop = p_prop.partition('=')
+                if '{'+str(i)+'}' in p_prop[0]:
+                    memb = int(p_prop[2].replace('{','').replace('}',''))
+                    others = comp[memb].split('&')
+                    for x, each in enumerate(others):
+                        others[x] = (each, 1)
+                    self.others[prop] = others
+                else:
+                    print 'No'
+            elif ':therefor:' in prop:
+                elem = prop.split(':therefor:')
+            #self.extset
+        print self.others
 
     def propositions(self):
-        """Sentences are analysed for similarities to extract invariant
-        qualities and generalized to predicates and formulas."""
+        """Propositions are analysed to extract the classes of 
+        the different elements."""
         return
 
 
@@ -142,5 +196,6 @@ class BalanceSheet(dict):
         new_values = self[item] = (old_values[0], value)
         self[item] = new_values
 
-sentence = "(Nacho = Human :AND: (~Machine)) :THEREFOR: (:EXIST:Machines = ~Human)"
-s = Representation().encode(sentence)
+sentence = "((Nacho) = (Human & ~Machine & ~Ugly)) :therefor: ((:exists::Human) = (~Machine & ~Ugly))"
+r = Representation()
+r.encode(sentence)
