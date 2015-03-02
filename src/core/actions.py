@@ -1,12 +1,13 @@
 """This module implements:
-1) The virtual actions committed by agents towards the environment 
-(which includes other agents). 
+1) The virtual actions committed by agents towards the environment
+(which includes other agents).
 2) Elements for the previous decission making about what actions to commit.
 """
 pmodes = []
 
+
 def action_routines(agent, eval_mode, act):
-    if act == None:
+    if act is None:
         # Check the current state and comit action, if possible
         # according to the current state.
         pass
@@ -15,9 +16,10 @@ def action_routines(agent, eval_mode, act):
         # and not incompatible with the current state.
         pass
 
+
 def percept_routines(agent, percept_modes, eval_funcs, optimal=None):
     for mode in percept_modes:
-        if mode in pmodes and optimal == None:
+        if mode in pmodes and optimal is None:
             func = eval_funcs.collection[mode]
             return func()
         elif optimal in pmodes and optimal in percept_modes:
@@ -27,7 +29,8 @@ def percept_routines(agent, percept_modes, eval_funcs, optimal=None):
                 percept_routines(agent, percept_modes, eval_funcs)
             else:
                 raise ValueError('Perception method not found.')
-        
+
+
 def deliberation():
     """Represents the practical deliberation of the agents.
     Input => The perceived current state of the environment and the agent.
@@ -36,6 +39,7 @@ def deliberation():
     """
     pass
 
+
 def means_end():
     """Represents the means-end deliberation of the agent.
     Input => Intended state the agent wants to achieve.
@@ -43,17 +47,16 @@ def means_end():
     """
     pass
 
+
 class PerceptionFuncs(object):
     """Registers the different evaluation functions.
-    
+
     Evaluation functions get an agent and a perception mode as input.
     And output a 'perception' data structure which is valid for that agent.
     """
     def __init__(self):
         self.collection = {}
-    
+
     def add(self, func):
         self.collection[func.__name__] = func
         pmodes.append(func.__name__)
-        
-        
