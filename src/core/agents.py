@@ -1,13 +1,29 @@
-"""Main agent module."""
+"""Main agent module, implements the different agent objects and all the
+supporting methods and classes.
+
+Actions
+-------
+1) The virtual actions committed by agents towards the environment
+(which includes other agents).
+2) Elements for the previous decission making about what actions to commit.
+"""
+#====================================================================#
+#   Imports and globals
+#====================================================================#
 
 import datetime
 import time
 import uuid
-import re
 
-from core.actions import percept_routines, action_routines
+from core.percept import Representation
 
 prop_list = ['name', 'born', 'ag_state', 'pos']
+pmodes = []
+actmodes = []
+
+#====================================================================#
+#   AGENT OBJECTS CLASSES AND SUBCLASSES
+#====================================================================#
 
 
 class BasicAgent(object):
@@ -19,7 +35,6 @@ class BasicAgent(object):
                       'ag_state': 'idle',
                       'percept_modes': ['std'],
                       'eval_modes': ['std']}
-        self.representations = Representation()
         self.assets = BalanceSheet()
         self.liabilities = BalanceSheet()
         if load is not None:
@@ -51,18 +66,57 @@ class BasicAgent(object):
 
     def perceive(self, eval_funcs, optimal=None):
         """Evaluates the environment and creates an internal representation
-        based on this 'perception'.
+        based on this 'perception'. Which is then registered for that moment.
         """
-        set_percept_modes = self.props['percept_modes']
-        percept = percept_routines(self, set_percept_modes, eval_funcs,
-                                   optimal)
-        world_rep = Representation(percept)
+        percept = self.percept_routine(self, eval_funcs, optimal)
+        world_rep = Representation.encode(percept)
         reg = float(time.time())
-        self.representationss[reg] = world_rep
-
-    def action(self, act):
-        set_eval_mode = self.props['eval_mode']
-        action_routines(self, set_eval_mode, act)
+        self.representations[reg] = world_rep
+        
+    def action_routine(self, action_funcs):
+        """Evaluates current set of beliefs and intentions and produces
+        a plan to achieve the desired state if possible.
+        """
+        eval_mode = self.props['eval_mode']    
+        # Current set of beliefs about the env
+        beliefs = self.representations        
+        # Current set of intentions the agent has
+        not_comp_acts = []      
+        incomp = False        
+        # Pick an action which is compatible with the current set of 
+        # beliefs and intentions.
+        while incomp is True:        
+            act = self.check_intetions(not_comp_acts)
+            incomp = self.is_incompatible(beliefs, act)
+            if incomp is True:
+                not_comp_acts.append(act)                
+        pertinent = True
+        while pertinent == True:
+            # Comit action
+            self.commit(act)
+            # Re-evaluate the situation to see if the actions still
+            # are pertinent to the current state of the simulation.
+            pertinent = self.eval_action(eval_mode, act)
+            # wait X time before re-evaluation (async)
+    
+    def perception_routine(self, eval_funcs, optimal=None):
+        percept_modes = self.props['percept_modes']        
+        if optimal is None:
+            # mode = check_optimal_perc_mode(self, percept_modes)
+            func = eval_funcs.collection['perc_std']
+            return func()
+        if optimal in pmodes and optimal in percept_modes:
+            # func = eval_funcs.collection[optimal]
+            return 'Placeholder percept: func => optimal mode'
+        else:
+            if optimal not in percept_modes:
+                self.percept_routine(percept_modes, eval_funcs)
+            else:
+                raise ValueError('Perception method not found.')
+    
+    def commit(self, act):
+        """Commits an action if pertinent."""        
+        pass
 
 
 class Institution(object):
@@ -74,109 +128,9 @@ class Institution(object):
     """
     pass
 
-
-class Representation(object):
-    """This class is a container for internal representations of agents
-    of the 'simulated reality'. An agent can have any number of such
-    representations, all of which are contained in this object.
-
-    The representations are modal and fuzzy logical sentences in 
-    a local notation. The class includes methods to encode and decode
-    the representations to/from machine language.
-    """
-    def __init__(self):
-        self.others = {}    
-    
-    def encode(self, sentence):
-
-        def decomp_par(s, f=0, loop=0):
-            initpar = []
-            endpar = []
-            idx = 0
-            while idx < len(s):
-                if s[idx] == '(':
-                    initpar.append(idx)
-                elif s[idx] == ')':
-                    endpar.append(idx)
-                idx += 1
-            min_ = float('inf')
-            for i in initpar:
-                for e in endpar:
-                    diff = abs(e - i)
-                    if diff < min_ and i < e:
-                        min_ = diff
-                        par = (i, e)
-            if len(initpar) == 0 and len(endpar) == 0:
-                comp.append(s[:])
-                s = s.replace(s[:], '{'+str(f)+'}')
-                return s
-            elif (len(initpar) == 0 and len(endpar) != 0) or \
-                 (len(initpar) != 0 and len(endpar) == 0):
-                raise ValueError('Incorrect use of parentheses.')
-            else:
-                elem = s[par[0]+1:par[1]]
-                comp.append(elem)
-                s = s.replace(s[par[0]:par[1]+1], '{'+str(f)+'}')
-                f += 1
-                return decomp_par(s, f)
-        
-        def iter_childs(ls):
-            for n in range(0,ls):
-                exp = comp[n]
-                childs = rgx.findall(exp)
-                childs = [int(x) for x in childs]
-                if childs != ():
-                    hier[n] = {'childs': childs, 'parent': -1}                        
-                else:
-                    hier[n] = {'childs': -1, 'parent': -1}
-            for n in range(0,ls):
-                childs = hier[n]['childs']
-                if childs != -1:
-                    for c in childs:
-                        hier[c]['parent'] = n
-        
-        comp = []
-        hier = {}
-        # logsymb = ['::=', '=>', '<=>', ':nand:', ':xor:', ':forall::',
-        #            ':exists::', ':true:', ':false:',':provable:', ':therefor:']
-        s = decomp_par(sentence.replace(' ', ''))
-        rgx = re.compile('(?<={)[^}]*(?=})')
-        idx = len(comp)
-        iter_childs(idx)
-        for i, prop in enumerate(comp):
-            if '&' in prop:
-                prop = (':and:', prop.split('&'))
-                comp[i] = prop
-            elif '||' in prop:
-                prop = (':or:', prop.split('||'))
-                comp[i] = prop
-            elif ':exists::' in prop:
-                prop = prop.replace(':exists::','')
-                par = hier[i]['parent']
-                brothers = hier[par]['childs']
-                for x, b in enumerate(brothers):
-                    if b == i:
-                        brothers.pop(x)
-                p_prop = comp[par]
-                if p_prop.find('=') != -1:
-                    p_prop = p_prop.partition('=')
-                if '{'+str(i)+'}' in p_prop[0]:
-                    memb = int(p_prop[2].replace('{','').replace('}',''))
-                    others = comp[memb].split('&')
-                    for x, each in enumerate(others):
-                        others[x] = (each, 1)
-                    self.others[prop] = others
-                else:
-                    print 'No'
-            elif ':therefor:' in prop:
-                elem = prop.split(':therefor:')
-            #self.extset
-        print self.others
-
-    def propositions(self):
-        """Propositions are analysed to extract the classes of 
-        the different elements."""
-        return
+#====================================================================#
+#   SUPPORTING CLASSES AND SUBCLASSES
+#====================================================================#
 
 
 class BalanceSheet(dict):
@@ -195,7 +149,58 @@ class BalanceSheet(dict):
         old_values = self[item]
         new_values = self[item] = (old_values[0], value)
         self[item] = new_values
+        
 
-sentence = "((Nacho) = (Human & ~Machine & ~Ugly)) :therefor: ((:exists::Human) = (~Machine & ~Ugly))"
-r = Representation()
-r.encode(sentence)
+class PerceptionFuncs(object):
+    """Registers the different evaluation functions.
+
+    Evaluation functions get an agent and a perception mode as input.
+    And output a 'perception' data structure which is valid for that agent.
+    """
+    def __init__(self):
+        self.collection = {}
+
+    def add(self, func):
+        self.collection[func.__name__] = func
+        pmodes.append(func.__name__)
+        
+
+class ActionFuncs(object):
+    """Registers the different action functions.
+
+    Action functions get an agent and an evaluation mode as input.
+    And output a set of instructions which is valid for that agent.
+    """
+    def __init__(self):
+        self.collection = {}
+
+    def add(self, func):
+        self.collection[func.__name__] = func
+        actmodes.append(func.__name__)
+
+#====================================================================#
+#   Action deliberation and commitment functions
+#====================================================================#
+
+def deliberation():
+    """Represents the practical deliberation of the agents. It includes
+    the level of commitment to an end (blind, single-minded, open-minded).
+    
+    Input: The perceived current state of the environment and the agent.
+    Output: What is the intended (end) state the agent wants to achieve.
+    """
+    pass
+
+
+def means():
+    """Represents the means-end deliberation of the agent.
+    
+    Given an end what means to use to achieve such state and the level
+    of commitment the agent will take when using those means, indepent of
+    the level of commitment to the end itself.
+    (Blind, single-minded or open-minded commitment).
+    
+    Input: Intended state the agent wants to achieve.
+    Output: Actions to commit to achieve the state.
+    """
+    pass
