@@ -71,17 +71,17 @@ class Representation(object):
                     others[x] = (each, 1)
                 self.others[prop] = others
             else:
-                for oitem in old:
-                    for x, nitem in enumerate(others):
-                        others[x] =  (nitem, 1)
-                        if oitem[0] == nitem:
-                            others[x] =  (nitem, oitem[1] + 1)
-                self.others[prop] = others
+                oitems = [x for (x, y) in old]
+                for item in others:                        
+                    if item in oitems:
+                        idx = oitems.index(item)
+                        old[idx] = (item, old[idx][1] + 1)
+                    else:
+                        old.append((item, 1))
+                self.others[prop] = old
 
         comp = []
-        hier = {}
-        # logsymb = ['::=', '=>', '<=>', ':nand:', ':xor:', ':forall::',
-        #            ':exists::', ':true:', ':false:',':provable:', ':therefor:']
+        hier = {}        
         decomp_par(sentence.replace(' ', ''))
         rgx = re.compile('(?<={)[^}]*(?=})')
         idx = len(comp)
@@ -120,7 +120,13 @@ class Representation(object):
         the different elements."""
         return
 
-sentence = "((Nacho) = (Human & ~Machine & ~Ugly)) :therefor: ((:exists::Human) = (~Machine & ~Ugly))"
+# logsymb = ['::=', '=>', '<=>', ':nand:', ':xor:', ':forall::',
+#            ':exists::', ':true:', ':false:',':provable:', ':therefor:']
+
+sentence1 = "((nacho)=(human&~machine&~ugly)):therefor:((:exists::human)=(~machine&~ugly))"
+sentence2 = "(:exists::human)=(~machine)"
 r = Representation()
-r.others['Human'] = [('~Machine', 2)]
-r.encode(sentence)
+r.others['human'] = [('~machine', 1)]
+r.encode(sentence1)
+r.encode(sentence2)
+print r.others

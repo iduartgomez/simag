@@ -35,6 +35,7 @@ class BasicAgent(object):
                       'ag_state': 'idle',
                       'percept_modes': ['std'],
                       'eval_modes': ['std']}
+        self.percepts = []
         self.assets = BalanceSheet()
         self.liabilities = BalanceSheet()
         if load is not None:
@@ -68,10 +69,10 @@ class BasicAgent(object):
         """Evaluates the environment and creates an internal representation
         based on this 'perception'. Which is then registered for that moment.
         """
-        percept = self.percept_routine(self, eval_funcs, optimal)
-        world_rep = Representation.encode(percept)
+        percept = self.perception_routine(eval_funcs, optimal)
+        #world_rep = Representation.encode(percept)
         reg = float(time.time())
-        self.representations[reg] = world_rep
+        self.percepts.append((reg, percept))
         
     def action_routine(self, action_funcs):
         """Evaluates current set of beliefs and intentions and produces
