@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Main agent module, implements the different agent objects and all the
 supporting methods and classes.
 
@@ -8,9 +7,9 @@ Actions
 (which includes other agents).
 2) Elements for the previous decission making about what actions to commit.
 """
-# ===================================================================#
+#====================================================================#
 #   Imports and globals
-# ===================================================================#
+#====================================================================#
 
 import datetime
 import time
@@ -22,9 +21,9 @@ prop_list = ['name', 'born', 'ag_state', 'pos']
 pmodes = []
 actmodes = []
 
-# ===================================================================#
+#====================================================================#
 #   AGENT OBJECTS CLASSES AND SUBCLASSES
-# ===================================================================#
+#====================================================================#
 
 
 class BasicAgent(object):
@@ -71,38 +70,38 @@ class BasicAgent(object):
         based on this 'perception'. Which is then registered for that moment.
         """
         percept = self.perception_routine(eval_funcs, optimal)
-        # world_rep = Representation.encode(percept)
+        #world_rep = Representation.encode(percept)
         reg = float(time.time())
         self.percepts.append((reg, percept))
-
+        
     def action_routine(self, action_funcs):
         """Evaluates current set of beliefs and intentions and produces
         a plan to achieve the desired state if possible.
         """
-        eval_mode = self.props['eval_mode']
+        eval_mode = self.props['eval_mode']    
         # Current set of beliefs about the env
-        beliefs = self.representations
+        beliefs = self.representations        
         # Current set of intentions the agent has
-        not_comp_acts = []
-        incomp = False
-        # Pick an action which is compatible with the current set of
+        not_comp_acts = []      
+        incomp = False        
+        # Pick an action which is compatible with the current set of 
         # beliefs and intentions.
-        while incomp is True:
+        while incomp is True:        
             act = self.check_intetions(not_comp_acts)
             incomp = self.is_incompatible(beliefs, act)
             if incomp is True:
-                not_comp_acts.append(act)
+                not_comp_acts.append(act)                
         pertinent = True
-        while pertinent is True:
+        while pertinent == True:
             # Comit action
             self.commit(act)
             # Re-evaluate the situation to see if the actions still
             # are pertinent to the current state of the simulation.
             pertinent = self.eval_action(eval_mode, act)
             # wait X time before re-evaluation (async)
-
+    
     def perception_routine(self, eval_funcs, optimal=None):
-        percept_modes = self.props['percept_modes']
+        percept_modes = self.props['percept_modes']        
         if optimal is None:
             # mode = check_optimal_perc_mode(self, percept_modes)
             func = eval_funcs.collection['perc_std']
@@ -115,9 +114,9 @@ class BasicAgent(object):
                 self.percept_routine(percept_modes, eval_funcs)
             else:
                 raise ValueError('Perception method not found.')
-
+    
     def commit(self, act):
-        """Commits an action if pertinent."""
+        """Commits an action if pertinent."""        
         pass
 
 
@@ -130,9 +129,9 @@ class Institution(object):
     """
     pass
 
-# ===================================================================#
+#====================================================================#
 #   SUPPORTING CLASSES AND SUBCLASSES
-# ===================================================================#
+#====================================================================#
 
 
 class BalanceSheet(dict):
@@ -151,7 +150,7 @@ class BalanceSheet(dict):
         old_values = self[item]
         new_values = self[item] = (old_values[0], value)
         self[item] = new_values
-
+        
 
 class PerceptionFuncs(object):
     """Registers the different evaluation functions.
@@ -165,7 +164,7 @@ class PerceptionFuncs(object):
     def add(self, func):
         self.collection[func.__name__] = func
         pmodes.append(func.__name__)
-
+        
 
 class ActionFuncs(object):
     """Registers the different action functions.
@@ -180,15 +179,14 @@ class ActionFuncs(object):
         self.collection[func.__name__] = func
         actmodes.append(func.__name__)
 
-# ===================================================================#
+#====================================================================#
 #   Action deliberation and commitment functions
-# ===================================================================#
-
+#====================================================================#
 
 def deliberation():
     """Represents the practical deliberation of the agents. It includes
     the level of commitment to an end (blind, single-minded, open-minded).
-
+    
     Input: The perceived current state of the environment and the agent.
     Output: What is the intended (end) state the agent wants to achieve.
     """
@@ -197,12 +195,12 @@ def deliberation():
 
 def means():
     """Represents the means-end deliberation of the agent.
-
+    
     Given an end what means to use to achieve such state and the level
-    of commitment the agent will take when using those means, indepent
-    of the level of commitment to the end itself.
+    of commitment the agent will take when using those means, indepent of
+    the level of commitment to the end itself.
     (Blind, single-minded or open-minded commitment).
-
+    
     Input: Intended state the agent wants to achieve.
     Output: Actions to commit to achieve the state.
     """

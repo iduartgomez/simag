@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Set up the classes and methods for the basic environment
 where the actors reside and where the 'simulated world' exists.
 

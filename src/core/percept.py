@@ -2,35 +2,29 @@
 
 import re
 
-
 class Representation(object):
     """This class is a container for internal agent's representations
     of the 'simulated reality'. An agent can have any number of such
-    representations at a moment in time, all of which are contained
+    representations at a moment in time, all of which are contained 
     in this object.
 
-    The representations are modal and fuzzy logical sentences in
+    The representations are modal and fuzzy logical sentences in 
     a local notation. The class includes methods to encode and decode
     the representations to/from machine language.
     """
     def __init__(self):
-        self.singles = {}
-        self.classes = {}
+        self.others = {}    
+    
+    def encode(self, sentence):
 
-    def encode(self, formula):        
-        comp = []
-        hier = {}
-        rgx_par = re.compile(r'\{(.*?)\}')
-        rgx_ob = re.compile(r'\b(.*?)\]')
-
-        def decomp_par(s, symb, f=0):
+        def decomp_par(s, f=0, loop=0):
             initpar = []
             endpar = []
             idx = 0
             while idx < len(s):
-                if s[idx] == symb[0]:
+                if s[idx] == '(':
                     initpar.append(idx)
-                elif s[idx] == symb[1]:
+                elif s[idx] == ')':
                     endpar.append(idx)
                 idx += 1
             min_ = float('inf')
@@ -52,101 +46,87 @@ class Representation(object):
                 comp.append(elem)
                 s = s.replace(s[par[0]:par[1]+1], '{'+str(f)+'}')
                 f += 1
-                return decomp_par(s, symb, f)
-            
-        def decomp_all(tform, symb, idx):            
-            if symb in tform:
-                memb = tform.split(symb)
-                x, y = len(comp), len(comp)+1
-                if symb == '<=>':
-                    comp[idx] = '{'+str(x)+'}'+':equiv:'+'{'+str(y)+'}'
-                if symb == ' =>':
-                    comp[idx] = '{'+str(x)+'}'+':implies:'+'{'+str(y)+'}'
-                if symb == '||':
-                    comp[idx] = '{'+str(x)+'}'+':or:'+'{'+str(y)+'}'
-                if symb == '&&':
-                    comp[idx] = '{'+str(x)+'}'+':and:'+'{'+str(y)+'}'
-                comp.append(memb[0])
-                comp.append(memb[1])
-                return True
-            
+                return decomp_par(s, f)
+        
         def iter_childs(ls):
-            for n in range(0, ls):
+            for n in range(0,ls):
                 exp = comp[n]
-                childs = rgx_par.findall(exp)
+                childs = rgx.findall(exp)
                 childs = [int(x) for x in childs]
-                if childs != []:
+                if childs != ():
                     hier[n] = {'childs': childs, 'parent': -1}
                 else:
                     hier[n] = {'childs': -1, 'parent': -1}
-            for n in range(0, ls):
+            for n in range(0,ls):
                 childs = hier[n]['childs']
                 if childs != -1:
                     for c in childs:
                         hier[c]['parent'] = n
-            
-        def get_membs(i):
-            par = hier[i]['parent']
-            brothers = hier[par]['childs']
-            for x, b in enumerate(brothers):
-                if b == i:
-                    brothers.pop(x)                
-            return brothers, par
-        
-        def up_dict(var, key):
-            if key == 0:
-                if not var[1] in self.singles:
-                    self.singles[var[1].strip('$')] = [var[0]]
-                else:
-                    self.singles[var[0]].append(var[1])
-                if not var[0] in self.classes:
-                    self.classes[var[0]] = [var[1]]
-                else:
-                    self.classes[var[0]].append(var[1])
 
-        decomp_par(formula.rstrip('\n'), symb=('(',')'))
-        for i, form in enumerate(comp):
-            symbs = ['<=>',' =>','||','&&']
-            for symb in symbs:
-                if decomp_all(form, symb, idx=i):
-                    break
+        def up_dict(others, prop):
+            try:
+                old = self.others[prop]
+            except:
+                for x, each in enumerate(others):
+                    others[x] = (each, 1)
+                self.others[prop] = others
+            else:
+                oitems = [x for (x, y) in old]
+                for item in others:                        
+                    if item in oitems:
+                        idx = oitems.index(item)
+                        old[idx] = (item, old[idx][1] + 1)
+                    else:
+                        old.append((item, 1))
+                self.others[prop] = old
+
+        comp = []
+        hier = {}        
+        decomp_par(sentence.replace(' ', ''))
+        rgx = re.compile('(?<={)[^}]*(?=})')
         idx = len(comp)
         iter_childs(idx)
-        for idx, form in enumerate(comp):
-            if '[' in form:
-                set_ = rgx_ob.findall(form)
-                if '<' in form:
-                    # This is a function class > implies an action between
-                    # an object and the enc or an obj and other objects.
-                    pass
+        for i, prop in enumerate(comp):
+            if '&' in prop:
+                prop = (':and:', prop.split('&'))
+                comp[i] = prop
+            elif '||' in prop:
+                prop = (':or:', prop.split('||'))
+                comp[i] = prop
+            elif ':exists::' in prop:
+                prop = prop.replace(':exists::','')
+                par = hier[i]['parent']
+                brothers = hier[par]['childs']
+                for x, b in enumerate(brothers):
+                    if b == i:
+                        brothers.pop(x)
+                p_prop = comp[par]
+                if p_prop.find('=') != -1:
+                    p_prop = p_prop.partition('=')
+                if '{'+str(i)+'}' in p_prop[0]:
+                    memb = int(p_prop[2].replace('{','').replace('}',''))
+                    others = comp[memb].split('&')
+                    up_dict(others, prop)
                 else:
-                    # This is a set class > an object belongs 
-                    # to a set of objects.
-                    set_ = set_[0].split('[')
-                    if ',' in set_[1]:
-                        set_[1] = tuple(set_[1].split(','))
-                    if isinstance(set_[1], tuple):
-                        pass
-                    else:
-                        if '$' in set_[1]:
-                            up_dict(set_, key=0)                            
-            elif ':implies:' in form:
-                par = hier[idx]['parent']
-                par_form = comp[par]
-                while not any(x in par_form for x in [':forall:', ':exists:']):                    
-                    par = hier[idx]['parent']
-                    par_form = comp[par]
-                par_form = par_form.split(':')
-                for i, a in enumerate(par_form):
-                    if a == 'forall':
-                        var = par_form[i+1].split(',')
-                        var = var[0] if len(var) == 1 else None
-                childs = hier[par]['childs']                
-                print comp, childs
-                
-        #print comp
+                    memb = int(p_prop[1].replace('{','').replace('}',''))
+                    others = comp[memb].split('&')
+                    up_dict(others, prop)
+            elif ':therefor:' in prop:
+                #elem = prop.split(':therefor:')
+                pass
 
     def propositions(self):
-        """Propositions are analysed to extract the classes of
+        """Propositions are analysed to extract the classes of 
         the different elements."""
         return
+
+# logsymb = ['::=', '=>', '<=>', ':nand:', ':xor:', ':forall::',
+#            ':exists::', ':true:', ':false:',':provable:', ':therefor:']
+
+sentence1 = "((nacho)=(human&~machine&~ugly)):therefor:((:exists::human)=(~machine&~ugly))"
+sentence2 = "(:exists::human)=(~machine)"
+r = Representation()
+r.others['human'] = [('~machine', 1)]
+r.encode(sentence1)
+r.encode(sentence2)
+print r.others
