@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-
 import re
 
 
@@ -16,13 +15,13 @@ class Representation(object):
     def __init__(self):
         self.singles = {}
         self.classes = {}
+        self.formulae = {}
 
     def encode(self, formula):        
         comp = []
         hier = {}
         rgx_par = re.compile(r'\{(.*?)\}')
-        rgx_ob = re.compile(r'\b(.*?)\]')
-
+        
         def decomp_par(s, symb, f=0):
             initpar = []
             endpar = []
@@ -84,17 +83,6 @@ class Representation(object):
                 if childs != -1:
                     for c in childs:
                         hier[c]['parent'] = n
-        
-        def up_classes(var, key):
-            if key == 0:
-                if var[1] not in self.singles:
-                    self.singles[var[1].strip('$')] = [var[0]]
-                else:
-                    self.singles[var[0]].append(var[1])
-                if var[0] not in self.classes:
-                    self.classes[var[0]] = [var[1]]
-                else:
-                    self.classes[var[0]].append(var[1])
 
         decomp_par(formula.rstrip('\n'), symb=('(',')'))
         ori = len(comp)-1
@@ -108,137 +96,171 @@ class Representation(object):
         if not any(x in par_form for x in [':forall:', ':exists:']):
             # It's a declaration/definition
             if '[' in par_form and len(comp) == 1:
-                set_ = rgx_ob.findall(form)
-                if '<' in par_form:
-                    # Is a function declaration > implies an action
-                    # between an object and the env or other objects.
-                    pass
-                else:
-                    # Is a set declaration -> the object belongs 
-                    # to a set of objects.
-                    set_ = set_[0].split('[')
-                    if ',' in set_[1]:
-                        set_[1] = tuple(set_[1].split(','))
-                    if isinstance(set_[1], tuple):
-                        raise ValueError("Only one object can be declared as \
-                                          member of a set at once.")
-                    else:
-                        if '$' in set_[1]:
-                            up_classes(set_, key=0)
+                self.declare(par_form)
             elif '[' in par_form and len(comp) > 1:
                 raise TypeError('Statement not well constructed.')
             else:
                 # Is a conditional function declaration:
                 # the action taken depends on the operators.
-                print comp
+                pass
         else:
             # It's a formula, not a declaration/definition
-            formula = Formula(self, ori, comp, hier)
-
+            proof = Proof()
+            make_form(proof, ori, comp, hier)
+            print 'COMP:', proof.instructions
+            proof(self, '$John')
+            print '---------------'
+    
+    def declare(self, form):
+        rgx_ob = re.compile(r'\b(.*?)\]')
+        set_ = rgx_ob.findall(form)
+        if '<' in form:
+            # Is a function declaration > implies an action
+            # between an object and the env or other objects.
+            pass
+        else:
+            # Is a membership declaration -> the object belongs 
+            # to a set of objects.
+            set_ = set_[0].split('[')
+            if ',' in set_[1]:
+                set_[1] = tuple(set_[1].split(','))
+            if isinstance(set_[1], tuple):
+                raise ValueError('Only one object can be declared as \
+                                  member of a set at once.')
+            else:
+                if '$' in set_[1]:
+                    self.up_classes(set_, key=0)
+    
+    def up_classes(self, var, key):
+        if key == 0:
+            if var[1] not in self.singles:
+                self.singles[var[1]] = [var[0]]
+            else:
+                self.singles[var[1]].append(var[0])
+            if var[0] not in self.classes:
+                self.classes[var[0]] = [var[1]]
+            else:
+                self.classes[var[0]].append(var[1])
+            
     def propositions(self):
         """Propositions are analysed to extract the classes of
         the different elements."""
         return
 
 
-class Formula(object):
-    """Object to store logic formulas."""
-    class Variable():
-        def __init__(self):
-            self.values = []
-        
-        def __call__(self):
-            pass
-        
-        def __str__(self):
-            return str(self.values)
-        
-        def append(self, hier, val):
-            self.values.insert(hier, val)
-    
-    class Proof():
-        def __init__(self):
-            self.atoms = {}
-        
-        def __call__(self):
-            pass
-        
-        def new_test(self, form, depth):
-            if ':implies:' in form:
-                self.condition = ':implies:
-        
-        def childs(self):
-            """If it has childs, makes and stores them."""
-            pass
-        
-            
-    def __init__(self, parent, ori, *args):
+class Proof(object):
+    """Object to store logic proofs."""
+
+    def __init__(self):
         self.vars = {}
-        self.parent = parent
-        self.proof = self.Proof()
-        self.make_form(ori, *args)
+        self.var_order = []
+        self.instructions = []
+        self.depth = 0
+
+    def __call__(self, ag, *args):
+        self.ag = ag
+        if len(self.vars) == len(args):
+            self.assign = {}
+            for n, const in enumerate(args):
+                memb = self.check_membership(const)
+                if memb is None:
+                    return
+                var_name = self.var_order[n]
+                self.assign[var_name] = [const, memb]
+                hier = [x[0] for x in self.instructions]
+                self.check_conditions(hier, 0)
+        else:
+            return
+
+    def check_membership(self, name):
+        if name in self.ag.singles:
+            return self.ag.singles[name]
+        else:
+            return None
     
-    def __call__(self):
-        pass    
+    def check_conditions(self, hier, depth):
+        for i, lvl in enumerate(hier):
+            if lvl == depth:
+                atoms = self.instructions[i]     
+        if 'implies' in atoms[1]:
+            atoms = []
+            for i, lvl in enumerate(hier):
+                if lvl == depth + 1:
+                    atoms.append(self.instructions[i])
+            if atoms[0][0]  == self.depth:
+                rgx_par = re.compile(r'\[(.*?)\]')
+                rgx_ob = re.compile(r'\b(.*?)\]')
+                for n, atom in enumerate(atoms):                    
+                    vars_ = rgx_par.findall(atom[2])
+                    if len(vars_) == 1:
+                        var = vars_[0]
+                        var = [x[1] if x[0] < depth else None for x in self.vars[var]] 
+                        var = var[0]                                         
+                        set_ = rgx_ob.findall(atom[2])
+                        set_ = set_[0].split('[')
+                        if n == 0 and set_[0] in self.assign[set_[1]][1]:
+                            cond = True
+                        elif n == 0:
+                            cond = False
+                        if n != 0 and cond is True:
+                            set_[1] = self.assign[set_[1]][0]
+                            self.ag.up_classes(set_, key=0)
+        if depth < self.depth:
+            depth += 1
+            self.check_conditions(hier, depth)
     
-    def make_form(self, ori, comp, hier, depth=0):
-        form = comp[ori]
-        print 'PROCESSING!', form
-        self.proof.new_test(form, depth)
-        childs = hier[ori]['childs']
-        depth += 1
-        for child in childs:            
-            if hier[child]['childs'] != -1:                
-                self.make_form(child, comp, hier, depth)
-            else:
-                form = comp[child]                
-                print 'PROCESSING LAST ATOM:', form
-                self.proof.new_test(form, depth)
+    # optimizable en Representation.encode.decomp_all()
+    def new_test(self, form, depth):
         
-        """
-        par_form = comp[ori].split(':')
-        for i, a in enumerate(par_form):
-            if a == 'forall':
-                vars_ = par_form[i+1].split(',')
-                for var in vars_:
-                    var_name = var.strip()
-                    var = self.Variable()
-                    var.append(0, float('inf'))
-                    self.vars[var_name] = var
-            elif a == 'exists':
-                vars_ = par_form[i+1].split(',')
-                for var in vars_:
-                    var_name = var.strip()
-                    var = self.Variable()
-                    var.append(0, 1)
-                    self.vars[var_name] = var"""
-    
-    def up_classes(self, var, key):
-        if key == 0:
-            if var[1] not in self.parent.singles:
-                self.parent.singles[var[1].strip('$')] = [var[0]]
-            else:
-                self.parent.singles[var[0]].append(var[1])
-            if var[0] not in self.classes:
-                self.parent.classes[var[0]] = [var[1]]
-            else:
-                self.parent.classes[var[0]].append(var[1])
+        def up_var(quant):
+            vars_ = form[i+1].split(',')
+            for var in vars_:
+                var_name = var.strip()
+                if var_name not in self.vars:
+                    self.vars[var_name] = [(depth, quant)]
+                    self.instructions.append((depth, condition, var_name))
+                    self.var_order.append(var_name)
+                else:
+                    self.vars[var_name].append(depth, quant)
+                    self.instructions.append((depth, condition, var_name))
+                    self.var_order.append(var_name)
+        
+        self.depth = depth
+        if ':equiv:' in form:
+            condition = 'equiv'
+            self.instructions.append((depth, condition))
+        if ':implies:' in form:
+            condition = 'implies'
+            self.instructions.append((depth, condition))
+        if ':or:' in form:
+            condition = 'or'
+            self.instructions.append((depth, condition))
+        if ':and:' in form:
+            condition = 'and'
+            self.instructions.append((depth, condition))
+        if any(x in form for x in [':forall:', ':exists:']):            
+            form = form.split(':')
+            condition = 'check_var'
+            for i, a in enumerate(form):
+                if a == 'forall':
+                    quant = float('inf')
+                    up_var(quant)
+                elif a == 'exists':
+                    quant = 1
+                    up_var(quant)
+        elif '[' in form:
+            condition = 'predicate'
+            self.instructions.append((depth, condition, form.strip()))
 
-# :forall:x: (student[x] => person[x])
 
-"""
-formulas: { 'student': obj formula() }
-
-formula():
-    vars == {'x': -inf}
-    __call__() == self.person()
-    proposition(x) == x = 'person',
-                     update_dict(person,vars['x'])
-
-0. process(('student','$Bill'))
-1. form = formulas['student']
-2. form('$Bill')
-3. form.vars[x] = $Bill
-4. update_dict(person, '$Bill')
-
-"""
+def make_form(proof, ori, comp, hier, depth=0):
+    form = comp[ori]
+    childs = hier[ori]['childs']
+    proof.new_test(form, depth)
+    depth += 1
+    for child in childs:
+        if hier[child]['childs'] != -1:
+            make_form(proof, child, comp, hier, depth)
+        else:
+            form = comp[child]
+            proof.new_test(form, depth)

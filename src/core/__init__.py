@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-
 import os
 
 from core.env import Env
@@ -11,8 +10,8 @@ path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 env = Env()
 eval_funcs = PerceptionFuncs()
 act_funcs = ActionFuncs()
-cfg_test = os.path.join(path, 'data', 'ag_test_01.xml')
-logic_test = os.path.join(path, 'data', 'logic_test_01.txt')
+cfg_test = os.path.join(path, 'tests', 'ag_test_01.xml')
+logic_test = os.path.join(path, 'tests', 'logic_test_01.txt')
 
 
 def perc_std():
@@ -46,4 +45,3 @@ if __name__ == '__main__':
     print(d2-d1)
     print r.singles
     print r.classes
-    

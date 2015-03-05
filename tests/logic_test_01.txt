@@ -1,0 +1,5 @@
+professor[$Lucy]
+dean[$John]
+:forall:x: (professor[x] => person[x])
+:forall:x: (dean[x] => professor[x])
+#:forall:x: (:exists:y: (friend[x,y]))

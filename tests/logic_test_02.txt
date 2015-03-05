@@ -20,7 +20,7 @@ student[$Bill]
 ~:exists::x (student[x] && <loves[x,$Bill]>)
 :exists:x: (sister[x,$Bill])
 ~:exists::x (sister[x,$Bill])
-:forall:x: :forall:y: (sister[x,$Bill] && sister[y,$Bill] => <eq[x,y]>)
+:forall:x,y: (sister[x,$Bill] && sister[y,$Bill] => <eq[x,y]>)
 :exists:x: (sister[x,$Bill] && :forall:y: (sister[y,$Bill] => <eq[x,y]>))
 :exists:x,y: (sister[x,$Bill] && sister[y,$Bill] && ~<eq[x,y]>)
 :forall:x: (student[x] => :exists:y: (course[y] && <takes[x,y]>))
