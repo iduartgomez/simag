@@ -45,7 +45,5 @@ if __name__ == '__main__':
     d2 = datetime.datetime.now()
     print(d2-d1)
     print r.singles
-    #print r.classes
-    
-    #:forall:x: (professor[x] => person[x])
+    print r.classes
     
