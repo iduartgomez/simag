@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Helper functions and tools."""
 
 import xml.etree.ElementTree as xml

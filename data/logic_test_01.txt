@@ -1,0 +1,4 @@
+professor[$Lucy]
+:forall:x: (professor[x] => person[x])
+dean[$John]
+:forall:x: (dean[x] => professor[x])
