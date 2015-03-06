@@ -1,5 +1,7 @@
 professor[$Lucy]
+student[$Bill]
 dean[$John]
 :forall:x: (professor[x] => person[x])
 :forall:x: (dean[x] => professor[x])
-#:forall:x: (:exists:y: (friend[x,y]))
+:#forall:x,y: (professor[x] && dean[y] => <friend[y,x]> || ~<knows[x,y]>)
+:forall:x: (:exists:y: (<friend[x,y]>))

@@ -45,7 +45,7 @@ class Representation(object):
                 return
             elif (len(initpar) == 0 and len(endpar) != 0) or \
                  (len(initpar) != 0 and len(endpar) == 0):
-                raise ValueError('Incorrect use of parentheses.')
+                raise SyntaxError('Incorrect use of parentheses.')
             else:
                 elem = s[par[0]+1:par[1]]
                 comp.append(elem)
@@ -98,19 +98,16 @@ class Representation(object):
             if '[' in par_form and len(comp) == 1:
                 self.declare(par_form)
             elif '[' in par_form and len(comp) > 1:
-                raise TypeError('Statement not well constructed.')
+                raise SyntaxError('Statement not well constructed.')
             else:
                 # Is a conditional function declaration:
                 # the action taken depends on the operators.
                 pass
         else:
             # It's a formula, not a declaration/definition
-            proof = Proof()
-            make_form(proof, ori, comp, hier)
-            print 'COMP:', proof.instructions
-            proof(self, '$John')
-            print '---------------'
-    
+            proof = Proof(ori, comp, hier)
+            self.save_proof(proof)
+
     def declare(self, form):
         rgx_ob = re.compile(r'\b(.*?)\]')
         set_ = rgx_ob.findall(form)
@@ -125,13 +122,46 @@ class Representation(object):
             if ',' in set_[1]:
                 set_[1] = tuple(set_[1].split(','))
             if isinstance(set_[1], tuple):
-                raise ValueError('Only one object can be declared as \
+                raise IndexError('Only one object can be declared as \
                                   member of a set at once.')
             else:
                 if '$' in set_[1]:
                     self.up_classes(set_, key=0)
+
+    def save_proof(self, proof):
+        names = []
+        for part in proof.particles:
+            if part.cond == 'predicate':
+                names.append(part.pred[0])
+        for name in names:
+            if name not in self.formulae:
+                self.formulae[name] = [proof]
+            else:
+                self.formulae[name].append(proof)
     
+    def prove(self, *args):
+        keys = []      
+        for arg in args:
+            if arg in self.singles:
+                k = self.singles[arg]
+                for x in k:
+                    keys.append(x)
+        forms = []
+        for key in keys:
+            if key in self.formulae:
+                for proof in self.formulae[key]:
+                    if proof not in forms:
+                        forms.append(proof)
+        for x, proof in enumerate(forms):
+            print '...............', x
+            proof(self, *args)
+            
+
     def up_classes(self, var, key):
+        """Keys for registering membership to a set:
+        0: Default registering, membership equality.
+        1: Implied membership of an object, quantified.
+        """
         if key == 0:
             if var[1] not in self.singles:
                 self.singles[var[1]] = [var[0]]
@@ -141,126 +171,170 @@ class Representation(object):
                 self.classes[var[0]] = [var[1]]
             else:
                 self.classes[var[0]].append(var[1])
-            
-    def propositions(self):
-        """Propositions are analysed to extract the classes of
-        the different elements."""
-        return
 
 
 class Proof(object):
-    """Object to store logic proofs."""
-
-    def __init__(self):
+    """Object to store logic proofs.
+    """
+    def __init__(self, ori, comp, hier):
+        self.depth = 0
         self.vars = {}
         self.var_order = []
-        self.instructions = []
-        self.depth = 0
-
-    def __call__(self, ag, *args):
-        self.ag = ag
-        if len(self.vars) == len(args):
-            self.assign = {}
-            for n, const in enumerate(args):
-                memb = self.check_membership(const)
-                if memb is None:
-                    return
-                var_name = self.var_order[n]
-                self.assign[var_name] = [const, memb]
-                hier = [x[0] for x in self.instructions]
-                self.check_conditions(hier, 0)
-        else:
-            return
-
-    def check_membership(self, name):
-        if name in self.ag.singles:
-            return self.ag.singles[name]
-        else:
-            return None
-    
-    def check_conditions(self, hier, depth):
-        for i, lvl in enumerate(hier):
-            if lvl == depth:
-                atoms = self.instructions[i]     
-        if 'implies' in atoms[1]:
-            atoms = []
-            for i, lvl in enumerate(hier):
-                if lvl == depth + 1:
-                    atoms.append(self.instructions[i])
-            if atoms[0][0]  == self.depth:
-                rgx_par = re.compile(r'\[(.*?)\]')
-                rgx_ob = re.compile(r'\b(.*?)\]')
-                for n, atom in enumerate(atoms):                    
-                    vars_ = rgx_par.findall(atom[2])
-                    if len(vars_) == 1:
-                        var = vars_[0]
-                        var = [x[1] if x[0] < depth else None for x in self.vars[var]] 
-                        var = var[0]                                         
-                        set_ = rgx_ob.findall(atom[2])
-                        set_ = set_[0].split('[')
-                        if n == 0 and set_[0] in self.assign[set_[1]][1]:
-                            cond = True
-                        elif n == 0:
-                            cond = False
-                        if n != 0 and cond is True:
-                            set_[1] = self.assign[set_[1]][0]
-                            self.ag.up_classes(set_, key=0)
-        if depth < self.depth:
-            depth += 1
-            self.check_conditions(hier, depth)
-    
-    # optimizable en Representation.encode.decomp_all()
-    def new_test(self, form, depth):
+        self.particles = []
+        self.make_parts(ori, comp, hier)
+        self.connect_parts()
         
-        def up_var(quant):
+    def make_parts(self, ori, comp, hier, depth=0):
+        form = comp[ori]
+        childs = hier[ori]['childs']
+        parent = hier[ori]['parent']
+        self.new_test(form, depth, parent, ori)
+        depth += 1
+        for child in childs:
+            if hier[child]['childs'] != -1:
+                self.make_parts(child, comp, hier, depth)
+            else:
+                form = comp[child]
+                parent = hier[child]['parent']
+                self.new_test(form, depth, parent, child)
+    
+    def connect_parts(self):        
+        particles = []
+        lvl = self.depth
+        while lvl > -1:
+            p = [part for part in self.particles if part.depth == lvl]
+            for part in p:                
+                particles.append(part)
+            lvl -= 1
+        self.particles = particles
+        for p in self.particles:
+            p.connect(self.particles)
+
+    def new_test(self, form, depth, parent, part_id):
+        def up_var():
             vars_ = form[i+1].split(',')
             for var in vars_:
                 var_name = var.strip()
                 if var_name not in self.vars:
-                    self.vars[var_name] = [(depth, quant)]
-                    self.instructions.append((depth, condition, var_name))
-                    self.var_order.append(var_name)
+                    self.vars[var_name] = [(depth, quant)]                    
+                    self.var_order.append(var_name)               
+                    self.particles.append(Particle(cond, depth, part_id, parent))
                 else:
-                    self.vars[var_name].append(depth, quant)
-                    self.instructions.append((depth, condition, var_name))
+                    self.vars[var_name].append((depth, quant))
                     self.var_order.append(var_name)
+                    self.particles.append(Particle(cond, depth, part_id, parent))
         
-        self.depth = depth
+        def break_pred(form):
+            rgx_par = re.compile(r'\[(.*?)\]')
+            rgx_ob = re.compile(r'\b(.*?)\]')                           
+            vars_ = rgx_par.findall(form)
+            if len(vars_) == 1:              
+                set_ = rgx_ob.findall(form)
+                set_ = set_[0].split('[')
+            return set_
+
+        if depth > self.depth:
+            self.depth = depth
         if ':equiv:' in form:
-            condition = 'equiv'
-            self.instructions.append((depth, condition))
-        if ':implies:' in form:
-            condition = 'implies'
-            self.instructions.append((depth, condition))
-        if ':or:' in form:
-            condition = 'or'
-            self.instructions.append((depth, condition))
-        if ':and:' in form:
-            condition = 'and'
-            self.instructions.append((depth, condition))
-        if any(x in form for x in [':forall:', ':exists:']):            
+            cond = 'equiv'
+            self.particles.append(Particle(cond, depth, part_id, parent))
+        elif ':implies:' in form:
+            cond = 'implies'  
+            self.particles.append(Particle(cond, depth, part_id, parent))
+        elif ':or:' in form:
+            cond = 'or'
+            self.particles.append(Particle(cond, depth, part_id, parent))
+        elif ':and:' in form:
+            cond = 'and'
+            self.particles.append(Particle(cond, depth, part_id, parent))
+        elif any(x in form for x in [':forall:', ':exists:']):
             form = form.split(':')
-            condition = 'check_var'
+            cond = 'check_var'
             for i, a in enumerate(form):
                 if a == 'forall':
                     quant = float('inf')
-                    up_var(quant)
+                    up_var()
                 elif a == 'exists':
                     quant = 1
-                    up_var(quant)
+                    up_var()
         elif '[' in form:
-            condition = 'predicate'
-            self.instructions.append((depth, condition, form.strip()))
+            cond = 'predicate'
+            form = break_pred(form)
+            self.particles.append(Particle(cond, depth, part_id, parent, form))
 
-
-def make_form(proof, ori, comp, hier, depth=0):
-    form = comp[ori]
-    childs = hier[ori]['childs']
-    proof.new_test(form, depth)
-    depth += 1
-    for child in childs:
-        if hier[child]['childs'] != -1:
-            make_form(proof, child, comp, hier, depth)
+    def __call__(self, ag, *args):        
+        if len(self.vars) == len(args):
+            self.assigned = {}
+            for n, const in enumerate(args):
+                memb = self.check_membership(const, ag)
+                if memb is None:
+                    return
+                var_name = self.var_order[n]
+                self.assigned[var_name] = [const, memb]
+            self.particles[0].resolve(self, ag)
+            self.assigned = None
         else:
-            form = comp[child]
-            proof.new_test(form, depth)
+            return
+
+    def check_membership(self, name, ag):
+        if name in ag.singles:
+            return ag.singles[name]
+        else:
+            return None
+
+class Particle:
+    def __init__(self, cond, depth, id_, parent, *args):
+        self.pID = id_
+        self.depth = depth
+        self.cond = cond
+        self.next = parent
+        self.pred = None
+        if cond == 'predicate':
+            self.pred = args[0]
+
+    def __str__(self):
+        if self.cond != 'predicate':
+            s = '<operator ' + str(self.pID) + ' (depth:' \
+            + str(self.depth) + ') "' + str(self.cond) + '">'
+        else:
+            s = '<predicate ' + str(self.pID) + ' (depth:' \
+            + str(self.depth) + '): ' + str(self.pred) + '>'
+        return s
+    
+    def connect(self, part_list):
+        for part in part_list:
+            if self.next == part.pID:
+                self.next = part
+                break
+
+    def resolve(self, proof, ag, key=0, *args):
+        """Keys for resolving the substitution:
+        101: Passing an unresolved predicate to the operator.
+        102: Passing a predicate after asserting conditions.
+        """
+        print self, '// Order:'+str(key), '// Args:', args        
+        if self.cond == 'check_var':
+            if key == 102:
+                if args[0].pred:
+                    var = proof.vars[args[0].pred[1]]                    
+                    var = [j for i,j in var if i == self.depth]
+                    set_, quant = args[0].pred[0], var[0]
+                    obj = proof.assigned[args[0].pred[1]][0]
+                    result = [set_, obj, quant]
+                    if self.next == -1:
+                        ag.up_classes(result, key=0)
+        if self.cond == 'implies':
+            if key == 101: 
+                key = 102
+                if args[0] is True:
+                    self.next.resolve(proof, ag, key, args[1])
+        if self.pred:
+            key = 101
+            for x, part in enumerate(proof.particles):
+                if part == self:
+                    arg2 = proof.particles[x+1]
+                    break
+            s = proof.assigned[self.pred[1]][1]
+            result = True if self.pred[0] in s else False
+            self.next.resolve(proof, ag, key, result, arg2)
+        

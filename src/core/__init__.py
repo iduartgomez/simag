@@ -40,7 +40,10 @@ if __name__ == '__main__':
     """
     for form in ls:
         r.encode(form)
-
+    for x in ['$John','$Bill','$Lucy']:
+        print '__________ ', x, '__________ '
+        r.prove(x)
+    
     d2 = datetime.datetime.now()
     print(d2-d1)
     print r.singles
