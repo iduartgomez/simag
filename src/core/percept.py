@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import re
-
+import os
 
 class Representation(object):
     """This class is a container for internal agent's representations
@@ -153,9 +153,7 @@ class Representation(object):
                     if proof not in forms:
                         forms.append(proof)
         for x, proof in enumerate(forms):
-            print '...............', x
             proof(self, *args)
-            
 
     def up_classes(self, var, key):
         """Keys for registering membership to a set:
@@ -184,6 +182,11 @@ class Proof(object):
         self.make_parts(ori, comp, hier)
         self.connect_parts()
         
+        print '-----------------'
+        for n in self.particles:
+            print n
+        print '-----------------'
+        
     def make_parts(self, ori, comp, hier, depth=0):
         form = comp[ori]
         childs = hier[ori]['childs']
@@ -197,7 +200,7 @@ class Proof(object):
                 form = comp[child]
                 parent = hier[child]['parent']
                 self.new_test(form, depth, parent, child)
-    
+
     def connect_parts(self):        
         particles = []
         lvl = self.depth
@@ -217,20 +220,25 @@ class Proof(object):
                 var_name = var.strip()
                 if var_name not in self.vars:
                     self.vars[var_name] = [(depth, quant)]                    
-                    self.var_order.append(var_name)               
-                    self.particles.append(Particle(cond, depth, part_id, parent))
+                    self.var_order.append(var_name)
                 else:
                     self.vars[var_name].append((depth, quant))
                     self.var_order.append(var_name)
-                    self.particles.append(Particle(cond, depth, part_id, parent))
-        
+            self.particles.append(Particle(cond, depth, part_id, parent))            
+            
         def break_pred(form):
-            rgx_par = re.compile(r'\[(.*?)\]')
-            rgx_ob = re.compile(r'\b(.*?)\]')                           
-            vars_ = rgx_par.findall(form)
-            if len(vars_) == 1:              
-                set_ = rgx_ob.findall(form)
-                set_ = set_[0].split('[')
+            if '~' in form:
+                neg = False
+            else:                
+                neg = True
+            rgx_ob = re.compile(r'\b(.*?)\]')
+            set_ = rgx_ob.findall(form)                    
+            set_ = set_[0].split('[')            
+            if '<' in form:
+                set_[0] = '<' + set_[0] + '>'
+            if len(set_[1]) > 1:
+                set_[1] = tuple(set_[1].split(','))
+            set_.append(neg)
             return set_
 
         if depth > self.depth:
@@ -249,7 +257,7 @@ class Proof(object):
             self.particles.append(Particle(cond, depth, part_id, parent))
         elif any(x in form for x in [':forall:', ':exists:']):
             form = form.split(':')
-            cond = 'check_var'
+            cond = 'check_var'            
             for i, a in enumerate(form):
                 if a == 'forall':
                     quant = float('inf')
@@ -271,7 +279,7 @@ class Proof(object):
                     return
                 var_name = self.var_order[n]
                 self.assigned[var_name] = [const, memb]
-            self.particles[0].resolve(self, ag)
+            self.particles[0].resolve(self, ag, key=[self.depth, 0])
             self.assigned = None
         else:
             return
@@ -307,34 +315,54 @@ class Particle:
                 self.next = part
                 break
 
-    def resolve(self, proof, ag, key=0, *args):
+    def resolve(self, proof, ag, key, *args):
         """Keys for resolving the substitution:
         101: Passing an unresolved predicate to the operator.
         102: Passing a predicate after asserting conditions.
         """
-        print self, '// Order:'+str(key), '// Args:', args        
+        print self, '// Key:'+str(key), '// Args:', args
         if self.cond == 'check_var':
-            if key == 102:
-                if args[0].pred:
-                    var = proof.vars[args[0].pred[1]]                    
-                    var = [j for i,j in var if i == self.depth]
-                    set_, quant = args[0].pred[0], var[0]
-                    obj = proof.assigned[args[0].pred[1]][0]
-                    result = [set_, obj, quant]
-                    if self.next == -1:
-                        ag.up_classes(result, key=0)
+            if args[0].pred:
+                var = proof.vars[args[0].pred[1]]                    
+                var = [j for i,j in var if i == self.depth]
+                set_, quant = args[0].pred[0], var[0]
+                obj = proof.assigned[args[0].pred[1]][0]
+                result = [set_, obj, quant]
+                if self.next == -1:
+                    ag.up_classes(result, key=0)
         if self.cond == 'implies':
-            if key == 101: 
-                key = 102
-                if args[0] is True:
-                    self.next.resolve(proof, ag, key, args[1])
+            if args[0] is True:
+                self.next.resolve(proof, ag, key, args[1])
         if self.pred:
-            key = 101
             for x, part in enumerate(proof.particles):
                 if part == self:
                     arg2 = proof.particles[x+1]
                     break
             s = proof.assigned[self.pred[1]][1]
             result = True if self.pred[0] in s else False
-            self.next.resolve(proof, ag, key, result, arg2)
-        
+            cnt = len([x for x in proof.particles if x.depth == key[0]])
+            if cnt > key[1]:
+                key[1] += 1
+                # HERE
+            else:
+                self.next.resolve(proof, ag, key, result, arg2)
+
+if __name__ == '__main__':
+    path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    logic_test = os.path.join(path, 'tests', 'logic_test_01.txt')
+    ls = []
+    with open(logic_test, 'r') as f:
+        for line in f:
+            if line[0] == '#':
+                pass
+            else:
+                ls.append(line)                
+    r = Representation()
+    for form in ls:
+        r.encode(form)
+    r.prove('$Lucy','$John')
+    
+    #for x in ['$John','$Bill','$Lucy']:
+    #    print '__________ ', x, '__________ '
+    #    r.prove(x)
+    

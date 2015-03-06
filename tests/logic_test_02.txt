@@ -1,12 +1,12 @@
 professor[$Lucy]
 dean[$John]
-student[$Bill]
 :forall:x: (professor[x] => person[x])
 :forall:x: (dean[x] => professor[x])
 :forall:x,y: (professor[x] && dean[y] => <friend[y,x]> || ~<knows[x,y]>)
 :forall:x: (:exists:y: (<friend[x,y]>))
 :forall:x: (:forall:y: (person[x] && person[y] && (<criticize[x,y]> ~<friend[y,x]>)))
 <criticize[$Lucy,$John]>
+student[$Bill]
 :forall:x: (student[x] => smart[x])
 :exists:x: (student[x])
 :exists:x: (student[x] && smart[x])
