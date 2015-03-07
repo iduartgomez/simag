@@ -1,8 +1,8 @@
 professor[$Lucy]
+:forall:x: (professor[x] => person[x])
 dean[$John]
-#:forall:x: (professor[x] => person[x])
-#:forall:x: (dean[x] => professor[x])
-:forall:x,y: (professor[x] && dean[y] => <friend[y,x]> || ~<knows[x,y]>)
-#:forall:x: (:exists:y: (<friend[x,y]>))
-#:forall:x: (:forall:y: (person[x] && person[y] && (<criticize[x,y]> ~<friend[y,x]>)))
+:forall:x: (dean[x] => professor[x])
+#<friend[$Lucy,$John]>
+#:forall:x,y: (professor[x] && dean[y] => friend[y,x] || ~<knows[x,y])>
+#:forall:x: (:forall:y: (person[x] && person[y] && <criticize[x,y]> => ~<friend[y,x]>))
 #<criticize[$Lucy,$John]>

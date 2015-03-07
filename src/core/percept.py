@@ -126,7 +126,7 @@ class Representation(object):
                                   member of a set at once.')
             else:
                 if '$' in set_[1]:
-                    self.up_classes(set_, key=0)
+                    self.up_classes(set_)
 
     def save_proof(self, proof):
         names = []
@@ -138,6 +138,9 @@ class Representation(object):
                 self.formulae[name] = [proof]
             else:
                 self.formulae[name].append(proof)
+        # Run the new proof with every 'single' object that matches
+        for obj in self.singles.iterkeys():
+            self.prove(obj)
 
     def prove(self, *args):
         keys = []
@@ -153,21 +156,19 @@ class Representation(object):
                     if proof not in forms:
                         forms.append(proof)
         for x, proof in enumerate(forms):
+            print 'NEW PROOF .....'
             proof(self, *args)
 
-    def up_classes(self, var, key):
-        """Keys for registering membership to a set:
-        0: Default registering, membership equality.
-        1: Implied membership of an object, quantified.
-        """
-        if key == 0:
-            if var[1] not in self.singles:
-                self.singles[var[1]] = [var[0]]
-            else:
+    def up_classes(self, var, *args):
+        if var[1] not in self.singles:
+            self.singles[var[1]] = [var[0]]
+        else:
+            if var[0] not in self.singles[var[1]]:                
                 self.singles[var[1]].append(var[0])
-            if var[0] not in self.classes:
-                self.classes[var[0]] = [var[1]]
-            else:
+        if var[0] not in self.classes:
+            self.classes[var[0]] = [var[1]]
+        else:
+            if var[1] not in self.classes[var[0]]:
                 self.classes[var[0]].append(var[1])
 
 
@@ -176,30 +177,26 @@ class Proof(object):
     """
     def __init__(self, ori, comp, hier):
         self.depth = 0
-        self.vars = {}
+        #self.vars = {}
         self.var_order = []
         self.particles = []
         self.make_parts(ori, comp, hier)
         self.connect_parts()
         
-        print '-----------------'
-        for n in self.particles:
-            print n
-        print '-----------------'
-        
     def make_parts(self, ori, comp, hier, depth=0):
         form = comp[ori]
         childs = hier[ori]['childs']
         parent = hier[ori]['parent']
-        self.new_test(form, depth, parent, ori)
+        self.new_test(form, depth, parent, ori, childs)
         depth += 1
         for child in childs:
-            if hier[child]['childs'] != -1:
+            syb = hier[child]['childs']
+            if syb != -1:
                 self.make_parts(child, comp, hier, depth)
             else:
                 form = comp[child]
                 parent = hier[child]['parent']
-                self.new_test(form, depth, parent, child)
+                self.new_test(form, depth, parent, child, syb=[-1])
 
     def connect_parts(self):
         particles = []
@@ -213,19 +210,19 @@ class Proof(object):
         for p in self.particles:
             p.connect(self.particles)
 
-    def new_test(self, form, depth, parent, part_id):
+    def new_test(self, form, depth, parent, part_id, syb):
         def up_var():
             vars_ = form[i+1].split(',')
             for var in vars_:
                 var_name = var.strip()
-                if var_name not in self.vars:
-                    self.vars[var_name] = [(depth, quant)]
+                if var_name not in self.var_order:
+                    #self.vars[var_name] = [(depth, quant)]
                     self.var_order.append(var_name)
-                else:
-                    self.vars[var_name].append((depth, quant))
-                    self.var_order.append(var_name)
-            self.particles.append(Particle(cond, depth, part_id, parent))
-            
+                #else:
+                #    self.vars[var_name].append((depth, quant))
+                #    self.var_order.append(var_name)
+            self.particles.append(Particle(cond, depth, part_id, parent, syb))
+
         def break_pred(form):
             if '~' in form:
                 neg = False
@@ -245,45 +242,53 @@ class Proof(object):
             self.depth = depth
         if ':equiv:' in form:
             cond = 'equiv'
-            self.particles.append(Particle(cond, depth, part_id, parent))
+            self.particles.append(Particle(cond, depth, part_id, parent, syb))
         elif ':implies:' in form:
             cond = 'implies'  
-            self.particles.append(Particle(cond, depth, part_id, parent))
+            self.particles.append(Particle(cond, depth, part_id, parent, syb))
         elif ':or:' in form:
             cond = 'or'
-            self.particles.append(Particle(cond, depth, part_id, parent))
+            self.particles.append(Particle(cond, depth, part_id, parent, syb))
         elif ':and:' in form:
             cond = 'and'
-            self.particles.append(Particle(cond, depth, part_id, parent))
+            self.particles.append(Particle(cond, depth, part_id, parent, syb))
         elif any(x in form for x in [':forall:', ':exists:']):
+            # Only universal quantifier is supported right now,
+            # so the quantity is irrelevant
+            
             form = form.split(':')
             cond = 'check_var'
             for i, a in enumerate(form):
                 if a == 'forall':
-                    quant = float('inf')
+                    #quant = float('inf')
                     up_var()
-                elif a == 'exists':
-                    quant = 1
-                    up_var()
+            #    elif a == 'exists':
+            #        quant = 1
+            #        up_var()
         elif '[' in form:
             cond = 'predicate'
-            form = break_pred(form)
-            self.particles.append(Particle(cond, depth, part_id, parent, form))
+            form = tuple(break_pred(form))
+            self.particles.append(Particle(cond, depth, part_id, parent, syb, form))
 
     def __call__(self, ag, *args):
-        if len(self.vars) == len(args):
+        if len(self.var_order) == len(args):
             self.assigned = {}
+            self.clear_results()
             for n, const in enumerate(args):
                 memb = self.check_membership(const, ag)
                 if memb is None:
                     return
                 var_name = self.var_order[n]
-                self.assigned[var_name] = [const, memb]
-            self.particles[0].resolve(self, ag, key=[100, None])
-            self.assigned = None
+                self.assigned[var_name] = [const, set(memb)]
+            self.particles[-1].resolve(self, ag, key=[0])
         else:
             return
-
+    
+    def clear_results(self):
+        for part in self.particles:
+            if part.results is not None:
+                part.results = []
+    
     def check_membership(self, name, ag):
         if name in ag.singles:
             return ag.singles[name]
@@ -291,15 +296,17 @@ class Proof(object):
             return None
 
 class Particle:
-    def __init__(self, cond, depth, id_, parent, *args):
+    def __init__(self, cond, depth, id_, parent, syb, *args):
         self.pID = id_
         self.depth = depth
         self.cond = cond
-        self.next = parent
-        self.parent = None
-        self.pred = None
+        self.next = syb
+        self.parent = parent
+        self.results = []
         if cond == 'predicate':
             self.pred = args[0]
+        if syb[0] != -1:
+            self.results = []
 
     def __str__(self):
         if self.cond != 'predicate':
@@ -311,52 +318,89 @@ class Particle:
         return s
 
     def connect(self, part_list):
-        for x, part in enumerate(part_list):
-            if self.pID == part.pID:
-                try:
-                    self.next, self.parent = part_list[x+1], self.next
-                except:
-                    self.next, self.parent = -1, self.next
+        for part in part_list:
+            if self.parent == part.pID:
+                self.parent = part
                 break
+        for x, child in enumerate(self.next):
+            for part in part_list:
+                if part.pID == child:
+                    self.next[x] = part
 
     def resolve(self, proof, ag, key, *args):
         """Keys for resolving the substitution:
-        100: Pass predicates to next particle.
-        101: Solve a predicate.
-        """        
+        100: Get a child's predicate.
+        101: Check the truthiness of an operation.
+        102: Incoming truthiness of an operation for storage.
+        103: Incoming predicate for resolution.
+        """
         print self, '// Key:'+str(key), '// Args:', args
+        if key[-1] == 102:
+            key.pop()
+            self.results.append(args[0])
+        if key[-1] == 103:
+            self.results.append(args[0])
         if self.cond == 'check_var':
-            if args[0].pred:
-                var = proof.vars[args[0].pred[1]]
-                var = [j for i,j in var if i == self.depth]
-                set_, quant = args[0].pred[0], var[0]
-                obj = proof.assigned[args[0].pred[1]][0]
-                result = [set_, obj, quant]
-                if self.next == -1:
-                    ag.up_classes(result, key=0)
+            self.next[0].resolve(proof, ag, key)
         elif self.cond == 'implies':
-            if args[0] is True:
-                self.next.resolve(proof, ag, key, args[1])
+            current = len(self.results)
+            if current < len(self.next):
+                # if the left branch is examined then solve, else don't.
+                key.append(100) if current == 1 else key.append(101)
+                self.next[current].resolve(proof, ag, key)
+            else:
+                # two branches finished, check if left is true
+                left_branch = self.results[0]
+                right_branch = self.results[1]
+                if left_branch is True and key[-1] == 103:
+                    # marked for resolution                    
+                    # subtitute var for object's name
+                    var = right_branch[1]
+                    right_branch[1] = proof.assigned[var][0]
+                    # pass to agent for updatign proper classes                    
+                    ag.up_classes(right_branch)
+        elif self.cond == 'and':
+            current = len(self.results)
+            if current < len(self.next):
+                key.append(101)
+                self.next[current].resolve(proof, ag, key)            
+            else:
+                left_branch = self.results[0]
+                right_branch = self.results[1]
+                if (left_branch and right_branch) is True:
+                    key.append(102)
+                    self.parent.resolve(proof, ag, key, True)
+        elif self.cond == 'or':
+            current = len(self.results)
+            if current < len(self.next):
+                key.append(101)
+                self.next[current].resolve(proof, ag, key) 
+            else:
+                left_branch = self.results[0]
+                right_branch = self.results[1]
+                if (left_branch or right_branch) is True:
+                    key.append(102)
+                    self.parent.resolve(proof, ag, key, True)
         elif self.pred:
-            key, result = self.ispred(proof, key, *args)
-            self.next.resolve(proof, ag, key, result)
+            result = self.ispred(proof, key)
+            key.append(102) if key.pop() == 101 else key.append(103)
+            self.parent.resolve(proof, ag, key, result)
 
     def ispred(self, proof, key, *args):
-        if key[0] == 100:
-            result = []
-            if key[1] == self.parent:
-                result.append(self.pred)
+        if key[-1] == 101:
+            belongs_to_sets = proof.assigned[self.pred[1]][1]
+            checking_set = self.pred[0]
+            must_be = self.pred[2]
+            # if must be True, then the object must belogn to the set.
+            # else, must be False, and the object mustn't belong to the set.
+            if must_be is True:
+                result = True if checking_set in belongs_to_sets else False
             else:
-                result.append(self.pred)
-            key[1] = self.parent
-            return key, result
-        elif key[0] == 101:
-            s = proof.assigned[self.pred[1]][1]
-            if self.pred[2] is True:
-                result = True if self.pred[0] in s else False
-            else:
-                result = False if self.pred[0] in s else True
-            return key, result
+                result = False if checking_set in belongs_to_sets else True
+            return result
+        if key[-1] == 100:
+            result = [x for x in self.pred]
+            return result
 
 
 if __name__ == '__main__':
@@ -372,8 +416,7 @@ if __name__ == '__main__':
     r = Representation()
     for form in ls:
         r.encode(form)
-    r.prove('$Lucy','$John')
     
-    #for x in ['$John','$Bill','$Lucy']:
-    #    print '__________ ', x, '__________ '
-    #    r.prove(x)
+    print '---------------'
+    print r.singles
+    print r.classes
