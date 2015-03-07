@@ -17,7 +17,7 @@ class Representation(object):
         self.classes = {}
         self.formulae = {}
 
-    def encode(self, formula):        
+    def encode(self, formula):
         comp = []
         hier = {}
         rgx_par = re.compile(r'\{(.*?)\}')
@@ -53,7 +53,7 @@ class Representation(object):
                 f += 1
                 return decomp_par(s, symb, f)
             
-        def decomp_all(tform, symb, idx):            
+        def decomp_all(tform, symb, idx):
             if symb in tform:
                 memb = tform.split(symb)
                 x, y = len(comp), len(comp)+1
@@ -68,7 +68,7 @@ class Representation(object):
                 comp.append(memb[0])
                 comp.append(memb[1])
                 return True
-            
+
         def iter_childs(ls):
             for n in range(0, ls):
                 exp = comp[n]
@@ -91,7 +91,7 @@ class Representation(object):
             for symb in symbs:
                 if decomp_all(form, symb, idx=i):
                     break
-        iter_childs(len(comp))        
+        iter_childs(len(comp))
         par_form = comp[ori]
         if not any(x in par_form for x in [':forall:', ':exists:']):
             # It's a declaration/definition
@@ -138,9 +138,9 @@ class Representation(object):
                 self.formulae[name] = [proof]
             else:
                 self.formulae[name].append(proof)
-    
+
     def prove(self, *args):
-        keys = []      
+        keys = []
         for arg in args:
             if arg in self.singles:
                 k = self.singles[arg]
@@ -201,12 +201,12 @@ class Proof(object):
                 parent = hier[child]['parent']
                 self.new_test(form, depth, parent, child)
 
-    def connect_parts(self):        
+    def connect_parts(self):
         particles = []
         lvl = self.depth
         while lvl > -1:
             p = [part for part in self.particles if part.depth == lvl]
-            for part in p:                
+            for part in p:
                 particles.append(part)
             lvl -= 1
         self.particles = particles
@@ -219,21 +219,21 @@ class Proof(object):
             for var in vars_:
                 var_name = var.strip()
                 if var_name not in self.vars:
-                    self.vars[var_name] = [(depth, quant)]                    
+                    self.vars[var_name] = [(depth, quant)]
                     self.var_order.append(var_name)
                 else:
                     self.vars[var_name].append((depth, quant))
                     self.var_order.append(var_name)
-            self.particles.append(Particle(cond, depth, part_id, parent))            
+            self.particles.append(Particle(cond, depth, part_id, parent))
             
         def break_pred(form):
             if '~' in form:
                 neg = False
-            else:                
+            else:
                 neg = True
             rgx_ob = re.compile(r'\b(.*?)\]')
-            set_ = rgx_ob.findall(form)                    
-            set_ = set_[0].split('[')            
+            set_ = rgx_ob.findall(form)
+            set_ = set_[0].split('[')
             if '<' in form:
                 set_[0] = '<' + set_[0] + '>'
             if len(set_[1]) > 1:
@@ -257,7 +257,7 @@ class Proof(object):
             self.particles.append(Particle(cond, depth, part_id, parent))
         elif any(x in form for x in [':forall:', ':exists:']):
             form = form.split(':')
-            cond = 'check_var'            
+            cond = 'check_var'
             for i, a in enumerate(form):
                 if a == 'forall':
                     quant = float('inf')
@@ -270,7 +270,7 @@ class Proof(object):
             form = break_pred(form)
             self.particles.append(Particle(cond, depth, part_id, parent, form))
 
-    def __call__(self, ag, *args):        
+    def __call__(self, ag, *args):
         if len(self.vars) == len(args):
             self.assigned = {}
             for n, const in enumerate(args):
@@ -279,7 +279,7 @@ class Proof(object):
                     return
                 var_name = self.var_order[n]
                 self.assigned[var_name] = [const, memb]
-            self.particles[0].resolve(self, ag, key=[self.depth, 0])
+            self.particles[0].resolve(self, ag, key=[100, None])
             self.assigned = None
         else:
             return
@@ -296,6 +296,7 @@ class Particle:
         self.depth = depth
         self.cond = cond
         self.next = parent
+        self.parent = None
         self.pred = None
         if cond == 'predicate':
             self.pred = args[0]
@@ -308,44 +309,55 @@ class Particle:
             s = '<predicate ' + str(self.pID) + ' (depth:' \
             + str(self.depth) + '): ' + str(self.pred) + '>'
         return s
-    
+
     def connect(self, part_list):
-        for part in part_list:
-            if self.next == part.pID:
-                self.next = part
+        for x, part in enumerate(part_list):
+            if self.pID == part.pID:
+                try:
+                    self.next, self.parent = part_list[x+1], self.next
+                except:
+                    self.next, self.parent = -1, self.next
                 break
 
     def resolve(self, proof, ag, key, *args):
         """Keys for resolving the substitution:
-        101: Passing an unresolved predicate to the operator.
-        102: Passing a predicate after asserting conditions.
-        """
+        100: Pass predicates to next particle.
+        101: Solve a predicate.
+        """        
         print self, '// Key:'+str(key), '// Args:', args
         if self.cond == 'check_var':
             if args[0].pred:
-                var = proof.vars[args[0].pred[1]]                    
+                var = proof.vars[args[0].pred[1]]
                 var = [j for i,j in var if i == self.depth]
                 set_, quant = args[0].pred[0], var[0]
                 obj = proof.assigned[args[0].pred[1]][0]
                 result = [set_, obj, quant]
                 if self.next == -1:
                     ag.up_classes(result, key=0)
-        if self.cond == 'implies':
+        elif self.cond == 'implies':
             if args[0] is True:
                 self.next.resolve(proof, ag, key, args[1])
-        if self.pred:
-            for x, part in enumerate(proof.particles):
-                if part == self:
-                    arg2 = proof.particles[x+1]
-                    break
-            s = proof.assigned[self.pred[1]][1]
-            result = True if self.pred[0] in s else False
-            cnt = len([x for x in proof.particles if x.depth == key[0]])
-            if cnt > key[1]:
-                key[1] += 1
-                # HERE
+        elif self.pred:
+            key, result = self.ispred(proof, key, *args)
+            self.next.resolve(proof, ag, key, result)
+
+    def ispred(self, proof, key, *args):
+        if key[0] == 100:
+            result = []
+            if key[1] == self.parent:
+                result.append(self.pred)
             else:
-                self.next.resolve(proof, ag, key, result, arg2)
+                result.append(self.pred)
+            key[1] = self.parent
+            return key, result
+        elif key[0] == 101:
+            s = proof.assigned[self.pred[1]][1]
+            if self.pred[2] is True:
+                result = True if self.pred[0] in s else False
+            else:
+                result = False if self.pred[0] in s else True
+            return key, result
+
 
 if __name__ == '__main__':
     path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
@@ -356,7 +368,7 @@ if __name__ == '__main__':
             if line[0] == '#':
                 pass
             else:
-                ls.append(line)                
+                ls.append(line)
     r = Representation()
     for form in ls:
         r.encode(form)
@@ -365,4 +377,3 @@ if __name__ == '__main__':
     #for x in ['$John','$Bill','$Lucy']:
     #    print '__________ ', x, '__________ '
     #    r.prove(x)
-    
