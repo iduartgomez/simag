@@ -6,9 +6,10 @@ of the different objects and the relationships between them.
 :class: Representation. Main class, stores all the representations and
 relationships for a given agent in a concrete time.
 
-:class: Proof stores a serie of logical predicates that form a
-formula. These are rulesets for cataloging objects into categories or
-classes, and relationships between these objects.
+:class: Proof stores a serie of logical atoms (be them predicates or
+connectives), that form a well-formed logic formula. These are rulesets 
+for cataloging objects into sets/classes, and the relationships between 
+these objects.
 
 """
 # ===================================================================#
@@ -32,11 +33,11 @@ class Representation(object):
     to/from data streams or idioms.
     
     Attributes:
-        singles -> Unique members (entities) of their own class.
+        singles -> Unique members (entities) of their own set/class.
                    Entities are denoted with a $ symbol followed by a name.
         classes -> Sets of objects that share a common property.
-        relations -> A function between two objects.
-        formulae -> Stores the different logical proofs.
+        relations -> A function/map between two objects.
+        formulae -> Stores the different logical formulae.
 
     """
     def __init__(self):
@@ -138,7 +139,7 @@ class Representation(object):
 
     def declare(self, form):
         """Declares an object as a member of a class or the relationship
-        between two objects.
+        between two objects. Declarations parse well-formed predicates.
         
         Input: a string with one of the two following forms:
         1) professor[$Lucy] -> Declares the entity '$Lucy' as a member of the
@@ -234,8 +235,7 @@ class Representation(object):
 
 
 class Proof(object):
-    """Object to store a logic formula.
-    """
+    """Object to store a logic formula."""
     def __init__(self, ori, comp, hier):
         self.depth = 0
         #self.vars = {}
@@ -367,7 +367,7 @@ class Particle:
     """Is a node that represents a logic atom, that can be either:
     a) An operator of the following types: implies, equals,
     and, or, not.
-    b) A predicate, delclaring a variable as a member of a set,
+    b) A predicate, declaring a variable as a member of a set,
     or a function between two variables.
     c) A quantifier for a variable: universal or existential.
     """
@@ -400,9 +400,10 @@ class Particle:
     def resolve(self, proof, ag, key, *args):
         """Keys for resolving the proof:
         100: Get a child's predicate.
-        101: Check the truthiness of an operation.
+        101: Check the truthiness of a child particle.
         102: Incoming truthiness of an operation for storage.
         103: Incoming predicate for substitution.
+        104: A test is passed and returns true.
         """
         #print self, '// Key:'+str(key), '// Args:', args
         if key[-1] == 102:
@@ -413,64 +414,127 @@ class Particle:
         if self.cond == 'check_var':
             self.next[0].resolve(proof, ag, key)
         elif self.cond == 'implies':
-            current = len(self.results)
-            # if the left branch is examined then solve, else don't.
-            if current < len(self.next):
-                key.append(100) if current == 1 else key.append(101)
-                self.next[current].resolve(proof, ag, key)
-            else:
+            if key[-1] == 104:
+                self.results.append(args[0])
                 self.implies(proof, ag, key)
+            else:
+                current = len(self.results)
+                # if the left branch is examined then solve, else don't.
+                if current < len(self.next):
+                    key.append(100) if current == 1 else key.append(101)
+                    self.next[current].resolve(proof, ag, key)
+                else:
+                    self.implies(proof, ag, key)
         elif self.cond == 'equiv':
             pass
             # equivalence
             #
         elif self.cond == 'and':
+            if key[-1] == 104:
+                key.pop()
+                self.results.append(args[0])
             current = len(self.results)
-            if current < len(self.next):
-                key.append(101)
-                self.next[current].resolve(proof, ag, key)
-            else:
-                # Two branches finished, check if both are true.
-                left_branch = self.results[0]
-                right_branch = self.results[1]
-                if (left_branch and right_branch) is True:
-                    key.append(102)
-                    self.parent.resolve(proof, ag, key, True)
+            if key[-1] == 101:
+                if current < len(self.next):
+                    key.append(101)
+                    self.next[current].resolve(proof, ag, key)
+                else:
+                    self.conjunction(proof, ag, key)                    
+            elif key[-1] == 100:
+                if current < len(self.next) and \
+                self.next[current].cond == 'predicate':
+                    key.append(101)
+                    self.next[current].resolve(proof, ag, key)
+                elif current < len(self.next):
+                    self.next[current].resolve(proof, ag, key)
+                else:
+                    result = self.conjunction(proof, ag, key)
+                    key.append(104)
+                    self.parent.resolve(proof, ag, key, result)
         elif self.cond == 'or':
-            current = len(self.results)
-            if current < len(self.next):
-                key.append(101)
-                self.next[current].resolve(proof, ag, key)
-            else:
-                # Two branches finished, check if one is true.
-                left_branch = self.results[0]
-                right_branch = self.results[1]
-                if (left_branch or right_branch) is True:
-                    key.append(102)
-                    self.parent.resolve(proof, ag, key, True)
+            if key[-1] == 104:
+                key.pop()
+                self.results.append(args[0])
+            current = len(self.results)            
+            if key[-1] == 101:
+                if current < len(self.next):
+                    key.append(101)
+                    self.next[current].resolve(proof, ag, key)
+                else:
+                    # Two branches finished, check if one is true.
+                    self.disjunction(proof, ag, key)
+            elif key[-1] == 100 or key[-1] == 104:
+                if current < len(self.next) and \
+                self.next[current].cond == 'predicate':
+                    key.append(101)
+                    self.next[current].resolve(proof, ag, key)
+                elif current < len(self.next):
+                    self.next[current].resolve(proof, ag, key)
+                else:
+                    result = self.disjunction(proof, ag, key)
+                    key.append(104)
+                    self.parent.resolve(proof, ag, key, result)
         elif self.pred:
             result = self.ispred(proof, ag, key)
             key.append(102) if key.pop() == 101 else key.append(103)
             self.parent.resolve(proof, ag, key, result)
 
     def implies(self, proof, ag, key):
-        # two branches finished, check if left is true
+        if key[-1] == 104:
+            print '\nTESTED THE RIGHT BRANCH'
+            print self.results
+        else:
+            # two branches finished, check if left is true
+            left_branch = self.results[0]
+            right_branch = self.results[1]
+            if left_branch is True and key[-1] == 103:
+                # marked for resolution
+                # subtitute var(s) for object(s) name(s)
+                # and pass to agent for updating proper classes
+                if type(right_branch[1]) is tuple:
+                    var1, var2 = right_branch[1][0], right_branch[1][1]
+                    var1 = proof.assigned[var1][0]
+                    var2 = proof.assigned[var2][0]
+                    right_branch[1] = (var1, var2)
+                    ag.up_attr(right_branch, key=1)
+                else:
+                    var = right_branch[1]
+                    right_branch[1] = proof.assigned[var][0]
+                    ag.up_attr(right_branch)
+
+    def conjunction(self, proof, ag, key):
         left_branch = self.results[0]
         right_branch = self.results[1]
-        if left_branch is True and key[-1] == 103:
-            # marked for resolution
-            # subtitute var(s) for object(s) name(s)
-            # and pass to agent for updating proper classes
-            if type(right_branch[1]) is tuple:
-                var1, var2 = right_branch[1][0], right_branch[1][1]
-                var1 = proof.assigned[var1][0]
-                var2 = proof.assigned[var2][0]
-                right_branch[1] = (var1, var2)
-                ag.up_attr(right_branch, key=1)
+        if key[-1] == 101:
+        # Two branches finished, check if both are true.            
+            if (left_branch and right_branch) is True:
+                key.append(102)
+                self.parent.resolve(proof, ag, key, True)
+        elif key[-1] == 100:
+        # Test if this conjunction fails
+            if (left_branch and right_branch) is True:
+                # passes the proof
+                return True
             else:
-                var = right_branch[1]                        
-                right_branch[1] = proof.assigned[var][0]              
-                ag.up_attr(right_branch)
+                # fails the proof
+                return False
+
+    def disjunction(self, proof, ag, key):
+        left_branch = self.results[0]
+        right_branch = self.results[1]
+        if key[-1] == 101:
+        # Two branches finished, check if both are true.
+            if (left_branch or right_branch) is True:
+                key.append(102)
+                self.parent.resolve(proof, ag, key, True)
+        elif key[-1] == 100:
+        # Test if this disjunction fails
+            if left_branch != right_branch:
+                # passes the proof
+                return True
+            else:
+                # fails the proof
+                return False
 
     def ispred(self, proof, ag, key):
         if key[-1] == 101:
@@ -479,7 +543,7 @@ class Particle:
                 subject = proof.assigned[self.pred[1][0]][0]
                 obj = proof.assigned[self.pred[1][1]][0]
                 check_func = self.pred[0]
-                must_be = self.pred[2]     
+                must_be = self.pred[2]
                 try:
                     mapped = ag.relations[subject][check_func]
                 except:
@@ -503,13 +567,14 @@ class Particle:
                     result = False if check_set in belongs_to_sets else True
             return result
         if key[-1] == 100:
+            # Return predicate for substitution
             result = [x for x in self.pred]
             return result
 
 
 if __name__ == '__main__':
     import datetime
-    
+
     path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     logic_test = os.path.join(path, 'tests', 'logic_test_01.txt')
     ls = []
