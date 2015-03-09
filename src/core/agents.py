@@ -12,7 +12,6 @@ Actions
 #   Imports and globals
 # ===================================================================#
 import datetime
-import time
 import uuid
 
 from core.percept import Representation
@@ -35,7 +34,7 @@ class BasicAgent(object):
                       'ag_state': 'idle',
                       'percept_modes': ['std'],
                       'eval_modes': ['std']}
-        self.percepts = []
+        self.percepts = Representation()
         self.assets = BalanceSheet()
         self.liabilities = BalanceSheet()
         if load is not None:
@@ -70,9 +69,6 @@ class BasicAgent(object):
         based on this 'perception'. Which is then registered for that moment.
         """
         percept = self.perception_routine(eval_funcs, optimal)
-        # world_rep = Representation.encode(percept)
-        reg = float(time.time())
-        self.percepts.append((reg, percept))
 
     def action_routine(self, action_funcs):
         """Evaluates current set of beliefs and intentions and produces
@@ -185,7 +181,7 @@ class ActionFuncs(object):
 
 
 def deliberation():
-    """Represents the practical deliberation of the agents. It includes
+    """The practical deliberation function of the agents. It includes
     the level of commitment to an end (blind, single-minded, open-minded).
 
     Input: The perceived current state of the environment and the agent.
@@ -195,12 +191,11 @@ def deliberation():
 
 
 def means():
-    """Represents the means-end deliberation of the agent.
+    """The means-end deliberation function of the agent.
 
     Given an end what means to use to achieve such state and the level
     of commitment the agent will take when using those means, indepent
     of the level of commitment to the end itself.
-    (Blind, single-minded or open-minded commitment).
 
     Input: Intended state the agent wants to achieve.
     Output: Actions to commit to achieve the state.

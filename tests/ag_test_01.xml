@@ -15,6 +15,9 @@
 	    </assets>
 	    <liabilities>
 	    </liabilities>
+	    <logic>
+	    	<form>person[$Nacho]</form>
+	    </logic>
 	</agent>
 	<agent id='cfg_01' type='setup'>
 	    <properties

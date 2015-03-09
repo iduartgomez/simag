@@ -402,8 +402,8 @@ class Particle:
         100: Get a child's predicate.
         101: Check the truthiness of a child particle.
         102: Incoming truthiness of an operation for storage.
-        103: Incoming predicate for substitution.
-        104: A test is passed and returns true.
+        103: Incoming predicate for declaration.
+        104: Returns the result of a test.
         """
         #print self, '// Key:'+str(key), '// Args:', args
         if key[-1] == 102:
@@ -420,14 +420,23 @@ class Particle:
             else:
                 current = len(self.results)
                 # if the left branch is examined then solve, else don't.
-                if current < len(self.next):
-                    key.append(100) if current == 1 else key.append(101)
+                if current < len(self.next) and current == 0:
+                    key.append(101)
                     self.next[current].resolve(proof, ag, key)
-                else:
+                elif current == 1 and self.results[0] == True:
+                    key.append(100)
+                    self.next[current].resolve(proof, ag, key)
+                elif key[-1] == 103:
                     self.implies(proof, ag, key)
+                else:
+                    # The left first was false, so do not continue.                    
+                    print 'Tested the left branch and failed.\n'
         elif self.cond == 'equiv':
             pass
             # equivalence
+            #
+            #
+            #
             #
         elif self.cond == 'and':
             if key[-1] == 104:
@@ -481,26 +490,22 @@ class Particle:
 
     def implies(self, proof, ag, key):
         if key[-1] == 104:
-            print '\nTESTED THE RIGHT BRANCH'
-            print self.results
+            print 'Tested right branch and got the result.\n'
         else:
-            # two branches finished, check if left is true
-            left_branch = self.results[0]
-            right_branch = self.results[1]
-            if left_branch is True and key[-1] == 103:
-                # marked for resolution
-                # subtitute var(s) for object(s) name(s)
-                # and pass to agent for updating proper classes
-                if type(right_branch[1]) is tuple:
-                    var1, var2 = right_branch[1][0], right_branch[1][1]
-                    var1 = proof.assigned[var1][0]
-                    var2 = proof.assigned[var2][0]
-                    right_branch[1] = (var1, var2)
-                    ag.up_attr(right_branch, key=1)
-                else:
-                    var = right_branch[1]
-                    right_branch[1] = proof.assigned[var][0]
-                    ag.up_attr(right_branch)
+            # marked for declaration
+            # subtitute var(s) for object(s) name(s)
+            # and pass to agent for updating proper classes
+            right_branch = self.results[1]            
+            if type(right_branch[1]) is tuple:
+                var1, var2 = right_branch[1][0], right_branch[1][1]
+                var1 = proof.assigned[var1][0]
+                var2 = proof.assigned[var2][0]
+                right_branch[1] = (var1, var2)
+                ag.up_attr(right_branch, key=1)
+            else:
+                var = right_branch[1]
+                right_branch[1] = proof.assigned[var][0]
+                ag.up_attr(right_branch)
 
     def conjunction(self, proof, ag, key):
         left_branch = self.results[0]

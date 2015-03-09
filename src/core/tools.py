@@ -7,7 +7,7 @@ from ast import literal_eval
 
 def import_configs(cfg_file):
 
-    def iter_balsheet(node):
+    def iter_balsheet():
         entries = {}
         for item in node:
             try:
@@ -35,9 +35,9 @@ def import_configs(cfg_file):
                     elif node.tag == 'position':
                         agents[ag_id]['position'] = literal_eval(node.text)
                     elif node.tag == 'assets':
-                        agents[ag_id]['assets'] = iter_balsheet(node)
+                        agents[ag_id]['assets'] = iter_balsheet()
                     elif node.tag == 'liabilities':
-                        agents[ag_id]['liabilities'] = iter_balsheet(node)
+                        agents[ag_id]['liabilities'] = iter_balsheet()
                     elif node.tag == 'percept_modes':
                         modes = node.text.split(',')
                         modes = [x.strip() for x in modes]
@@ -46,8 +46,13 @@ def import_configs(cfg_file):
                         modes = node.text.split(',')
                         modes = [x.strip() for x in modes]
                         agents[ag_id]['properties']['eval_modes'] = modes
+                    elif node.tag == 'logic':
+                        formulae = []
+                        for item in node:
+                            formulae.append(item)
+                        agents[ag_id]['logic'] = formulae
             else:
-                assets, liabilities = {}, {}
+                assets, liabilities, logic = {}, {}, []
                 for node in agent:
                     if node.tag == 'properties':
                         props = node.attrib
@@ -55,5 +60,9 @@ def import_configs(cfg_file):
                         assets = iter_balsheet(node)
                     elif node.tag == 'liabilities':
                         liabilities = iter_balsheet(node)
-                configs[ag_id] = [props, assets, liabilities]
+                    elif node.tag == 'logic':
+                        formulae = []
+                        for item in node:
+                            formulae.append(item)
+                configs[ag_id] = [props, assets, liabilities, formulae]
         return agents, configs
