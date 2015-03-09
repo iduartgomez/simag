@@ -2,7 +2,6 @@ professor[$Lucy]
 :forall:x: (professor[x] => person[x])
 dean[$John]
 :forall:x: (dean[x] => professor[x])
-#<friend[$Lucy,$John]>
-#:forall:x,y: (professor[x] && dean[y] => friend[y,x] || ~<knows[x,y])>
-#:forall:x: (:forall:y: (person[x] && person[y] && <criticize[x,y]> => ~<friend[y,x]>))
-#<criticize[$Lucy,$John]>
+:forall:x,y: (professor[x] && dean[y] => <friend[x,y]> || ~<knows[x,y]>)
+<criticize[$Lucy,$John]>
+:forall:x,y: (person[x] && person[y] && <criticize[x,y]> => ~<friend[y,x]>)

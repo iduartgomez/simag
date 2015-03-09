@@ -1,20 +1,48 @@
 # -*- coding: utf-8 -*-
+"""Main perception module, in this module exists the different classes
+that store data for the individual agents and serve as representations
+of the different objects and the relationships between them.
+
+:class: Representation. Main class, stores all the representations and
+relationships for a given agent in a concrete time.
+
+:class: Proof stores a serie of logical predicates that form a
+formula. These are rulesets for cataloging objects into categories or
+classes, and relationships between these objects.
+
+"""
+# ===================================================================#
+#   Imports and globals
+# ===================================================================#
 import re
 import os
+
+# ===================================================================#
+#   REPRESENTATION OBJECTS CLASSES AND SUBCLASSES
+# ===================================================================#
+
 
 class Representation(object):
     """This class is a container for internal agent's representations
     of the 'simulated reality'. An agent can have any number of such
     representations at a moment in time, all of which are contained
     in this object.
+    
+    The class includes methods to encode and decode the representations 
+    to/from data streams or idioms.
+    
+    Attributes:
+        singles -> Unique members (entities) of their own class.
+                   Entities are denoted with a $ symbol followed by a name.
+        classes -> Sets of objects that share a common property.
+        relations -> A function between two objects.
+        formulae -> Stores the different logical proofs.
 
-    The representations are modal and fuzzy logical sentences in
-    a local notation. The class includes methods to encode and decode
-    the representations to/from machine language.
     """
     def __init__(self):
         self.singles = {}
         self.classes = {}
+        self.relations = {}
         self.formulae = {}
 
     def encode(self, formula):
@@ -45,17 +73,21 @@ class Representation(object):
                 return
             elif (len(initpar) == 0 and len(endpar) != 0) or \
                  (len(initpar) != 0 and len(endpar) == 0):
-                raise SyntaxError('Incorrect use of parentheses.')
+                raise AssertionError('Incorrect use of parentheses.')
             else:
                 elem = s[par[0]+1:par[1]]
                 comp.append(elem)
                 s = s.replace(s[par[0]:par[1]+1], '{'+str(f)+'}')
                 f += 1
                 return decomp_par(s, symb, f)
-            
+
         def decomp_all(tform, symb, idx):
             if symb in tform:
                 memb = tform.split(symb)
+                if len(memb) > 2:
+                    while len(memb) > 2:
+                        last = memb.pop()                        
+                        memb[-1] =  memb[-1] + symb + last
                 x, y = len(comp), len(comp)+1
                 if symb == '<=>':
                     comp[idx] = '{'+str(x)+'}'+':equiv:'+'{'+str(y)+'}'
@@ -97,36 +129,49 @@ class Representation(object):
             # It's a declaration/definition
             if '[' in par_form and len(comp) == 1:
                 self.declare(par_form)
-            elif '[' in par_form and len(comp) > 1:
-                raise SyntaxError('Statement not well constructed.')
             else:
-                # Is a conditional function declaration:
-                # the action taken depends on the operators.
-                pass
+                raise AssertionError('Formula synthax is wrong.')
         else:
             # It's a formula, not a declaration/definition
             proof = Proof(ori, comp, hier)
             self.save_proof(proof)
 
     def declare(self, form):
+        """Declares an object as a member of a class or the relationship
+        between two objects.
+        
+        Input: a string with one of the two following forms:
+        1) professor[$Lucy] -> Declares the entity '$Lucy' as a member of the
+        'professor' class.
+        
+        Declarations of membership can only happen to entities, objects
+        which are the only member of their class. To denote an entity we use
+        the $ symbol before the entity name.
+        
+        2) <friend[$Lucy,$John]> -> Declares a mapping of the 'friend' type
+        between the entities '$Lucy' and '$John'.
+        
+        Declarations of mapping can happen between entities, classes, 
+        or between an entity and a class (ie. <loves[$Lucy, cats]>).
+        """
         rgx_ob = re.compile(r'\b(.*?)\]')
         set_ = rgx_ob.findall(form)
+        set_ = set_[0].split('[')
+        if ',' in set_[1]:
+            set_[1] = tuple(set_[1].split(','))
         if '<' in form:
-            # Is a function declaration > implies an action
-            # between an object and the env or other objects.
-            pass
+            # Is a function declaration > implies an mapping
+            # between an object (or a set) and other object (or set).
+            assert (type(set_[1]) == tuple), \
+                    'A mapping needs a subject and object'
+            self.up_attr(set_, key=1)
         else:
             # Is a membership declaration -> the object belongs 
             # to a set of objects.
-            set_ = set_[0].split('[')
-            if ',' in set_[1]:
-                set_[1] = tuple(set_[1].split(','))
-            if isinstance(set_[1], tuple):
-                raise IndexError('Only one object can be declared as \
-                                  member of a set at once.')
-            else:
-                if '$' in set_[1]:
-                    self.up_classes(set_)
+            assert (type(set_[1]) != tuple), \
+                    'Only one object can be declared as member of a set at once.'
+            assert ('$' in set_[1]), 'The object is not an entity.'
+            self.up_attr(set_)
 
     def save_proof(self, proof):
         names = []
@@ -138,7 +183,8 @@ class Representation(object):
                 self.formulae[name] = [proof]
             else:
                 self.formulae[name].append(proof)
-        # Run the new proof with every 'single' object that matches
+
+        # Run the new proof with every 'single' object that matches.
         for obj in self.singles.iterkeys():
             self.prove(obj)
 
@@ -156,24 +202,39 @@ class Representation(object):
                     if proof not in forms:
                         forms.append(proof)
         for x, proof in enumerate(forms):
-            print 'NEW PROOF .....'
             proof(self, *args)
 
-    def up_classes(self, var, *args):
-        if var[1] not in self.singles:
-            self.singles[var[1]] = [var[0]]
-        else:
-            if var[0] not in self.singles[var[1]]:                
-                self.singles[var[1]].append(var[0])
-        if var[0] not in self.classes:
-            self.classes[var[0]] = [var[1]]
-        else:
-            if var[1] not in self.classes[var[0]]:
-                self.classes[var[0]].append(var[1])
+    def up_attr(self, var, key=0):
+        if len(var) > 2 and var[2] is False:
+                var[0] = 'NOT__' + var[0]
+        if key == 0:
+            subject = var[1]
+            property_ = var[0]
+            if subject not in self.singles:
+                self.singles[subject] = [property_]
+            elif property_ not in self.singles[subject]:                
+                self.singles[subject].append(property_)            
+            if property_ not in self.classes:
+                self.classes[property_] = [subject]
+            elif subject not in self.classes[property_]:
+                self.classes[property_].append(subject)
+        elif key == 1:
+            relation = var[0]
+            subject = var[1][0]
+            obj = var[1][1]
+            if subject not in self.relations:
+                self.relations[subject] = {relation: [obj]}
+            elif obj not in self.relations[subject][relation]:
+                self.relations[subject][relation].append(obj)
+
+
+# ===================================================================#
+#   SUPPORTING CLASSES AND SUBCLASSES
+# ===================================================================#
 
 
 class Proof(object):
-    """Object to store logic proofs.
+    """Object to store a logic formula.
     """
     def __init__(self, ori, comp, hier):
         self.depth = 0
@@ -182,7 +243,24 @@ class Proof(object):
         self.particles = []
         self.make_parts(ori, comp, hier)
         self.connect_parts()
-        
+        self.depth = None
+    
+    def __call__(self, ag, *args):
+        #print('\n----- NEW TEST -----')
+        if len(self.var_order) == len(args):
+            self.assigned = {}
+            self.clean_results()
+            for n, const in enumerate(args):
+                memb = self.check_existence(const, ag)
+                if memb is None:
+                    return
+                var_name = self.var_order[n]
+                # Assign an entity to a variable by order.
+                self.assigned[var_name] = [const, set(memb)]
+            self.particles[-1].resolve(self, ag, key=[0])
+        else:
+            return
+    
     def make_parts(self, ori, comp, hier, depth=0):
         form = comp[ori]
         childs = hier[ori]['childs']
@@ -211,6 +289,7 @@ class Proof(object):
             p.connect(self.particles)
 
     def new_test(self, form, depth, parent, part_id, syb):
+
         def up_var():
             vars_ = form[i+1].split(',')
             for var in vars_:
@@ -230,12 +309,12 @@ class Proof(object):
                 neg = True
             rgx_ob = re.compile(r'\b(.*?)\]')
             set_ = rgx_ob.findall(form)
-            set_ = set_[0].split('[')
-            if '<' in form:
-                set_[0] = '<' + set_[0] + '>'
+            set_ = set_[0].split('[')            
             if len(set_[1]) > 1:
                 set_[1] = tuple(set_[1].split(','))
             set_.append(neg)
+            if '<' in form:
+                set_.append('map')
             return set_
 
         if depth > self.depth:
@@ -254,8 +333,8 @@ class Proof(object):
             self.particles.append(Particle(cond, depth, part_id, parent, syb))
         elif any(x in form for x in [':forall:', ':exists:']):
             # Only universal quantifier is supported right now,
-            # so the quantity is irrelevant
-            
+            # so the quantity is irrelevant.
+
             form = form.split(':')
             cond = 'check_var'
             for i, a in enumerate(form):
@@ -270,32 +349,28 @@ class Proof(object):
             form = tuple(break_pred(form))
             self.particles.append(Particle(cond, depth, part_id, parent, syb, form))
 
-    def __call__(self, ag, *args):
-        if len(self.var_order) == len(args):
-            self.assigned = {}
-            self.clear_results()
-            for n, const in enumerate(args):
-                memb = self.check_membership(const, ag)
-                if memb is None:
-                    return
-                var_name = self.var_order[n]
-                self.assigned[var_name] = [const, set(memb)]
-            self.particles[-1].resolve(self, ag, key=[0])
-        else:
-            return
-    
-    def clear_results(self):
+    def clean_results(self):
+        """Clean up previous results."""
         for part in self.particles:
             if part.results is not None:
                 part.results = []
     
-    def check_membership(self, name, ag):
+    def check_existence(self, name, ag):
+        """Check if an entity existence is known by the agent."""
         if name in ag.singles:
             return ag.singles[name]
         else:
             return None
 
+
 class Particle:
+    """Is a node that represents a logic atom, that can be either:
+    a) An operator of the following types: implies, equals,
+    and, or, not.
+    b) A predicate, delclaring a variable as a member of a set,
+    or a function between two variables.
+    c) A quantifier for a variable: universal or existential.
+    """
     def __init__(self, cond, depth, id_, parent, syb, *args):
         self.pID = id_
         self.depth = depth
@@ -305,8 +380,6 @@ class Particle:
         self.results = []
         if cond == 'predicate':
             self.pred = args[0]
-        if syb[0] != -1:
-            self.results = []
 
     def __str__(self):
         if self.cond != 'predicate':
@@ -318,23 +391,20 @@ class Particle:
         return s
 
     def connect(self, part_list):
-        for part in part_list:
-            if self.parent == part.pID:
-                self.parent = part
-                break
         for x, child in enumerate(self.next):
             for part in part_list:
                 if part.pID == child:
                     self.next[x] = part
+                    self.next[x].parent = self
 
     def resolve(self, proof, ag, key, *args):
-        """Keys for resolving the substitution:
+        """Keys for resolving the proof:
         100: Get a child's predicate.
         101: Check the truthiness of an operation.
         102: Incoming truthiness of an operation for storage.
-        103: Incoming predicate for resolution.
+        103: Incoming predicate for substitution.
         """
-        print self, '// Key:'+str(key), '// Args:', args
+        #print self, '// Key:'+str(key), '// Args:', args
         if key[-1] == 102:
             key.pop()
             self.results.append(args[0])
@@ -344,27 +414,23 @@ class Particle:
             self.next[0].resolve(proof, ag, key)
         elif self.cond == 'implies':
             current = len(self.results)
+            # if the left branch is examined then solve, else don't.
             if current < len(self.next):
-                # if the left branch is examined then solve, else don't.
                 key.append(100) if current == 1 else key.append(101)
                 self.next[current].resolve(proof, ag, key)
             else:
-                # two branches finished, check if left is true
-                left_branch = self.results[0]
-                right_branch = self.results[1]
-                if left_branch is True and key[-1] == 103:
-                    # marked for resolution                    
-                    # subtitute var for object's name
-                    var = right_branch[1]
-                    right_branch[1] = proof.assigned[var][0]
-                    # pass to agent for updatign proper classes                    
-                    ag.up_classes(right_branch)
+                self.implies(proof, ag, key)
+        elif self.cond == 'equiv':
+            pass
+            # equivalence
+            #
         elif self.cond == 'and':
             current = len(self.results)
             if current < len(self.next):
                 key.append(101)
-                self.next[current].resolve(proof, ag, key)            
+                self.next[current].resolve(proof, ag, key)
             else:
+                # Two branches finished, check if both are true.
                 left_branch = self.results[0]
                 right_branch = self.results[1]
                 if (left_branch and right_branch) is True:
@@ -374,29 +440,67 @@ class Particle:
             current = len(self.results)
             if current < len(self.next):
                 key.append(101)
-                self.next[current].resolve(proof, ag, key) 
+                self.next[current].resolve(proof, ag, key)
             else:
+                # Two branches finished, check if one is true.
                 left_branch = self.results[0]
                 right_branch = self.results[1]
                 if (left_branch or right_branch) is True:
                     key.append(102)
                     self.parent.resolve(proof, ag, key, True)
         elif self.pred:
-            result = self.ispred(proof, key)
+            result = self.ispred(proof, ag, key)
             key.append(102) if key.pop() == 101 else key.append(103)
             self.parent.resolve(proof, ag, key, result)
 
-    def ispred(self, proof, key, *args):
-        if key[-1] == 101:
-            belongs_to_sets = proof.assigned[self.pred[1]][1]
-            checking_set = self.pred[0]
-            must_be = self.pred[2]
-            # if must be True, then the object must belogn to the set.
-            # else, must be False, and the object mustn't belong to the set.
-            if must_be is True:
-                result = True if checking_set in belongs_to_sets else False
+    def implies(self, proof, ag, key):
+        # two branches finished, check if left is true
+        left_branch = self.results[0]
+        right_branch = self.results[1]
+        if left_branch is True and key[-1] == 103:
+            # marked for resolution
+            # subtitute var(s) for object(s) name(s)
+            # and pass to agent for updating proper classes
+            if type(right_branch[1]) is tuple:
+                var1, var2 = right_branch[1][0], right_branch[1][1]
+                var1 = proof.assigned[var1][0]
+                var2 = proof.assigned[var2][0]
+                right_branch[1] = (var1, var2)
+                ag.up_attr(right_branch, key=1)
             else:
-                result = False if checking_set in belongs_to_sets else True
+                var = right_branch[1]                        
+                right_branch[1] = proof.assigned[var][0]              
+                ag.up_attr(right_branch)
+
+    def ispred(self, proof, ag, key):
+        if key[-1] == 101:
+            if len(self.pred) == 4:
+                # Check mapping of a set/entity to an other set/entity.                
+                subject = proof.assigned[self.pred[1][0]][0]
+                obj = proof.assigned[self.pred[1][1]][0]
+                check_func = self.pred[0]
+                must_be = self.pred[2]     
+                try:
+                    mapped = ag.relations[subject][check_func]
+                except:
+                    result = False
+                else:
+                    if must_be is True:
+                        result = True if obj in mapped else False
+                    else:
+                        result = False if obj in mapped else True
+            else:
+                # Check membership to a set of an entity.
+                var = self.pred[1]
+                belongs_to_sets = proof.assigned[var][1]
+                check_set = self.pred[0]
+                must_be = self.pred[2]
+                # If must be True, then the object must belong to the set.
+                # Else, must be False, and the object must not belong to the set.
+                if must_be is True:
+                    result = True if check_set in belongs_to_sets else False
+                else:
+                    result = False if check_set in belongs_to_sets else True
             return result
         if key[-1] == 100:
             result = [x for x in self.pred]
@@ -404,6 +508,8 @@ class Particle:
 
 
 if __name__ == '__main__':
+    import datetime
+    
     path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     logic_test = os.path.join(path, 'tests', 'logic_test_01.txt')
     ls = []
@@ -414,9 +520,13 @@ if __name__ == '__main__':
             else:
                 ls.append(line)
     r = Representation()
+    d1 = datetime.datetime.now()
     for form in ls:
         r.encode(form)
-    
-    print '---------------'
+    r.prove('$Lucy','$John')
+    print '\n---------- RESULTS ----------'
+    d2 = datetime.datetime.now()
+    print (d2-d1)
     print r.singles
     print r.classes
+    print r.relations
