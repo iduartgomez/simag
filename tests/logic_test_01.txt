@@ -6,5 +6,8 @@ dean[$John]
 <criticize[$Lucy,$John]>
 :forall:x,y: (person[x] && person[y] && <criticize[x,y]> => ~<friend[y,x]>)
 student[$Bill]
-#:forall:x: (student[x] && <takes[x,$analysis]> => <takes[x,$geometry]>)
-#:forall:x,y: (sister[x,$Bill] && sister[y,$Bill] => <eq[x,y]>)
+<takes[$Bill,$analysis]>
+:forall:x: (student[x] && <takes[x,$analysis]> => <takes[x,$geometry]>)
+sister[$Lucy]
+<sister[$Lucy,$Bill]>
+:forall:x,y: (<sister[x,$Bill]> && <sister[y,$Bill]> => <eq[x,y]>)

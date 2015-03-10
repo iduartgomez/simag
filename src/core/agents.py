@@ -69,6 +69,7 @@ class BasicAgent(object):
         based on this 'perception'. Which is then registered for that moment.
         """
         percept = self.perception_routine(eval_funcs, optimal)
+        print percept
 
     def action_routine(self, action_funcs):
         """Evaluates current set of beliefs and intentions and produces

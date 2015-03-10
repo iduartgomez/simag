@@ -33,15 +33,15 @@ class Representation(object):
     to/from data streams or idioms.
     
     Attributes:
-        singles -> Unique members (entities) of their own set/class.
+        individuals -> Unique members (entities) of their own set/class.
                    Entities are denoted with a $ symbol followed by a name.
         classes -> Sets of objects that share a common property.
-        relations -> A function/map between two objects.
+        relations -> A function (relation) between two objects.
         formulae -> Stores the different logical formulae.
 
     """
     def __init__(self):
-        self.singles = {}
+        self.individuals = {}
         self.classes = {}
         self.relations = {}
         self.formulae = {}
@@ -139,7 +139,7 @@ class Representation(object):
 
     def declare(self, form):
         """Declares an object as a member of a class or the relationship
-        between two objects. Declarations parse well-formed predicates.
+        between two objects. Declarations parse well-formed statements.
         
         Input: a string with one of the two following forms:
         1) professor[$Lucy] -> Declares the entity '$Lucy' as a member of the
@@ -177,7 +177,7 @@ class Representation(object):
     def save_proof(self, proof):
         names = []
         for part in proof.particles:
-            if part.cond == 'predicate':
+            if part.cond == 'predicate' and part.pred[0] not in names:
                 names.append(part.pred[0])
         for name in names:
             if name not in self.formulae:
@@ -186,14 +186,15 @@ class Representation(object):
                 self.formulae[name].append(proof)
 
         # Run the new proof with every 'single' object that matches.
-        for obj in self.singles.iterkeys():
+        dic_copy = {k:v for k,v in self.individuals.iteritems()}
+        for obj in dic_copy.iterkeys():
             self.prove(obj)
 
     def prove(self, *args):
         keys = []
         for arg in args:
-            if arg in self.singles:
-                k = self.singles[arg]
+            if arg in self.individuals:
+                k = self.individuals[arg]
                 for x in k:
                     keys.append(x)
         forms = []
@@ -211,10 +212,10 @@ class Representation(object):
         if key == 0:
             subject = var[1]
             property_ = var[0]
-            if subject not in self.singles:
-                self.singles[subject] = [property_]
-            elif property_ not in self.singles[subject]:                
-                self.singles[subject].append(property_)            
+            if subject not in self.individuals:
+                self.individuals[subject] = [property_]
+            elif property_ not in self.individuals[subject]:                
+                self.individuals[subject].append(property_)            
             if property_ not in self.classes:
                 self.classes[property_] = [subject]
             elif subject not in self.classes[property_]:
@@ -225,6 +226,8 @@ class Representation(object):
             obj = var[1][1]
             if subject not in self.relations:
                 self.relations[subject] = {relation: [obj]}
+            elif relation not in self.relations[subject]:
+                self.relations[subject][relation] = [obj]
             elif obj not in self.relations[subject][relation]:
                 self.relations[subject][relation].append(obj)
 
@@ -246,13 +249,18 @@ class Proof(object):
         self.depth = None
     
     def __call__(self, ag, *args):
-        #print('\n----- NEW TEST -----')
+        #print('----- NEW TEST -----')
         if len(self.var_order) == len(args):
+            # Clean up previous results.
             self.assigned = {}
-            self.clean_results()
+            for part in self.particles:
+                if part.results is not None:
+                    part.results = []
+            # Check the properties/classes an obj belongs to
             for n, const in enumerate(args):
-                memb = self.check_existence(const, ag)
-                if memb is None:
+                if const in ag.individuals:
+                    memb = ag.individuals[const]
+                else:
                     return
                 var_name = self.var_order[n]
                 # Assign an entity to a variable by order.
@@ -349,19 +357,6 @@ class Proof(object):
             form = tuple(break_pred(form))
             self.particles.append(Particle(cond, depth, part_id, parent, syb, form))
 
-    def clean_results(self):
-        """Clean up previous results."""
-        for part in self.particles:
-            if part.results is not None:
-                part.results = []
-    
-    def check_existence(self, name, ag):
-        """Check if an entity existence is known by the agent."""
-        if name in ag.singles:
-            return ag.singles[name]
-        else:
-            return None
-
 
 class Particle:
     """Is a node that represents a logic atom, that can be either:
@@ -399,24 +394,25 @@ class Particle:
 
     def resolve(self, proof, ag, key, *args):
         """Keys for resolving the proof:
-        100: Get a child's predicate.
+        100: Resolve a child's predicates.
         101: Check the truthiness of a child particle.
         102: Incoming truthiness of an operation for storage.
-        103: Incoming predicate for declaration.
+        103: Process the right branch of a statement.
         104: Returns the result of a test.
         """
         #print self, '// Key:'+str(key), '// Args:', args
         if key[-1] == 102:
             key.pop()
             self.results.append(args[0])
-        if key[-1] == 103:
-            self.results.append(args[0])
         if self.cond == 'check_var':
             self.next[0].resolve(proof, ag, key)
         elif self.cond == 'implies':
             if key[-1] == 104:
                 self.results.append(args[0])
-                self.implies(proof, ag, key)
+                if self.next[1].cond is 'or' and self.results[1] is False:
+                    key.pop()
+                    key.append(103)
+                    self.next[1].resolve(proof, ag, key)
             else:
                 current = len(self.results)
                 # if the left branch is examined then solve, else don't.
@@ -426,11 +422,10 @@ class Particle:
                 elif current == 1 and self.results[0] == True:
                     key.append(100)
                     self.next[current].resolve(proof, ag, key)
-                elif key[-1] == 103:
-                    self.implies(proof, ag, key)
                 else:
-                    # The left first was false, so do not continue.                    
-                    print 'Tested the left branch and failed.\n'
+                    # The left branch was false, so do not continue.             
+                    #print '\nTested the left branch and failed.\n'
+                    return
         elif self.cond == 'equiv':
             pass
             # equivalence
@@ -438,29 +433,7 @@ class Particle:
             #
             #
             #
-        elif self.cond == 'and':
-            if key[-1] == 104:
-                key.pop()
-                self.results.append(args[0])
-            current = len(self.results)
-            if key[-1] == 101:
-                if current < len(self.next):
-                    key.append(101)
-                    self.next[current].resolve(proof, ag, key)
-                else:
-                    self.conjunction(proof, ag, key)                    
-            elif key[-1] == 100:
-                if current < len(self.next) and \
-                self.next[current].cond == 'predicate':
-                    key.append(101)
-                    self.next[current].resolve(proof, ag, key)
-                elif current < len(self.next):
-                    self.next[current].resolve(proof, ag, key)
-                else:
-                    result = self.conjunction(proof, ag, key)
-                    key.append(104)
-                    self.parent.resolve(proof, ag, key, result)
-        elif self.cond == 'or':
+        elif self.cond == 'or' or self.cond == 'and':
             if key[-1] == 104:
                 key.pop()
                 self.results.append(args[0])
@@ -470,9 +443,13 @@ class Particle:
                     key.append(101)
                     self.next[current].resolve(proof, ag, key)
                 else:
-                    # Two branches finished, check if one is true.
-                    self.disjunction(proof, ag, key)
-            elif key[-1] == 100 or key[-1] == 104:
+                    if self.cond == 'or':
+                        # Two branches finished, check if one is true.                    
+                        self.disjunction(proof, ag, key)
+                    elif self.cond == 'and':
+                        # Two branches finished, check if both are true. 
+                        self.conjunction(proof, ag, key) 
+            elif key[-1] == 100:
                 if current < len(self.next) and \
                 self.next[current].cond == 'predicate':
                     key.append(101)
@@ -480,32 +457,20 @@ class Particle:
                 elif current < len(self.next):
                     self.next[current].resolve(proof, ag, key)
                 else:
-                    result = self.disjunction(proof, ag, key)
+                    if self.cond == 'or':
+                        result = self.disjunction(proof, ag, key)
+                    elif self.cond == 'and':
+                        result = self.conjunction(proof, ag, key)
                     key.append(104)
                     self.parent.resolve(proof, ag, key, result)
+            elif key[-1] == 103:
+                self.next[1].resolve(proof, ag, key)
         elif self.pred:
             result = self.ispred(proof, ag, key)
-            key.append(102) if key.pop() == 101 else key.append(103)
-            self.parent.resolve(proof, ag, key, result)
-
-    def implies(self, proof, ag, key):
-        if key[-1] == 104:
-            print 'Tested right branch and got the result.\n'
-        else:
-            # marked for declaration
-            # subtitute var(s) for object(s) name(s)
-            # and pass to agent for updating proper classes
-            right_branch = self.results[1]            
-            if type(right_branch[1]) is tuple:
-                var1, var2 = right_branch[1][0], right_branch[1][1]
-                var1 = proof.assigned[var1][0]
-                var2 = proof.assigned[var2][0]
-                right_branch[1] = (var1, var2)
-                ag.up_attr(right_branch, key=1)
-            else:
-                var = right_branch[1]
-                right_branch[1] = proof.assigned[var][0]
-                ag.up_attr(right_branch)
+            x = key.pop()
+            if x != 100 and x != 103:
+                key.append(102)
+                self.parent.resolve(proof, ag, key, result)
 
     def conjunction(self, proof, ag, key):
         left_branch = self.results[0]
@@ -544,20 +509,27 @@ class Particle:
     def ispred(self, proof, ag, key):
         if key[-1] == 101:
             if len(self.pred) == 4:
-                # Check mapping of a set/entity to an other set/entity.                
-                subject = proof.assigned[self.pred[1][0]][0]
-                obj = proof.assigned[self.pred[1][1]][0]
+                # Check mapping of a set/entity to an other set/entity.
                 check_func = self.pred[0]
-                must_be = self.pred[2]
+                must_be = self.pred[2]                
+                if '$' in self.pred[1][1]:
+                    # It's a relationship between a var obj and a set obj.
+                    subject = proof.assigned[self.pred[1][0]][0]
+                    obj = self.pred[1][1]
+                else:
+                    # It's a relationship between two var objs
+                    subject = proof.assigned[self.pred[1][0]][0]
+                    obj = proof.assigned[self.pred[1][1]][0]
                 try:
-                    mapped = ag.relations[subject][check_func]
+                    relation = ag.relations[subject][check_func]
                 except:
                     result = False
                 else:
                     if must_be is True:
-                        result = True if obj in mapped else False
+                        result = True if obj in relation else False
                     else:
-                        result = False if obj in mapped else True
+                        result = False if obj in relation else True
+                return result
             else:
                 # Check membership to a set of an entity.
                 var = self.pred[1]
@@ -571,10 +543,26 @@ class Particle:
                 else:
                     result = False if check_set in belongs_to_sets else True
             return result
-        if key[-1] == 100:
-            # Return predicate for substitution
-            result = [x for x in self.pred]
-            return result
+        if key[-1] == 100 or key[-1] == 103:
+            # marked for declaration
+            # subtitute var(s) for object(s) name(s)
+            # and pass to agent for updating
+            pred = list(self.pred)
+            if type(pred[1]) is tuple:
+                if '$' in pred[1][1]:
+                    var, obj = pred[1][0], pred[1][1]
+                    var = proof.assigned[var][0]
+                    pred[1] = (var, obj)
+                else:
+                    var1, var2 = pred[1][0], pred[1][1]
+                    var1 = proof.assigned[var1][0]
+                    var2 = proof.assigned[var2][0]
+                    pred[1] = (var1, var2)
+                ag.up_attr(pred, key=1)
+            else:
+                var = pred[1]
+                pred[1] = proof.assigned[var][0]
+                ag.up_attr(pred)
 
 
 if __name__ == '__main__':
@@ -593,10 +581,10 @@ if __name__ == '__main__':
     d1 = datetime.datetime.now()
     for form in ls:
         r.encode(form)
-    r.prove('$Lucy','$John')
+    r.prove('$Lucy','$Lucy')
     print '\n---------- RESULTS ----------'
     d2 = datetime.datetime.now()
     print (d2-d1)
-    print r.singles
+    print r.individuals
     print r.classes
     print r.relations
