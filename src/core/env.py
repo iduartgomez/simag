@@ -18,14 +18,14 @@ class Molecule(object):
     pass
 
 
-class Materials():
+class Materials(object):
     """This represent different types of materials in the simulated.
     It's an homogenous compound of different molecules.
     """
     pass
 
 
-class Block():
+class Block(object):
     """This represents material objects in the simulated world.
     And it's built of n materials and/or blocks of the same or different types.
 

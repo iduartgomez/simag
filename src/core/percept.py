@@ -3,10 +3,19 @@
 that store data for the individual agents and serve as representations
 of the different objects and the relationships between them.
 
+Main
+----
 :class: Representation. Main class, stores all the representations and
 relationships for a given agent in a concrete time.
 
-:class: Proof stores a serie of logical atoms (be them predicates or
+:class: Individual. Represents a singular entity which is the unique
+member of it's own set.
+
+:class: Categories. The sets in which the agent can categorise objects.
+
+Support
+-------
+:class: Proof. Stores a serie of logical atoms (be them predicates or
 connectives), that form a well-formed logic formula. These are rulesets 
 for cataloging objects into sets/classes, and the relationships between 
 these objects.
@@ -17,6 +26,9 @@ these objects.
 # ===================================================================#
 import re
 import os
+import uuid
+
+gl_res = []
 
 # ===================================================================#
 #   REPRESENTATION OBJECTS CLASSES AND SUBCLASSES
@@ -36,15 +48,11 @@ class Representation(object):
         individuals -> Unique members (entities) of their own set/class.
                    Entities are denoted with a $ symbol followed by a name.
         classes -> Sets of objects that share a common property.
-        relations -> A function (relation) between two objects.
-        formulae -> Stores the different logical formulae.
 
     """
     def __init__(self):
         self.individuals = {}
         self.classes = {}
-        self.relations = {}
-        self.formulae = {}
 
     def encode(self, formula):
         comp = []
@@ -82,25 +90,26 @@ class Representation(object):
                 f += 1
                 return decomp_par(s, symb, f)
 
-        def decomp_all(tform, symb, idx):
-            if symb in tform:
-                memb = tform.split(symb)
-                if len(memb) > 2:
-                    while len(memb) > 2:
-                        last = memb.pop()                        
-                        memb[-1] =  memb[-1] + symb + last
-                x, y = len(comp), len(comp)+1
-                if symb == '<=>':
-                    comp[idx] = '{'+str(x)+'}'+':equiv:'+'{'+str(y)+'}'
-                if symb == ' =>':
-                    comp[idx] = '{'+str(x)+'}'+':implies:'+'{'+str(y)+'}'
-                if symb == '||':
-                    comp[idx] = '{'+str(x)+'}'+':or:'+'{'+str(y)+'}'
-                if symb == '&&':
-                    comp[idx] = '{'+str(x)+'}'+':and:'+'{'+str(y)+'}'
-                comp.append(memb[0])
-                comp.append(memb[1])
-                return True
+        def decomp_all(tform, idx):
+            symb = [x for x in symbs if x in tform]
+            symb = symb[0]
+            memb = tform.split(symb)
+            if len(memb) > 2:
+                while len(memb) > 2:
+                    last = memb.pop()                        
+                    memb[-1] =  memb[-1] + symb + last
+            x, y = len(comp), len(comp)+1
+            if symb == '<=>':
+                comp[idx] = '{'+str(x)+'}'+':equiv:'+'{'+str(y)+'}'
+            if symb == ' =>':
+                comp[idx] = '{'+str(x)+'}'+':implies:'+'{'+str(y)+'}'
+            if symb == '||':
+                comp[idx] = '{'+str(x)+'}'+':or:'+'{'+str(y)+'}'
+            if symb == '&&':
+                comp[idx] = '{'+str(x)+'}'+':and:'+'{'+str(y)+'}'
+            comp.append(memb[0])
+            comp.append(memb[1])
+            return True
 
         def iter_childs(ls):
             for n in range(0, ls):
@@ -121,9 +130,8 @@ class Representation(object):
         ori = len(comp)-1
         for i, form in enumerate(comp):
             symbs = ['<=>',' =>','||','&&']
-            for symb in symbs:
-                if decomp_all(form, symb, idx=i):
-                    break
+            if any(symb in form for x, symb in enumerate(symbs)):
+                decomp_all(form, idx=i)
         iter_childs(len(comp))
         par_form = comp[ori]
         if not any(x in par_form for x in [':forall:', ':exists:']):
@@ -142,15 +150,16 @@ class Representation(object):
         between two objects. Declarations parse well-formed statements.
         
         Input: a string with one of the two following forms:
-        1) professor[$Lucy] -> Declares the entity '$Lucy' as a member of the
-        'professor' class.
+        1) "silly[$Lucy,u=0.2]" -> Declares the entity '$Lucy' as a member 
+        of the 'silly' class. u = 0.2 is the fuzzy modifier, which can go 
+        from 0 to 1.
         
         Declarations of membership can only happen to entities, objects
         which are the only member of their class. To denote an entity we use
         the $ symbol before the entity name.
         
-        2) <friend[$Lucy,$John]> -> Declares a mapping of the 'friend' type
-        between the entities '$Lucy' and '$John'.
+        2) "<friend[$John, $Lucy,u=0.2]>" -> Declares a mapping of the 'friend' type
+        between the entities '$Lucy' and '$John'. $John: friend -> $Lucy, 0.2
         
         Declarations of mapping can happen between entities, classes, 
         or between an entity and a class (ie. <loves[$Lucy, cats]>).
@@ -158,78 +167,197 @@ class Representation(object):
         rgx_ob = re.compile(r'\b(.*?)\]')
         set_ = rgx_ob.findall(form)
         set_ = set_[0].split('[')
-        if ',' in set_[1]:
-            set_[1] = tuple(set_[1].split(','))
+        if ';' in set_[1]:
+            set_[1] = set_[1].split(';')
         if '<' in form:
             # Is a function declaration > implies an mapping
             # between an object (or a set) and other object (or set).
-            assert (type(set_[1]) == tuple), \
-                    'A mapping needs a subject and object'
+            assert (type(set_[1]) == list), \
+                    'A function/map needs subject and object'
+            u = set_[1][1].split(',u=')            
+            u[1] = float(u[1])
+            x = set_[1][0], tuple(u)
+            set_ = set_[0], x
             self.up_attr(set_, key=1)
         else:
             # Is a membership declaration -> the object belongs 
             # to a set of objects.
             assert (type(set_[1]) != tuple), \
                     'Only one object can be declared as member of a set at once.'
-            assert ('$' in set_[1]), 'The object is not an entity.'
+            assert ('$' in set_[1]), 'The object is not an unique entity.'
+            u = set_[1].split(',u=')
+            u[1] = float(u[1])
+            set_ = (set_[0], u[1]), u[0]
             self.up_attr(set_)
 
-    def save_proof(self, proof):
-        names = []
-        for part in proof.particles:
-            if part.cond == 'predicate' and part.pred[0] not in names:
-                names.append(part.pred[0])
-        for name in names:
-            if name not in self.formulae:
-                self.formulae[name] = [proof]
-            else:
-                self.formulae[name].append(proof)
-
-        # Run the new proof with every 'single' object that matches.
-        dic_copy = {k:v for k,v in self.individuals.iteritems()}
-        for obj in dic_copy.iterkeys():
-            self.prove(obj)
-
-    def prove(self, *args):
-        keys = []
-        for arg in args:
-            if arg in self.individuals:
-                k = self.individuals[arg]
-                for x in k:
-                    keys.append(x)
-        forms = []
-        for key in keys:
-            if key in self.formulae:
-                for proof in self.formulae[key]:
-                    if proof not in forms:
-                        forms.append(proof)
-        for x, proof in enumerate(forms):
-            proof(self, *args)
-
-    def up_attr(self, var, key=0):
-        if len(var) > 2 and var[2] is False:
-                var[0] = 'NOT__' + var[0]
+    def up_attr(self, pred, key=0):
         if key == 0:
-            subject = var[1]
-            property_ = var[0]
+            subject = pred[1]
+            categ = pred[0]
             if subject not in self.individuals:
-                self.individuals[subject] = [property_]
-            elif property_ not in self.individuals[subject]:                
-                self.individuals[subject].append(property_)            
-            if property_ not in self.classes:
-                self.classes[property_] = [subject]
-            elif subject not in self.classes[property_]:
-                self.classes[property_].append(subject)
+                ind = Individual(subject)
+                ind.categ.append(categ)
+                self.individuals[subject] = ind
+            elif categ not in self.individuals[subject].categ:
+                self.individuals[subject].categ.append(categ)
+            if categ[0] not in self.classes:
+                new_class = Category(categ[0])
+                new_class['type'] = 'class'
+                self.classes[categ[0]] = new_class
         elif key == 1:
-            relation = var[0]
-            subject = var[1][0]
-            obj = var[1][1]
-            if subject not in self.relations:
-                self.relations[subject] = {relation: [obj]}
-            elif relation not in self.relations[subject]:
-                self.relations[subject][relation] = [obj]
+            relation = pred[0]
+            subject = pred[1][0]
+            obj = pred[1][1]
+            if subject not in self.individuals:
+                ind = Individual(subject)
+                ind.relations[relation] = [obj]
+                self.individuals[subject] = ind                
+            elif relation not in self.individuals[subject].relations:
+                ind = self.individuals[subject]
+                ind.relations[relation] = [obj]
             elif obj not in self.relations[subject][relation]:
                 self.relations[subject][relation].append(obj)
+
+    def save_proof(self, proof):
+        for part in proof.particles:
+            if part.parent == -1:
+                x = part
+            if part.results is not None:
+                    part.results = []        
+        x.get_pred()
+        for name in gl_res:            
+            if name[0] in self.classes and \
+            proof not in self.classes[name[0]]['proofs']:
+                self.classes[name[0]]['proofs'].append(proof)
+            elif len(name) == 3:
+                new_class = Category(name[0])
+                new_class['type'] = 'relation'
+                new_class['proofs'].append(proof)
+                self.classes[name[0]] = new_class
+            else:
+                new_class = Category(name[0])
+                new_class['type'] = 'class'
+                new_class['proofs'].append(proof)
+                self.classes[name[0]] = new_class
+        n = set([x[0] for x in gl_res])
+        del gl_res[:]
+        # Run the new proof with every unique object that matches.
+        for ind in self.individuals.itervalues():
+            common = list(ind.check_cat(n))
+            proof(self, ind.name)
+            tests = None
+            for cat in common:
+                tests = self.classes[cat]['proofs']
+            if tests:
+                for test in tests:
+                    test(self, ind.name)
+    
+    def prove(self, *args):
+        cats = []
+        for ind in args:
+            if ind in self.individuals:
+                c = self.individuals[ind].itercat()
+                x = [n for n in c[0]]
+                cats = cats + x
+        tests = []
+        for c in cats:
+            tests = tests + self.classes[c]['proofs']
+        tests = set(tests)
+        tests = list(tests)
+        for test in tests:
+            test(self, *args)
+
+
+class Individual(object):
+    """An individual is the unique member of it's own class.
+    Represents an object which can pertain to multiple classes or sets.
+    It's an abstraction owned by an agent, the internal representation 
+    of the object, not the object itself.
+    
+    An Individual inherits the properties of the classes it belongs to,
+    and has some implicit attributes which are unique to itself.
+    
+    Membership to a class is denoted (following fuzzy sets) by a
+    real number between 0 and 1. If the number is one, the object will
+    will always belong to the set, if it's zero, it will never belong to
+    the set.
+    
+    For example, an object can belong to the set 'cold' with a degree of
+    0.9 (in natural language then it would be 'very cold') or 0.1
+    (then it would be 'a bit cold', the subjective adjectives are defined
+    in the category itself).
+    
+    Attributes:
+        id -> Unique identifier for the object.
+        name -> Name of the unique object.
+        categ -> Categories to which the object belongs.
+                Includes the degree of membership (ie. ('cold', 0.9)).
+        attr -> Implicit attributes of the object, unique to itself.
+        cog (opt) -> These are the cognitions (modal) attributed to the object
+                    by the agent owning this representation.
+        relations (opt) -> Functions between two objects and/or classes.
+    """
+    def __init__(self, name):
+        self.id = str(uuid.uuid4())
+        self.name = name
+        self.categ = []
+        self.relations = {}
+        self.attr = {}
+
+    def set_attr(self, **kwargs):
+        """Sets implicit attributes for the class, if an attribute exists
+        it's replaced.
+        
+        Takes a dictionary as input."""
+        for k, v in kwargs.items():
+            self.attr[k] = v
+
+    def infer(self):
+        """Inferes attributes of the entity from it's classes."""
+        pass
+    
+    def check_cat(self, n):
+        """Returns a set of the categories and relations of the object."""
+        t = set([k for k in self.relations.iterkeys()])
+        s = set([c[0] for c in self.categ])
+        s = s.union(t)
+        s = s.intersection(n)
+        return s
+    
+    def itercat(self):
+        """Returns an iterator of the categories of the object and a 
+        list of the values."""
+        cat = [k for k,_ in self.categ]
+        val = [u for _,u in self.categ]
+        return (iter(cat), val)
+    
+    def __str__(self):
+        s = "\n<individual '" + self.name + "'>"
+        return s
+
+
+class Category(dict):
+    """A category is a set/class of entities that share some properties.    
+    It can be a subset of others supersets, and viceversa. It inherits
+    from the dict class.
+    
+    Membership is not binary, but fuzzy, being the extreme cases (0, 1)
+    the classic binary membership. Likewise, membership to a class can be 
+    temporal. For more info check 'Individual' class.
+    
+    All the attributes of a category are inherited by their members
+    (to a degree).
+    """
+    def __init__(self, name):
+        self['id'] = str(uuid.uuid4())
+        self['name'] = name
+        self['superset'] = []
+        self['subset'] = []
+        self['proofs'] = []
+
+    def infer(self):
+        """Infers attributes of the class from it's members."""
+        pass
 
 
 # ===================================================================#
@@ -259,12 +387,12 @@ class Proof(object):
             # Check the properties/classes an obj belongs to
             for n, const in enumerate(args):
                 if const in ag.individuals:
-                    memb = ag.individuals[const]
+                    memb = ag.individuals[const].itercat()
                 else:
                     return
                 var_name = self.var_order[n]
                 # Assign an entity to a variable by order.
-                self.assigned[var_name] = [const, set(memb)]
+                self.assigned[var_name] = [const, memb]
             self.particles[-1].resolve(self, ag, key=[0])
         else:
             return
@@ -299,7 +427,7 @@ class Proof(object):
     def new_test(self, form, depth, parent, part_id, syb):
 
         def up_var():
-            vars_ = form[i+1].split(',')
+            vars_ = form[i+1].split(';')
             for var in vars_:
                 var_name = var.strip()
                 if var_name not in self.var_order:
@@ -311,16 +439,11 @@ class Proof(object):
             self.particles.append(Particle(cond, depth, part_id, parent, syb))
 
         def break_pred(form):
-            if '~' in form:
-                neg = False
-            else:
-                neg = True
             rgx_ob = re.compile(r'\b(.*?)\]')
             set_ = rgx_ob.findall(form)
-            set_ = set_[0].split('[')            
-            if len(set_[1]) > 1:
-                set_[1] = tuple(set_[1].split(','))
-            set_.append(neg)
+            set_ = set_[0].split('[')
+            if ';' in set_[1]:
+                set_[1] = tuple(set_[1].split(';'))
             if '<' in form:
                 set_.append('map')
             return set_
@@ -342,7 +465,6 @@ class Proof(object):
         elif any(x in form for x in [':forall:', ':exists:']):
             # Only universal quantifier is supported right now,
             # so the quantity is irrelevant.
-
             form = form.split(':')
             cond = 'check_var'
             for i, a in enumerate(form):
@@ -358,7 +480,7 @@ class Proof(object):
             self.particles.append(Particle(cond, depth, part_id, parent, syb, form))
 
 
-class Particle:
+class Particle(object):
     """Is a node that represents a logic atom, that can be either:
     a) An operator of the following types: implies, equals,
     and, or, not.
@@ -375,15 +497,6 @@ class Particle:
         self.results = []
         if cond == 'predicate':
             self.pred = args[0]
-
-    def __str__(self):
-        if self.cond != 'predicate':
-            s = '<operator ' + str(self.pID) + ' (depth:' \
-            + str(self.depth) + ') "' + str(self.cond) + '">'
-        else:
-            s = '<predicate ' + str(self.pID) + ' (depth:' \
-            + str(self.depth) + '): ' + str(self.pred) + '>'
-        return s
 
     def connect(self, part_list):
         for x, child in enumerate(self.next):
@@ -430,8 +543,7 @@ class Particle:
             pass
             # equivalence
             #
-            #
-            #
+            #            
             #
         elif self.cond == 'or' or self.cond == 'and':
             if key[-1] == 104:
@@ -452,8 +564,12 @@ class Particle:
             elif key[-1] == 100:
                 if current < len(self.next) and \
                 self.next[current].cond == 'predicate':
-                    key.append(101)
-                    self.next[current].resolve(proof, ag, key)
+                    if self.cond == 'or':
+                        key.append(101)
+                        self.next[current].resolve(proof, ag, key)
+                    else:
+                        key.append(105)
+                        self.next[current].resolve(proof, ag, key)
                 elif current < len(self.next):
                     self.next[current].resolve(proof, ag, key)
                 else:
@@ -464,6 +580,10 @@ class Particle:
                     key.append(104)
                     self.parent.resolve(proof, ag, key, result)
             elif key[-1] == 103:
+                self.next[1].resolve(proof, ag, key)
+            elif key[-1] == 105 and self.next[1].cond == 'predicate':
+                key.pop()
+                key.append(100)
                 self.next[1].resolve(proof, ag, key)
         elif self.pred:
             result = self.ispred(proof, ag, key)
@@ -508,18 +628,26 @@ class Particle:
 
     def ispred(self, proof, ag, key):
         if key[-1] == 101:
-            if len(self.pred) == 4:
+            result = None
+            if len(self.pred) == 3:
                 # Check mapping of a set/entity to an other set/entity.
                 check_func = self.pred[0]
                 must_be = self.pred[2]                
                 if '$' in self.pred[1][1]:
+                    # FIX THIS
+                    #
                     # It's a relationship between a var obj and a set obj.
                     subject = proof.assigned[self.pred[1][0]][0]
                     obj = self.pred[1][1]
                 else:
                     # It's a relationship between two var objs
-                    subject = proof.assigned[self.pred[1][0]][0]
-                    obj = proof.assigned[self.pred[1][1]][0]
+                    var1, u = self.pred[1][1].split(',u')
+                    var2 = self.pred[1][0]
+                    subject = proof.assigned[var2][0]
+                    obj = proof.assigned[var1][0]
+
+                # MUST CHECK u VALUE below
+                #
                 try:
                     relation = ag.relations[subject][check_func]
                 except:
@@ -532,41 +660,97 @@ class Particle:
                 return result
             else:
                 # Check membership to a set of an entity.
-                var = self.pred[1]
-                belongs_to_sets = proof.assigned[var][1]
+                var, u = self.pred[1].split(',u')
+                categs = proof.assigned[var][1]
                 check_set = self.pred[0]
-                must_be = self.pred[2]
-                # If must be True, then the object must belong to the set.
-                # Else, must be False, and the object must not belong to the set.
-                if must_be is True:
-                    result = True if check_set in belongs_to_sets else False
-                else:
-                    result = False if check_set in belongs_to_sets else True
+                uval = float(u[1:])
+                # If is True, then the object belong sto the set.
+                # Else, must be False, and the object must not belong.
+                for i, cat in enumerate(categs[0]):
+                    if cat in check_set:
+                        if u[0] == '=' and uval == categs[1][i]:
+                            # Must be exactly that number to be True
+                            result = True
+                        elif u[0] == '>' and uval > categs[1][i]:
+                            # Must be bigger than to be True
+                            result = True
+                        elif u[0] == '<' and uval == categs[1][i]:
+                            # Must be smaller than to be True
+                            result = True
+                result = False if result is None else True
             return result
-        if key[-1] == 100 or key[-1] == 103:
+        if key[-1] == 100 or key[-1] == 103 or key[-1] == 105:
             # marked for declaration
             # subtitute var(s) for object(s) name(s)
             # and pass to agent for updating
             pred = list(self.pred)
             if type(pred[1]) is tuple:
                 if '$' in pred[1][1]:
+                    # FIX THIS
+                    #
                     var, obj = pred[1][0], pred[1][1]
                     var = proof.assigned[var][0]
                     pred[1] = (var, obj)
                 else:
-                    var1, var2 = pred[1][0], pred[1][1]
-                    var1 = proof.assigned[var1][0]
+                    var2, u = pred[1][1].split(',u')
+                    u = float(u[1:])
+                    var1 = pred[1][0]
                     var2 = proof.assigned[var2][0]
-                    pred[1] = (var1, var2)
+                    var1 = proof.assigned[var1][0]
+                    pred[1] = (var1, (var2, u))
                 ag.up_attr(pred, key=1)
             else:
-                var = pred[1]
+                var, u = self.pred[1].split(',u')
+                u = float(u[1:])
                 pred[1] = proof.assigned[var][0]
+                pred = ((pred[0], u), pred[1])
                 ag.up_attr(pred)
 
+    def get_pred(self, k=0, *args):
+        conds = ['implies']
+        if k == 1:
+            self.results.append(args[0])
+            k = 0
+        if len(self.results) == 0:
+            if self.cond == 'predicate':
+                k = 1
+                if self.pred not in gl_res:
+                    gl_res.append(self.pred)
+                self.parent.get_pred(k, True)
+            else:
+                self.next[0].get_pred(k)
+        elif len(self.results) == 1 and self.cond not in conds:
+            if self.cond == 'predicate':
+                k = 1
+                if self.pred not in gl_res:
+                    gl_res.append(self.pred)
+                self.parent.get_pred(k, True)
+            else:
+                self.next[1].get_pred(k)
+    
+    def __str__(self):
+        if self.cond != 'predicate':
+            s = '<operator ' + str(self.pID) + ' (depth:' \
+            + str(self.depth) + ') "' + str(self.cond) + '">'
+        else:
+            s = '<predicate ' + str(self.pID) + ' (depth:' \
+            + str(self.depth) + '): ' + str(self.pred) + '>'
+        return s
+
+
+class Group(Category):
+    """A special instance of a category. It defines a 'group' of
+    elements that pertain to a class.
+    """
+
+class Part(Category):
+    """A special instance of a category. It defines an element
+    which is a part of an other object.
+    """
 
 if __name__ == '__main__':
     import datetime
+    import pprint
 
     path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     logic_test = os.path.join(path, 'tests', 'logic_test_01.txt')
@@ -581,10 +765,13 @@ if __name__ == '__main__':
     d1 = datetime.datetime.now()
     for form in ls:
         r.encode(form)
-    r.prove('$Lucy','$Lucy')
+    r.prove('$Lucy','$John')
     print '\n---------- RESULTS ----------'
     d2 = datetime.datetime.now()
     print (d2-d1)
-    print r.individuals
-    print r.classes
-    print r.relations
+    for ind in r.individuals.values():
+        print ind
+        print 'Relations:', ind.relations
+        print 'Categories:', ind.categ
+    print
+    pprint.pprint(r.classes)
