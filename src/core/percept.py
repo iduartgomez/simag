@@ -215,8 +215,9 @@ class Representation(object):
             elif relation not in self.individuals[subject].relations:
                 ind = self.individuals[subject]
                 ind.relations[relation] = [obj]
-            elif obj not in self.relations[subject][relation]:
-                self.relations[subject][relation].append(obj)
+            elif obj not in self.individuals[subject].relations[relation]:
+                ind = self.individuals[subject]
+                ind.relations[relation].append(obj)
 
     def save_proof(self, proof):
         for part in proof.particles:
@@ -242,7 +243,7 @@ class Representation(object):
         n = set([x[0] for x in gl_res])
         del gl_res[:]
         # Run the new proof with every unique object that matches.
-        for ind in self.individuals.itervalues():
+        for ind in self.individuals.values():
             common = list(ind.check_cat(n))
             proof(self, ind.name)
             tests = None
@@ -256,8 +257,8 @@ class Representation(object):
         cats = []
         for ind in args:
             if ind in self.individuals:
-                c = self.individuals[ind].itercat()
-                x = [n for n in c[0]]
+                c = self.individuals[ind].get_cat()
+                x = [k for k,_ in c.items()]
                 cats = cats + x
         tests = []
         for c in cats:
@@ -308,7 +309,8 @@ class Individual(object):
         """Sets implicit attributes for the class, if an attribute exists
         it's replaced.
         
-        Takes a dictionary as input."""
+        Takes a dictionary as input.
+        """
         for k, v in kwargs.items():
             self.attr[k] = v
 
@@ -317,19 +319,30 @@ class Individual(object):
         pass
     
     def check_cat(self, n):
-        """Returns a set of the categories and relations of the object."""
-        t = set([k for k in self.relations.iterkeys()])
+        """Returns a set that is the interdiction of the input set
+        and the union of the categories and relations of the object.
+        """
+        t = set([k for k,_ in self.relations.items()])
         s = set([c[0] for c in self.categ])
         s = s.union(t)
         s = s.intersection(n)
         return s
     
-    def itercat(self):
-        """Returns an iterator of the categories of the object and a 
-        list of the values."""
-        cat = [k for k,_ in self.categ]
-        val = [u for _,u in self.categ]
-        return (iter(cat), val)
+    def get_cat(self):
+        """Returns a dictionary of the categories of the object and
+        their 'u' values.
+        """
+        cat = {k:v for k,v in self.categ}
+        return cat
+    
+    def get_rel(self, rel):
+        """Returns a dictionary of the objects that hold an input type
+        of relation and a list of their 'u' values.
+        """
+        if rel in self.relations:
+            return {k:v for k,v in self.relations[rel]}
+        else:
+            return None
     
     def __str__(self):
         s = "\n<individual '" + self.name + "'>"
@@ -387,7 +400,7 @@ class Proof(object):
             # Check the properties/classes an obj belongs to
             for n, const in enumerate(args):
                 if const in ag.individuals:
-                    memb = ag.individuals[const].itercat()
+                    memb = ag.individuals[const].get_cat()
                 else:
                     return
                 var_name = self.var_order[n]
@@ -630,33 +643,33 @@ class Particle(object):
         if key[-1] == 101:
             result = None
             if len(self.pred) == 3:
-                # Check mapping of a set/entity to an other set/entity.
-                check_func = self.pred[0]
-                must_be = self.pred[2]                
-                if '$' in self.pred[1][1]:
-                    # FIX THIS
-                    #
-                    # It's a relationship between a var obj and a set obj.
-                    subject = proof.assigned[self.pred[1][0]][0]
-                    obj = self.pred[1][1]
+                # Check mapping of a set/entity to an other set/entity.                
+                check_func = self.pred[0]         
+                if '$' in self.pred[1][1]:                    
+                    var = self.pred[1][0]
+                    obj, u = self.pred[1][1].split(',u')
+                    uval = float(u[1:])                    
+                    subject = proof.assigned[var][0]
                 else:
-                    # It's a relationship between two var objs
                     var1, u = self.pred[1][1].split(',u')
+                    uval = float(u[1:])
                     var2 = self.pred[1][0]
                     subject = proof.assigned[var2][0]
                     obj = proof.assigned[var1][0]
-
-                # MUST CHECK u VALUE below
-                #
+                relation = ag.individuals[subject].get_rel(check_func)
                 try:
-                    relation = ag.relations[subject][check_func]
+                    val = relation[obj]
                 except:
-                    result = False
+                    result = None
                 else:
-                    if must_be is True:
-                        result = True if obj in relation else False
+                    if u[0] == '=' and val == uval:
+                        result = True
+                    elif u[0] == '>' and val > uval:
+                        result = True
+                    elif u[0] == '<' and val < uval:
+                        result = True
                     else:
-                        result = False if obj in relation else True
+                        result = False
                 return result
             else:
                 # Check membership to a set of an entity.
@@ -664,20 +677,19 @@ class Particle(object):
                 categs = proof.assigned[var][1]
                 check_set = self.pred[0]
                 uval = float(u[1:])
-                # If is True, then the object belong sto the set.
+                # If is True, then the object belongs to the set.
                 # Else, must be False, and the object must not belong.
-                for i, cat in enumerate(categs[0]):
-                    if cat in check_set:
-                        if u[0] == '=' and uval == categs[1][i]:
-                            # Must be exactly that number to be True
-                            result = True
-                        elif u[0] == '>' and uval > categs[1][i]:
-                            # Must be bigger than to be True
-                            result = True
-                        elif u[0] == '<' and uval == categs[1][i]:
-                            # Must be smaller than to be True
-                            result = True
-                result = False if result is None else True
+                result = None
+                if check_set in categs:
+                    val = categs[check_set]
+                    if u[0] == '=' and uval == val:
+                        result = True
+                    elif u[0] == '>' and uval > val:
+                        result = True
+                    elif u[0] == '<' and uval == val:
+                        result = True
+                    else:
+                        result = False
             return result
         if key[-1] == 100 or key[-1] == 103 or key[-1] == 105:
             # marked for declaration
@@ -686,15 +698,15 @@ class Particle(object):
             pred = list(self.pred)
             if type(pred[1]) is tuple:
                 if '$' in pred[1][1]:
-                    # FIX THIS
-                    #
-                    var, obj = pred[1][0], pred[1][1]
+                    obj, u = pred[1][1].split(',u')
+                    u = float(u[1:])
+                    var = pred[1][0]
                     var = proof.assigned[var][0]
-                    pred[1] = (var, obj)
+                    pred[1] = (var, (obj, u))
                 else:
+                    var1 = pred[1][0]
                     var2, u = pred[1][1].split(',u')
                     u = float(u[1:])
-                    var1 = pred[1][0]
                     var2 = proof.assigned[var2][0]
                     var1 = proof.assigned[var1][0]
                     pred[1] = (var1, (var2, u))
@@ -765,7 +777,7 @@ if __name__ == '__main__':
     d1 = datetime.datetime.now()
     for form in ls:
         r.encode(form)
-    r.prove('$Lucy','$John')
+    r.prove('$Lucy','$Lucy')
     print '\n---------- RESULTS ----------'
     d2 = datetime.datetime.now()
     print (d2-d1)
@@ -774,4 +786,4 @@ if __name__ == '__main__':
         print 'Relations:', ind.relations
         print 'Categories:', ind.categ
     print
-    pprint.pprint(r.classes)
+    #pprint.pprint(r.classes)
