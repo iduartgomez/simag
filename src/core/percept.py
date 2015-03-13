@@ -28,6 +28,8 @@ import re
 import os
 import uuid
 
+from core.bms import BeliefRecord
+
 gl_res = []
 
 # ===================================================================#
@@ -142,8 +144,8 @@ class Representation(object):
                 raise AssertionError('Formula synthax is wrong.')
         else:
             # It's a formula, not a declaration/definition
-            proof = Proof(ori, comp, hier)
-            self.save_proof(proof)
+            formula = Formula(ori, comp, hier)
+            self.save_proof(formula)
 
     def declare(self, form):
         """Declares an object as a member of a class or the relationship
@@ -226,19 +228,19 @@ class Representation(object):
             if part.results is not None:
                     part.results = []        
         x.get_pred()
-        for name in gl_res:            
+        for name in gl_res:
             if name[0] in self.classes and \
-            proof not in self.classes[name[0]]['proofs']:
-                self.classes[name[0]]['proofs'].append(proof)
+            proof not in self.classes[name[0]]['tests']:
+                self.classes[name[0]]['tests'].append(proof)
             elif len(name) == 3:
                 new_class = Category(name[0])
                 new_class['type'] = 'relation'
-                new_class['proofs'].append(proof)
+                new_class['tests'].append(proof)
                 self.classes[name[0]] = new_class
             else:
                 new_class = Category(name[0])
                 new_class['type'] = 'class'
-                new_class['proofs'].append(proof)
+                new_class['tests'].append(proof)
                 self.classes[name[0]] = new_class
         n = set([x[0] for x in gl_res])
         del gl_res[:]
@@ -248,7 +250,7 @@ class Representation(object):
             proof(self, ind.name)
             tests = None
             for cat in common:
-                tests = self.classes[cat]['proofs']
+                tests = self.classes[cat]['tests']
             if tests:
                 for test in tests:
                     test(self, ind.name)
@@ -262,7 +264,7 @@ class Representation(object):
                 cats = cats + x
         tests = []
         for c in cats:
-            tests = tests + self.classes[c]['proofs']
+            tests = tests + self.classes[c]['tests']
         tests = set(tests)
         tests = list(tests)
         for test in tests:
@@ -366,7 +368,7 @@ class Category(dict):
         self['name'] = name
         self['superset'] = []
         self['subset'] = []
-        self['proofs'] = []
+        self['tests'] = []
 
     def infer(self):
         """Infers attributes of the class from it's members."""
@@ -378,21 +380,21 @@ class Category(dict):
 # ===================================================================#
 
 
-class Proof(object):
+class Formula(object):
     """Object to store a logic formula."""
     def __init__(self, ori, comp, hier):
         self.depth = 0
+        self.id = str(uuid.uuid4())        
         #self.vars = {}
         self.var_order = []
         self.particles = []
         self.make_parts(ori, comp, hier)
         self.connect_parts()
-        self.depth = None
-    
+
     def __call__(self, ag, *args):
-        #print('----- NEW TEST -----')
         if len(self.var_order) == len(args):
             # Clean up previous results.
+            self.product = None
             self.assigned = {}
             for part in self.particles:
                 if part.results is not None:
@@ -406,6 +408,7 @@ class Proof(object):
                 var_name = self.var_order[n]
                 # Assign an entity to a variable by order.
                 self.assigned[var_name] = [const, memb]
+            self.product = BeliefRecord(self)
             self.particles[-1].resolve(self, ag, key=[0])
         else:
             return
@@ -436,6 +439,8 @@ class Proof(object):
         self.particles = particles
         for p in self.particles:
             p.connect(self.particles)
+        for p in self.particles:
+            p.pID = None
 
     def new_test(self, form, depth, parent, part_id, syb):
 
@@ -476,7 +481,7 @@ class Proof(object):
             cond = 'and'
             self.particles.append(Particle(cond, depth, part_id, parent, syb))
         elif any(x in form for x in [':forall:', ':exists:']):
-            # Only universal quantifier is supported right now,
+            # Only universal quantifiers are supported right now,
             # so the quantity is irrelevant.
             form = form.split(':')
             cond = 'check_var'
@@ -490,7 +495,8 @@ class Proof(object):
         elif '[' in form:
             cond = 'predicate'
             form = tuple(break_pred(form))
-            self.particles.append(Particle(cond, depth, part_id, parent, syb, form))
+            self.particles.append(Particle(cond, depth, part_id, \
+                                           parent, syb, form))
 
 
 class Particle(object):
@@ -653,8 +659,8 @@ class Particle(object):
                 else:
                     var1, u = self.pred[1][1].split(',u')
                     uval = float(u[1:])
-                    var2 = self.pred[1][0]
-                    subject = proof.assigned[var2][0]
+                    var = self.pred[1][0]
+                    subject = proof.assigned[var][0]
                     obj = proof.assigned[var1][0]
                 relation = ag.individuals[subject].get_rel(check_func)
                 try:
@@ -670,7 +676,10 @@ class Particle(object):
                         result = True
                     else:
                         result = False
-                return result
+                if result is True:
+                    obj = obj + ',u=' + str(uval)
+                    s = '<' + check_func + '['+subject+';' + obj + ']>'
+                    proof.product.prev_blf(s)
             else:
                 # Check membership to a set of an entity.
                 var, u = self.pred[1].split(',u')
@@ -690,6 +699,10 @@ class Particle(object):
                         result = True
                     else:
                         result = False
+                if result is True:
+                    sbj = proof.assigned[var][0]
+                    s = check_set + '[' + sbj + ',u=' + str(uval) + ']'
+                    proof.product.prev_blf(s)
             return result
         if key[-1] == 100 or key[-1] == 103 or key[-1] == 105:
             # marked for declaration
@@ -711,12 +724,14 @@ class Particle(object):
                     var1 = proof.assigned[var1][0]
                     pred[1] = (var1, (var2, u))
                 ag.up_attr(pred, key=1)
+                proof.product.add(pred)
             else:
                 var, u = self.pred[1].split(',u')
                 u = float(u[1:])
                 pred[1] = proof.assigned[var][0]
                 pred = ((pred[0], u), pred[1])
                 ag.up_attr(pred)
+                proof.product.add(pred)
 
     def get_pred(self, k=0, *args):
         conds = ['implies']
@@ -777,7 +792,7 @@ if __name__ == '__main__':
     d1 = datetime.datetime.now()
     for form in ls:
         r.encode(form)
-    r.prove('$Lucy','$Lucy')
+    r.prove('$Lucy','$John')
     print '\n---------- RESULTS ----------'
     d2 = datetime.datetime.now()
     print (d2-d1)
