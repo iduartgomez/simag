@@ -28,7 +28,7 @@ import re
 import os
 import uuid
 
-from core.bms import BeliefRecord
+from core.bms import BmsContainer
 
 gl_res = []
 
@@ -55,6 +55,7 @@ class Representation(object):
     def __init__(self):
         self.individuals = {}
         self.classes = {}
+        self.bmsContainer = BmsContainer()
 
     def encode(self, formula):
         comp = []
@@ -165,34 +166,41 @@ class Representation(object):
         
         Declarations of mapping can happen between entities, classes, 
         or between an entity and a class (ie. <loves[$Lucy, cats]>).
-        """
+        """        
+        form = form.strip()
         rgx_ob = re.compile(r'\b(.*?)\]')
-        set_ = rgx_ob.findall(form)
-        set_ = set_[0].split('[')
-        if ';' in set_[1]:
-            set_[1] = set_[1].split(';')
+        sets = rgx_ob.findall(form)
+        sets = sets[0].split('[')
+        if ';' in sets[1]:
+            sets[1] = sets[1].split(';')
         if '<' in form:
             # Is a function declaration > implies an mapping
             # between an object (or a set) and other object (or set).
-            assert (type(set_[1]) == list), \
+            assert (type(sets[1]) == list), \
                     'A function/map needs subject and object'
-            u = set_[1][1].split(',u=')            
+            u = sets[1][1].split(',u=')
             u[1] = float(u[1])
-            x = set_[1][0], tuple(u)
-            set_ = set_[0], x
-            self.up_attr(set_, key=1)
+            x = sets[1][0], tuple(u)
+            sets = sets[0], x
+            self.up_attr(sets, key=1)            
+            s = '<' + sets[0] + '[' + sets[1][0] + ';' + u[0] + ',u=' + \
+                str(u[1]) + ']>'
+            self.bmsContainer.add(s, True)
         else:
             # Is a membership declaration -> the object belongs 
             # to a set of objects.
-            assert (type(set_[1]) != tuple), \
+            assert (type(sets[1]) != tuple), \
                     'Only one object can be declared as member of a set at once.'
-            assert ('$' in set_[1]), 'The object is not an unique entity.'
-            u = set_[1].split(',u=')
+            assert ('$' in sets[1]), 'The object is not an unique entity.'
+            u = sets[1].split(',u=')
             u[1] = float(u[1])
-            set_ = (set_[0], u[1]), u[0]
-            self.up_attr(set_)
+            sets = (sets[0], u[1]), u[0]
+            self.up_attr(sets)
+            s = sets[0][0] + '[' + sets[1] + ',u=' + str(u[1]) + ']'
+            self.bmsContainer.add(s, True)
 
     def up_attr(self, pred, key=0):
+        # It's a membership declaration.
         if key == 0:
             subject = pred[1]
             categ = pred[0]
@@ -206,20 +214,39 @@ class Representation(object):
                 new_class = Category(categ[0])
                 new_class['type'] = 'class'
                 self.classes[categ[0]] = new_class
+        # It's a function declaration between two objs/classes.
         elif key == 1:
             relation = pred[0]
             subject = pred[1][0]
             obj = pred[1][1]
-            if subject not in self.individuals:
-                ind = Individual(subject)
-                ind.relations[relation] = [obj]
-                self.individuals[subject] = ind                
-            elif relation not in self.individuals[subject].relations:
-                ind = self.individuals[subject]
-                ind.relations[relation] = [obj]
-            elif obj not in self.individuals[subject].relations[relation]:
-                ind = self.individuals[subject]
-                ind.relations[relation].append(obj)
+            #It's a func between an object and other obj/class.
+            if '$' in subject:
+                if subject not in self.individuals:
+                    ind = Individual(subject)
+                    ind.relations[relation] = [obj]
+                    self.individuals[subject] = ind                
+                elif relation not in self.individuals[subject].relations:
+                    ind = self.individuals[subject]
+                    ind.relations[relation] = [obj]
+                elif obj not in self.individuals[subject].relations[relation]:
+                    ind = self.individuals[subject]
+                    ind.relations[relation].append(obj)
+            #It's a func between a class and other class/obj.
+            else:
+                if subject not in self.classes:
+                    categ = Category(subject)
+                    categ[relation] = [obj]
+                    categ['type'] = 'relation'
+                    self.classes[subject] = categ
+                elif relation not in self.classes[subject]:
+                    self.classes[subject][relation] = [obj]
+                else:
+                    x  = self.classes[subject].iter_rel(relation)
+                    if obj[0] not in x:
+                        self.classes[subject][relation].append(obj)
+                    else:
+                        idx = x.index(obj[0])
+                        self.classes[subject][relation][idx] = obj
 
     def save_proof(self, proof):
         for part in proof.particles:
@@ -366,10 +393,11 @@ class Category(dict):
     def __init__(self, name):
         self['id'] = str(uuid.uuid4())
         self['name'] = name
-        self['superset'] = []
-        self['subset'] = []
         self['tests'] = []
-
+    
+    def iter_rel(self, rel):
+        return [x for (x, _) in self[rel]]
+    
     def infer(self):
         """Infers attributes of the class from it's members."""
         pass
@@ -408,7 +436,7 @@ class Formula(object):
                 var_name = self.var_order[n]
                 # Assign an entity to a variable by order.
                 self.assigned[var_name] = [const, memb]
-            self.product = BeliefRecord(self)
+            ag.bmsContainer.start_reg(self)
             self.particles[-1].resolve(self, ag, key=[0])
         else:
             return
@@ -679,7 +707,7 @@ class Particle(object):
                 if result is True:
                     obj = obj + ',u=' + str(uval)
                     s = '<' + check_func + '['+subject+';' + obj + ']>'
-                    proof.product.prev_blf(s)
+                    ag.bmsContainer.prev_blf(s)
             else:
                 # Check membership to a set of an entity.
                 var, u = self.pred[1].split(',u')
@@ -702,9 +730,9 @@ class Particle(object):
                 if result is True:
                     sbj = proof.assigned[var][0]
                     s = check_set + '[' + sbj + ',u=' + str(uval) + ']'
-                    proof.product.prev_blf(s)
+                    ag.bmsContainer.prev_blf(s)
             return result
-        if key[-1] == 100 or key[-1] == 103 or key[-1] == 105:
+        elif key[-1] != 101:
             # marked for declaration
             # subtitute var(s) for object(s) name(s)
             # and pass to agent for updating
@@ -724,14 +752,14 @@ class Particle(object):
                     var1 = proof.assigned[var1][0]
                     pred[1] = (var1, (var2, u))
                 ag.up_attr(pred, key=1)
-                proof.product.add(pred)
+                ag.bmsContainer.add(pred)
             else:
                 var, u = self.pred[1].split(',u')
                 u = float(u[1:])
                 pred[1] = proof.assigned[var][0]
                 pred = ((pred[0], u), pred[1])
                 ag.up_attr(pred)
-                proof.product.add(pred)
+                ag.bmsContainer.add(pred)
 
     def get_pred(self, k=0, *args):
         conds = ['implies']
@@ -801,4 +829,4 @@ if __name__ == '__main__':
         print 'Relations:', ind.relations
         print 'Categories:', ind.categ
     print
-    #pprint.pprint(r.classes)
+    pprint.pprint(r.classes)

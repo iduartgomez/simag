@@ -1,15 +1,8 @@
-professor[$Lucy,u=1] 
+professor[$Lucy,u=1]
 dean[$John,u=1]
-sister[$Lucy,u=1]
-student[$Bill,u=1]
-<criticize[$Lucy;$John,u=1]>
-<sister[$Lucy;$Bill,u=1]>
-<takes[$Bill;$analysis,u=0]>
-person[$John,u=1]
-:forall:x: (professor[x,u=1] => person[x,u=1])
 :forall:x: (dean[x,u=1] => professor[x,u=1])
-:forall:x: (student[x,u=1] => smart[x,u=1])
+:forall:x: (professor[x,u=1] => person[x,u=1])
+<friend[$Lucy;$John,u=1]>
 :forall:x;y: (professor[x,u=1] && dean[y,u=1] => <friend[x;y,u=1]> || <knows[x;y,u=0]>)
+<criticize[$Lucy;$John,u=1]>
 :forall:x;y: (person[x,u=1] && person[y,u=1] && <criticize[x;y,u=1]> => <friend[y;x,u=0]>)
-:forall:x: (student[x,u=1] && <takes[x;$analysis,u=0]> => <takes[x;$geometry,u=1]>)
-:forall:x;y: (<sister[x;$Bill,u=1]> && <sister[y;$Bill,u=1]> => <eq[x;y,u=1]>)
