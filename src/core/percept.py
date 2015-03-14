@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+
 """Main perception module, in this module exists the different classes
 that store data for the individual agents and serve as representations
 of the different objects and the relationships between them.
@@ -12,6 +13,7 @@ relationships for a given agent in a concrete time.
 member of it's own set.
 
 :class: Categories. The sets in which the agent can categorise objects.
+Also stores the types of relations an object can have.
 
 Support
 -------
@@ -19,7 +21,6 @@ Support
 connectives), that form a well-formed logic formula. These are rulesets 
 for cataloging objects into sets/classes, and the relationships between 
 these objects.
-
 """
 # ===================================================================#
 #   Imports and globals
@@ -28,7 +29,7 @@ import re
 import os
 import uuid
 
-from core.bms import BmsContainer
+from core.bms import BmsWrapper
 
 gl_res = []
 
@@ -50,12 +51,11 @@ class Representation(object):
         individuals -> Unique members (entities) of their own set/class.
                    Entities are denoted with a $ symbol followed by a name.
         classes -> Sets of objects that share a common property.
-
     """
     def __init__(self):
         self.individuals = {}
         self.classes = {}
-        self.bmsContainer = BmsContainer()
+        self.bmsWrapper = BmsWrapper(self)
 
     def encode(self, formula):
         comp = []
@@ -166,7 +166,7 @@ class Representation(object):
         
         Declarations of mapping can happen between entities, classes, 
         or between an entity and a class (ie. <loves[$Lucy, cats]>).
-        """        
+        """
         form = form.strip()
         rgx_ob = re.compile(r'\b(.*?)\]')
         sets = rgx_ob.findall(form)
@@ -181,11 +181,9 @@ class Representation(object):
             u = sets[1][1].split(',u=')
             u[1] = float(u[1])
             x = sets[1][0], tuple(u)
-            sets = sets[0], x
-            self.up_attr(sets, key=1)            
-            s = '<' + sets[0] + '[' + sets[1][0] + ';' + u[0] + ',u=' + \
-                str(u[1]) + ']>'
-            self.bmsContainer.add(s, True)
+            sets = [sets[0], x, 'map']            
+            self.bmsWrapper.add(sets, True)
+            self.up_attr(sets, key=1)
         else:
             # Is a membership declaration -> the object belongs 
             # to a set of objects.
@@ -194,10 +192,9 @@ class Representation(object):
             assert ('$' in sets[1]), 'The object is not an unique entity.'
             u = sets[1].split(',u=')
             u[1] = float(u[1])
-            sets = (sets[0], u[1]), u[0]
+            sets = (sets[0], u[1]), u[0]                        
+            self.bmsWrapper.add(sets, True)
             self.up_attr(sets)
-            s = sets[0][0] + '[' + sets[1] + ',u=' + str(u[1]) + ']'
-            self.bmsContainer.add(s, True)
 
     def up_attr(self, pred, key=0):
         # It's a membership declaration.
@@ -208,8 +205,14 @@ class Representation(object):
                 ind = Individual(subject)
                 ind.categ.append(categ)
                 self.individuals[subject] = ind
-            elif categ not in self.individuals[subject].categ:
+            elif categ[0] not in self.individuals[subject].categ:
                 self.individuals[subject].categ.append(categ)
+            else:
+                pass
+                #
+                # MUST CHECK IF IT EXISTS,
+                # THEN REPLACE VALUE
+                #
             if categ[0] not in self.classes:
                 new_class = Category(categ[0])
                 new_class['type'] = 'class'
@@ -218,35 +221,44 @@ class Representation(object):
         elif key == 1:
             relation = pred[0]
             subject = pred[1][0]
-            obj = pred[1][1]
+            obj = pred[1][1][0]
+            val = pred[1][1][1]
+            #
+            # MUST CHECK IF IT EXISTS,
+            # THEN REPLACE VALUE
+            #
             #It's a func between an object and other obj/class.
             if '$' in subject:
                 if subject not in self.individuals:
                     ind = Individual(subject)
-                    ind.relations[relation] = [obj]
+                    ind.relations[relation] = [(obj, val)]
                     self.individuals[subject] = ind                
                 elif relation not in self.individuals[subject].relations:
                     ind = self.individuals[subject]
-                    ind.relations[relation] = [obj]
+                    ind.relations[relation] = [(obj, val)]
                 elif obj not in self.individuals[subject].relations[relation]:
                     ind = self.individuals[subject]
-                    ind.relations[relation].append(obj)
+                    ind.relations[relation].append((obj, val))
+                if relation not in self.classes:
+                    categ = Category(relation)
+                    categ['type'] = 'relation'
+                    self.classes[relation] = categ
             #It's a func between a class and other class/obj.
             else:
                 if subject not in self.classes:
                     categ = Category(subject)
-                    categ[relation] = [obj]
+                    categ[relation] = [(obj, val)]
                     categ['type'] = 'relation'
                     self.classes[subject] = categ
                 elif relation not in self.classes[subject]:
-                    self.classes[subject][relation] = [obj]
+                    self.classes[subject][relation] = [(obj, val)]
                 else:
                     x  = self.classes[subject].iter_rel(relation)
-                    if obj[0] not in x:
-                        self.classes[subject][relation].append(obj)
+                    if obj not in x:
+                        self.classes[subject][relation].append((obj, val))
                     else:
-                        idx = x.index(obj[0])
-                        self.classes[subject][relation][idx] = obj
+                        idx = x.index(obj)
+                        self.classes[subject][relation][idx] = (obj, val)
 
     def save_proof(self, proof):
         for part in proof.particles:
@@ -281,7 +293,7 @@ class Representation(object):
             if tests:
                 for test in tests:
                     test(self, ind.name)
-    
+                    
     def prove(self, *args):
         cats = []
         for ind in args:
@@ -436,8 +448,9 @@ class Formula(object):
                 var_name = self.var_order[n]
                 # Assign an entity to a variable by order.
                 self.assigned[var_name] = [const, memb]
-            ag.bmsContainer.start_reg(self)
+            ag.bmsWrapper.start_reg(self)
             self.particles[-1].resolve(self, ag, key=[0])
+            ag.bmsWrapper.check()
         else:
             return
     
@@ -707,7 +720,7 @@ class Particle(object):
                 if result is True:
                     obj = obj + ',u=' + str(uval)
                     s = '<' + check_func + '['+subject+';' + obj + ']>'
-                    ag.bmsContainer.prev_blf(s)
+                    ag.bmsWrapper.prev_blf(s)
             else:
                 # Check membership to a set of an entity.
                 var, u = self.pred[1].split(',u')
@@ -730,7 +743,7 @@ class Particle(object):
                 if result is True:
                     sbj = proof.assigned[var][0]
                     s = check_set + '[' + sbj + ',u=' + str(uval) + ']'
-                    ag.bmsContainer.prev_blf(s)
+                    ag.bmsWrapper.prev_blf(s)
             return result
         elif key[-1] != 101:
             # marked for declaration
@@ -751,17 +764,21 @@ class Particle(object):
                     var2 = proof.assigned[var2][0]
                     var1 = proof.assigned[var1][0]
                     pred[1] = (var1, (var2, u))
+                ag.bmsWrapper.add(pred)
                 ag.up_attr(pred, key=1)
-                ag.bmsContainer.add(pred)
             else:
                 var, u = self.pred[1].split(',u')
                 u = float(u[1:])
                 pred[1] = proof.assigned[var][0]
                 pred = ((pred[0], u), pred[1])
+                ag.bmsWrapper.add(pred)
                 ag.up_attr(pred)
-                ag.bmsContainer.add(pred)
 
-    def get_pred(self, k=0, *args):
+    def get_pred(self, pos='left', k=0, *args):
+        if pos == 'left':
+            branch = 0
+        else:
+            branch = 1
         conds = ['implies']
         if k == 1:
             self.results.append(args[0])
@@ -771,18 +788,18 @@ class Particle(object):
                 k = 1
                 if self.pred not in gl_res:
                     gl_res.append(self.pred)
-                self.parent.get_pred(k, True)
+                self.parent.get_pred(pos, k, True)
             else:
-                self.next[0].get_pred(k)
+                self.next[branch].get_pred(pos, k)
         elif len(self.results) == 1 and self.cond not in conds:
             if self.cond == 'predicate':
                 k = 1
                 if self.pred not in gl_res:
                     gl_res.append(self.pred)
-                self.parent.get_pred(k, True)
+                self.parent.get_pred(pos, k, True)
             else:
-                self.next[1].get_pred(k)
-    
+                self.next[0].get_pred(pos, k)
+
     def __str__(self):
         if self.cond != 'predicate':
             s = '<operator ' + str(self.pID) + ' (depth:' \
@@ -829,4 +846,4 @@ if __name__ == '__main__':
         print 'Relations:', ind.relations
         print 'Categories:', ind.categ
     print
-    pprint.pprint(r.classes)
+    #pprint.pprint(r.classes)
