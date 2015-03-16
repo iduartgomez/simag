@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+
 """Main agent module, implements the different agent objects and all the
 supporting methods and classes.
 

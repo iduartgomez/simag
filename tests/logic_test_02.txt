@@ -4,10 +4,12 @@ dean[$John,u=1]
 :forall:x: (professor[x,u=1] => person[x,u=1])
 <friend[$Lucy;$John,u=1]>
 :forall:x;y: (professor[x,u=1] && dean[y,u=1] => <friend[x;y,u=1]> || <knows[x;y,u=0]>)
+#professor[$Lucy,u=0]
 <criticize[$Lucy;$John,u=1]>
+<friend[$John;$Lucy,u=1]>
 :forall:x;y: (person[x,u=1] && person[y,u=1] && <criticize[x;y,u=1]> => <friend[y;x,u=0]>)
-
-
+#
+#
 professor[$Lucy,u=1]
 dean[$John,u=1]
 sister[$Lucy,u=1]

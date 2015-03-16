@@ -26,14 +26,13 @@ class BmsWrapper(object):
     """
     class WrappDecl(object):
         def __init__(self, parent):
-            self.beliefs = []
             self.parent = parent
 
-        def remake(self):
-            sets = self.beliefs[0]
+        def remake(self, sets):
+            # SUBTITUTE symbol u= can be u< or u>
             if len(sets) == 3:
                 s = ['<', sets[0], '[', sets[1][0], ';', sets[1][1][0],
-                     ',u=', str(sets[1][1][0]), ']>']
+                     ',u=', str(sets[1][1][1]), ']>']
             else:
                 s = [sets[0][0], '[', sets[1], ',u=', str(sets[0][1]), ']']
             s = ''.join(s)
@@ -45,45 +44,56 @@ class BmsWrapper(object):
         self.container = {}
         self.ag = ag
 
-    def start_reg(self, form):
-        self.wrk_bel = BeliefRecord(form, self)
+    def register(self, form, stop=False):
+        if stop is True:
+            self.wrk_bel.save()
+        else:
+            self.wrk_bel = BeliefRecord(form, self)
 
-    def add(self, *args):            
-        if len(args) < 2:
-            self.wrk_bel.add(*args)
-        elif args[1] is True:
+    def add(self, *args):
+        if args[1] is True:
             self.wrk_bel = self.WrappDecl(self)
-            self.wrk_bel.beliefs.append(args[0])
-            self.check()
+            self.check(args[0])
 
     def prev_blf(self, *args):
         self.wrk_bel.prev_blf(*args)
     
-    def k_chain(self):
-        """Reconstructs a chain which represent the beliefs that 
-        produced an input belief for inconsistence fixing.
+    def k_chain(self, pred, pval):
+        """Reconstructs a chain which represent the beliefs that produced
+        an input belief.
         """
-        pass
+        # SUBTITUTE symbol u= can be u < or u >
+        rel, sbj, obj = pred[0], pred[1][0], pred[1][1][0]
+        opred = '<'+rel+'['+sbj+';'+obj+',u='+str(pval)+']>'
+        if self.container[opred]['form'] is 'SELF':
+            # the fact has changed from the initial predicate
+            pass
+        else:
+            pass
     
-    def check(self):
+    def check(self, pred):
         """Initialises the sequence to detect inconsistencies between new
         beliefs and old beliefs.
         """
-        for pred in self.wrk_bel.beliefs:
-            if len(pred) == 2 and pred[1] in self.ag.individuals:                
-                cat, val, sbj = pred[0][0], pred[0][1], pred[1]
-                categs = self.ag.individuals[sbj].get_cat()
-                if cat in categs and val != categs[cat]:
-                    print 'INCONSISTENCY', pred, categs
-            elif len(pred) == 3 and pred[0] in self.ag.classes:
-                rel, sbj, obj = pred[0], pred[1][0], pred[1][1][0]
-                val = pred[1][1][1]
-                if '$' in sbj and rel in self.ag.individuals[sbj].relations:
-                    rel = self.ag.individuals[sbj].get_rel(rel)
-                    print 'CHECKING FOR INCON', obj, rel[obj], val
-                    if obj in rel and val != rel[obj]:
-                        print 'INCONSISTENCY', pred
-        self.wrk_bel.remake()
+        # MUST CHECK u symbol, can be =, >, <
+        if len(pred) == 2 and pred[1] in self.ag.individuals:
+            cat, val, sbj = pred[0][0], pred[0][1], pred[1]
+            categs = self.ag.individuals[sbj].get_cat()
+            if cat in categs and val != categs[cat]:
+                print 'INCONSISTENCY', pred, categs
+            else:
+                self.wrk_bel.remake(pred)
+        elif len(pred) == 3 and pred[0] in self.ag.classes:
+            rel0, sbj, obj = pred[0], pred[1][0], pred[1][1][0]
+            val = pred[1][1][1]
+            if '$' in sbj and rel0 in self.ag.individuals[sbj].relations:
+                rel = self.ag.individuals[sbj].get_rel(rel0)
+                if obj in rel and val != rel[obj]:
+                    print 'INCONSISTENCY', '{'+obj+': '+str(val)+'}', rel
+                    self.wrk_bel.remake(pred)
+                    chk_const(self, pred, rel[obj])
+        elif len(pred) == 3:
+            self.wrk_bel.remake(pred)
 
 
 class BeliefRecord(object):
@@ -98,19 +108,15 @@ class BeliefRecord(object):
         self.beliefs = []
         self.prod = []
     
-    def add(self, s):
-        self.beliefs.append(s)
-    
-    def remake(self):
+    def remake(self, s):
         """Remakes the beliefs in a logic predicate form and stores them."""
-        for i, s in enumerate(self.beliefs):
-            if len(s) == 2:
-                pred = ''.join([s[0][0],'[',s[1],',u=',str(s[0][1]),']'])            
-            else:
-                pred = ''.join(['<',s[0],'[',s[1][0],';',s[1][1][0],\
-                                ',u=',str(s[1][1][1]),']>'])
-            self.beliefs[i] = pred
-        self.save()
+        # SUBTITUTE symbol u= can be u< or u>
+        if len(s) == 2:
+            pred = ''.join([s[0][0],'[',s[1],',u=',str(s[0][1]),']'])            
+        else:
+            pred = ''.join(['<',s[0],'[',s[1][0],';',s[1][1][0],\
+                            ',u=',str(s[1][1][1]),']>'])
+        self.beliefs.append(pred)
 
     def prev_blf(self, belief):
         """The belief may be a product of past beliefs, the possibility
@@ -137,7 +143,7 @@ class BeliefRecord(object):
 # ===================================================================#
 
 
-def check_consistency():
-    """Check if a new belief is consistent with all past beliefs."""
-    pass
+def chk_const(wrapper, *args):
+    """Check what predicates are the cause of the inconsistency."""
+    p_known = wrapper.k_chain(*args)
     

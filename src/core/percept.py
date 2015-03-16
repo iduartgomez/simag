@@ -142,7 +142,7 @@ class Representation(object):
             if '[' in par_form and len(comp) == 1:
                 self.declare(par_form)
             else:
-                raise AssertionError('Formula synthax is wrong.')
+                raise AssertionError('Formula synthax is incorrect.')
         else:
             # It's a formula, not a declaration/definition
             formula = Formula(ori, comp, hier)
@@ -181,7 +181,7 @@ class Representation(object):
             u = sets[1][1].split(',u=')
             u[1] = float(u[1])
             x = sets[1][0], tuple(u)
-            sets = [sets[0], x, 'map']            
+            sets = [sets[0], x, 'map']
             self.bmsWrapper.add(sets, True)
             self.up_attr(sets, key=1)
         else:
@@ -192,7 +192,7 @@ class Representation(object):
             assert ('$' in sets[1]), 'The object is not an unique entity.'
             u = sets[1].split(',u=')
             u[1] = float(u[1])
-            sets = (sets[0], u[1]), u[0]                        
+            sets = (sets[0], u[1]), u[0]
             self.bmsWrapper.add(sets, True)
             self.up_attr(sets)
 
@@ -205,14 +205,13 @@ class Representation(object):
                 ind = Individual(subject)
                 ind.categ.append(categ)
                 self.individuals[subject] = ind
-            elif categ[0] not in self.individuals[subject].categ:
-                self.individuals[subject].categ.append(categ)
             else:
-                pass
-                #
-                # MUST CHECK IF IT EXISTS,
-                # THEN REPLACE VALUE
-                #
+                ctg_rec = [x for (x,_) in self.individuals[subject].categ]
+                if categ[0] not in ctg_rec:
+                    self.individuals[subject].categ.append(categ)
+                else:
+                    idx = ctg_rec.index(categ[0])
+                    self.individuals[subject].categ[idx] = categ
             if categ[0] not in self.classes:
                 new_class = Category(categ[0])
                 new_class['type'] = 'class'
@@ -223,10 +222,6 @@ class Representation(object):
             subject = pred[1][0]
             obj = pred[1][1][0]
             val = pred[1][1][1]
-            #
-            # MUST CHECK IF IT EXISTS,
-            # THEN REPLACE VALUE
-            #
             #It's a func between an object and other obj/class.
             if '$' in subject:
                 if subject not in self.individuals:
@@ -236,9 +231,15 @@ class Representation(object):
                 elif relation not in self.individuals[subject].relations:
                     ind = self.individuals[subject]
                     ind.relations[relation] = [(obj, val)]
-                elif obj not in self.individuals[subject].relations[relation]:
+                else:
+                    rel = self.individuals[subject].relations[relation]
+                    rel = [x for (x,_) in rel]
                     ind = self.individuals[subject]
-                    ind.relations[relation].append((obj, val))
+                    if obj not in rel:
+                        ind.relations[relation].append((obj, val))
+                    else:
+                        idx = rel.index(obj)
+                        ind.relations[relation][idx] = (obj, val)
                 if relation not in self.classes:
                     categ = Category(relation)
                     categ['type'] = 'relation'
@@ -386,7 +387,7 @@ class Individual(object):
             return None
     
     def __str__(self):
-        s = "\n<individual '" + self.name + "'>"
+        s = "\n<individual '" + self.name + "' w/ id: " + self.id + ">"
         return s
 
 
@@ -448,9 +449,9 @@ class Formula(object):
                 var_name = self.var_order[n]
                 # Assign an entity to a variable by order.
                 self.assigned[var_name] = [const, memb]
-            ag.bmsWrapper.start_reg(self)
+            ag.bmsWrapper.register(self)
             self.particles[-1].resolve(self, ag, key=[0])
-            ag.bmsWrapper.check()
+            ag.bmsWrapper.register(self, stop=True)
         else:
             return
     
@@ -718,7 +719,7 @@ class Particle(object):
                     else:
                         result = False
                 if result is True:
-                    obj = obj + ',u=' + str(uval)
+                    obj = obj + ',u' + u[0] + str(uval)
                     s = '<' + check_func + '['+subject+';' + obj + ']>'
                     ag.bmsWrapper.prev_blf(s)
             else:
@@ -742,7 +743,7 @@ class Particle(object):
                         result = False
                 if result is True:
                     sbj = proof.assigned[var][0]
-                    s = check_set + '[' + sbj + ',u=' + str(uval) + ']'
+                    s = check_set + '[' + sbj + ',u' + u[0] + str(uval) + ']'
                     ag.bmsWrapper.prev_blf(s)
             return result
         elif key[-1] != 101:
@@ -753,25 +754,24 @@ class Particle(object):
             if type(pred[1]) is tuple:
                 if '$' in pred[1][1]:
                     obj, u = pred[1][1].split(',u')
-                    u = float(u[1:])
                     var = pred[1][0]
                     var = proof.assigned[var][0]
-                    pred[1] = (var, (obj, u))
+                    pred[1] = (var, [obj, u])
                 else:
                     var1 = pred[1][0]
                     var2, u = pred[1][1].split(',u')
-                    u = float(u[1:])
                     var2 = proof.assigned[var2][0]
                     var1 = proof.assigned[var1][0]
-                    pred[1] = (var1, (var2, u))
-                ag.bmsWrapper.add(pred)
+                    pred[1] = (var1, [var2, u])
+                ag.bmsWrapper.check(pred)
+                pred[1][1][1] = float(u[1:])
                 ag.up_attr(pred, key=1)
             else:
                 var, u = self.pred[1].split(',u')
-                u = float(u[1:])
                 pred[1] = proof.assigned[var][0]
-                pred = ((pred[0], u), pred[1])
-                ag.bmsWrapper.add(pred)
+                pred = ([pred[0], u], pred[1])
+                ag.bmsWrapper.check(pred)
+                pred[0][1] = float(u[1:])
                 ag.up_attr(pred)
 
     def get_pred(self, pos='left', k=0, *args):
