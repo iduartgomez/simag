@@ -191,8 +191,8 @@ class Representation(object):
             u[1] = float(u[1])
             x = sets[1][0], tuple(u)
             sets = [sets[0], x, 'map']
-            self.up_rel(sets)
             self.bmsWrapper.add(sets, True)
+            self.up_rel(sets)
         else:
             # Is a membership declaration -> the object belongs 
             # to a set of objects.
@@ -202,8 +202,11 @@ class Representation(object):
             u = sets[1].split(',u=')
             u[1] = float(u[1])
             sets = sets[0], (u[0], u[1])
-            self.up_memb(sets)
             self.bmsWrapper.add(sets, True)
+            check = self.bmsWrapper.add(sets, True)
+            self.up_memb(sets)
+            if check is False:
+                self.bmsWrapper.add(sets, True)
 
     def up_memb(self, pred):
         # It's a membership declaration.
@@ -223,7 +226,7 @@ class Representation(object):
             new_class = Category(categ)
             new_class['type'] = 'class'
             self.classes[categ] = new_class
-            
+
     def up_rel(self, pred):
         # It's a function declaration between two objs/classes.
         relation = pred[0]
@@ -302,14 +305,15 @@ class Representation(object):
             if tests:
                 for test in tests:
                     test(self, ind.name)
-                    
+
     def prove(self, *args):
         cats = []
         for ind in args:
             if ind in self.individuals:
                 c = self.individuals[ind].get_cat()
-                x = [k for k,_ in c.items()]
-                cats = cats + x
+                i = [k for k,_ in c.items()]
+                j = [k for k,_ in self.individuals[ind].relations.items()]
+                cats = cats + i + j
         tests = []
         for c in cats:
             tests = tests + self.classes[c]['tests']
@@ -317,7 +321,10 @@ class Representation(object):
         tests = list(tests)
         for test in tests:
             test(self, *args)
-
+        # Tests are run twice, as the changes from the first run could
+        # have introduced inconsistencies which need to be found.
+        for test in tests:
+            test(self, *args)
 
 class Individual(object):
     """An individual is the unique member of it's own class.
@@ -786,10 +793,7 @@ class Particle(object):
                 ag.up_memb(pred)
 
     def get_pred(self, pos='left', k=0, *args):
-        if pos == 'left':
-            branch = 0
-        else:
-            branch = 1
+        branch = 0 if pos == 'left' else 1
         conds = ['implies']
         if k == 1:
             self.results.append(args[0])
@@ -809,15 +813,16 @@ class Particle(object):
                     gl_res.append(self.pred)
                 self.parent.get_pred(pos, k, True)
             else:
-                self.next[0].get_pred(pos, k)
+                x = 1 if pos == 'left' else 0
+                self.next[x].get_pred(pos, k)
 
     def __str__(self):
         if self.cond != 'predicate':
-            s = '<operator ' + str(self.pID) + ' (depth:' \
-            + str(self.depth) + ') "' + str(self.cond) + '">'
+            s = '<operator ' + ' (depth:' + str(self.depth) + ') "' \
+            + str(self.cond) + '">'
         else:
-            s = '<predicate ' + str(self.pID) + ' (depth:' \
-            + str(self.depth) + '): ' + str(self.pred) + '>'
+            s = '<predicate ' + ' (depth:' + str(self.depth) + '): ' \
+            + str(self.pred) + '>'
         return s
 
 
@@ -849,6 +854,7 @@ if __name__ == '__main__':
     for form in ls:
         r.tell(form)
     r.prove('$Lucy','$John')
+    r.tell('<friend[$Lucy;$John,u=1]>')
     print '\n---------- RESULTS ----------'
     d2 = datetime.datetime.now()
     print (d2-d1)
@@ -857,4 +863,6 @@ if __name__ == '__main__':
         print 'Relations:', ind.relations
         print 'Categories:', ind.categ
     print
+    pprint.pprint(r.bmsWrapper.container)
     #pprint.pprint(r.classes)
+    

@@ -56,24 +56,6 @@ class BmsWrapper(object):
 
     def prev_blf(self, *args):
         self.wrk_bel.prev_blf(*args)
-    
-    def k_chain(self, pred, pval):
-        """Reconstructs a chain which represent the beliefs that produced
-        an input belief.
-        
-        If the immediate past fact was product of previous logic formulae, 
-        unpacks the logic sequence to find the formula that produced 
-        the previous belief, which is now inconsistent.
-        """
-        rel, sbj, obj = pred[0], pred[1][0], pred[1][1][0]
-        opred = '<'+rel+'['+sbj+';'+obj+',u='+str(pval)+']>'
-        if self.container[opred]['form'] is 'SELF':
-            # The fact has changed from the initial predicate
-            # the initial fact being not True anymore.
-            pass
-        else:
-            # Unpack the logic sequence.
-            pass
 
     def check(self, pred):
         """Initialises the sequence to detect inconsistencies between new
@@ -84,24 +66,26 @@ class BmsWrapper(object):
                 cat, sbj = pred[0], pred[1][0]
                 val, op = float(pred[1][1][1:]), pred[1][1][0]
             else:
-                cat, val, sbj = pred[0], pred[1][1], pred[1][0]
+                cat, val, sbj = pred[0], float(pred[1][1]), pred[1][0]
                 op = '='
-            categs = self.ag.individuals[sbj].get_cat()
+            try:
+                categs = self.ag.individuals[sbj].get_cat()
+            except:
+                return False
             if cat in categs and val != categs[cat]:
                 # Check if there is an inconsistency.
                 if op is '>' and categs[cat] > val:
-                    self.wrk_bel.remake(pred)
+                    pass
                 elif op is '<' and categs[cat] < val:
-                    self.wrk_bel.remake(pred)
+                    pass
                 else:
-                    print 'INCONSISTENCY', pred, categs
+                    print 'INCONSISTENCY', pred, categs           
                     # Inconsitency found between values.
-            else:
-                self.wrk_bel.remake(pred)
+            self.wrk_bel.remake(pred)
         elif len(pred) == 3:
             rel0, sbj, obj = pred[0], pred[1][0], pred[1][1][0]
             if isinstance(pred[1][1][1], str):
-                val, op = pred[1][1][1][1:], pred[1][1][1][0]
+                val, op = float(pred[1][1][1][1:]), pred[1][1][1][0]
             else:
                 val, op = pred[1][1][1], '='
             if '$' in sbj and rel0 in self.ag.individuals[sbj].relations:
@@ -109,16 +93,18 @@ class BmsWrapper(object):
                 if obj in rel and val != rel[obj]:
                     # Check if there is an inconsistency.
                     if op is '>' and rel[obj] > val:
-                        self.wrk_bel.remake(pred)
+                        pass
                     elif op is '<' and rel[obj] < val:
-                        self.wrk_bel.remake(pred)
+                        pass
                     else:
-                        print 'INCONSISTENCY', '{'+obj+': '+str(val)+'}', rel
+                        print 'INCONSISTENCY', rel0 + ': {\''+obj+'\': ' \
+                        + str(val) + '}', rel
                         # Inconsitency found between values.
-                        self.wrk_bel.remake(pred)
                         chk_const(self, pred, rel[obj])
-                else:
-                    self.wrk_bel.remake(pred)
+            if not '$' in sbj:
+                # It's the relation between a class and other object(s)
+                pass
+            self.wrk_bel.remake(pred)
 
 class BeliefRecord(object):
     """Representation of how a belief become to existence.
@@ -134,13 +120,13 @@ class BeliefRecord(object):
     
     def remake(self, s):
         """Remakes the beliefs in a logic predicate form and stores them."""
-        # SUBTITUTE symbol u= can be u< or u>
         if len(s) == 2:
             symb, val = s[1][1][0], str(float(s[1][1][1:]))
             pred = ''.join([s[0],'[',s[1][0],',u',symb,val,']'])
         else:
+            symb, val = s[1][1][1][0], str(float(s[1][1][1][1:]))
             pred = ''.join(['<',s[0],'[',s[1][0],';',s[1][1][0],\
-                            ',u=',str(s[1][1][1]),']>'])
+                            ',u',symb,val,']>'])
         self.beliefs.append(pred)
 
     def prev_blf(self, belief):
@@ -168,7 +154,23 @@ class BeliefRecord(object):
 # ===================================================================#
 
 
-def chk_const(wrapper, *args):
+def chk_const(bms, pred, pval):
     """Check what predicates are the cause of the inconsistency."""
-    p_known = wrapper.k_chain(*args)
+    rel, sbj, obj = pred[0], pred[1][0], pred[1][1][0]
+    opred = '<'+rel+'['+sbj+';'+obj+',u='+str(pval)+']>'
+    if bms.container[opred]['form'] is 'SELF':
+        # The fact has changed from the initial predicate
+        # the initial fact being not True anymore.
+        pass
+    else:
+        # Unpack the logic sequence.
+        p_known = k_chain(bms, opred)
     
+def k_chain(bms, pred, form):
+    """Reconstructs a logic sequence which represent the beliefs that
+    produced an input belief.
+    """
+    while bms.container[pred]['prev'] is not 'SELF':
+        for ppred in bms.container[pred]['prev']:
+            pass
+            
