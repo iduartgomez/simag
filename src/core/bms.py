@@ -29,12 +29,11 @@ class BmsWrapper(object):
             self.parent = parent
 
         def remake(self, sets):
-            # SUBTITUTE symbol u= can be u< or u>
             if len(sets) == 3:
                 s = ['<', sets[0], '[', sets[1][0], ';', sets[1][1][0],
                      ',u=', str(sets[1][1][1]), ']>']
             else:
-                s = [sets[0][0], '[', sets[1], ',u=', str(sets[0][1]), ']']
+                s = [sets[0], '[', sets[1][0], ',u=', str(sets[1][1]), ']']
             s = ''.join(s)
             self.parent.container[s] = {'form': 'SELF',
                                         'prev': None,
@@ -61,40 +60,65 @@ class BmsWrapper(object):
     def k_chain(self, pred, pval):
         """Reconstructs a chain which represent the beliefs that produced
         an input belief.
+        
+        If the immediate past fact was product of previous logic formulae, 
+        unpacks the logic sequence to find the formula that produced 
+        the previous belief, which is now inconsistent.
         """
-        # SUBTITUTE symbol u= can be u < or u >
         rel, sbj, obj = pred[0], pred[1][0], pred[1][1][0]
         opred = '<'+rel+'['+sbj+';'+obj+',u='+str(pval)+']>'
         if self.container[opred]['form'] is 'SELF':
-            # the fact has changed from the initial predicate
+            # The fact has changed from the initial predicate
+            # the initial fact being not True anymore.
             pass
         else:
+            # Unpack the logic sequence.
             pass
-    
+
     def check(self, pred):
         """Initialises the sequence to detect inconsistencies between new
         beliefs and old beliefs.
         """
-        # MUST CHECK u symbol, can be =, >, <
-        if len(pred) == 2 and pred[1] in self.ag.individuals:
-            cat, val, sbj = pred[0][0], pred[0][1], pred[1]
+        if len(pred) == 2:
+            if isinstance(pred[1][1], str):
+                cat, sbj = pred[0], pred[1][0]
+                val, op = float(pred[1][1][1:]), pred[1][1][0]
+            else:
+                cat, val, sbj = pred[0], pred[1][1], pred[1][0]
+                op = '='
             categs = self.ag.individuals[sbj].get_cat()
             if cat in categs and val != categs[cat]:
-                print 'INCONSISTENCY', pred, categs
+                # Check if there is an inconsistency.
+                if op is '>' and categs[cat] > val:
+                    self.wrk_bel.remake(pred)
+                elif op is '<' and categs[cat] < val:
+                    self.wrk_bel.remake(pred)
+                else:
+                    print 'INCONSISTENCY', pred, categs
+                    # Inconsitency found between values.
             else:
                 self.wrk_bel.remake(pred)
-        elif len(pred) == 3 and pred[0] in self.ag.classes:
+        elif len(pred) == 3:
             rel0, sbj, obj = pred[0], pred[1][0], pred[1][1][0]
-            val = pred[1][1][1]
+            if isinstance(pred[1][1][1], str):
+                val, op = pred[1][1][1][1:], pred[1][1][1][0]
+            else:
+                val, op = pred[1][1][1], '='
             if '$' in sbj and rel0 in self.ag.individuals[sbj].relations:
                 rel = self.ag.individuals[sbj].get_rel(rel0)
                 if obj in rel and val != rel[obj]:
-                    print 'INCONSISTENCY', '{'+obj+': '+str(val)+'}', rel
+                    # Check if there is an inconsistency.
+                    if op is '>' and rel[obj] > val:
+                        self.wrk_bel.remake(pred)
+                    elif op is '<' and rel[obj] < val:
+                        self.wrk_bel.remake(pred)
+                    else:
+                        print 'INCONSISTENCY', '{'+obj+': '+str(val)+'}', rel
+                        # Inconsitency found between values.
+                        self.wrk_bel.remake(pred)
+                        chk_const(self, pred, rel[obj])
+                else:
                     self.wrk_bel.remake(pred)
-                    chk_const(self, pred, rel[obj])
-        elif len(pred) == 3:
-            self.wrk_bel.remake(pred)
-
 
 class BeliefRecord(object):
     """Representation of how a belief become to existence.
@@ -112,7 +136,8 @@ class BeliefRecord(object):
         """Remakes the beliefs in a logic predicate form and stores them."""
         # SUBTITUTE symbol u= can be u< or u>
         if len(s) == 2:
-            pred = ''.join([s[0][0],'[',s[1],',u=',str(s[0][1]),']'])            
+            symb, val = s[1][1][0], str(float(s[1][1][1:]))
+            pred = ''.join([s[0],'[',s[1][0],',u',symb,val,']'])
         else:
             pred = ''.join(['<',s[0],'[',s[1][0],';',s[1][1][0],\
                             ',u=',str(s[1][1][1]),']>'])

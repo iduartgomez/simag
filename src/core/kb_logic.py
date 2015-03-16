@@ -1,22 +1,23 @@
 # -*- coding: utf-8 -*-
 
-"""Main perception module, in this module exists the different classes
-that store data for the individual agents and serve as representations
-of the different objects and the relationships between them.
+"""Main knowledge-base logic module, in this module exists the different 
+classes that transform and store the data for the individual agents and 
+serve as representations of the different objects and the relationships 
+between them.
 
 Main
 ----
 :class: Representation. Main class, stores all the representations and
 relationships for a given agent in a concrete time.
 
-:class: Individual. Represents a singular entity which is the unique
+:class: Individual. Represents a singular entity, which is the unique
 member of it's own set.
 
-:class: Categories. The sets in which the agent can categorise objects.
+:class: Categories. The sets in which the agent can classify objects.
 Also stores the types of relations an object can have.
 
-Support
--------
+Support classes and methods
+---------------------------
 :class: Proof. Stores a serie of logical atoms (be them predicates or
 connectives), that form a well-formed logic formula. These are rulesets 
 for cataloging objects into sets/classes, and the relationships between 
@@ -57,7 +58,15 @@ class Representation(object):
         self.classes = {}
         self.bmsWrapper = BmsWrapper(self)
 
-    def encode(self, formula):
+    def tell(self, formula):
+        """Parses a logic sentence into an usable formula and stores it into
+        the internal representation alogn with the corresponding classes.
+        
+        Accepts both declarative sentences, logic predicates of the form
+        'Lucy is a professor' (check declare method for more info), and
+        implicative sentences of the form 'All the professors are persons'
+        (check the 'formula' class for more info).
+        """
         comp = []
         hier = {}
         rgx_par = re.compile(r'\{(.*?)\}')
@@ -182,8 +191,8 @@ class Representation(object):
             u[1] = float(u[1])
             x = sets[1][0], tuple(u)
             sets = [sets[0], x, 'map']
+            self.up_rel(sets)
             self.bmsWrapper.add(sets, True)
-            self.up_attr(sets, key=1)
         else:
             # Is a membership declaration -> the object belongs 
             # to a set of objects.
@@ -192,74 +201,73 @@ class Representation(object):
             assert ('$' in sets[1]), 'The object is not an unique entity.'
             u = sets[1].split(',u=')
             u[1] = float(u[1])
-            sets = (sets[0], u[1]), u[0]
+            sets = sets[0], (u[0], u[1])
+            self.up_memb(sets)
             self.bmsWrapper.add(sets, True)
-            self.up_attr(sets)
 
-    def up_attr(self, pred, key=0):
+    def up_memb(self, pred):
         # It's a membership declaration.
-        if key == 0:
-            subject = pred[1]
-            categ = pred[0]
+        categ, subject, val = pred[0], pred[1][0], pred[1][1]
+        if subject not in self.individuals:
+            ind = Individual(subject)
+            ind.categ.append((categ, val))
+            self.individuals[subject] = ind
+        else:
+            ctg_rec = [x for (x,_) in self.individuals[subject].categ]
+            if categ not in ctg_rec:
+                self.individuals[subject].categ.append((categ, val))
+            else:
+                idx = ctg_rec.index(categ)
+                self.individuals[subject].categ[idx] = (categ, val)
+        if categ not in self.classes:
+            new_class = Category(categ)
+            new_class['type'] = 'class'
+            self.classes[categ] = new_class
+            
+    def up_rel(self, pred):
+        # It's a function declaration between two objs/classes.
+        relation = pred[0]
+        subject = pred[1][0]
+        obj = pred[1][1][0]
+        val = pred[1][1][1]
+        #It's a func between an object and other obj/class.
+        if '$' in subject:
             if subject not in self.individuals:
                 ind = Individual(subject)
-                ind.categ.append(categ)
-                self.individuals[subject] = ind
+                ind.relations[relation] = [(obj, val)]
+                self.individuals[subject] = ind                
+            elif relation not in self.individuals[subject].relations:
+                ind = self.individuals[subject]
+                ind.relations[relation] = [(obj, val)]
             else:
-                ctg_rec = [x for (x,_) in self.individuals[subject].categ]
-                if categ[0] not in ctg_rec:
-                    self.individuals[subject].categ.append(categ)
+                rel = self.individuals[subject].relations[relation]
+                rel = [x for (x,_) in rel]
+                ind = self.individuals[subject]
+                if obj not in rel:
+                    ind.relations[relation].append((obj, val))
                 else:
-                    idx = ctg_rec.index(categ[0])
-                    self.individuals[subject].categ[idx] = categ
-            if categ[0] not in self.classes:
-                new_class = Category(categ[0])
-                new_class['type'] = 'class'
-                self.classes[categ[0]] = new_class
-        # It's a function declaration between two objs/classes.
-        elif key == 1:
-            relation = pred[0]
-            subject = pred[1][0]
-            obj = pred[1][1][0]
-            val = pred[1][1][1]
-            #It's a func between an object and other obj/class.
-            if '$' in subject:
-                if subject not in self.individuals:
-                    ind = Individual(subject)
-                    ind.relations[relation] = [(obj, val)]
-                    self.individuals[subject] = ind                
-                elif relation not in self.individuals[subject].relations:
-                    ind = self.individuals[subject]
-                    ind.relations[relation] = [(obj, val)]
-                else:
-                    rel = self.individuals[subject].relations[relation]
-                    rel = [x for (x,_) in rel]
-                    ind = self.individuals[subject]
-                    if obj not in rel:
-                        ind.relations[relation].append((obj, val))
-                    else:
-                        idx = rel.index(obj)
-                        ind.relations[relation][idx] = (obj, val)
-                if relation not in self.classes:
-                    categ = Category(relation)
-                    categ['type'] = 'relation'
-                    self.classes[relation] = categ
-            #It's a func between a class and other class/obj.
+                    idx = rel.index(obj)
+                    ind.relations[relation][idx] = (obj, val)
+            if relation not in self.classes:
+                categ = Category(relation)
+                categ['type'] = 'relation'
+                self.classes[relation] = categ
+        #It's a func between a class and other class/obj.
+        else:
+            if subject not in self.classes:
+                categ = Category(subject)
+                categ[relation] = [(obj, val)]
+                categ['type'] = 'relation'
+                self.classes[subject] = categ
+            elif relation not in self.classes[subject]:
+                self.classes[subject][relation] = [(obj, val)]
             else:
-                if subject not in self.classes:
-                    categ = Category(subject)
-                    categ[relation] = [(obj, val)]
-                    categ['type'] = 'relation'
-                    self.classes[subject] = categ
-                elif relation not in self.classes[subject]:
-                    self.classes[subject][relation] = [(obj, val)]
+                x  = self.classes[subject].iter_rel(relation)
+                if obj not in x:
+                    self.classes[subject][relation].append((obj, val))
                 else:
-                    x  = self.classes[subject].iter_rel(relation)
-                    if obj not in x:
-                        self.classes[subject][relation].append((obj, val))
-                    else:
-                        idx = x.index(obj)
-                        self.classes[subject][relation][idx] = (obj, val)
+                    idx = x.index(obj)
+                    self.classes[subject][relation][idx] = (obj, val)
 
     def save_proof(self, proof):
         for part in proof.particles:
@@ -422,7 +430,10 @@ class Category(dict):
 
 
 class Formula(object):
-    """Object to store a logic formula."""
+    """Object to store a logic formula.
+    
+    A logic formula is the result of parsing a sentence and encode
+    it in an usable form for the agent."""
     def __init__(self, ori, comp, hier):
         self.depth = 0
         self.id = str(uuid.uuid4())        
@@ -524,7 +535,7 @@ class Formula(object):
             self.particles.append(Particle(cond, depth, part_id, parent, syb))
         elif any(x in form for x in [':forall:', ':exists:']):
             # Only universal quantifiers are supported right now,
-            # so the quantity is irrelevant.
+            # so the quantity is irrelevant (check declare method for more info).
             form = form.split(':')
             cond = 'check_var'
             for i, a in enumerate(form):
@@ -765,14 +776,14 @@ class Particle(object):
                     pred[1] = (var1, [var2, u])
                 ag.bmsWrapper.check(pred)
                 pred[1][1][1] = float(u[1:])
-                ag.up_attr(pred, key=1)
+                ag.up_rel(pred)
             else:
                 var, u = self.pred[1].split(',u')
                 pred[1] = proof.assigned[var][0]
-                pred = ([pred[0], u], pred[1])
+                pred = (pred[0], [pred[1], u])
                 ag.bmsWrapper.check(pred)
-                pred[0][1] = float(u[1:])
-                ag.up_attr(pred)
+                pred[1][1] = float(u[1:])
+                ag.up_memb(pred)
 
     def get_pred(self, pos='left', k=0, *args):
         if pos == 'left':
@@ -836,7 +847,7 @@ if __name__ == '__main__':
     r = Representation()
     d1 = datetime.datetime.now()
     for form in ls:
-        r.encode(form)
+        r.tell(form)
     r.prove('$Lucy','$John')
     print '\n---------- RESULTS ----------'
     d2 = datetime.datetime.now()

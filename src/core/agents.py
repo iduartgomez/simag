@@ -15,7 +15,7 @@ Actions
 import datetime
 import uuid
 
-from core.percept import Representation
+from core.kb_logic import Representation
 
 prop_list = ['name', 'born', 'ag_state', 'pos']
 pmodes = []
