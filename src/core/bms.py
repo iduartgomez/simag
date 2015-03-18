@@ -156,6 +156,14 @@ class BeliefRecord(object):
 
 def chk_const(bms, pred, pval):
     """Check what predicates are the cause of the inconsistency."""
+    
+    def k_chain(bms, chk_pred):
+        """Reconstructs a logic sequence which represent the beliefs that
+        produced an input belief.
+        """
+        print bms.container[chk_pred]['form']
+    
+    
     rel, sbj, obj = pred[0], pred[1][0], pred[1][1][0]
     opred = '<'+rel+'['+sbj+';'+obj+',u='+str(pval)+']>'
     if bms.container[opred]['form'] is 'SELF':
@@ -164,13 +172,5 @@ def chk_const(bms, pred, pval):
         pass
     else:
         # Unpack the logic sequence.
-        p_known = k_chain(bms, opred)
-    
-def k_chain(bms, pred, form):
-    """Reconstructs a logic sequence which represent the beliefs that
-    produced an input belief.
-    """
-    while bms.container[pred]['prev'] is not 'SELF':
-        for ppred in bms.container[pred]['prev']:
-            pass
-            
+        seq = []
+        k_chain(bms, opred)            

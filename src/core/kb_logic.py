@@ -40,10 +40,9 @@ gl_res = []
 
 
 class Representation(object):
-    """This class is a container for internal agent's representations
-    of the 'simulated reality'. An agent can have any number of such
-    representations at a moment in time, all of which are contained
-    in this object.
+    """This class is a container for internal agent's representations. 
+    An agent can have any number of such representations at any moment, 
+    all of which are contained in this object.
     
     The class includes methods to encode and decode the representations 
     to/from data streams or idioms.
@@ -58,14 +57,28 @@ class Representation(object):
         self.classes = {}
         self.bmsWrapper = BmsWrapper(self)
 
-    def tell(self, formula):
-        """Parses a logic sentence into an usable formula and stores it into
-        the internal representation alogn with the corresponding classes.
+    def tell(self, sentence):
+        """Parses sentences into an usable formule and stores it into
+        the internal representation along with the corresponding classes.
         
-        Accepts both declarative sentences, logic predicates of the form
-        'Lucy is a professor' (check declare method for more info), and
-        implicative sentences of the form 'All the professors are persons'
-        (check the 'formula' class for more info).
+        Accepts:
+        
+        1) Conditional declarative sentences, which follow natural
+        language rules (check declare method for more info), in both atomic
+        sentence ('Lucy is a professor') and complex form ('If someone is a
+        professor, then it's a person'). Examples:
+        
+        >>> r.tell("professor[$Lucy,u=1]")
+        will include the individual '$Lucy' in the professor category)
+        >>> r.tell(":forall:x: (professor[x,u=1] => person[x,u=1])")
+        all the individuals which are professors will be added to the
+        person category
+        
+        For more examples check the DeclSentence class docs.
+        
+        2) First-Order logic sentences, the only difference is that these
+        follow the rules of first-order logic and are preceded by 'FOL::',
+        >>> r.tell("FOL:: :forall:x: (professor[x,u=1] => person[x,u=1])")
         """
         comp = []
         hier = {}
@@ -137,8 +150,14 @@ class Representation(object):
                 if childs != -1:
                     for c in childs:
                         hier[c]['parent'] = n
-
-        decomp_par(formula.rstrip('\n'), symb=('(',')'))
+        
+        sentence = sentence.strip()
+        if 'FOL:' in sentence[0:4].strip():
+            FOL = True
+            sentence = sentence.replace('FOL:','').strip()
+        else:
+            FOL = False
+        decomp_par(sentence.rstrip('\n'), symb=('(',')'))
         ori = len(comp)-1
         for i, form in enumerate(comp):
             symbs = ['<=>',' =>','||','&&']
@@ -151,11 +170,12 @@ class Representation(object):
             if '[' in par_form and len(comp) == 1:
                 self.declare(par_form)
             else:
-                raise AssertionError('Formula synthax is incorrect.')
+                raise AssertionError('Declarative sentence synthax is ' \
+                                     + 'incorrect.')
         else:
-            # It's a formula, not a declaration/definition
-            formula = Formula(ori, comp, hier)
-            self.save_proof(formula)
+            # It's a sentence, not a declaration/definition
+            sentence = DeclSentence(ori, comp, hier)
+            self.save_form(sentence)
 
     def declare(self, form):
         """Declares an object as a member of a class or the relationship
@@ -272,12 +292,12 @@ class Representation(object):
                     idx = x.index(obj)
                     self.classes[subject][relation][idx] = (obj, val)
 
-    def save_proof(self, proof):
+    def save_form(self, proof):
         for part in proof.particles:
             if part.parent == -1:
                 x = part
             if part.results is not None:
-                    part.results = []        
+                    part.results = []
         x.get_pred()
         for name in gl_res:
             if name[0] in self.classes and \
@@ -295,7 +315,7 @@ class Representation(object):
                 self.classes[name[0]] = new_class
         n = set([x[0] for x in gl_res])
         del gl_res[:]
-        # Run the new proof with every unique object that matches.
+        # Run the new formula with every unique object that matches.
         for ind in self.individuals.values():
             common = list(ind.check_cat(n))
             proof(self, ind.name)
@@ -306,7 +326,7 @@ class Representation(object):
                 for test in tests:
                     test(self, ind.name)
 
-    def prove(self, *args):
+    def test(self, *args):
         cats = []
         for ind in args:
             if ind in self.individuals:
@@ -323,6 +343,9 @@ class Representation(object):
             test(self, *args)
         # Tests are run twice, as the changes from the first run could
         # have introduced inconsistencies which need to be found.
+        #
+        # MUST BE OPTIMIZED, DETECT CHANGES AND RUN THE APPROPIATE
+        # FORMULAS, not every single formula again
         for test in tests:
             test(self, *args)
 
@@ -430,21 +453,32 @@ class Category(dict):
         """Infers attributes of the class from it's members."""
         pass
 
+# ===================================================================#
+#   LOGIC METHODS
+# ===================================================================#
 
+
+def infer_facts():
+    """Inference method from first-order logic sentences.
+    """
+    
 # ===================================================================#
 #   SUPPORTING CLASSES AND SUBCLASSES
 # ===================================================================#
 
 
-class Formula(object):
-    """Object to store a logic formula.
+class DeclSentence(object):
+    """Object to store a conditional declaration sentence. A conditional
+    declaration sentence is not the same as a first-order logic sentence.
+    A declaration sentence follows the rules of classic factual implication
+    sentences following natural language.
     
-    A logic formula is the result of parsing a sentence and encode
-    it in an usable form for the agent."""
+    A declaration formula is the result of parsing a sentence and encode
+    it in an usable form for the agent to classify objects and relations.
+    """
     def __init__(self, ori, comp, hier):
         self.depth = 0
-        self.id = str(uuid.uuid4())        
-        #self.vars = {}
+        self.id = str(uuid.uuid4())
         self.var_order = []
         self.particles = []
         self.make_parts(ori, comp, hier)
@@ -528,11 +562,8 @@ class Formula(object):
 
         if depth > self.depth:
             self.depth = depth
-        if ':equiv:' in form:
-            cond = 'equiv'
-            self.particles.append(Particle(cond, depth, part_id, parent, syb))
-        elif ':implies:' in form:
-            cond = 'implies'  
+        if ':implies:' in form:
+            cond = 'implies'
             self.particles.append(Particle(cond, depth, part_id, parent, syb))
         elif ':or:' in form:
             cond = 'or'
@@ -547,7 +578,7 @@ class Formula(object):
             cond = 'check_var'
             for i, a in enumerate(form):
                 if a == 'forall':
-                    #quant = float('inf')
+            #        quant = float('inf')
                     up_var()
             #    elif a == 'exists':
             #        quant = 1
@@ -560,7 +591,8 @@ class Formula(object):
 
 
 class Particle(object):
-    """Is a node that represents a logic atom, that can be either:
+    """Is a node that represents a natural language particle, 
+    that can be either:
     a) An operator of the following types: implies, equals,
     and, or, not.
     b) A predicate, declaring a variable as a member of a set,
@@ -618,12 +650,6 @@ class Particle(object):
                     # The left branch was false, so do not continue.             
                     #print '\nTested the left branch and failed.\n'
                     return
-        elif self.cond == 'equiv':
-            pass
-            # equivalence
-            #
-            #            
-            #
         elif self.cond == 'or' or self.cond == 'and':
             if key[-1] == 104:
                 key.pop()
@@ -826,6 +852,25 @@ class Particle(object):
         return s
 
 
+class LogicSentence(DeclSentence):
+    """Inherits from the declarative sentence class.
+    
+    Applies the rules of first-order logic and it's only used for logic
+    inference, and not for declaration of objects into classes or
+    relationships.
+    """
+    def __call__(self):
+        pass
+
+
+class LogicPart(Particle):
+    """Inherits from the particle class, and implements the
+    rules of first-order logic for logic reasoning.
+    """
+    def resolve(self):
+        pass
+
+
 class Group(Category):
     """A special instance of a category. It defines a 'group' of
     elements that pertain to a class.
@@ -853,7 +898,7 @@ if __name__ == '__main__':
     d1 = datetime.datetime.now()
     for form in ls:
         r.tell(form)
-    r.prove('$Lucy','$John')
+    r.test('$Lucy','$John')
     r.tell('<friend[$Lucy;$John,u=1]>')
     print '\n---------- RESULTS ----------'
     d2 = datetime.datetime.now()
@@ -863,6 +908,5 @@ if __name__ == '__main__':
         print 'Relations:', ind.relations
         print 'Categories:', ind.categ
     print
-    pprint.pprint(r.bmsWrapper.container)
+    #pprint.pprint(r.bmsWrapper.container)
     #pprint.pprint(r.classes)
-    
