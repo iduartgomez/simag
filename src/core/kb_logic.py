@@ -18,7 +18,7 @@ Also stores the types of relations an object can have.
 
 Support classes and methods
 ---------------------------
-:class: Proof. Stores a serie of logical atoms (be them predicates or
+:class: LogSentence. Stores a serie of logical atoms (be them predicates or
 connectives), that form a well-formed logic formula. These are rulesets 
 for cataloging objects into sets/classes, and the relationships between 
 these objects.
@@ -58,27 +58,21 @@ class Representation(object):
         self.bmsWrapper = BmsWrapper(self)
 
     def tell(self, sentence):
-        """Parses sentences into an usable formule and stores it into
+        """Parses a sentence into an usable formula and stores it into
         the internal representation along with the corresponding classes.
         
-        Accepts:
-        
-        1) Conditional declarative sentences, which follow natural
-        language rules (check declare method for more info), in both atomic
-        sentence ('Lucy is a professor') and complex form ('If someone is a
-        professor, then it's a person'). Examples:
+        Accepts first-order logic sentences sentences, both atomic 
+        sentences ('Lucy is a professor') and complex sentences compossed 
+        of different atoms and operators ('If someone is a professor,
+        then it's a person'). Examples:
         
         >>> r.tell("professor[$Lucy,u=1]")
         will include the individual '$Lucy' in the professor category)
-        >>> r.tell(":forall:x: (professor[x,u=1] => person[x,u=1])")
+        >>> r.tell(":forall:x: (professor[x,u=1] |= person[x,u=1])")
         all the individuals which are professors will be added to the
         person category
         
         For more examples check the DeclSentence class docs.
-        
-        2) First-Order logic sentences, the only difference is that these
-        follow the rules of first-order logic and are preceded by 'FOL::',
-        >>> r.tell("FOL:: :forall:x: (professor[x,u=1] => person[x,u=1])")
         """
         comp = []
         hier = {}
@@ -124,6 +118,8 @@ class Representation(object):
                     last = memb.pop()                        
                     memb[-1] =  memb[-1] + symb + last
             x, y = len(comp), len(comp)+1
+            if symb == '|=':
+                comp[idx] = '{'+str(x)+'}'+':entails:'+'{'+str(y)+'}'
             if symb == '<=>':
                 comp[idx] = '{'+str(x)+'}'+':equiv:'+'{'+str(y)+'}'
             if symb == ' =>':
@@ -150,34 +146,30 @@ class Representation(object):
                 if childs != -1:
                     for c in childs:
                         hier[c]['parent'] = n
-        
-        sentence = sentence.strip()
-        if 'FOL:' in sentence[0:4].strip():
-            FOL = True
-            sentence = sentence.replace('FOL:','').strip()
-        else:
-            FOL = False
+
         decomp_par(sentence.rstrip('\n'), symb=('(',')'))
         ori = len(comp)-1
         for i, form in enumerate(comp):
-            symbs = ['<=>',' =>','||','&&']
+            symbs = ['|=', '<=>',' =>','||','&&']
             if any(symb in form for x, symb in enumerate(symbs)):
                 decomp_all(form, idx=i)
         iter_childs(len(comp))
         par_form = comp[ori]
         if not any(x in par_form for x in [':forall:', ':exists:']):
-            # It's a declaration/definition
+            # It's a predicate substitution
             if '[' in par_form and len(comp) == 1:
                 self.declare(par_form)
             else:
-                raise AssertionError('Declarative sentence synthax is ' \
-                                     + 'incorrect.')
+                raise AssertionError('Logic sentence synthax is incorrect.')
         else:
-            # It's a sentence, not a declaration/definition
-            sentence = DeclSentence(ori, comp, hier)
+            # It's a complex sentence, not a declaration
+            sentence = LogSentence(ori, comp, hier)
             self.save_form(sentence)
-
-    def declare(self, form):
+    
+    def ask(self, sent):
+        pass
+    
+    def declare(self, sent):
         """Declares an object as a member of a class or the relationship
         between two objects. Declarations parse well-formed statements.
         
@@ -196,23 +188,23 @@ class Representation(object):
         Declarations of mapping can happen between entities, classes, 
         or between an entity and a class (ie. <loves[$Lucy, cats]>).
         """
-        form = form.strip()
+        sent = sent.strip()
         rgx_ob = re.compile(r'\b(.*?)\]')
-        sets = rgx_ob.findall(form)
+        sets = rgx_ob.findall(sent)
         sets = sets[0].split('[')
         if ';' in sets[1]:
             sets[1] = sets[1].split(';')
-        if '<' in form:
+        if '<' in sent:
             # Is a function declaration > implies an mapping
             # between an object (or a set) and other object (or set).
             assert (type(sets[1]) == list), \
                     'A function/map needs subject and object'
-            u = sets[1][1].split(',u=')
+            u = sets[1][0].split(',u=')
             u[1] = float(u[1])
-            x = sets[1][0], tuple(u)
-            sets = [sets[0], x, 'map']
-            self.bmsWrapper.add(sets, True)
-            self.up_rel(sets)
+            x = tuple(u), sets[1][1]
+            func = [sets[0], x, 'map']
+            self.bmsWrapper.add(func, True)
+            self.up_rel(func)
         else:
             # Is a membership declaration -> the object belongs 
             # to a set of objects.
@@ -221,12 +213,12 @@ class Representation(object):
             assert ('$' in sets[1]), 'The object is not an unique entity.'
             u = sets[1].split(',u=')
             u[1] = float(u[1])
-            sets = sets[0], (u[0], u[1])
-            self.bmsWrapper.add(sets, True)
-            check = self.bmsWrapper.add(sets, True)
-            self.up_memb(sets)
+            pred = sets[0], (u[0], u[1])
+            self.bmsWrapper.add(pred, True)
+            check = self.bmsWrapper.add(pred, True)
+            self.up_memb(pred)
             if check is False:
-                self.bmsWrapper.add(sets, True)
+                self.bmsWrapper.add(pred, True)
 
     def up_memb(self, pred):
         # It's a membership declaration.
@@ -247,12 +239,12 @@ class Representation(object):
             new_class['type'] = 'class'
             self.classes[categ] = new_class
 
-    def up_rel(self, pred):
+    def up_rel(self, func):
         # It's a function declaration between two objs/classes.
-        relation = pred[0]
-        subject = pred[1][0]
-        obj = pred[1][1][0]
-        val = pred[1][1][1]
+        relation = func[0]
+        subject = func[1][1]
+        obj = func[1][0][0]
+        val = func[1][0][1]
         #It's a func between an object and other obj/class.
         if '$' in subject:
             if subject not in self.individuals:
@@ -348,6 +340,7 @@ class Representation(object):
         # FORMULAS, not every single formula again
         for test in tests:
             test(self, *args)
+
 
 class Individual(object):
     """An individual is the unique member of it's own class.
@@ -467,14 +460,12 @@ def infer_facts():
 # ===================================================================#
 
 
-class DeclSentence(object):
-    """Object to store a conditional declaration sentence. A conditional
-    declaration sentence is not the same as a first-order logic sentence.
-    A declaration sentence follows the rules of classic factual implication
-    sentences following natural language.
+class LogSentence(object):
+    """Object to store a first-order logic complex sentence.
     
     A declaration formula is the result of parsing a sentence and encode
-    it in an usable form for the agent to classify objects and relations.
+    it in an usable form for the agent to classify and reason about
+    objects and relations.
     """
     def __init__(self, ori, comp, hier):
         self.depth = 0
@@ -562,7 +553,10 @@ class DeclSentence(object):
 
         if depth > self.depth:
             self.depth = depth
-        if ':implies:' in form:
+        if ':entails:' in form:
+            cond = 'entails'
+            self.particles.append(Particle(cond, depth, part_id, parent, syb))
+        elif ':implies:' in form:
             cond = 'implies'
             self.particles.append(Particle(cond, depth, part_id, parent, syb))
         elif ':or:' in form:
@@ -618,7 +612,7 @@ class Particle(object):
 
     def resolve(self, proof, ag, key, *args):
         """Keys for resolving the proof:
-        100: Resolve a child's predicates.
+        100: Substitute a child's predicates.
         101: Check the truthiness of a child particle.
         102: Incoming truthiness of an operation for storage.
         103: Process the right branch of a statement.
@@ -630,26 +624,8 @@ class Particle(object):
             self.results.append(args[0])
         if self.cond == 'check_var':
             self.next[0].resolve(proof, ag, key)
-        elif self.cond == 'implies':
-            if key[-1] == 104:
-                self.results.append(args[0])
-                if self.next[1].cond is 'or' and self.results[1] is False:
-                    key.pop()
-                    key.append(103)
-                    self.next[1].resolve(proof, ag, key)
-            else:
-                current = len(self.results)
-                # if the left branch is examined then solve, else don't.
-                if current < len(self.next) and current == 0:
-                    key.append(101)
-                    self.next[current].resolve(proof, ag, key)
-                elif current == 1 and self.results[0] == True:
-                    key.append(100)
-                    self.next[current].resolve(proof, ag, key)
-                else:
-                    # The left branch was false, so do not continue.             
-                    #print '\nTested the left branch and failed.\n'
-                    return
+        elif self.cond == 'entails':
+            self.entailment(proof, ag, key, *args)
         elif self.cond == 'or' or self.cond == 'and':
             if key[-1] == 104:
                 key.pop()
@@ -696,6 +672,27 @@ class Particle(object):
             if x != 100 and x != 103:
                 key.append(102)
                 self.parent.resolve(proof, ag, key, result)
+    
+    def entailment(self, proof, ag, key, *args):
+        if key[-1] == 104:
+            self.results.append(args[0])
+            if self.next[1].cond is 'or' and self.results[1] is False:
+                key.pop()
+                key.append(103)
+                self.next[1].resolve(proof, ag, key)
+        else:
+            current = len(self.results)
+            # if the left branch is examined then solve, else don't.
+            if current < len(self.next) and current == 0:
+                key.append(101)
+                self.next[current].resolve(proof, ag, key)
+            elif current == 1 and self.results[0] == True:
+                key.append(100)
+                self.next[current].resolve(proof, ag, key)
+            else:
+                # The left branch was false, so do not continue.             
+                #print '\nTested the left branch and failed.\n'
+                return
 
     def conjunction(self, proof, ag, key):
         left_branch = self.results[0]
@@ -736,16 +733,16 @@ class Particle(object):
             result = None
             if len(self.pred) == 3:
                 # Check mapping of a set/entity to an other set/entity.                
-                check_func = self.pred[0]         
+                check_func = self.pred[0]
                 if '$' in self.pred[1][1]:                    
-                    var = self.pred[1][0]
-                    obj, u = self.pred[1][1].split(',u')
-                    uval = float(u[1:])                    
+                    var = self.pred[1][1]
+                    obj, u = self.pred[1][0].split(',u')
+                    uval = float(u[1:])
                     subject = proof.assigned[var][0]
                 else:
-                    var1, u = self.pred[1][1].split(',u')
+                    var1, u = self.pred[1][0].split(',u')
                     uval = float(u[1:])
-                    var = self.pred[1][0]
+                    var = self.pred[1][1]
                     subject = proof.assigned[var][0]
                     obj = proof.assigned[var1][0]
                 relation = ag.individuals[subject].get_rel(check_func)
@@ -797,18 +794,18 @@ class Particle(object):
             pred = list(self.pred)
             if type(pred[1]) is tuple:
                 if '$' in pred[1][1]:
-                    obj, u = pred[1][1].split(',u')
-                    var = pred[1][0]
+                    obj, u = pred[1][0].split(',u')
+                    var = pred[1][1]
                     var = proof.assigned[var][0]
                     pred[1] = (var, [obj, u])
                 else:
-                    var1 = pred[1][0]
-                    var2, u = pred[1][1].split(',u')
+                    var1 = pred[1][1]
+                    var2, u = pred[1][0].split(',u')
                     var2 = proof.assigned[var2][0]
                     var1 = proof.assigned[var1][0]
-                    pred[1] = (var1, [var2, u])
+                    pred[1] = ([var2, u], var1)
                 ag.bmsWrapper.check(pred)
-                pred[1][1][1] = float(u[1:])
+                pred[1][0][1] = float(u[1:])
                 ag.up_rel(pred)
             else:
                 var, u = self.pred[1].split(',u')
@@ -852,29 +849,11 @@ class Particle(object):
         return s
 
 
-class LogicSentence(DeclSentence):
-    """Inherits from the declarative sentence class.
-    
-    Applies the rules of first-order logic and it's only used for logic
-    inference, and not for declaration of objects into classes or
-    relationships.
-    """
-    def __call__(self):
-        pass
-
-
-class LogicPart(Particle):
-    """Inherits from the particle class, and implements the
-    rules of first-order logic for logic reasoning.
-    """
-    def resolve(self):
-        pass
-
-
 class Group(Category):
     """A special instance of a category. It defines a 'group' of
     elements that pertain to a class.
     """
+
 
 class Part(Category):
     """A special instance of a category. It defines an element
@@ -899,7 +878,7 @@ if __name__ == '__main__':
     for form in ls:
         r.tell(form)
     r.test('$Lucy','$John')
-    r.tell('<friend[$Lucy;$John,u=1]>')
+    #r.tell('<friend[$John,u=1;$Lucy]>')
     print '\n---------- RESULTS ----------'
     d2 = datetime.datetime.now()
     print (d2-d1)

@@ -30,8 +30,8 @@ class BmsWrapper(object):
 
         def remake(self, sets):
             if len(sets) == 3:
-                s = ['<', sets[0], '[', sets[1][0], ';', sets[1][1][0],
-                     ',u=', str(sets[1][1][1]), ']>']
+                s = ['<', sets[0], '[', sets[1][0][0], ',u=', 
+                     str(sets[1][0][1]), ';', sets[1][1], ']>']
             else:
                 s = [sets[0], '[', sets[1][0], ',u=', str(sets[1][1]), ']']
             s = ''.join(s)
@@ -83,11 +83,11 @@ class BmsWrapper(object):
                     # Inconsitency found between values.
             self.wrk_bel.remake(pred)
         elif len(pred) == 3:
-            rel0, sbj, obj = pred[0], pred[1][0], pred[1][1][0]
-            if isinstance(pred[1][1][1], str):
-                val, op = float(pred[1][1][1][1:]), pred[1][1][1][0]
+            rel0, sbj, obj = pred[0], pred[1][1], pred[1][0][0]
+            if isinstance(pred[1][0][1], str):
+                val, op = float(pred[1][0][1][1:]), pred[1][0][1][0]
             else:
-                val, op = pred[1][1][1], '='
+                val, op = pred[1][0][1], '='
             if '$' in sbj and rel0 in self.ag.individuals[sbj].relations:
                 rel = self.ag.individuals[sbj].get_rel(rel0)
                 if obj in rel and val != rel[obj]:
@@ -124,9 +124,9 @@ class BeliefRecord(object):
             symb, val = s[1][1][0], str(float(s[1][1][1:]))
             pred = ''.join([s[0],'[',s[1][0],',u',symb,val,']'])
         else:
-            symb, val = s[1][1][1][0], str(float(s[1][1][1][1:]))
-            pred = ''.join(['<',s[0],'[',s[1][0],';',s[1][1][0],\
-                            ',u',symb,val,']>'])
+            symb, val = s[1][0][1][0], str(float(s[1][0][1][1:]))
+            pred = ''.join(['<',s[0],'[',s[1][0][0],',u',symb,val,
+                            ';',s[1][1],']>'])
         self.beliefs.append(pred)
 
     def prev_blf(self, belief):
