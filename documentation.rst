@@ -24,17 +24,17 @@ in the KB are fixed, repaired, or mitigated.
 The new information is categorized in different ways, depending on the
 structure and attributes of that information. There are two main categories
 in which agents categorize information:
-* Categories (also called classes or sets).
-  Categories are sets of objects which share common properties.
-* Individuals.
-  Individuals are unique objects in the world, which could be said to be
-  the sole members of their own class.
+  * Categories (also called classes or sets).
+    Categories are sets of objects which share common properties.
+  * Individuals. Unique objects in the world, which could be said to be
+    the sole members of their own class.
 
 Categories
 ----------
 
 Categories or classes have several properties:
-1. Attributes. This are unique items, which can be added
+  1. Attributes. Attributes common to to every member of the class.
+  2. Tests.
 
 ******************************
 Synthax and semantics of SimAg
