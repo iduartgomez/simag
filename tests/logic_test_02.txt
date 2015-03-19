@@ -9,7 +9,9 @@ student[$Bill,u=1]
 :forall:x;y: (professor[x,u=1] && dean[y,u=1] |= <friend[x;y,u=1]> || <knows[x;y,u=0]>)
 :forall:x;y: (person[x,u=1] && person[y,u=1] && <criticize[x;y,u=1]> |= <friend[y;x,u=0]>)
 :forall:x: (student[x,u=1] && <takes[x;$analysis,u=0]> |= <takes[x;$geometry,u=1]>)
-:forall:x;y: (<sister[x;$Bill,u=1]> && <sister[y;$Bill,u=1]> |= <eq[x;y,u=1]>)
+<takes[$analysis;$Bill]> <=> ~<takes[$geometry;$Bill]>
+<takes[$analysis;$Bill]> || <takes[$geometry;$Bill]>
+<takes[$analysis;$Bill]> && <takes[$geometry;$Bill]>
 #
 :forall:x: (:exists:y: (<friend[x;y]>))
 :exists:x: (student[x])
@@ -17,7 +19,7 @@ student[$Bill,u=1]
 :forall:x: (student[x] => :exists:y: (student[y] && <loves[x;y]>))
 :forall:x: (student[x] => :exists:y: (student[y] && ~<eq[x;y]> && <loves(x;y)>))
 :exists:x: (student[x] && :forall:y: (student[y] && ~<eq[x;y]> => <loves[x;y]>))
-~:exists::x (student[x] && <loves[x;$Bill]>)
+:exists:x: (student[x] && <loves[x,u=0;$Bill]>)
 :exists:x: (sister[x;$Bill])
 ~:exists::x (sister[x;$Bill])
 :exists:x: (sister[x;$Bill] && :forall:y: (sister[y;$Bill] => <eq[x;y]>))
@@ -26,7 +28,3 @@ student[$Bill,u=1]
 :exists:x: (student[x] && <fails[x;$history]> && :forall:y: (student(y) && <fails[y;history]> => <eq[x;y]>))
 ~:exists:x: (student[x] && <failed[x;$chemistry]>) && :exists:x: (student[x] && <failed[x;$history]>)
 ~:exists:x: (student[x] && :forall:y: (student[y] && ~<eq[x;y]> => <fool[x;y]>))
-#
-<takes[$Bill;$analysis]> <=> ~<takes[$Bill;$geometry]>
-<takes[$Bill;$analysis]> || <takes[$Bill;$geometry]>
-<takes[$Bill;$analysis]> && <takes[$Bill;$geometry]>

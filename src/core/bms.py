@@ -162,8 +162,7 @@ def chk_const(bms, pred, pval):
         produced an input belief.
         """
         print bms.container[chk_pred]['form']
-    
-    
+
     rel, sbj, obj = pred[0], pred[1][0], pred[1][1][0]
     opred = '<'+rel+'['+sbj+';'+obj+',u='+str(pval)+']>'
     if bms.container[opred]['form'] is 'SELF':
@@ -173,4 +172,4 @@ def chk_const(bms, pred, pval):
     else:
         # Unpack the logic sequence.
         seq = []
-        k_chain(bms, opred)            
+        k_chain(bms, opred)

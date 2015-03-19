@@ -60,6 +60,8 @@ class Representation(object):
     def tell(self, sentence):
         """Parses a sentence into an usable formula and stores it into
         the internal representation along with the corresponding classes.
+        In case the sentence is a predicate, the objects get declared
+        as members of their classes.
         
         Accepts first-order logic sentences sentences, both atomic 
         sentences ('Lucy is a professor') and complex sentences compossed 
@@ -70,9 +72,10 @@ class Representation(object):
         will include the individual '$Lucy' in the professor category)
         >>> r.tell(":forall:x: (professor[x,u=1] |= person[x,u=1])")
         all the individuals which are professors will be added to the
-        person category
+        person category, and the formula will be stored in the professor
+        class for future use.
         
-        For more examples check the DeclSentence class docs.
+        For more examples check the LogSentence class docs.
         """
         comp = []
         hier = {}
@@ -146,27 +149,61 @@ class Representation(object):
                 if childs != -1:
                     for c in childs:
                         hier[c]['parent'] = n
-
+        
+        def add_bhv():
+            for p in sent.particles:
+                if p.parent == -1:
+                    p.get_pred()
+                    p.get_pred(pos='right')
+            preds = []
+            for x in gl_res:
+                if len(x) == 3:
+                    preds.append((x[0], x[1][1]))
+                else:
+                    preds.append(x)
+            del gl_res[:]
+            for sbj in preds:
+                if ',u' in sbj[1]:
+                    sbj = sbj[0], sbj[1].split(',u')[0]
+                if '$' in sbj[1][0] and sbj[1] in self.individuals:
+                    self.individuals[sbj[1]].add_bhv(sbj[0], sent)
+                elif '$' in sbj[1][0]:
+                    ind = Individual(sbj[1])
+                    ind.add_bhv(sbj[0], sent)
+                    self.individuals[sbj[1]] = ind
+                elif sbj[1] in self.classes:
+                    self.classes[sbj[1]]['bhv'].append(sent)
+                else:
+                    new_class = Category(sbj[1])
+                    new_class['type'] = 'class'
+                    new_class.add_bhv(sbj[0], sent)
+                    self.classes[sbj[1]] = new_class
+        
         decomp_par(sentence.rstrip('\n'), symb=('(',')'))
         ori = len(comp)-1
         for i, form in enumerate(comp):
             symbs = ['|=', '<=>',' =>','||','&&']
-            if any(symb in form for x, symb in enumerate(symbs)):
+            if any(symb in form for symb in symbs):
                 decomp_all(form, idx=i)
         iter_childs(len(comp))
         par_form = comp[ori]
         if not any(x in par_form for x in [':forall:', ':exists:']):
-            # It's a predicate substitution
             if '[' in par_form and len(comp) == 1:
+                # It's a predicate
                 self.declare(par_form)
             else:
-                raise AssertionError('Logic sentence synthax is incorrect.')
+                # It's a complex sentence with various predicates/funcs
+                sent = LogSentence(ori, comp, hier)
+                add_bhv()
+                #raise AssertionError('Logic sentence synthax is incorrect.')
         else:
-            # It's a complex sentence, not a declaration
+            # It's a complex sentence with variables
             sentence = LogSentence(ori, comp, hier)
             self.save_form(sentence)
     
     def ask(self, sent):
+        """Parses a sentence, asks the KB and returns the result of that ask.
+        """
         pass
     
     def declare(self, sent):
@@ -290,7 +327,8 @@ class Representation(object):
                 x = part
             if part.results is not None:
                     part.results = []
-        x.get_pred()
+        conds = ['implies', 'entails', 'equiv']
+        x.get_pred(conds=conds)
         for name in gl_res:
             if name[0] in self.classes and \
             proof not in self.classes[name[0]]['tests']:
@@ -365,18 +403,19 @@ class Individual(object):
         id -> Unique identifier for the object.
         name -> Name of the unique object.
         categ -> Categories to which the object belongs.
-                Includes the degree of membership (ie. ('cold', 0.9)).
+            Includes the degree of membership (ie. ('cold', 0.9)).
         attr -> Implicit attributes of the object, unique to itself.
-        cog (opt) -> These are the cognitions (modal) attributed to the object
-                    by the agent owning this representation.
+        bhv (opt) -> These are the cognitions and/or behaviours attributed
+                to the object by the agent owning this representation.
         relations (opt) -> Functions between two objects and/or classes.
     """
     def __init__(self, name):
         self.id = str(uuid.uuid4())
         self.name = name
         self.categ = []
-        self.relations = {}
         self.attr = {}
+        self.relations = {}
+        self.bhv = {}
 
     def set_attr(self, **kwargs):
         """Sets implicit attributes for the class, if an attribute exists
@@ -417,6 +456,12 @@ class Individual(object):
         else:
             return None
     
+    def add_bhv(self, p, sent):
+        if p not in self.bhv:
+            self.bhv[p] = [sent]
+        elif sent not in self.bhv[p]:
+            self.bhv[p].append(sent)
+    
     def __str__(self):
         s = "\n<individual '" + self.name + "' w/ id: " + self.id + ">"
         return s
@@ -438,6 +483,7 @@ class Category(dict):
         self['id'] = str(uuid.uuid4())
         self['name'] = name
         self['tests'] = []
+        self['bhv'] = {}
     
     def iter_rel(self, rel):
         return [x for (x, _) in self[rel]]
@@ -445,6 +491,12 @@ class Category(dict):
     def infer(self):
         """Infers attributes of the class from it's members."""
         pass
+    
+    def add_bhv(self, p, sent):
+        if p not in self['bhv']:
+            self['bhv'][p] = [sent]
+        elif sent not in self['bhv'][p]:
+            self['bhv'][p].append(sent)
 
 # ===================================================================#
 #   LOGIC METHODS
@@ -493,7 +545,7 @@ class LogSentence(object):
                 # Assign an entity to a variable by order.
                 self.assigned[var_name] = [const, memb]
             ag.bmsWrapper.register(self)
-            self.particles[-1].resolve(self, ag, key=[0])
+            self.particles[-1].substitute(self, ag, key=[0])
             ag.bmsWrapper.register(self, stop=True)
         else:
             return
@@ -556,6 +608,9 @@ class LogSentence(object):
         if ':entails:' in form:
             cond = 'entails'
             self.particles.append(Particle(cond, depth, part_id, parent, syb))
+        elif ':equiv:' in form:
+            cond = 'equiv'
+            self.particles.append(Particle(cond, depth, part_id, parent, syb))
         elif ':implies:' in form:
             cond = 'implies'
             self.particles.append(Particle(cond, depth, part_id, parent, syb))
@@ -610,7 +665,7 @@ class Particle(object):
                     self.next[x] = part
                     self.next[x].parent = self
 
-    def resolve(self, proof, ag, key, *args):
+    def substitute(self, proof, ag, key, *args):
         """Keys for resolving the proof:
         100: Substitute a child's predicates.
         101: Check the truthiness of a child particle.
@@ -623,7 +678,7 @@ class Particle(object):
             key.pop()
             self.results.append(args[0])
         if self.cond == 'check_var':
-            self.next[0].resolve(proof, ag, key)
+            self.next[0].substitute(proof, ag, key)
         elif self.cond == 'entails':
             self.entailment(proof, ag, key, *args)
         elif self.cond == 'or' or self.cond == 'and':
@@ -634,7 +689,7 @@ class Particle(object):
             if key[-1] == 101:
                 if current < len(self.next):
                     key.append(101)
-                    self.next[current].resolve(proof, ag, key)
+                    self.next[current].substitute(proof, ag, key)
                 else:
                     if self.cond == 'or':
                         # Two branches finished, check if one is true.                    
@@ -647,31 +702,31 @@ class Particle(object):
                 self.next[current].cond == 'predicate':
                     if self.cond == 'or':
                         key.append(101)
-                        self.next[current].resolve(proof, ag, key)
+                        self.next[current].substitute(proof, ag, key)
                     else:
                         key.append(105)
-                        self.next[current].resolve(proof, ag, key)
+                        self.next[current].substitute(proof, ag, key)
                 elif current < len(self.next):
-                    self.next[current].resolve(proof, ag, key)
+                    self.next[current].substitute(proof, ag, key)
                 else:
                     if self.cond == 'or':
                         result = self.disjunction(proof, ag, key)
                     elif self.cond == 'and':
                         result = self.conjunction(proof, ag, key)
                     key.append(104)
-                    self.parent.resolve(proof, ag, key, result)
+                    self.parent.substitute(proof, ag, key, result)
             elif key[-1] == 103:
-                self.next[1].resolve(proof, ag, key)
+                self.next[1].substitute(proof, ag, key)
             elif key[-1] == 105 and self.next[1].cond == 'predicate':
                 key.pop()
                 key.append(100)
-                self.next[1].resolve(proof, ag, key)
+                self.next[1].substitute(proof, ag, key)
         elif self.pred:
             result = self.ispred(proof, ag, key)
             x = key.pop()
             if x != 100 and x != 103:
                 key.append(102)
-                self.parent.resolve(proof, ag, key, result)
+                self.parent.substitute(proof, ag, key, result)
     
     def entailment(self, proof, ag, key, *args):
         if key[-1] == 104:
@@ -679,16 +734,16 @@ class Particle(object):
             if self.next[1].cond is 'or' and self.results[1] is False:
                 key.pop()
                 key.append(103)
-                self.next[1].resolve(proof, ag, key)
+                self.next[1].substitute(proof, ag, key)
         else:
             current = len(self.results)
             # if the left branch is examined then solve, else don't.
             if current < len(self.next) and current == 0:
                 key.append(101)
-                self.next[current].resolve(proof, ag, key)
+                self.next[current].substitute(proof, ag, key)
             elif current == 1 and self.results[0] == True:
                 key.append(100)
-                self.next[current].resolve(proof, ag, key)
+                self.next[current].substitute(proof, ag, key)
             else:
                 # The left branch was false, so do not continue.             
                 #print '\nTested the left branch and failed.\n'
@@ -701,7 +756,7 @@ class Particle(object):
         # Two branches finished, check if both are true.            
             if (left_branch and right_branch) is True:
                 key.append(102)
-                self.parent.resolve(proof, ag, key, True)
+                self.parent.substitute(proof, ag, key, True)
         elif key[-1] == 100:
         # Test if this conjunction fails
             if (left_branch and right_branch) is True:
@@ -718,7 +773,7 @@ class Particle(object):
         # Two branches finished, check if both are true.
             if (left_branch or right_branch) is True:
                 key.append(102)
-                self.parent.resolve(proof, ag, key, True)
+                self.parent.substitute(proof, ag, key, True)
         elif key[-1] == 100:
         # Test if this disjunction fails
             if left_branch != right_branch:
@@ -815,9 +870,8 @@ class Particle(object):
                 pred[1][1] = float(u[1:])
                 ag.up_memb(pred)
 
-    def get_pred(self, pos='left', k=0, *args):
+    def get_pred(self, pos='left', k=0, conds=[None], *args):
         branch = 0 if pos == 'left' else 1
-        conds = ['implies']
         if k == 1:
             self.results.append(args[0])
             k = 0
@@ -826,18 +880,18 @@ class Particle(object):
                 k = 1
                 if self.pred not in gl_res:
                     gl_res.append(self.pred)
-                self.parent.get_pred(pos, k, True)
+                self.parent.get_pred(pos, k, conds, True)
             else:
-                self.next[branch].get_pred(pos, k)
+                self.next[branch].get_pred(pos, k, conds)
         elif len(self.results) == 1 and self.cond not in conds:
             if self.cond == 'predicate':
                 k = 1
                 if self.pred not in gl_res:
                     gl_res.append(self.pred)
-                self.parent.get_pred(pos, k, True)
+                self.parent.get_pred(pos, k, conds, True)
             else:
                 x = 1 if pos == 'left' else 0
-                self.next[x].get_pred(pos, k)
+                self.next[x].get_pred(pos, k, conds)
 
     def __str__(self):
         if self.cond != 'predicate':
@@ -886,6 +940,7 @@ if __name__ == '__main__':
         print ind
         print 'Relations:', ind.relations
         print 'Categories:', ind.categ
+        #print 'Rules:', ind.bhv
     print
     #pprint.pprint(r.bmsWrapper.container)
     #pprint.pprint(r.classes)
