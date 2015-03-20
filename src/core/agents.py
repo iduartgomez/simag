@@ -15,7 +15,7 @@ Actions
 import datetime
 import uuid
 
-from core.kb_logic import Representation
+from core.kblogic import Representation
 
 prop_list = ['name', 'born', 'ag_state', 'pos']
 pmodes = []
