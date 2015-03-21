@@ -88,7 +88,8 @@ class BmsWrapper(object):
                 val, op = float(pred[1][0][1][1:]), pred[1][0][1][0]
             else:
                 val, op = pred[1][0][1], '='
-            if '$' in sbj and rel0 in self.ag.individuals[sbj].relations:
+            if sbj in self.ag.individuals and '$' in sbj \
+            and rel0 in self.ag.individuals[sbj].relations:
                 rel = self.ag.individuals[sbj].get_rel(rel0)
                 if obj in rel and val != rel[obj]:
                     # Check if there is an inconsistency.

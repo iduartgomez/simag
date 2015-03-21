@@ -69,7 +69,7 @@ Here is a detailed description, with examples, of the synthax:
 
 In general, there are no capitalization rules unless stated.
 
-Quantifiers: :forall:, :exists:
+Quantifiers: :forall: or :exists:
   Quantifies (and declares), a variable, for example: :forall:x: declares
   that the variable 'x' is universal. :exists:x,y: declares that for the
   next atom the variables 'x' and 'y' are existential.
@@ -85,7 +85,9 @@ Constant - set: professor
 Variables: x, y
   Variables are first declared through universal or existential quantifiers
   split by commas, and then used inside predicates. For example:
+  
   :forall:x,y: <loves[y;x,u=1]>
+  
   Here first the variables 'x' and 'y' are declared as universal, and after
   used inside the function 'loves'.
 
@@ -119,6 +121,7 @@ Parentheses can be used to split complex sentences for comprenhension and
 clarity. An example of a complex sentence:
   :forall:x,y: (<takes[$analysis,u=1;x]> && <takes[y,u=1;x]> && course[y,u=1] && 
   student[x,u=1] |> silly[x,u=1])
+  
   In natural language: Every student that takes analysis and takes an other 
   course is silly.
 
@@ -131,8 +134,8 @@ of this sentences. This idiom provides a highly abstract, yet efficient,
 way of translating any type of information to internal representation.
 
 There are four ways facts enter the KB. the first is throught predicate assertions:
-  professor[$Lucy,u=1]
-  white[cows,u=0.7]
+  |professor[$Lucy,u=1]
+  |white[cows,u=0.7]
   
 Predicate assertions declare an object or a class as a member of an other 
 class. In the first example, the individual 'Lucy' is declared as a member 
@@ -142,9 +145,9 @@ partial (0.7). You can still use declaration only in classical binary style
 by using the values 0 (negation) or 1 (true membership).
 
 The second way is through function assertions:
-  <loves[$Lucy,u=1;$John]>
-  <steals[peasant,u=1;king]>
-  <steals[$John,u=1;king]>
+  |<loves[$Lucy,u=1;$John]>
+  |<steals[peasant,u=1;king]>
+  |<steals[$John,u=1;king]>
 
 In the first example, it's stated that the object John has a relation of the
 'loves' type to the object $Lucy (note this does not mean that the object 'Lucy'
@@ -154,4 +157,3 @@ In the second example, it's stated that any member of the 'king' class has
 a 'steals' relationship with the class 'peasant'. Whereas in the third, this
 relationship is holded from the king class to the object 'John' (regardless of
 what classes does the object John belongs to).
-

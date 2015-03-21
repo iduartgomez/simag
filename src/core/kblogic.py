@@ -31,7 +31,6 @@ import os
 import uuid
 
 import core.bms
-from numpy import False_
 
 gl_res = []
 
@@ -50,7 +49,7 @@ class Representation(object):
     
     Attributes:
         individuals -> Unique members (entities) of their own set/class.
-                   Entities are denoted with a $ symbol followed by a name.
+        |Entities are denoted with a $ symbol followed by a name.
         classes -> Sets of objects that share a common property.
     """
     def __init__(self):
@@ -166,7 +165,7 @@ class Representation(object):
             else:
                 # It's a complex sentence with various predicates/funcs
                 sent = LogSentence(ori, comp, hier)
-                self.add_bhv(sent)
+                self.add_cog(sent)
                 #raise AssertionError('Logic sentence synthax is incorrect.')
         else:
             # It's a complex sentence with variables
@@ -175,7 +174,7 @@ class Representation(object):
                 sentence.validity = None
                 self.save_rule(sentence)
             elif sentence.validity is None:
-                self.add_bhv(sentence)
+                self.add_cog(sentence)
             else:
                 raise AssertionError('Illegal connectives used in the consequent' \
                                      + ' of an indicative conditional sentence')
@@ -251,9 +250,9 @@ class Representation(object):
                 idx = ctg_rec.index(categ)
                 self.individuals[subject].categ[idx] = (categ, val)
         if categ not in self.classes:
-            new_class = Category(categ)
-            new_class['type'] = 'class'
-            self.classes[categ] = new_class
+            nc = Category(categ)
+            nc['type'] = 'class'
+            self.classes[categ] = nc
 
     def up_rel(self, func):
         # It's a function declaration between two objs/classes.
@@ -261,24 +260,25 @@ class Representation(object):
         subject = func[1][1]
         obj = func[1][0][0]
         val = func[1][0][1]
+        iobj = func[1][2] if len(func[1]) == 3 else None
         #It's a func between an object and other obj/class.
         if '$' in subject:
             if subject not in self.individuals:
                 ind = Individual(subject)
-                ind.relations[relation] = [(obj, val)]
+                ind.relations[relation] = [(obj, val, iobj)]
                 self.individuals[subject] = ind
             elif relation not in self.individuals[subject].relations:
                 ind = self.individuals[subject]
-                ind.relations[relation] = [(obj, val)]
+                ind.relations[relation] = [(obj, val, iobj)]
             else:
                 rel = self.individuals[subject].relations[relation]
-                rel = [x for (x,_) in rel]
+                rel = [x for (x,_,_) in rel]
                 ind = self.individuals[subject]
                 if obj not in rel:
-                    ind.relations[relation].append((obj, val))
+                    ind.relations[relation].append((obj, val, iobj))
                 else:
                     idx = rel.index(obj)
-                    ind.relations[relation][idx] = (obj, val)
+                    ind.relations[relation][idx] = (obj, val, iobj)
             if relation not in self.classes:
                 categ = Category(relation)
                 categ['type'] = 'relation'
@@ -287,21 +287,20 @@ class Representation(object):
         else:
             if subject not in self.classes:
                 categ = Category(subject)
-                categ['bhv'] = {relation: [(obj, val)]}
-                categ['type'] = 'relation'
+                categ[relation] = [(obj, val, iobj)]
+                categ['type'] = 'class'
                 self.classes[subject] = categ
-            elif relation not in self.classes[subject]['bhv']:
-                
-                self.classes[subject]['bhv'][relation] = [(obj, val)]
+            elif relation not in self.classes[subject]:
+                self.classes[subject][relation] = [(obj, val, iobj)]
             else:
                 x  = self.classes[subject].iter_rel(relation)
                 if obj not in x:
-                    self.classes[subject][relation]['bhv'].append((obj, val))
+                    self.classes[subject][relation].append((obj, val, iobj))
                 else:
                     idx = x.index(obj)
-                    self.classes[subject][relation]['bhv'][idx] = (obj, val)
+                    self.classes[subject][relation][idx] = (obj, val, iobj)
 
-    def add_bhv(self, sent):
+    def add_cog(self, sent):
         preds = []
         for p in sent.particles:
             if p.cond is 'predicate':
@@ -324,27 +323,27 @@ class Representation(object):
                     sbj, p = pred[1], pred[0]
             if sbj not in sent.var_order:
                 if '$' in sbj and sbj in self.individuals:
-                    self.individuals[sbj].add_bhv(p, sent)
+                    self.individuals[sbj].add_cog(p, sent)
                 elif '$' in sbj:
                     ind = Individual(sbj)
-                    ind.add_bhv(p, sent)
+                    ind.add_cog(p, sent)
                     self.individuals[sbj] = ind
                 elif sbj in self.classes:
-                    self.classes[sbj].add_bhv(p, sent)
+                    self.classes[sbj].add_cog(p, sent)
                 else:
                     c = 'class' if len(sbj) == 2 else 'relation'
                     nc = Category(sbj)
                     nc['type'] = c
-                    nc.add_bhv(p, sent)
+                    nc.add_cog(p, sent)
                     self.classes[sbj] = nc
             else:
                 if p in self.classes:
-                    self.classes[p].add_bhv('SELF', sent)
+                    self.classes[p].add_cog('SELF', sent)
                 else:
                     c = 'class' if len(pred) == 2 else 'relation'
                     nc = Category(p)
                     nc['type'] = c
-                    nc.add_bhv('SELF', sent)
+                    nc.add_cog('SELF', sent)
                     self.classes[p] = nc
 
     def save_rule(self, proof):
@@ -355,13 +354,13 @@ class Representation(object):
         x.get_pred(conds=['icond'])
         for name in gl_res:
             if name[0] in self.classes and \
-            proof not in self.classes[name[0]]['rules']:
-                self.classes[name[0]]['rules'].append(proof)
+            proof not in self.classes[name[0]]['cog']['SELF']:
+                self.classes[name[0]].add_cog('SELF', proof)
             else:
                 c = 'class' if len(name) == 2 else 'relation'
                 nc = Category(name[0])
                 nc['type'] = c
-                nc['rules'].append(proof)
+                nc.add_cog('SELF', proof)
                 self.classes[name[0]] = nc
         n = set([x[0] for x in gl_res])
         del gl_res[:]
@@ -371,7 +370,7 @@ class Representation(object):
             proof(self, ind.name)
             tests = None
             for cat in common:
-                tests = self.classes[cat]['rules']
+                tests = self.classes[cat]['cog']['SELF']
             if tests:
                 for test in tests:
                     test(self, ind.name)
@@ -386,7 +385,7 @@ class Representation(object):
                 cats = cats + i + j
         tests = []
         for c in cats:
-            tests = tests + self.classes[c]['rules']
+            tests = tests + self.classes[c]['cog']['SELF']
         tests = set(tests)
         tests = list(tests)
         for t in tests:
@@ -423,10 +422,10 @@ class Individual(object):
         id -> Unique identifier for the object.
         name -> Name of the unique object.
         categ -> Categories to which the object belongs.
-            Includes the degree of membership (ie. ('cold', 0.9)).
+        |Includes the degree of membership (ie. ('cold', 0.9)).
         attr -> Implicit attributes of the object, unique to itself.
-        bhv (opt) -> These are the cognitions and/or behaviours attributed
-                to the object by the agent owning this representation.
+        cog (opt) -> These are the cognitions attributed to the object by 
+        |the agent owning this representation.
         relations (opt) -> Functions between two objects and/or classes.
     """
     def __init__(self, name):
@@ -435,7 +434,7 @@ class Individual(object):
         self.attr = {}
         self.categ = []
         self.relations = {}
-        self.bhv = {}
+        self.cog = {'SELF':[]}
 
     def set_attr(self, **kwargs):
         """Sets implicit attributes for the class, if an attribute exists
@@ -472,15 +471,15 @@ class Individual(object):
         of relation and a list of their 'u' values.
         """
         if rel in self.relations:
-            return {k:v for k,v in self.relations[rel]}
+            return {k:(v1,v2) for k,v1,v2 in self.relations[rel]}
         else:
             return None
     
-    def add_bhv(self, p, sent):
-        if p not in self.bhv:
-            self.bhv[p] = [sent]
-        elif sent not in self.bhv[p]:
-            self.bhv[p].append(sent)
+    def add_cog(self, p, sent):
+        if p not in self.cog:
+            self.cog[p] = [sent]
+        elif sent not in self.cog[p]:
+            self.cog[p].append(sent)
     
     def __str__(self):
         s = "\n<individual '" + self.name + "' w/ id: " + self.id + ">"
@@ -502,21 +501,20 @@ class Category(dict):
     def __init__(self, name):
         self['id'] = str(uuid.uuid4())
         self['name'] = name
-        self['bhv'] = {}
-        self['rules'] = []
+        self['cog'] = {'SELF':[]}
         
     def iter_rel(self, rel):
-        return [x for (x, _) in self[rel]]
+        return [x for (x, _, _) in self[rel]]
     
     def infer(self):
         """Infers attributes of the class from it's members."""
         pass
     
-    def add_bhv(self, p, sent):
-        if p not in self['bhv']:
-            self['bhv'][p] = [sent]
-        elif sent not in self['bhv'][p]:
-            self['bhv'][p].append(sent)
+    def add_cog(self, p, sent):
+        if p not in self['cog']:
+            self['cog'][p] = [sent]
+        elif sent not in self['cog'][p]:
+            self['cog'][p].append(sent)
 
 # ===================================================================#
 #   LOGIC METHODS
@@ -557,13 +555,11 @@ class LogSentence(object):
                     part.results = []
             # Check the properties/classes an obj belongs to
             for n, const in enumerate(args):
-                if const in ag.individuals:
-                    memb = ag.individuals[const].get_cat()
-                else:
+                if const not in ag.individuals:
                     return
                 var_name = self.var_order[n]
                 # Assign an entity to a variable by order.
-                self.assigned[var_name] = [const, memb]
+                self.assigned[var_name] = const
             ag.bmsWrapper.register(self)
             self.particles[-1].solve(self, ag, key=[0])
             ag.bmsWrapper.register(self, stop=True)
@@ -613,7 +609,7 @@ class LogSentence(object):
     def new_test(self, form, depth, parent, part_id, syb):
 
         def up_var():
-            vars_ = form[i+1].split(';')
+            vars_ = form[i+1].split(',')
             for var in vars_:
                 var_name = var.strip()
                 if var_name not in self.var_order:
@@ -815,44 +811,50 @@ class Particle(object):
                 return False
 
     def ispred(self, proof, ag, key):
+        
+        def isvar(s):
+            try:
+                s = proof.assigned[s]
+            except:
+                pass
+            return s
+        
         if key[-1] == 101:
             result = None
             if len(self.pred) == 3:
                 # Check mapping of a set/entity to an other set/entity.                
-                check_func = self.pred[0]
-                if '$' in self.pred[1][1]:                    
-                    var = self.pred[1][1]
-                    obj, u = self.pred[1][0].split(',u')
-                    uval = float(u[1:])
-                    subject = proof.assigned[var][0]
-                else:
-                    var1, u = self.pred[1][0].split(',u')
-                    uval = float(u[1:])
-                    var = self.pred[1][1]
-                    subject = proof.assigned[var][0]
-                    obj = proof.assigned[var1][0]
-                relation = ag.individuals[subject].get_rel(check_func)
+                check_func, sbj = self.pred[0], self.pred[1][1]
+                obj, u = self.pred[1][0].split(',u')
+                sbj, obj, uval = isvar(sbj), isvar(obj), float(u[1:])
+                if len(self.pred[1]) == 3:
+                    iobj = isvar(self.pred[1][2])
+                else: iobj = None
+                relation = ag.individuals[sbj].get_rel(check_func)
                 try:
-                    val = relation[obj]
+                    val, ciobj = relation[obj][0], relation[obj][1]
                 except:
                     result = None
                 else:
-                    if u[0] == '=' and val == uval:
-                        result = True
-                    elif u[0] == '>' and val > uval:
-                        result = True
-                    elif u[0] == '<' and val < uval:
-                        result = True
+                    if ciobj == iobj:
+                        if u[0] == '=' and val == uval:
+                            result = True
+                        elif u[0] == '>' and val > uval:
+                            result = True
+                        elif u[0] == '<' and val < uval:
+                            result = True
+                        else: 
+                            result = False
                     else:
                         result = False
                 if result is True:
                     obj = obj + ',u' + u[0] + str(uval)
-                    s = '<' + check_func + '['+subject+';' + obj + ']>'
-                    ag.bmsWrapper.prev_blf(s)
+                    s = '<' + check_func + '['+sbj+';' + obj + ']>'
+                    #ag.bmsWrapper.prev_blf(s)
             else:
                 # Check membership to a set of an entity.
-                var, u = self.pred[1].split(',u')
-                categs = proof.assigned[var][1]
+                sbj, u = self.pred[1].split(',u')
+                sbj = isvar(sbj)
+                categs = ag.individuals[sbj].get_cat()
                 check_set = self.pred[0]
                 uval = float(u[1:])
                 # If is True, then the object belongs to the set.
@@ -869,44 +871,27 @@ class Particle(object):
                     else:
                         result = False
                 if result is True:
-                    sbj = proof.assigned[var][0]
-                    s = check_set + '[' + sbj + ',u' + u[0] + str(uval) + ']'
-                    ag.bmsWrapper.prev_blf(s)
+                    s = check_set+'['+sbj+',u'+u[0]+str(uval)+']'
+                    #ag.bmsWrapper.prev_blf(s)
             return result
         elif key[-1] != 101:
             # marked for declaration
-            # subtitute var(s) for object(s) name(s)
+            # subtitute var(s) for constants
             # and pass to agent for updating
             pred = list(self.pred)
-            x = len(proof.var_order)
-            if type(pred[1]) is tuple and x != 0:
-                if '$' in pred[1][1]:
-                    obj, u = pred[1][0].split(',u')
-                    var = pred[1][1]
-                    var = proof.assigned[var][0]
-                    pred[1] = (var, [obj, u])
-                else:
-                    var1 = pred[1][1]
-                    var2, u = pred[1][0].split(',u')
-                    var2 = proof.assigned[var2][0]
-                    var1 = proof.assigned[var1][0]
-                    pred[1] = ([var2, u], var1)
-                ag.bmsWrapper.check(pred)
+            if type(pred[1]) is tuple:
+                obj, u = pred[1][0].split(',u')
+                obj, sbj = isvar(obj), isvar(pred[1][1])
+                iobj = isvar(pred[1][2]) if len(pred[1]) == 3 else None
+                pred[1] = ([obj, u], sbj, iobj)                                
+                #ag.bmsWrapper.check(pred)
                 pred[1][0][1] = float(u[1:])
                 ag.up_rel(pred)
-            elif x != 0:
-                var, u = self.pred[1].split(',u')
-                pred[1] = proof.assigned[var][0]
-                pred = (pred[0], [pred[1], u])
-                ag.bmsWrapper.check(pred)
-                pred[1][1] = float(u[1:])
-                ag.up_memb(pred)
-            elif type(pred[1]) is tuple:
-                raise 'FIX THIS'
             else:
-                cst, u = self.pred[1].split(',u')
-                pred = (pred[0], [cst, u])
-                ag.bmsWrapper.check(pred)
+                sbj, u = self.pred[1].split(',u')
+                pred[1] = isvar(sbj)
+                pred = (pred[0], [pred[1], u])
+                #ag.bmsWrapper.check(pred)
                 pred[1][1] = float(u[1:])
                 ag.up_memb(pred)
 
@@ -997,8 +982,6 @@ if __name__ == '__main__':
     d1 = datetime.datetime.now()
     for form in ls:
         r.tell(form)
-    r.test('$Lucy','$John')
-    #r.tell('<friend[$John,u=1;$Lucy]>')
     print '\n---------- RESULTS ----------'
     d2 = datetime.datetime.now()
     print (d2-d1)
@@ -1006,7 +989,7 @@ if __name__ == '__main__':
         print ind
         print 'Relations:', ind.relations
         print 'Categories:', ind.categ
-        #print 'Bhv:', ind.bhv
+        #print 'cog:', ind.cog
     print
     #pprint.pprint(r.bmsWrapper.container)
-    #pprint.pprint(r.classes)
+    pprint.pprint(r.classes)
