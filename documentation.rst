@@ -134,8 +134,8 @@ of this sentences. This idiom provides a highly abstract, yet efficient,
 way of translating any type of information to internal representation.
 
 There are four ways facts enter the KB. the first is throught predicate assertions:
-  |professor[$Lucy,u=1]
-  |white[cows,u=0.7]
+  | professor[$Lucy,u=1]
+  | white[cows,u=0.7]
   
 Predicate assertions declare an object or a class as a member of an other 
 class. In the first example, the individual 'Lucy' is declared as a member 
@@ -145,9 +145,9 @@ partial (0.7). You can still use declaration only in classical binary style
 by using the values 0 (negation) or 1 (true membership).
 
 The second way is through function assertions:
-  |<loves[$Lucy,u=1;$John]>
-  |<steals[peasant,u=1;king]>
-  |<steals[$John,u=1;king]>
+  | <loves[$Lucy,u=1;$John]>
+  | <steals[peasant,u=1;king]>
+  | <steals[$John,u=1;king]>
 
 In the first example, it's stated that the object John has a relation of the
 'loves' type to the object $Lucy (note this does not mean that the object 'Lucy'

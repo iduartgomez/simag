@@ -33,6 +33,18 @@ import uuid
 import core.bms
 
 gl_res = []
+symbs = dict([
+             ('|>','icond'),
+             ('<=>','equiv'), 
+             (' =>','implies'),
+             ('||','or'),
+             ('&&','and')
+            ])
+
+#Regex
+rgx_par = re.compile(r'\{(.*?)\}')
+rgx_ob = re.compile(r'\b(.*?)\]')
+rgx_br = re.compile(r'\}(.*?)\{')
 
 # ===================================================================#
 #   REPRESENTATION OBJECTS CLASSES AND SUBCLASSES
@@ -49,7 +61,7 @@ class Representation(object):
     
     Attributes:
         individuals -> Unique members (entities) of their own set/class.
-        |Entities are denoted with a $ symbol followed by a name.
+        | Entities are denoted with a $ symbol followed by a name.
         classes -> Sets of objects that share a common property.
     """
     def __init__(self):
@@ -57,7 +69,7 @@ class Representation(object):
         self.classes = {}
         self.bmsWrapper = core.bms.BmsWrapper(self)
 
-    def tell(self, sentence):
+    def tell(self, sent):
         """Parses a sentence into an usable formula and stores it into
         the internal representation along with the corresponding classes.
         In case the sentence is a predicate, the objects get declared
@@ -77,10 +89,39 @@ class Representation(object):
         
         For more examples check the LogSentence class docs.
         """
-        comp = []
-        hier = {}
-        rgx_par = re.compile(r'\{(.*?)\}')
+        ori, comp, hier = self.parse_sent(sent)
+        par_form = comp[ori]
+        if not any(x in par_form for x in [':forall:', ':icond']):
+            if '[' in par_form and len(comp) == 1:
+                # It's a predicate
+                self.declare(par_form)
+            else:
+                # It's a complex sentence with various predicates/funcs
+                sent = LogSentence(ori, comp, hier)
+                self.add_cog(sent)
+        else:
+            # It's a complex sentence with variables
+            sent = LogSentence(ori, comp, hier)
+            if sent.validity is True:
+                sent.validity = None
+                self.save_rule(sent)
+            elif sent.validity is None:
+                self.add_cog(sent)
+            else:
+                raise AssertionError('Illegal connectives used in the consequent' \
+                                     + ' of an indicative conditional sentence')
+    
+    def ask(self, sent):
+        """Parses a sentence, asks the KB and returns the result of that ask.
+        """
+        ori, comp, hier = self.parse_sent(sent)
+        print '\n', ori, comp, hier
         
+        result = infer_facts(sent)
+        return result
+
+    def parse_sent(self, sent):
+
         def decomp_par(s, symb, f=0):
             initpar = []
             endpar = []
@@ -112,30 +153,20 @@ class Representation(object):
                 f += 1
                 return decomp_par(s, symb, f)
 
-        def decomp_all(tform, idx):
-            symb = [x for x in symbs if x in tform]
-            symb = symb[0]
-            memb = tform.split(symb)
+        def decomp_symbs():
+            symb = [x for x in symbs if x in form][0]
+            memb = form.split(symb)
             if len(memb) > 2:
                 while len(memb) > 2:
                     last = memb.pop()                        
                     memb[-1] =  memb[-1] + symb + last
-            x, y = len(comp), len(comp)+1
-            if symb == '|>':
-                comp[idx] = '{'+str(x)+'}'+':icond:'+'{'+str(y)+'}'
-            if symb == '<=>':
-                comp[idx] = '{'+str(x)+'}'+':equiv:'+'{'+str(y)+'}'
-            if symb == ' =>':
-                comp[idx] = '{'+str(x)+'}'+':implies:'+'{'+str(y)+'}'
-            if symb == '||':
-                comp[idx] = '{'+str(x)+'}'+':or:'+'{'+str(y)+'}'
-            if symb == '&&':
-                comp[idx] = '{'+str(x)+'}'+':and:'+'{'+str(y)+'}'
+            x, y = len(comp), len(comp)+1            
+            comp[idx] = '{'+str(x)+'}'+symbs[symb]+'{'+str(y)+'}'
             comp.append(memb[0])
             comp.append(memb[1])
             return True
-
-        def iter_childs(ls):
+        
+        def iter_childs():
             for n in range(0, ls):
                 exp = comp[n]
                 childs = rgx_par.findall(exp)
@@ -149,42 +180,19 @@ class Representation(object):
                 if childs != -1:
                     for c in childs:
                         hier[c]['parent'] = n
-
-        decomp_par(sentence.rstrip('\n'), symb=('(',')'))
+        
+        comp = []
+        hier = {}
+        decomp_par(sent.rstrip('\n'), symb=('(', ')'))
         ori = len(comp)-1
-        for i, form in enumerate(comp):
-            symbs = ['|>', '<=>',' =>','||','&&']
-            if any(symb in form for symb in symbs):
-                decomp_all(form, idx=i)
-        iter_childs(len(comp))
-        par_form = comp[ori]
-        if not any(x in par_form for x in [':forall:', ':exists:', ':icond']):
-            if '[' in par_form and len(comp) == 1:
-                # It's a predicate
-                self.declare(par_form)
-            else:
-                # It's a complex sentence with various predicates/funcs
-                sent = LogSentence(ori, comp, hier)
-                self.add_cog(sent)
-                #raise AssertionError('Logic sentence synthax is incorrect.')
-        else:
-            # It's a complex sentence with variables
-            sentence = LogSentence(ori, comp, hier)
-            if sentence.validity is True:
-                sentence.validity = None
-                self.save_rule(sentence)
-            elif sentence.validity is None:
-                self.add_cog(sentence)
-            else:
-                raise AssertionError('Illegal connectives used in the consequent' \
-                                     + ' of an indicative conditional sentence')
-    
-    def ask(self, sent):
-        """Parses a sentence, asks the KB and returns the result of that ask.
-        """
-        pass
-
-    def declare(self, sent):
+        for idx, form in enumerate(comp):            
+            if any(symb in form for symb in symbs.keys()):
+                decomp_symbs()
+        ls = len(comp)
+        iter_childs()
+        return ori, comp, hier
+        
+    def declare(self, sent, save=False):
         """Declares an object as a member of a class or the relationship
         between two objects. Declarations parse well-formed statements.
         
@@ -203,8 +211,7 @@ class Representation(object):
         Declarations of mapping can happen between entities, classes, 
         or between an entity and a class (ie. <loves[$Lucy, cats]>).
         """
-        sent = sent.strip()
-        rgx_ob = re.compile(r'\b(.*?)\]')
+        sent = sent.strip()        
         sets = rgx_ob.findall(sent)
         sets = sets[0].split('[')
         if ';' in sets[1]:
@@ -386,8 +393,7 @@ class Representation(object):
         tests = []
         for c in cats:
             tests = tests + self.classes[c]['cog']['SELF']
-        tests = set(tests)
-        tests = list(tests)
+        tests, tests = set(tests), list(tests)
         for t in tests:
             t(self, *args)
         # Tests are run twice, as the changes from the first run could
@@ -422,10 +428,10 @@ class Individual(object):
         id -> Unique identifier for the object.
         name -> Name of the unique object.
         categ -> Categories to which the object belongs.
-        |Includes the degree of membership (ie. ('cold', 0.9)).
+        | Includes the degree of membership (ie. ('cold', 0.9)).
         attr -> Implicit attributes of the object, unique to itself.
         cog (opt) -> These are the cognitions attributed to the object by 
-        |the agent owning this representation.
+        | the agent owning this representation.
         relations (opt) -> Functions between two objects and/or classes.
     """
     def __init__(self, name):
@@ -516,24 +522,28 @@ class Category(dict):
         elif sent not in self['cog'][p]:
             self['cog'][p].append(sent)
 
-# ===================================================================#
-#   LOGIC METHODS
-# ===================================================================#
 
-
-def infer_facts():
-    """Inference method from first-order logic sentences.
+class Group(Category):
+    """A special instance of a category. It defines a 'group' of
+    elements that pertain to a class.
     """
-    
+
+
+class Part(Category):
+    """A special instance of a category. It defines an element
+    which is a part of an other object.
+    """
+
+
 # ===================================================================#
-#   SUPPORTING CLASSES AND SUBCLASSES
+#   LOGIC CLASSES AND SUBCLASSES
 # ===================================================================#
 
 
 class LogSentence(object):
     """Object to store a first-order logic complex sentence.
 
-    A declaration formula is the result of parsing a sentence and encode
+    This sentence is the result of parsing a sentence and encode
     it in an usable form for the agent to classify and reason about
     objects and relations.
     """
@@ -591,7 +601,7 @@ class LogSentence(object):
             p = [part for part in self.particles if part.depth == lvl]
             for part in p:
                 particles.append(part)
-                if part.cond is 'icond':
+                if part.cond == 'icond':
                     icond = part
             lvl -= 1        
         self.particles = particles
@@ -611,17 +621,11 @@ class LogSentence(object):
         def up_var():
             vars_ = form[i+1].split(',')
             for var in vars_:
-                var_name = var.strip()
-                if var_name not in self.var_order:
-                    #self.vars[var_name] = [(depth, quant)]
-                    self.var_order.append(var_name)
-                #else:
-                #    self.vars[var_name].append((depth, quant))
-                #    self.var_order.append(var_name)
+                if var not in self.var_order:
+                    self.var_order.append(var)
             self.particles.append(Particle(cond, depth, part_id, parent, syb))
 
         def break_pred(form):
-            rgx_ob = re.compile(r'\b(.*?)\]')
             set_ = rgx_ob.findall(form)
             set_ = set_[0].split('[')
             if ';' in set_[1]:
@@ -629,24 +633,13 @@ class LogSentence(object):
             if '<' in form:
                 set_.append('map')
             return set_
-
+        
+        form = form.replace(' ','').strip()
+        cond = rgx_br.findall(form)        
         if depth > self.depth:
             self.depth = depth
-        if ':icond:' in form:
-            cond = 'icond'
-            self.particles.append(Particle(cond, depth, part_id, parent, syb))
-        elif ':equiv:' in form:
-            cond = 'equiv'
-            self.particles.append(Particle(cond, depth, part_id, parent, syb))
-        elif ':implies:' in form:
-            cond = 'implies'
-            self.particles.append(Particle(cond, depth, part_id, parent, syb))
-        elif ':or:' in form:
-            cond = 'or'
-            self.particles.append(Particle(cond, depth, part_id, parent, syb))
-        elif ':and:' in form:
-            cond = 'and'
-            self.particles.append(Particle(cond, depth, part_id, parent, syb))
+        if len(cond) > 0:
+            self.particles.append(Particle(cond[0], depth, part_id, parent, syb))
         elif any(x in form for x in [':forall:', ':exists:']):
             # Only universal quantifiers are supported right now,
             # so the quantity is irrelevant (check declare method for more info).
@@ -654,11 +647,7 @@ class LogSentence(object):
             cond = 'check_var'
             for i, a in enumerate(form):
                 if a == 'forall':
-            #        quant = float('inf')
                     up_var()
-            #    elif a == 'exists':
-            #        quant = 1
-            #        up_var()
         elif '[' in form:
             cond = 'predicate'
             form = tuple(break_pred(form))
@@ -667,13 +656,12 @@ class LogSentence(object):
 
 
 class Particle(object):
-    """Is a node that represents a natural language particle, 
-    that can be either:
-    a) An operator of the following types: implies, equals,
-    and, or, not.
-    b) A predicate, declaring a variable as a member of a set,
+    """A particle in a logic sentence, that can be either:
+    * An operator of the following types: 
+    indicative conditional, implies, equals, and, or.
+    * A predicate, declaring a variable/constant as a member of a set, 
     or a function between two variables.
-    c) A quantifier for a variable: universal or existential.
+    * A quantifier for a variable: universal or existential.
     """
     def __init__(self, cond, depth, id_, parent, syb, *args):
         self.pID = id_
@@ -849,7 +837,7 @@ class Particle(object):
                 if result is True:
                     obj = obj + ',u' + u[0] + str(uval)
                     s = '<' + check_func + '['+sbj+';' + obj + ']>'
-                    #ag.bmsWrapper.prev_blf(s)
+                    ag.bmsWrapper.prev_blf(s)
             else:
                 # Check membership to a set of an entity.
                 sbj, u = self.pred[1].split(',u')
@@ -872,7 +860,7 @@ class Particle(object):
                         result = False
                 if result is True:
                     s = check_set+'['+sbj+',u'+u[0]+str(uval)+']'
-                    #ag.bmsWrapper.prev_blf(s)
+                    ag.bmsWrapper.prev_blf(s)
             return result
         elif key[-1] != 101:
             # marked for declaration
@@ -884,14 +872,14 @@ class Particle(object):
                 obj, sbj = isvar(obj), isvar(pred[1][1])
                 iobj = isvar(pred[1][2]) if len(pred[1]) == 3 else None
                 pred[1] = ([obj, u], sbj, iobj)                                
-                #ag.bmsWrapper.check(pred)
+                ag.bmsWrapper.check(pred)
                 pred[1][0][1] = float(u[1:])
                 ag.up_rel(pred)
             else:
                 sbj, u = self.pred[1].split(',u')
                 pred[1] = isvar(sbj)
                 pred = (pred[0], [pred[1], u])
-                #ag.bmsWrapper.check(pred)
+                ag.bmsWrapper.check(pred)
                 pred[1][1] = float(u[1:])
                 ag.up_memb(pred)
 
@@ -922,19 +910,19 @@ class Particle(object):
         if k == 1:
             self.results.append(args[0])
             k = 0
-        if self.cond is 'icond':
+        if self.cond == 'icond':
             if len(self.results) != 1:
                 self.next[1].get_ops(k)
             else:
                 return
         else:
-            if self.cond is 'predicate':
+            if self.cond == 'predicate':
                 k = 1
                 self.parent.get_ops(k, True)
-            elif len(self.results) < 2 and self.cond is 'and':
+            elif len(self.results) < 2 and self.cond == 'and':
                 i = len(self.results)
                 self.next[i].get_ops(k)
-            elif self.cond is 'and':
+            elif self.cond == 'and':
                 k = 1
                 if any(p is False for p in self.results):
                     self.parent.get_ops(k, False)
@@ -954,16 +942,21 @@ class Particle(object):
         return s
 
 
-class Group(Category):
-    """A special instance of a category. It defines a 'group' of
-    elements that pertain to a class.
-    """
+# ===================================================================#
+#   LOGIC INFERENCE
+# ===================================================================#
 
 
-class Part(Category):
-    """A special instance of a category. It defines an element
-    which is a part of an other object.
+def infer_facts(sent):
+    """Inference function from first-order logic sentences.
+    
+    Gets a query from an ASK, encapsulates the query, processes it
+    (including caching of partial results or tracking variable bounding)
+    and returns the answer to the query. If new knowledge is produced 
+    then it's passed to an other procedure for addition to the KB.
     """
+    print sent
+
 
 if __name__ == '__main__':
     import datetime
@@ -982,6 +975,7 @@ if __name__ == '__main__':
     d1 = datetime.datetime.now()
     for form in ls:
         r.tell(form)
+    r.ask('criminal[$West,u=1]')
     print '\n---------- RESULTS ----------'
     d2 = datetime.datetime.now()
     print (d2-d1)
@@ -992,4 +986,4 @@ if __name__ == '__main__':
         #print 'cog:', ind.cog
     print
     #pprint.pprint(r.bmsWrapper.container)
-    pprint.pprint(r.classes)
+    #pprint.pprint(r.classes)
