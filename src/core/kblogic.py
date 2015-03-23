@@ -24,7 +24,7 @@ for reasoning, cataloging objects into sets/classes, and the relationships
 between these objects.
 """
 # ===================================================================#
-#   Imports and globals
+#   Imports and constants
 # ===================================================================#
 import re
 import os
@@ -32,13 +32,12 @@ import uuid
 
 import core.bms
 
-gl_res = []
 symbs = dict([
-             ('|>','icond'),
-             ('<=>','equiv'), 
-             (' =>','implies'),
-             ('||','or'),
-             ('&&','and')
+             ('|>',':icond:'),
+             ('<=>',':equiv:'), 
+             (' =>',':implies:'),
+             ('||',':or:'),
+             ('&&',':and:')
             ])
 
 #Regex
@@ -91,7 +90,7 @@ class Representation(object):
         """
         ori, comp, hier = self.parse_sent(sent)
         par_form = comp[ori]
-        if not any(x in par_form for x in [':forall:', ':icond']):
+        if not any(x in par_form for x in [':forall:', ':icond:']):
             if '[' in par_form and len(comp) == 1:
                 # It's a predicate
                 self.declare(par_form)
@@ -114,10 +113,7 @@ class Representation(object):
     def ask(self, sent):
         """Parses a sentence, asks the KB and returns the result of that ask.
         """
-        ori, comp, hier = self.parse_sent(sent)
-        print '\n', ori, comp, hier
-        
-        result = infer_facts(sent)
+        result = infer_facts(self, self.parse_sent, sent)
         return result
 
     def parse_sent(self, sent):
@@ -312,11 +308,6 @@ class Representation(object):
         for p in sent.particles:
             if p.cond is 'predicate':
                 preds.append(p.pred)
-        for x in gl_res:
-            if len(x) == 3:
-                preds.append((x[0], x[1][1]))
-            else:
-                preds.append(x)
         for pred in preds:
             if len(pred) == 3:
                 if ',u' in pred[1][0]:
@@ -355,11 +346,11 @@ class Representation(object):
 
     def save_rule(self, proof):
         for part in proof.particles:
-            if part.parent == -1:
-                x = part
-            part.results = []        
-        x.get_pred(conds=['icond'])
-        for name in gl_res:
+            part.results = []
+        x = proof.start
+        x.get_pred(conds=[':icond:'])
+        setattr(proof, 'gl_res', list())
+        for name in proof.gl_res:
             if name[0] in self.classes and \
             proof not in self.classes[name[0]]['cog']['SELF']:
                 self.classes[name[0]].add_cog('SELF', proof)
@@ -369,8 +360,8 @@ class Representation(object):
                 nc['type'] = c
                 nc.add_cog('SELF', proof)
                 self.classes[name[0]] = nc
-        n = set([x[0] for x in gl_res])
-        del gl_res[:]
+        n = set([x[0] for x in proof.gl_res])
+        del proof.gl_res
         # Run the new formula with every unique object that matches.
         for ind in self.individuals.values():
             common = list(ind.check_cat(n))
@@ -403,7 +394,13 @@ class Representation(object):
         # RULE TEST, not every single test again
         for t in tests:
             t(self, *args)
-
+    
+    def inds_by_cat(self, cats):
+        cat_dic = {}
+        for ind in self.individuals.values():
+            s = ind.check_cat(cats)
+            cat_dic[ind.name] = list(s)
+        return cat_dic
 
 class Individual(object):
     """An individual is the unique member of it's own class.
@@ -456,7 +453,7 @@ class Individual(object):
         pass
     
     def check_cat(self, n):
-        """Returns a set that is the interdiction of the input set
+        """Returns a set that is the intersection of the input set
         and the union of the categories and relations of the object.
         """
         t = set([k for k,_ in self.relations.items()])
@@ -559,10 +556,8 @@ class LogSentence(object):
         # Clean up previous results.
         self.product = None
         self.assigned = {}
-        if len(self.var_order) == len(args):            
-            for part in self.particles:
-                if part.results is not None:
-                    part.results = []
+        cln_res(self)
+        if len(self.var_order) == len(args):
             # Check the properties/classes an obj belongs to
             for n, const in enumerate(args):
                 if const not in ag.individuals:
@@ -571,10 +566,10 @@ class LogSentence(object):
                 # Assign an entity to a variable by order.
                 self.assigned[var_name] = const
             ag.bmsWrapper.register(self)
-            self.particles[-1].solve(self, ag, key=[0])
+            self.start.solve(self, ag, key=[0])
             ag.bmsWrapper.register(self, stop=True)
         elif len(self.var_order) == 0:
-            self.particles[-1].solve(self, ag, key=[0])
+            self.start.solve(self, ag, key=[0])
         else:
             return
 
@@ -613,8 +608,11 @@ class LogSentence(object):
             icond.get_ops()
             self.validity = icond.results[0]
         for p in self.particles:
-            p.pID = None
+            del p.pID
+            p.sent = self
             p.results = []
+            if p.parent == -1:
+                self.start = p
 
     def new_test(self, form, depth, parent, part_id, syb):
 
@@ -626,13 +624,12 @@ class LogSentence(object):
             self.particles.append(Particle(cond, depth, part_id, parent, syb))
 
         def break_pred(form):
-            set_ = rgx_ob.findall(form)
-            set_ = set_[0].split('[')
-            if ';' in set_[1]:
-                set_[1] = tuple(set_[1].split(';'))
+            p = rgx_ob.findall(form)[0].split('[')
+            if ';' in p[1]:
+                p[1] = tuple(p[1].split(';'))
             if '<' in form:
-                set_.append('map')
-            return set_
+                p.append('map')
+            return p
         
         form = form.replace(' ','').strip()
         cond = rgx_br.findall(form)        
@@ -681,12 +678,13 @@ class Particle(object):
                     self.next[x].parent = self
 
     def solve(self, proof, ag, key, *args):
-        """Keys for resolving the proof:
+        """Keys for solving proofs:
         100: Substitute a child's predicates.
         101: Check the truthiness of a child particle.
         102: Incoming truthiness of an operation for storage.
-        103: Substitute the right branch of a statement and store.
+        103: Substitute the right branch and record in the KB.
         104: Returns the truthiness of a substitution.
+        105: Subtitute the right branch and go back to parent.
         """
         #print self, '// Key:'+str(key), '// Args:', args
         if key[-1] == 102:
@@ -694,28 +692,28 @@ class Particle(object):
             self.results.append(args[0])
         if self.cond == 'check_var':
             self.next[0].solve(proof, ag, key)
-        elif self.cond == 'icond':
+        elif self.cond == ':icond:':
             self.icond(proof, ag, key, *args)
-        elif self.cond == 'or' or self.cond == 'and':
+        elif self.cond == ':or:' or self.cond == ':and:':
             if key[-1] == 104:
                 key.pop()
                 self.results.append(args[0])
-            current = len(self.results)            
+            current = len(self.results)
             if key[-1] == 101:
                 if current < len(self.next):
                     key.append(101)
                     self.next[current].solve(proof, ag, key)
                 else:
-                    if self.cond == 'or':
-                        # Two branches finished, check if one is true.                    
+                    if self.cond == ':or:':
+                        # Two branches finished, check if one is true.
                         self.disjunction(proof, ag, key)
-                    elif self.cond == 'and':
-                        # Two branches finished, check if both are true. 
-                        self.conjunction(proof, ag, key) 
+                    elif self.cond == ':and:':
+                        # Two branches finished, check if both are true.
+                        self.conjunction(proof, ag, key)
             elif key[-1] == 100:
                 if current < len(self.next) and \
                 self.next[current].cond == 'predicate':
-                    if self.cond == 'or':
+                    if self.cond == ':or:':
                         key.append(101)
                         self.next[current].solve(proof, ag, key)
                     else:
@@ -724,9 +722,9 @@ class Particle(object):
                 elif current < len(self.next):
                     self.next[current].solve(proof, ag, key)
                 else:
-                    if self.cond == 'or':
+                    if self.cond == ':or:':
                         result = self.disjunction(proof, ag, key)
-                    elif self.cond == 'and':
+                    elif self.cond == ':and:':
                         result = self.conjunction(proof, ag, key)
                     key.append(104)
                     self.parent.solve(proof, ag, key, result)
@@ -747,7 +745,7 @@ class Particle(object):
         """Procedure for parsign indicative conditional assertions."""
         if key[-1] == 104:
             self.results.append(args[0])
-            if self.next[1].cond is 'or' and self.results[1] is False:
+            if self.next[1].cond is ':or:' and self.results[1] is False:
                 # This fails
                 return
         else:
@@ -891,16 +889,16 @@ class Particle(object):
         if len(self.results) == 0:
             if self.cond == 'predicate':
                 k = 1
-                if self.pred not in gl_res:
-                    gl_res.append(self.pred)
+                if self.pred not in self.sent.gl_res:
+                    self.sent.gl_res.append(self.pred)
                 self.parent.get_pred(pos, k, conds, True)
             else:
                 self.next[branch].get_pred(pos, k, conds)
         elif len(self.results) == 1 and self.cond not in conds:
             if self.cond == 'predicate':
                 k = 1
-                if self.pred not in gl_res:
-                    gl_res.append(self.pred)
+                if self.pred not in self.sent.gl_res:
+                    self.sent.gl_res.append(self.pred)
                 self.parent.get_pred(pos, k, conds, True)
             else:
                 x = 1 if pos == 'left' else 0
@@ -910,7 +908,7 @@ class Particle(object):
         if k == 1:
             self.results.append(args[0])
             k = 0
-        if self.cond == 'icond':
+        if self.cond == ':icond:':
             if len(self.results) != 1:
                 self.next[1].get_ops(k)
             else:
@@ -919,10 +917,10 @@ class Particle(object):
             if self.cond == 'predicate':
                 k = 1
                 self.parent.get_ops(k, True)
-            elif len(self.results) < 2 and self.cond == 'and':
+            elif len(self.results) < 2 and self.cond == ':and:':
                 i = len(self.results)
                 self.next[i].get_ops(k)
-            elif self.cond == 'and':
+            elif self.cond == ':and:':
                 k = 1
                 if any(p is False for p in self.results):
                     self.parent.get_ops(k, False)
@@ -941,22 +939,139 @@ class Particle(object):
             + str(self.pred) + '>'
         return s
 
+def cln_res(sent):
+    for p in sent.particles:
+        p.results = []
 
 # ===================================================================#
 #   LOGIC INFERENCE
 # ===================================================================#
 
-
-def infer_facts(sent):
+gr_conds = [':icond:', ':implies:', ':equiv:']
+    
+def infer_facts(kb, parser, sent):
     """Inference function from first-order logic sentences.
     
-    Gets a query from an ASK, encapsulates the query, processes it
-    (including caching of partial results or tracking variable bounding)
-    and returns the answer to the query. If new knowledge is produced 
-    then it's passed to an other procedure for addition to the KB.
+    Gets a query from an ASK, encapsulates the query subtitutions, 
+    processes it (including caching of partial results or tracking
+    var substitution) and returns the answer to the query. If new 
+    knowledge is produced then it's passed to an other procedure for
+    addition to the KB.
     """
-    print sent
+    ori, comp, hier = parser(sent)
+    infer = Inference(kb, comp)
+    query = infer.cats
+    ctg = []
+    for e in query.values():
+        for c in e:
+            ctg.append(c[0])
+    infer.rules = set()
+    infer.get_rules(kb, list(set(ctg)))
+    dic = kb.inds_by_cat(infer.chk_cats)
+    print dic
+    infer.forward_chain()
 
+"""
+function FOL-FC-A SK (KB, α) returns a substitution or false
+    inputs: KB , the knowledge base, a set of first-order definite clauses
+            α, the query, an atomic sentence
+    local variables: new , the new sentences inferred on each iteration
+        repeat until new is empty
+        new ← { }
+        for each rule in KB do
+            (p1 ∧ ... ∧ pn ⇒ q) ← STANDARDIZE-VARIABLES (rule)
+            for each θ such that SUBST (θ, p1 ∧ ... ∧ pn ) = SUBST (θ, p1 ∧ ... ∧ pn )
+                for some p1 , ... , pn in KB
+                q ← SUBST (θ, q)
+                    if q does not unify with some sentence already in KB or new then
+                        add q to new
+                        φ ← UNIFY (q, α)
+                        if φ is not fail then return φ
+        add new to KB
+    return false
+"""
+
+
+class Inference(object):
+    
+    def __init__(self, kb, *args):
+        self.kb = kb
+        self.get_terms(*args)
+        
+    def forward_chain(self):
+    
+        def std_vars():
+            pass
+        
+        pass
+
+    def get_terms(self, comp):
+        
+        def break_pred():
+            pr = rgx_ob.findall(p)[0].split('[')
+            if ';' in pr[1]:
+                t = pr[1].split(';')
+                if len(t) != 3:
+                    t.append(None)
+                pr[0], pr[1] = t[1], (pr[0], tuple(t[0].split(',')), t[2])
+            else:
+                t = pr[1].split(',')
+                pr = t[0], (pr[0], t[1])
+            return pr
+        
+        def cat_gen(ls):
+            for e in ls:
+                yield e
+        
+        preds = []
+        for pa in comp:
+            pa = pa.replace(' ','').strip()
+            if not any(s in pa for s in symbs.values()):
+                preds.append(pa)
+            if ':forall:' or ':exists:' in pa:
+                pass
+        for i, p in enumerate(preds):
+            preds[i] = break_pred()
+        terms = {}
+        for p in preds:
+            if p[0] not in terms.keys():
+                terms[p[0]] = [p[1]]
+            else:
+                terms[p[0]].append(tuple(p[1]))
+        cats = {}
+        for k, v in terms.items():
+            cats[k] = cat_gen(v)
+        self.cats = cats
+
+    def get_rules(self, kb, ctg, done=[None]):
+        if len(ctg) > 0:
+            c = ctg.pop()
+        else:
+            c = None
+        if c not in done:
+            done.append(c)
+            try:
+                chk_rules = set(kb.classes[c]['cog']['SELF'])
+                chk_rules = chk_rules.difference(self.rules)
+            except:
+                print 'SOLUTION CANNOT BE FOUND'
+                return
+            for sent in chk_rules:
+                setattr(sent, 'gl_res', list())
+                cln_res(sent)
+                sent.start.get_pred(conds=gr_conds)
+                ctg = ctg + [y[0] for y in sent.gl_res]
+                if c in sent.gl_res:
+                    del sent.gl_res[:]
+                    sent.start.get_pred(pos='right', conds=gr_conds)
+                    ctg = ctg + [y[0] for y in sent.gl_res]
+            self.rules = self.rules.union(chk_rules)
+            self.get_rules(kb, list(set(ctg)), done)
+        elif len(ctg) > 0:
+            self.get_rules(kb, ctg, done)
+        else:
+            done.pop(0)
+            self.chk_cats = set(done)
 
 if __name__ == '__main__':
     import datetime
@@ -976,6 +1091,7 @@ if __name__ == '__main__':
     for form in ls:
         r.tell(form)
     r.ask('criminal[$West,u=1]')
+    #r.ask('criminal[$West,u=1] && <sells[x,u=1;$West;$Nono]> && missile[x,u=1]')
     print '\n---------- RESULTS ----------'
     d2 = datetime.datetime.now()
     print (d2-d1)
@@ -983,7 +1099,6 @@ if __name__ == '__main__':
         print ind
         print 'Relations:', ind.relations
         print 'Categories:', ind.categ
-        #print 'cog:', ind.cog
+        print 'cog:', ind.cog
     print
-    #pprint.pprint(r.bmsWrapper.container)
-    #pprint.pprint(r.classes)
+    pprint.pprint(r.classes)

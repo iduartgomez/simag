@@ -119,7 +119,7 @@ Operators (by precedence):
 In the consequent of an indicative implication only && operator can be nested.
 Parentheses can be used to split complex sentences for comprenhension and 
 clarity. An example of a complex sentence:
-  :forall:x,y: (<takes[$analysis,u=1;x]> && <takes[y,u=1;x]> && course[y,u=1] && 
+  \:forall:x,y: (<takes[$analysis,u=1;x]> && <takes[y,u=1;x]> && course[y,u=1] && 
   student[x,u=1] |> silly[x,u=1])
   
   In natural language: Every student that takes analysis and takes an other 

@@ -3,6 +3,6 @@
 missile[$M1,u=1]
 :forall:x: (<owns[x,u=1;$Nono]> && missile[x,u=1] => <sells[x,u=1;$West;$Nono]>)
 :forall:x: (missile[x,u=1] => weapon[x,u=1])
-:forall:x: (<enemy[$America,u=1;x]> => hostile[x,u=1])
+:forall:x: (<enemy[x,u=1;$America]> => hostile[x,u=1])
 american[$West,u=1]
-<enemy[$America,u=1;$Nono]>
+<enemy[$Nono,u=1;$America]>
