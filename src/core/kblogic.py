@@ -207,7 +207,7 @@ class Representation(object):
         Declarations of mapping can happen between entities, classes, 
         or between an entity and a class (ie. <loves[$Lucy, cats]>).
         """
-        sent = sent.strip()        
+        sent = sent.replace(' ','')        
         sets = rgx_ob.findall(sent)
         sets = sets[0].split('[')
         if ';' in sets[1]:
@@ -305,7 +305,7 @@ class Representation(object):
 
     def add_cog(self, sent):
         preds = []
-        for p in sent.particles:
+        for p in sent:
             if p.cond is 'predicate':
                 preds.append(p.pred)
         for pred in preds:
@@ -345,7 +345,7 @@ class Representation(object):
                     self.classes[p] = nc
 
     def save_rule(self, proof):
-        for part in proof.particles:
+        for part in proof:
             part.results = []
         x = proof.start
         x.get_pred(conds=[':icond:'])
@@ -399,7 +399,11 @@ class Representation(object):
         cat_dic = {}
         for ind in self.individuals.values():
             s = ind.check_cat(cats)
-            cat_dic[ind.name] = list(s)
+            for c in s:
+                if c in cat_dic:
+                    cat_dic[c].append(c)
+                else:
+                    cat_dic[c] = [ind.name]
         return cat_dic
 
 class Individual(object):
@@ -546,7 +550,7 @@ class LogSentence(object):
     """
     def __init__(self, ori, comp, hier):
         self.depth = 0
-        self.id = str(uuid.uuid4())
+        self.id = hash(self)
         self.var_order = []
         self.particles = []
         self.make_parts(ori, comp, hier)
@@ -556,7 +560,7 @@ class LogSentence(object):
         # Clean up previous results.
         self.product = None
         self.assigned = {}
-        cln_res(self)
+        self.cln_res()
         if len(self.var_order) == len(args):
             # Check the properties/classes an obj belongs to
             for n, const in enumerate(args):
@@ -650,7 +654,13 @@ class LogSentence(object):
             form = tuple(break_pred(form))
             self.particles.append(Particle(cond, depth, part_id,
                                            parent, syb, form))
-
+    
+    def cln_res(self):
+        for p in self.particles:
+            p.results = []
+    
+    def __iter__(self):
+        return iter(self.particles)
 
 class Particle(object):
     """A particle in a logic sentence, that can be either:
@@ -806,7 +816,6 @@ class Particle(object):
             return s
         
         if key[-1] == 101:
-            result = None
             if len(self.pred) == 3:
                 # Check mapping of a set/entity to an other set/entity.                
                 check_func, sbj = self.pred[0], self.pred[1][1]
@@ -819,7 +828,7 @@ class Particle(object):
                 try:
                     val, ciobj = relation[obj][0], relation[obj][1]
                 except:
-                    result = None
+                    result = False
                 else:
                     if ciobj == iobj:
                         if u[0] == '=' and val == uval:
@@ -845,7 +854,7 @@ class Particle(object):
                 uval = float(u[1:])
                 # If is True, then the object belongs to the set.
                 # Else, must be False, and the object must not belong.
-                result = None
+                result = False
                 if check_set in categs:
                     val = categs[check_set]
                     if u[0] == '=' and uval == val:
@@ -893,7 +902,10 @@ class Particle(object):
                     self.sent.gl_res.append(self.pred)
                 self.parent.get_pred(pos, k, conds, True)
             else:
-                self.next[branch].get_pred(pos, k, conds)
+                if self.cond == 'check_var':
+                    self.next[0].get_pred(pos, k, conds)
+                else:
+                    self.next[branch].get_pred(pos, k, conds)
         elif len(self.results) == 1 and self.cond not in conds:
             if self.cond == 'predicate':
                 k = 1
@@ -939,10 +951,6 @@ class Particle(object):
             + str(self.pred) + '>'
         return s
 
-def cln_res(sent):
-    for p in sent.particles:
-        p.results = []
-
 # ===================================================================#
 #   LOGIC INFERENCE
 # ===================================================================#
@@ -959,54 +967,71 @@ def infer_facts(kb, parser, sent):
     addition to the KB.
     """
     ori, comp, hier = parser(sent)
-    infer = Inference(kb, comp)
-    query = infer.cats
-    ctg = []
-    for e in query.values():
-        for c in e:
-            ctg.append(c[0])
-    infer.rules = set()
-    infer.get_rules(kb, list(set(ctg)))
-    dic = kb.inds_by_cat(infer.chk_cats)
-    print dic
-    infer.forward_chain()
-
-"""
-function FOL-FC-A SK (KB, α) returns a substitution or false
-    inputs: KB , the knowledge base, a set of first-order definite clauses
-            α, the query, an atomic sentence
-    local variables: new , the new sentences inferred on each iteration
-        repeat until new is empty
-        new ← { }
-        for each rule in KB do
-            (p1 ∧ ... ∧ pn ⇒ q) ← STANDARDIZE-VARIABLES (rule)
-            for each θ such that SUBST (θ, p1 ∧ ... ∧ pn ) = SUBST (θ, p1 ∧ ... ∧ pn )
-                for some p1 , ... , pn in KB
-                q ← SUBST (θ, q)
-                    if q does not unify with some sentence already in KB or new then
-                        add q to new
-                        φ ← UNIFY (q, α)
-                        if φ is not fail then return φ
-        add new to KB
-    return false
-"""
+    query = Inference(kb, comp)
+    query.rules = set()
+    query.get_rules(query.ctgs)
+    subs_dic = kb.inds_by_cat(query.chk_cats)
+    query.chain(subs_dic)
 
 
 class Inference(object):
-    
+
     def __init__(self, kb, *args):
         self.kb = kb
-        self.get_terms(*args)
-        
-    def forward_chain(self):
-    
-        def std_vars():
-            pass
-        
-        pass
+        self.vrs = {}
+        self.nodes = {}
+        self.get_query(*args)
 
-    def get_terms(self, comp):
-        
+    def chain(self, subs_dic):
+        self.subskb = subs_dic
+        self.subactv = {}
+        for var, pred in self.query.items():
+            if var in self.vrs:
+                # It's a variable, find every object that fits the criteria
+                pass
+            else:
+                for p in pred:
+                    if p[0] in self.subskb and var in self.subskb[p[0]]:
+                        print 'SOLUTION FOUND'
+                        return
+                    else:
+                        self.rcsv_sub(p[0])
+
+    def rcsv_sub(self, ctg):
+        for node in self.nodes[ctg]:            
+            #print node.rule.var_order, node.subs
+            #print self.subskb
+            self.map_vars(node)
+            for ant in node.ants:
+                if ant in self.subskb and len(self.subskb[ant]) > 0 \
+                and ant not in self.subactv:
+                    x = self.subskb[ant].pop()
+                    self.subactv[ant] = x
+                else:
+                    a = [n for n in node.ants if n in self.subactv]
+                    s = set(node.ants).difference(set(a))
+                    if len(s) == 0:
+                        args = []
+                        for pred in a:
+                            args.append(self.subactv[pred])
+                    if ant not in self.nodes:
+                        pass
+                    else:
+                        self.rcsv_sub(ant)
+    
+    def map_vars(self, node):
+        for vr, val in node.subs.items():
+            tls = []
+            for v in val:
+                if v in self.subskb:
+                    tls.append(self.subskb[v])
+            #while len(tls) > 1:
+            #    s = tls.pop()
+            #    tls[0].union(s)
+            print tls, val
+    
+    def get_query(self, comp):
+
         def break_pred():
             pr = rgx_ob.findall(p)[0].split('[')
             if ';' in pr[1]:
@@ -1019,10 +1044,6 @@ class Inference(object):
                 pr = t[0], (pr[0], t[1])
             return pr
         
-        def cat_gen(ls):
-            for e in ls:
-                yield e
-        
         preds = []
         for pa in comp:
             pa = pa.replace(' ','').strip()
@@ -1032,46 +1053,88 @@ class Inference(object):
                 pass
         for i, p in enumerate(preds):
             preds[i] = break_pred()
-        terms = {}
+        terms, ctgs = {}, []
         for p in preds:
             if p[0] not in terms.keys():
                 terms[p[0]] = [p[1]]
+                ctgs.append(p[1][0])
             else:
                 terms[p[0]].append(tuple(p[1]))
-        cats = {}
-        for k, v in terms.items():
-            cats[k] = cat_gen(v)
-        self.cats = cats
+        self.query, self.ctgs = terms, ctgs
 
-    def get_rules(self, kb, ctg, done=[None]):
+    def get_rules(self, ctg, done=[None]):
         if len(ctg) > 0:
             c = ctg.pop()
         else:
             c = None
-        if c not in done:
+        if c is not None:      
             done.append(c)
             try:
-                chk_rules = set(kb.classes[c]['cog']['SELF'])
+                chk_rules = set(self.kb.classes[c]['cog']['SELF'])
                 chk_rules = chk_rules.difference(self.rules)
             except:
                 print 'SOLUTION CANNOT BE FOUND'
                 return
             for sent in chk_rules:
+                sent.cln_res()
                 setattr(sent, 'gl_res', list())
-                cln_res(sent)
                 sent.start.get_pred(conds=gr_conds)
-                ctg = ctg + [y[0] for y in sent.gl_res]
+                nc = [y[0] for y in sent.gl_res]
                 if c in sent.gl_res:
                     del sent.gl_res[:]
                     sent.start.get_pred(pos='right', conds=gr_conds)
-                    ctg = ctg + [y[0] for y in sent.gl_res]
+                    nc = [y[0] for y in sent.gl_res]
+                    self.mk_nodes(nc, sent.gl_res, sent, 'left')
+                else:
+                    nc = [y[0] for y in sent.gl_res]
+                    self.mk_nodes(nc, sent.gl_res, sent, 'right')
+                nc = [e for e in nc if e not in done and e not in ctg]
+                ctg.extend(nc)
             self.rules = self.rules.union(chk_rules)
-            self.get_rules(kb, list(set(ctg)), done)
-        elif len(ctg) > 0:
-            self.get_rules(kb, ctg, done)
+            self.get_rules(ctg, done)
         else:
             done.pop(0)
             self.chk_cats = set(done)
+            del self.rules
+            del self.ctgs
+    
+    def mk_nodes(self, nc, ants, rule, pos):
+        ants = list(ants)
+        del rule.gl_res[:]
+        rule.cln_res()
+        rule.start.get_pred(pos=pos, conds=gr_conds)
+        for cons in rule.gl_res:
+            node = InfNode(nc, ants, cons[0], rule)
+            if node.cons in self.nodes:
+                self.nodes[node.cons].append(node)
+            else:
+                self.nodes[node.cons] = [node]
+
+
+class InfNode(object):
+    
+    def __init__(self, *args):
+        self.mk_cons(*args)
+        
+    def mk_cons(self, nc, ants, cons, rule):
+        self.rule = rule
+        self.cons = cons
+        self.ants = nc       
+        self.subs = {v:list() for v in rule.var_order}
+        for ant in ants:
+            if isinstance(ant[1], tuple):
+                for vr in ant[1]:
+                    if ',u' in vr:
+                        v = vr.split(',u')
+                        v = v[0]
+                    else: 
+                        v = vr[0]          
+                    if v in self.subs:
+                        self.subs[v].append(ant[0])
+            else:
+                v = ant[1].split(',u')
+                if v[0] in self.subs:
+                    self.subs[v[0]].append(ant[0])
 
 if __name__ == '__main__':
     import datetime
@@ -1099,6 +1162,6 @@ if __name__ == '__main__':
         print ind
         print 'Relations:', ind.relations
         print 'Categories:', ind.categ
-        print 'cog:', ind.cog
+        #print 'cog:', ind.cog
     print
-    pprint.pprint(r.classes)
+    #pprint.pprint(r.classes)
