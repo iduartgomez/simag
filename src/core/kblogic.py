@@ -327,21 +327,21 @@ class Representation(object):
                     ind.add_cog(p, sent)
                     self.individuals[sbj] = ind
                 elif sbj in self.classes:
-                    self.classes[sbj].add_cog(p, sent)
+                    self.classes[sbj].add_cog(sent)
                 else:
                     c = 'class' if len(sbj) == 2 else 'relation'
                     nc = Category(sbj)
                     nc['type'] = c
-                    nc.add_cog(p, sent)
+                    nc.add_cog(sent)
                     self.classes[sbj] = nc
             else:
                 if p in self.classes:
-                    self.classes[p].add_cog('SELF', sent)
+                    self.classes[p].add_cog(sent)
                 else:
                     c = 'class' if len(pred) == 2 else 'relation'
                     nc = Category(p)
                     nc['type'] = c
-                    nc.add_cog('SELF', sent)
+                    nc.add_cog(sent)
                     self.classes[p] = nc
 
     def save_rule(self, proof):
@@ -352,13 +352,13 @@ class Representation(object):
         setattr(proof, 'gl_res', list())
         for name in proof.gl_res:
             if name[0] in self.classes and \
-            proof not in self.classes[name[0]]['cog']['SELF']:
-                self.classes[name[0]].add_cog('SELF', proof)
+            proof not in self.classes[name[0]]['cog']:
+                self.classes[name[0]].add_cog(proof)
             else:
                 c = 'class' if len(name) == 2 else 'relation'
                 nc = Category(name[0])
                 nc['type'] = c
-                nc.add_cog('SELF', proof)
+                nc.add_cog(proof)
                 self.classes[name[0]] = nc
         n = set([x[0] for x in proof.gl_res])
         del proof.gl_res
@@ -368,7 +368,7 @@ class Representation(object):
             proof(self, ind.name)
             tests = None
             for cat in common:
-                tests = self.classes[cat]['cog']['SELF']
+                tests = self.classes[cat]['cog']
             if tests:
                 for test in tests:
                     test(self, ind.name)
@@ -383,7 +383,7 @@ class Representation(object):
                 cats = cats + i + j
         tests = []
         for c in cats:
-            tests = tests + self.classes[c]['cog']['SELF']
+            tests = tests + self.classes[c]['cog']
         tests, tests = set(tests), list(tests)
         for t in tests:
             t(self, *args)
@@ -441,7 +441,7 @@ class Individual(object):
         self.attr = {}
         self.categ = []
         self.relations = {}
-        self.cog = {'SELF':[]}
+        self.cog = {}
 
     def set_attr(self, **kwargs):
         """Sets implicit attributes for the class, if an attribute exists
@@ -483,10 +483,10 @@ class Individual(object):
             return None
     
     def add_cog(self, p, sent):
-        if p not in self.cog:
-            self.cog[p] = [sent]
-        elif sent not in self.cog[p]:
+        if p in self.cog:
             self.cog[p].append(sent)
+        else:
+            self.cog[p] = [sent]
     
     def __str__(self):
         s = "\n<individual '" + self.name + "' w/ id: " + self.id + ">"
@@ -506,9 +506,8 @@ class Category(dict):
     (to a degree).
     """
     def __init__(self, name):
-        self['id'] = str(uuid.uuid4())
         self['name'] = name
-        self['cog'] = {'SELF':[]}
+        self['cog'] = []
         
     def iter_rel(self, rel):
         return [x for (x, _, _) in self[rel]]
@@ -517,11 +516,8 @@ class Category(dict):
         """Infers attributes of the class from it's members."""
         pass
     
-    def add_cog(self, p, sent):
-        if p not in self['cog']:
-            self['cog'][p] = [sent]
-        elif sent not in self['cog'][p]:
-            self['cog'][p].append(sent)
+    def add_cog(self, sent):
+        self['cog'].append(sent)
 
 
 class Group(Category):
@@ -1070,7 +1066,7 @@ class Inference(object):
         if c is not None:      
             done.append(c)
             try:
-                chk_rules = set(self.kb.classes[c]['cog']['SELF'])
+                chk_rules = set(self.kb.classes[c]['cog'])
                 chk_rules = chk_rules.difference(self.rules)
             except:
                 print 'SOLUTION CANNOT BE FOUND'
