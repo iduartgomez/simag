@@ -26,6 +26,7 @@ between these objects.
 # ===================================================================#
 #   Imports and constants
 # ===================================================================#
+import copy
 import re
 import os
 import uuid
@@ -284,6 +285,12 @@ class Representation(object):
                 else:
                     idx = rel.index(obj)
                     ind.relations[relation][idx] = (obj, val, iobj)
+            if '$' in obj and obj not in self.individuals:
+                ind = Individual(obj)
+                ind.categ.append((relation, subject))
+                self.individuals[obj] = ind
+            elif '$' in obj:
+                self.individuals[obj].categ.append((relation, subject))
             if relation not in self.classes:
                 categ = Category(relation)
                 categ['type'] = 'relation'
@@ -530,6 +537,25 @@ class Part(Category):
     """
 
 
+class SubstRepr(Representation):
+    
+    class FakeBms(object):
+        
+        def check(self, *args):
+            pass
+        
+        def register(self, form, stop=False):
+            pass
+        
+        def prev_blf(self, *args):
+            pass
+        
+    def __init__(self):
+        self.individuals = {}
+        self.classes = {}
+        self.bmsWrapper = self.FakeBms()
+
+
 # ===================================================================#
 #   LOGIC CLASSES AND SUBCLASSES
 # ===================================================================#
@@ -554,7 +580,6 @@ class LogSentence(object):
         if isinstance(args[0], list):
             args = args[0]
         # Clean up previous results.
-        self.product = None
         self.assigned = {}
         self.cln_res()
         if len(self.var_order) == len(args):
@@ -606,7 +631,6 @@ class LogSentence(object):
         self.validity = None
         if icond is not False:
             self.validity = self.get_ops(icond)
-            print self.validity
         for p in self.particles:
             del p.pID
             p.sent = self
@@ -672,7 +696,7 @@ class LogSentence(object):
                 else:
                     x = x.parent
             return True
-                    
+
     def get_pred(self, branch='left', conds=[None]):
         preds = []
         for p in self:
@@ -691,6 +715,7 @@ class LogSentence(object):
 
     def __iter__(self):
         return iter(self.particles)
+
 
 class Particle(object):
     """A particle in a logic sentence, that can be either:
@@ -724,12 +749,18 @@ class Particle(object):
         102: Incoming truthiness of an operation for recording.
         103: Return to parent atom.
         """
-        #print self, '// Key:'+str(key), '// Args:', args
-        if key[-1] == 102:
+        print self, '// Key:'+str(key), '// Args:', args
+        if key[-1] == 103 and self.parent == -1:
+            return
+        if key[-1] == 102 and self.cond \
+        and self.cond != (':check_var' or ':stub:'):
             key.pop()
             self.results.append(args[0])
         if self.cond == ':check_var:' or self.cond == ':stub:':
-            self.next[0].solve(proof, ag, key, *args)
+            if key[-1] == 102 or key[-1] == 103:
+                self.parent.solve(proof, ag, key, *args)
+            else:
+                self.next[0].solve(proof, ag, key, *args)
         elif self.cond == ':icond:':
             self.icond(proof, ag, key, *args)
         elif self.cond == ':implies:':
@@ -754,11 +785,8 @@ class Particle(object):
             elif key[-1] == 100:
                 if current < len(self.next) and \
                 self.next[current].cond == ':predicate:':
-                    if self.cond == ':or:':
-                        pass
-                    else:
-                        key.append(103)
-                        self.next[current].solve(proof, ag, key)
+                    key.append(103)
+                    self.next[current].solve(proof, ag, key)
                 elif current < len(self.next):
                     self.next[current].solve(proof, ag, key)
                 else:
@@ -771,7 +799,7 @@ class Particle(object):
             if x != 100:
                 key.append(102)
                 self.parent.solve(proof, ag, key, result)
-    
+
     def impl(self, proof, ag, key, *args):
         """Procedure for solving implications."""
         current = len(self.results)
@@ -780,17 +808,29 @@ class Particle(object):
             key.append(101)
             self.next[current].solve(proof, ag, key)
         elif current == 1 and self.results[0] == True:
-            print self.results
-            #self.next[current].solve(proof, ag, key)
+            if self.next[1].cond != ':predicate:':
+                print 'RIGHT BRANCH NOT A PREDICATE!'
+            else:
+                key.append(103)
+                self.next[current].solve(proof, ag, key)
+        elif current > 1:
+            if self.results[0] is None:
+                result = None
+            elif self.results[0] is True and self.results[1] is False:
+                result = False
+            else:
+                result = True                
+            key.append(103)
+            self.parent.solve(proof, ag, key, result)
         else:
             # The left branch was false, so do not continue.
             return False
-    
+
     def icond(self, proof, ag, key, *args):
         """Procedure for parsign indicative conditional assertions."""
         if key[-1] == 103:
             # Completed
-            return
+            self.parent.solve(proof, ag, key)
         else:
             current = len(self.results)
             # if the left branch is examined then solve, else don't.
@@ -846,7 +886,6 @@ class Particle(object):
             except:
                 pass
             return s
-        
         if key[-1] == 101:
             if len(self.pred) == 3:
                 # Check mapping of a set/entity to an other set/entity.                
@@ -921,6 +960,10 @@ class Particle(object):
                 ag.bmsWrapper.check(pred)
                 pred[1][1] = float(u[1:])
                 ag.up_memb(pred)
+            if key[-1] == 103 and hasattr(proof, 'result'):
+                proof.result.append(pred)
+            elif key[-1] == 103:
+                proof.result = [pred]
 
     def __str__(self):
         if self.cond != ':predicate:':
@@ -951,8 +994,16 @@ def infer_facts(kb, parser, sent):
     query.rules = set()
     query.get_rules(query.ctgs)
     subs_dic = kb.inds_by_cat(query.chk_cats)
-    query.chain(subs_dic)
-
+    query.subst_kb(subs_dic)
+    
+    r = query.subkb
+    for ind in r.individuals.values():
+        print ind
+        print 'Relations:', ind.relations
+        print 'Categories:', ind.categ
+        #print 'cog:', ind.cog
+    print
+    #pprint.pprint(r.classes)
 
 class Inference(object):
 
@@ -962,53 +1013,114 @@ class Inference(object):
         self.nodes = {}
         self.get_query(*args)
 
-    def chain(self, subs_dic):
-        self.subkb = subs_dic
-        self.queue = []
+    def chain(self):
+        self.queue = {}
         for var, pred in self.query.items():
             if var in self.vrs:
                 # It's a variable, find every object that fits the criteria
                 pass
             else:
                 for p in pred:
-                    if p[0] in self.subkb and var in self.subkb[p[0]]:
+                    if p[0] in self.obj_dic and var in self.obj_dic[p[0]]:
                         print 'SOLUTION FOUND'
                         return
                     else:
                         self.rcsv_sub(p[0])
 
     def rcsv_sub(self, ctg):
+        
+        def add_ctg():
+            key = hash(tuple(mapped))
+            for r in node.rule.result:
+                if len(r) == 3:
+                    pass
+                else:
+                    obj, cat = r[1][0], r[0]
+                    try:
+                        self.obj_dic[obj].add(cat)
+                    except:
+                        self.obj_dic[obj] = set([cat])
+            try:
+                self.queue[node].add(key)
+            except:
+                self.queue[node] = set([key])
+        
+        def try_new():
+            args = []
+            for v in node.rule.var_order:
+                if v in mapped and len(mapped[v]) > 0:
+                    x = mapped[v].pop()
+                else:
+                    del mapped[v]
+                    break
+                args.append(x)
+            return args            
+        
+        #print self.obj_dic
         if ctg not in self.nodes:
+            #print 'no rule for:', ctg
             pass
-        else:        
+        else:
             for node in self.nodes[ctg]:
                 mapped = self.map_vars(node)
-                if mapped is not False:
-                    args = []
-                    for v in node.rule.var_order:
-                        args.append(mapped[v])
-                    print 'MAPPED', args
-                    node.rule(self.kb, args)
-                else:                    
-                    print 'FAILED', ctg
-                    for ant in node.ants:
-                        self.rcsv_sub(ant)
+                i, j = len(node.subs), len(mapped)
+                key = hash(tuple(mapped))
+                if node in self.queue and key in self.queue[node]:
+                    pass
+                else:              
+                    if mapped is not False:
+                        res = hasattr(node.rule, 'result')
+                        while res is False or i == j:
+                            args = try_new()
+                            node.rule(self.subkb, args)
+                            res = hasattr(node.rule, 'result')
+                            if res is True:
+                                add_ctg()
+                                del node.rule.result
+                    else:
+                        for ant in node.ants:
+                            self.rcsv_sub(ant)
 
     def map_vars(self, node):
         subactv = {}
-        for obj, s in self.subkb.items():
-            x = len(s)
-            for vr, t in node.subs.items():
-                y = len(t)
+        for vr, t in node.subs.items():
+            subactv[vr] = []
+            y = len(t)               
+            for obj, s in self.obj_dic.items():
+                x = len(s)            
                 if x >= y:
                     r = s.intersection(t)
                     if len(r) == y:
-                        subactv[vr] = obj
+                        subactv[vr].append(obj)
         if len(node.subs) == len(subactv):
             return subactv
         else:
             return False
-
+    
+    def subst_kb(self, subs_dic):
+        """Create a new, filtered and temporal, work KB."""
+        self.obj_dic = subs_dic
+        self.subkb = SubstRepr()
+        for s in self.obj_dic:
+            if '$' in s[0]:
+                o_ind = self.kb.individuals[s]
+                n_ind = Individual(s)
+                for attr, val in o_ind.__dict__.items():
+                    if attr != 'relations' or attr != 'categ':
+                        n_ind.__dict__[attr] = val
+                nrm_ctg = self.obj_dic[s]
+                categ = []
+                for c in o_ind.categ:
+                    if c[0] in nrm_ctg:
+                        categ.append(c)
+                rels = {}
+                for rel in o_ind.relations:
+                    if rel in nrm_ctg:
+                        rels[rel] = o_ind.relations[rel]
+                n_ind.relations, n_ind.categ = rels, categ
+                self.subkb.individuals[n_ind.name] = n_ind
+        self.chain()
+    
     def get_query(self, comp):
 
         def break_pred():
@@ -1104,6 +1216,7 @@ class InfNode(object):
                 if v[0] in self.subs:
                     self.subs[v[0]].add(ant[0])
 
+
 if __name__ == '__main__':
     import datetime
     import pprint
@@ -1121,15 +1234,8 @@ if __name__ == '__main__':
     d1 = datetime.datetime.now()
     for form in ls:
         r.tell(form)
-    r.ask('criminal[$West,u=1]')
-    #r.ask('criminal[$West,u=1] && <sells[x,u=1;$West;$Nono]> && missile[x,u=1]')
+    r.ask('hostile[x,u=1]')
+    #r.ask('criminal[$West,u=1]')
     print '\n---------- RESULTS ----------'
     d2 = datetime.datetime.now()
     print (d2-d1)
-    for ind in r.individuals.values():
-        print ind
-        print 'Relations:', ind.relations
-        print 'Categories:', ind.categ
-        #print 'cog:', ind.cog
-    print
-    #pprint.pprint(r.classes)
