@@ -347,12 +347,8 @@ class Representation(object):
                     self.classes[p] = nc
 
     def save_rule(self, proof):
-        for part in proof:
-            part.results = []
-        x = proof.start
-        setattr(proof, 'gl_res', list())
-        x.get_pred(conds=[':icond:'])
-        for name in proof.gl_res:
+        preds = proof.get_pred(conds=[':icond:'])
+        for name in preds:
             if name[0] in self.classes and \
             proof not in self.classes[name[0]]['cog']:
                 self.classes[name[0]].add_cog(proof)
@@ -362,8 +358,7 @@ class Representation(object):
                 nc['type'] = c
                 nc.add_cog(proof)
                 self.classes[name[0]] = nc
-        n = set([x[0] for x in proof.gl_res])
-        del proof.gl_res
+        n = set([x[0] for x in preds])
         # Run the new formula with every unique object that matches.
         for ind in self.individuals.values():
             common = list(ind.check_cat(n))
@@ -665,7 +660,6 @@ class LogSentence(object):
             p.results = []
 
     def get_ops(self, p):
-        print 'VALIDITY'
         ops = []
         for p in self:
             if any(x in p.cond for x in [':or:', ':implies:', ':equiv:']):
@@ -673,11 +667,27 @@ class LogSentence(object):
         for p in ops:
             x = p
             while x.cond != ':icond:' or x.parent == -1:
-                print x.parent.cond
-                if x.parent.cond == ':icond:':
+                if x.parent.cond == ':icond:' and x.parent.next[1] == x:
                     return False
                 else:
                     x = x.parent
+            return True
+                    
+    def get_pred(self, branch='left', conds=[None]):
+        preds = []
+        for p in self:
+            if p.cond == ':predicate:':
+                preds.append(p)
+        res = []
+        for p in preds:
+            x = p
+            while x.parent.cond not in conds:
+                x = x.parent
+            if branch == 'left' and x.parent.next[0] == x:
+                res.append(p.pred)
+            elif branch != 'left' and x.parent.next[1] == x:
+                res.append(p.pred)
+        return res
 
     def __iter__(self):
         return iter(self.particles)
@@ -912,32 +922,6 @@ class Particle(object):
                 pred[1][1] = float(u[1:])
                 ag.up_memb(pred)
 
-    def get_pred(self, pos='left', k=0, conds=[None], *args):
-        branch = 0 if pos == 'left' else 1
-        if k == 1:
-            self.results.append(args[0])
-            k = 0
-        if len(self.results) == 0:
-            if self.cond == ':predicate:':
-                k = 1
-                if self.pred not in self.sent.gl_res:
-                    self.sent.gl_res.append(self.pred)
-                self.parent.get_pred(pos, k, conds, True)
-            else:
-                if self.cond == ':check_var:':
-                    self.next[0].get_pred(pos, k, conds)
-                else:
-                    self.next[branch].get_pred(pos, k, conds)
-        elif len(self.results) == 1 and self.cond not in conds:
-            if self.cond == ':predicate:':
-                k = 1
-                if self.pred not in self.sent.gl_res:
-                    self.sent.gl_res.append(self.pred)
-                self.parent.get_pred(pos, k, conds, True)
-            else:
-                x = 1 if pos == 'left' else 0
-                self.next[x].get_pred(pos, k, conds)
-
     def __str__(self):
         if self.cond != ':predicate:':
             s = '<operator ' + ' (depth:' + str(self.depth) + ') "' \
@@ -1071,18 +1055,14 @@ class Inference(object):
                 print 'SOLUTION CANNOT BE FOUND'
                 return
             for sent in chk_rules:
-                sent.cln_res()
-                setattr(sent, 'gl_res', list())
-                sent.start.get_pred(conds=gr_conds)
-                nc = [y[0] for y in sent.gl_res]
-                if c in sent.gl_res:
-                    del sent.gl_res[:]
-                    sent.start.get_pred(pos='right', conds=gr_conds)
-                    nc = [y[0] for y in sent.gl_res]
-                    self.mk_nodes(nc, sent.gl_res, sent, 'left')
+                preds = sent.get_pred(conds=gr_conds)
+                nc = [y[0] for y in preds]
+                if c in nc:    
+                    preds = sent.get_pred(branch='right', conds=gr_conds)
+                    nc = [y[0] for y in preds]
+                    self.mk_nodes(nc, preds, sent, 'left')
                 else:
-                    nc = [y[0] for y in sent.gl_res]
-                    self.mk_nodes(nc, sent.gl_res, sent, 'right')
+                    self.mk_nodes(nc, preds, sent, 'right')
                 nc = [e for e in nc if e not in done and e not in ctg]
                 ctg.extend(nc)
             self.rules = self.rules.union(chk_rules)
@@ -1095,10 +1075,8 @@ class Inference(object):
     
     def mk_nodes(self, nc, ants, rule, pos):
         ants = list(ants)
-        del rule.gl_res[:]
-        rule.cln_res()
-        rule.start.get_pred(pos=pos, conds=gr_conds)
-        for cons in rule.gl_res:
+        preds = rule.get_pred(branch=pos, conds=gr_conds)
+        for cons in preds:
             node = InfNode(nc, ants, cons[0], rule)
             if node.cons in self.nodes:
                 self.nodes[node.cons].append(node)
