@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-"""Main knowledge-base logic module, in this module exists the different 
+"""Main knowledge-base logic module, in this module exist the different 
 classes that transform and store the data for the individual agents and 
 serve as representations of the different objects and the relationships 
 between them.
@@ -26,7 +26,6 @@ between these objects.
 # ===================================================================#
 #   Imports and constants
 # ===================================================================#
-import copy
 import re
 import os
 import uuid
@@ -244,17 +243,20 @@ class Representation(object):
     def up_memb(self, pred):
         # It's a membership declaration.
         categ, subject, val = pred[0], pred[1][0], pred[1][1]
-        if subject not in self.individuals:
+        if subject not in self.individuals and '$' in subject:
+            # An individual which is member of a class
             ind = Individual(subject)
-            ind.categ.append((categ, val))
+            ind.add_ctg(categ, val)
             self.individuals[subject] = ind
+        elif '$' in subject:
+            # Add/replace an other class membership to an exisiting individual
+            self.individuals[subject].add_ctg(categ, val)            
+        elif subject in self.classes:
+            # Is a new subclass of an other class
+            pass
         else:
-            ctg_rec = [x for (x,_) in self.individuals[subject].categ]
-            if categ not in ctg_rec:
-                self.individuals[subject].categ.append((categ, val))
-            else:
-                idx = ctg_rec.index(categ)
-                self.individuals[subject].categ[idx] = (categ, val)
+            # Is an existing subclass of an other class
+            pass
         if categ not in self.classes:
             nc = Category(categ)
             nc['type'] = 'class'
@@ -263,40 +265,38 @@ class Representation(object):
     def up_rel(self, func):
         # It's a function declaration between two objs/classes.
         relation = func[0]
-        subject = func[1][1]
-        obj = func[1][0][0]
-        val = func[1][0][1]
+        subject, obj, val = func[1][1], func[1][0][0], func[1][0][1]
         iobj = func[1][2] if len(func[1]) == 3 else None
-        #It's a func between an object and other obj/class.
         if '$' in subject:
+            #It's a func between an object and other obj/class.
             if subject not in self.individuals:
                 ind = Individual(subject)
-                ind.relations[relation] = [(obj, val, iobj)]
+                ind.add_rel(relation, subject, obj, val, iobj)
                 self.individuals[subject] = ind
-            elif relation not in self.individuals[subject].relations:
-                ind = self.individuals[subject]
-                ind.relations[relation] = [(obj, val, iobj)]
             else:
-                rel = self.individuals[subject].relations[relation]
-                rel = [x for (x,_,_) in rel]
                 ind = self.individuals[subject]
-                if obj not in rel:
-                    ind.relations[relation].append((obj, val, iobj))
-                else:
-                    idx = rel.index(obj)
-                    ind.relations[relation][idx] = (obj, val, iobj)
+                ind.add_rel(relation, subject, obj, val, iobj)
             if '$' in obj and obj not in self.individuals:
                 ind = Individual(obj)
-                ind.categ.append((relation, subject))
+                ind.add_rel(relation, subject, obj, val, iobj)
                 self.individuals[obj] = ind
             elif '$' in obj:
-                self.individuals[obj].categ.append((relation, subject))
+                ind = self.individuals[obj]
+                ind.add_rel(relation, subject, obj, val, iobj)
+            if iobj is not None and '$' in iobj \
+            and iobj not in self.individuals:
+                ind = Individual(iobj)
+                ind.add_rel(relation, subject, obj, val, iobj)
+                self.individuals[iobj] = ind
+            elif iobj is not None and '$' in iobj:
+                ind = self.individuals[iobj]
+                ind.add_rel(relation, subject, obj, val, iobj)
             if relation not in self.classes:
                 categ = Category(relation)
                 categ['type'] = 'relation'
                 self.classes[relation] = categ
-        #It's a func between a class and other class/obj.
         else:
+            #It's a func between a class and other class/obj.
             if subject not in self.classes:
                 categ = Category(subject)
                 categ[relation] = [(obj, val, iobj)]
@@ -365,10 +365,10 @@ class Representation(object):
                 nc['type'] = c
                 nc.add_cog(proof)
                 self.classes[name[0]] = nc
-        n = set([x[0] for x in preds])
+        n = [x[0] for x in preds]
         # Run the new formula with every unique object that matches.
         for ind in self.individuals.values():
-            common = list(ind.check_cat(n))
+            common = ind.check_cat(n)
             proof(self, ind.name)
             tests = None
             for cat in common:
@@ -377,15 +377,14 @@ class Representation(object):
                 for test in tests:
                     test(self, ind.name)
 
-    def inds_by_cat(self, cats):
+    def inds_by_cat(self, ctgs):
         cat_dic = {}
         for ind in self.individuals.values():
-            s = ind.check_cat(cats)
-            for c in s:
-                if c in cat_dic:
-                    cat_dic[ind.name].add([c])
-                else:
-                    cat_dic[ind.name] = set([c])
+            s = ind.check_cat(ctgs)
+            t = set(ind.get_rel())
+            t = t.intersection(ctgs)
+            s = t.union(t)
+            cat_dic[ind.name] = s
         return cat_dic
     
     def test(self, *args):
@@ -462,14 +461,43 @@ class Individual(object):
         pass
     
     def check_cat(self, n):
-        """Returns a set that is the intersection of the input set
-        and the union of the categories and relations of the object.
+        """Returns a set that is the intersection of the input iterable
+        and the categories of the object.
         """
-        t = set([k for k,_ in self.relations.items()])
+        if not isinstance(n, set):
+            n = set([n])
         s = set([c[0] for c in self.categ])
-        s = s.union(t)
         s = s.intersection(n)
         return s
+    
+    def check_rel(self, rel, sbj, obj, iobj):
+        """Checks if a relation, with a specified subject, object and 
+        indirect object, exists; and returns the 'u' value if it does, 
+        else returns none.
+        """
+        if self.name == sbj:
+            rtype = 'sbj'
+        elif self.name == obj:
+            rtype = 'obj'
+        if rtype != 'iobj':        
+            try:
+                r = self.relations[rel][rtype][obj]
+            except:
+                return None
+            else:
+                p = [x for (x, _) in r]
+                if iobj in p:
+                    i = p.index(iobj)
+                    return r[i][1]
+        if self.name == iobj:
+            k = obj+'::'+sbj
+            try:
+                r = self.relations[rel][rtype][k]
+            except:
+                return None
+            else:
+                return r
+        return None
     
     def get_cat(self):
         """Returns a dictionary of the categories of the object and
@@ -478,14 +506,12 @@ class Individual(object):
         cat = {k:v for k,v in self.categ}
         return cat
     
-    def get_rel(self, rel):
-        """Returns a dictionary of the objects that hold an input type
-        of relation and a list of their 'u' values.
+    def get_rel(self):
+        """Returns a list of the relations the object is involved
+        either as subject, object or indirect object.
         """
-        if rel in self.relations:
-            return {k:(v1,v2) for k,v1,v2 in self.relations[rel]}
-        else:
-            return None
+        rel = [k for k in self.relations]
+        return rel         
     
     def add_cog(self, p, sent):
         if p in self.cog:
@@ -493,6 +519,79 @@ class Individual(object):
         else:
             self.cog[p] = [sent]
     
+    def add_ctg(self, ctg, val):
+        ctg_rec = [x for (x,_) in self.categ]
+        if ctg not in ctg_rec:
+            self.categ.append((ctg, val))
+        else:
+            idx = ctg_rec.index(ctg)
+            self.categ[idx] = (ctg, val)
+            
+    def add_rel(self, rel, sbj, obj, val, iobj):
+
+        def mk_rel(args, k=None):
+            try:
+                if k is None:
+                    self.relations[args[0]]
+                else:
+                    k[args[0]]
+            except:                
+                if k is None:
+                    x = args.pop(0)
+                    self.relations[x] = dict()
+                    k = self.relations[x]
+                    mk_rel(args, k)
+                else:
+                    x = args.pop(0)
+                    k[x] = dict()
+                    k = k[x]
+                    if len(args) > 0:
+                        mk_rel(args, k)
+                    else:
+                        return
+            else:
+                if len(args) > 0:
+                    x = args.pop(0)
+                    k = k[x]
+                    mk_rel(args, k)
+                else:
+                    return
+
+        if self.name == sbj:
+            try:
+                ov = self.relations[rel]['sbj'][obj]
+            except:
+                mk_rel([rel, 'sbj', obj])
+                self.relations[rel]['sbj'][obj] = [(iobj, val)]
+            else:
+                p = [x for (x, _) in ov]
+                if iobj in p:
+                    ov[p.index(iobj)] = (iobj, val)
+                else:
+                    ov.append((iobj, val))
+        elif self.name == obj:
+            try:
+                ov = self.relations[rel]['obj'][sbj]
+            except:
+                mk_rel([rel, 'obj', sbj])
+                self.relations[rel]['obj'][sbj] = [(iobj, val)]
+            else:
+                p = [x for (x, _) in ov]
+                if iobj in p:
+                    ov[p.index(iobj)] = (iobj, val)
+                else:
+                    ov.append((iobj, val))
+        elif self.name == iobj:
+            k = obj+'::'+sbj
+            try:
+                ov = self.relations[rel]['iobj'][k]
+            except:
+                mk_rel([rel, 'iobj', k])
+                self.relations[rel]['iobj'][k] = val
+            else:
+                if k in p:
+                    ov = val
+
     def __str__(self):
         s = "\n<individual '" + self.name + "' w/ id: " + self.id + ">"
         return s
@@ -566,11 +665,15 @@ class LogSentence(object):
 
     This sentence is the result of parsing a sentence and encode
     it in an usable form for the agent to classify and reason about
-    objects and relations.
+    objects and relations, cannot be instantiated directly.
+    
+    It's callable when instantiated, accepts as arguments:
+    1) the working knowledge-base
+    2) n strins which will subsitute the variables in the sentence
+       or a list of string.
     """
     def __init__(self, ori, comp, hier):
         self.depth = 0
-        self.id = hash(self)
         self.var_order = []
         self.particles = []
         self.make_parts(ori, comp, hier)
@@ -735,13 +838,6 @@ class Particle(object):
         if cond == ':predicate:':
             self.pred = args[0]
 
-    def connect(self, part_list):
-        for x, child in enumerate(self.next):
-            for part in part_list:
-                if part.pID == child:
-                    self.next[x] = part
-                    self.next[x].parent = self
-
     def solve(self, proof, ag, key, *args):
         """Keys for solving proofs:
         100: Substitute a child's predicates.
@@ -749,7 +845,7 @@ class Particle(object):
         102: Incoming truthiness of an operation for recording.
         103: Return to parent atom.
         """
-        print self, '// Key:'+str(key), '// Args:', args
+        #print self, '// Key:'+str(key), '// Args:', args
         if key[-1] == 103 and self.parent == -1:
             return
         if key[-1] == 102 and self.cond \
@@ -886,6 +982,7 @@ class Particle(object):
             except:
                 pass
             return s
+        
         if key[-1] == 101:
             if len(self.pred) == 3:
                 # Check mapping of a set/entity to an other set/entity.                
@@ -895,22 +992,16 @@ class Particle(object):
                 if len(self.pred[1]) == 3:
                     iobj = isvar(self.pred[1][2])
                 else: iobj = None
-                relation = ag.individuals[sbj].get_rel(check_func)
-                try:
-                    val, ciobj = relation[obj][0], relation[obj][1]
-                except:
-                    result = None
-                else:
-                    if ciobj == iobj:
-                        if u[0] == '=' and val == uval:
-                            result = True
-                        elif u[0] == '>' and val > uval:
-                            result = True
-                        elif u[0] == '<' and val < uval:
-                            result = True
-                        else: 
-                            result = False
-                    else:
+                val = ag.individuals[sbj].check_rel(check_func, sbj, obj, iobj)
+                result = None
+                if val is not None:
+                    if u[0] == '=' and val == uval:
+                        result = True
+                    elif u[0] == '>' and val > uval:
+                        result = True
+                    elif u[0] == '<' and val < uval:
+                        result = True
+                    else: 
                         result = False
                 if result is True:
                     obj = obj + ',u' + u[0] + str(uval)
@@ -949,7 +1040,7 @@ class Particle(object):
                 obj, u = pred[1][0].split(',u')
                 obj, sbj = isvar(obj), isvar(pred[1][1])
                 iobj = isvar(pred[1][2]) if len(pred[1]) == 3 else None
-                pred[1] = ([obj, u], sbj, iobj)                                
+                pred[1] = ([obj, u], sbj, iobj)
                 ag.bmsWrapper.check(pred)
                 pred[1][0][1] = float(u[1:])
                 ag.up_rel(pred)
@@ -973,6 +1064,14 @@ class Particle(object):
             s = '<predicate ' + ' (depth:' + str(self.depth) + '): ' \
             + str(self.pred) + '>'
         return s
+    
+    def connect(self, part_list):
+        for x, child in enumerate(self.next):
+            for part in part_list:
+                if part.pID == child:
+                    self.next[x] = part
+                    self.next[x].parent = self
+
 
 # ===================================================================#
 #   LOGIC INFERENCE
@@ -989,12 +1088,16 @@ def infer_facts(kb, parser, sent):
     knowledge is produced then it's passed to an other procedure for
     addition to the KB.
     """
-    ori, comp, hier = parser(sent)
+    _, comp, _ = parser(sent)
     query = Inference(kb, comp)
     query.rules = set()
     query.get_rules(query.ctgs)
     subs_dic = kb.inds_by_cat(query.chk_cats)
     query.subst_kb(subs_dic)
+    for obj in query.query:
+        q = query.query[obj]
+        for p in q:
+            query.chain(p[0])
     
     r = query.subkb
     for ind in r.individuals.values():
@@ -1005,32 +1108,59 @@ def infer_facts(kb, parser, sent):
     print
     #pprint.pprint(r.classes)
 
+
 class Inference(object):
 
     def __init__(self, kb, *args):
         self.kb = kb
         self.vrs = {}
         self.nodes = {}
+        self.queue = {}
         self.get_query(*args)
 
-    def chain(self):
-        self.queue = {}
-        for var, pred in self.query.items():
-            if var in self.vrs:
-                # It's a variable, find every object that fits the criteria
-                pass
-            else:
+    def chain(self, p, chk=[], done=[]):
+        
+        def chk_res():
+            for var, pred in self.query.items():
+                if var in self.vrs:
+                    # It's a variable, find every object that fits the criteria
+                    return
                 for p in pred:
-                    if p[0] in self.obj_dic and var in self.obj_dic[p[0]]:
-                        print 'SOLUTION FOUND'
-                        return
+                    if var in self.obj_dic and p[0] in self.obj_dic[var]:
+                        print 'done'
+                        return True
                     else:
-                        self.rcsv_sub(p[0])
-
-    def rcsv_sub(self, ctg):
+                        return False
+        
+        print p, chk, done
+        solved = chk_res()
+        if len(chk) > 0 and solved is False:            
+            if p in self.nodes:
+                for node in self.nodes[p]:
+                    self.rcsv_test_self(node)
+            p = chk.pop()
+            done.append(p)
+            self.chain(p, chk, done)
+        elif solved is False:
+            if len(done) > 0:
+                p = done.pop(0)
+            chk = []
+            if p in self.nodes:
+                for node in self.nodes[p]:
+                    chk.extend(node.ants)
+            else:
+                try:
+                    p = done.pop(0)
+                except:
+                    return
+            self.chain(p, chk, done)
+                        
+    def rcsv_test_next(self, node):
+        pass
+    
+    def rcsv_test_self(self, node):
         
         def add_ctg():
-            key = hash(tuple(mapped))
             for r in node.rule.result:
                 if len(r) == 3:
                     pass
@@ -1040,10 +1170,7 @@ class Inference(object):
                         self.obj_dic[obj].add(cat)
                     except:
                         self.obj_dic[obj] = set([cat])
-            try:
-                self.queue[node].add(key)
-            except:
-                self.queue[node] = set([key])
+            self.queue[node]['pos'].add(key)
         
         def try_new():
             args = []
@@ -1051,35 +1178,28 @@ class Inference(object):
                 if v in mapped and len(mapped[v]) > 0:
                     x = mapped[v].pop()
                 else:
-                    del mapped[v]
+                    if v in mapped:
+                        del mapped[v]
                     break
                 args.append(x)
-            return args            
-        
-        #print self.obj_dic
-        if ctg not in self.nodes:
-            #print 'no rule for:', ctg
-            pass
-        else:
-            for node in self.nodes[ctg]:
-                mapped = self.map_vars(node)
-                i, j = len(node.subs), len(mapped)
-                key = hash(tuple(mapped))
-                if node in self.queue and key in self.queue[node]:
-                    pass
-                else:              
-                    if mapped is not False:
-                        res = hasattr(node.rule, 'result')
-                        while res is False or i == j:
-                            args = try_new()
-                            node.rule(self.subkb, args)
-                            res = hasattr(node.rule, 'result')
-                            if res is True:
-                                add_ctg()
-                                del node.rule.result
+            return args
+
+        mapped = self.map_vars(node)
+        i, j = len(node.subs), len(mapped)
+        if mapped is not False:
+            res = hasattr(node.rule, 'result')
+            while res is False and i == j:
+                j = len(mapped)
+                args = try_new()
+                key = hash(tuple(args))
+                if key not in self.queue[node]['pos']:
+                    node.rule(self.subkb, args)
+                    res = hasattr(node.rule, 'result')
+                    if res is True :
+                        add_ctg()
+                        del node.rule.result
                     else:
-                        for ant in node.ants:
-                            self.rcsv_sub(ant)
+                        self.queue[node]['neg'].add(key)
 
     def map_vars(self, node):
         subactv = {}
@@ -1098,7 +1218,7 @@ class Inference(object):
             return False
     
     def subst_kb(self, subs_dic):
-        """Create a new, filtered and temporal, work KB."""
+        """Create a new, filtered and temporal, work KB."""        
         self.obj_dic = subs_dic
         self.subkb = SubstRepr()
         for s in self.obj_dic:
@@ -1119,7 +1239,6 @@ class Inference(object):
                         rels[rel] = o_ind.relations[rel]
                 n_ind.relations, n_ind.categ = rels, categ
                 self.subkb.individuals[n_ind.name] = n_ind
-        self.chain()
     
     def get_query(self, comp):
 
@@ -1190,6 +1309,7 @@ class Inference(object):
         preds = rule.get_pred(branch=pos, conds=gr_conds)
         for cons in preds:
             node = InfNode(nc, ants, cons[0], rule)
+            self.queue[node] = {'neg': set(), 'pos': set()}
             if node.cons in self.nodes:
                 self.nodes[node.cons].append(node)
             else:
@@ -1198,13 +1318,10 @@ class Inference(object):
 
 class InfNode(object):
     
-    def __init__(self, *args):
-        self.mk_cons(*args)
-        
-    def mk_cons(self, nc, ants, cons, rule):
+    def __init__(self, nc, ants, cons, rule):
         self.rule = rule
         self.cons = cons
-        self.ants = nc
+        self.ants = tuple(nc)
         self.subs = {v:set() for v in rule.var_order}
         for ant in ants:
             if isinstance(ant[1], tuple):
@@ -1234,8 +1351,7 @@ if __name__ == '__main__':
     d1 = datetime.datetime.now()
     for form in ls:
         r.tell(form)
-    r.ask('hostile[x,u=1]')
-    #r.ask('criminal[$West,u=1]')
+    r.ask('criminal[$West,u=1]')
     print '\n---------- RESULTS ----------'
     d2 = datetime.datetime.now()
     print (d2-d1)
