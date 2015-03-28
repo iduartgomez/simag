@@ -383,8 +383,8 @@ class Representation(object):
             s = ind.check_cat(ctgs)
             t = set(ind.get_rel())
             t = t.intersection(ctgs)
-            s = t.union(t)
-            cat_dic[ind.name] = s
+            t = t.union(s)
+            cat_dic[ind.name] = t
         return cat_dic
     
     def test(self, *args):
@@ -461,13 +461,10 @@ class Individual(object):
         pass
     
     def check_cat(self, n):
-        """Returns a set that is the intersection of the input iterable
+        """Returns a list that is the intersection of the input iterable
         and the categories of the object.
         """
-        if not isinstance(n, set):
-            n = set([n])
-        s = set([c[0] for c in self.categ])
-        s = s.intersection(n)
+        s = [c[0] for c in self.categ if c[0] in n]
         return s
     
     def check_rel(self, rel, sbj, obj, iobj):
@@ -1097,7 +1094,10 @@ def infer_facts(kb, parser, sent):
     for obj in query.query:
         q = query.query[obj]
         for p in q:
-            query.chain(p[0])
+            result, i = None, 0
+            while result is None and i < 2:
+                result = query.chain(p[0])
+                i += 1
     
     r = query.subkb
     for ind in r.individuals.values():
@@ -1123,7 +1123,8 @@ class Inference(object):
         def chk_res():
             for var, pred in self.query.items():
                 if var in self.vrs:
-                    # It's a variable, find every object that fits the criteria
+                    # It's a variable, find every object that fits 
+                    # the criteria
                     return
                 for p in pred:
                     if var in self.obj_dic and p[0] in self.obj_dic[var]:
@@ -1131,35 +1132,32 @@ class Inference(object):
                         return True
                     else:
                         return False
-        
-        print p, chk, done
+
+        #print p, chk, done
+        done.append(p)
+        if p in self.nodes:
+            for node in self.nodes[p]:
+                self.rcsv_test(node)
         solved = chk_res()
-        if len(chk) > 0 and solved is False:            
-            if p in self.nodes:
-                for node in self.nodes[p]:
-                    self.rcsv_test_self(node)
-            p = chk.pop()
-            done.append(p)
+        if solved is True:
+            return
+        if len(chk) > 0:
+            p = chk.pop(0)
             self.chain(p, chk, done)
-        elif solved is False:
-            if len(done) > 0:
-                p = done.pop(0)
+        else:
             chk = []
-            if p in self.nodes:
-                for node in self.nodes[p]:
-                    chk.extend(node.ants)
-            else:
-                try:
-                    p = done.pop(0)
-                except:
-                    return
-            self.chain(p, chk, done)
-                        
-    def rcsv_test_next(self, node):
-        pass
-    
-    def rcsv_test_self(self, node):
-        
+            try:
+                p = done.pop(0)
+                if p in self.nodes:
+                    for node in self.nodes[p]:
+                        chk.extend(node.ants)                
+                self.chain(p, chk, done)
+            except:
+                return
+            
+
+    def rcsv_test(self, node):
+
         def add_ctg():
             for r in node.rule.result:
                 if len(r) == 3:
@@ -1171,7 +1169,7 @@ class Inference(object):
                     except:
                         self.obj_dic[obj] = set([cat])
             self.queue[node]['pos'].add(key)
-        
+
         def try_new():
             args = []
             for v in node.rule.var_order:
@@ -1216,9 +1214,9 @@ class Inference(object):
             return subactv
         else:
             return False
-    
+
     def subst_kb(self, subs_dic):
-        """Create a new, filtered and temporal, work KB."""        
+        """Create a new, filtered and temporal, work KB."""
         self.obj_dic = subs_dic
         self.subkb = SubstRepr()
         for s in self.obj_dic:
@@ -1239,7 +1237,7 @@ class Inference(object):
                         rels[rel] = o_ind.relations[rel]
                 n_ind.relations, n_ind.categ = rels, categ
                 self.subkb.individuals[n_ind.name] = n_ind
-    
+
     def get_query(self, comp):
 
         def break_pred():
@@ -1286,14 +1284,19 @@ class Inference(object):
                 print 'SOLUTION CANNOT BE FOUND'
                 return
             for sent in chk_rules:
+                # Check for the condition 
                 preds = sent.get_pred(conds=gr_conds)
                 nc = [y[0] for y in preds]
-                if c in nc:    
+                """
+                if c in nc:
+                    print c, nc
                     preds = sent.get_pred(branch='right', conds=gr_conds)
                     nc = [y[0] for y in preds]
                     self.mk_nodes(nc, preds, sent, 'left')
                 else:
                     self.mk_nodes(nc, preds, sent, 'right')
+                """
+                self.mk_nodes(nc, preds, sent, 'right')
                 nc = [e for e in nc if e not in done and e not in ctg]
                 ctg.extend(nc)
             self.rules = self.rules.union(chk_rules)
@@ -1303,9 +1306,8 @@ class Inference(object):
             self.chk_cats = set(done)
             del self.rules
             del self.ctgs
-    
+
     def mk_nodes(self, nc, ants, rule, pos):
-        ants = list(ants)
         preds = rule.get_pred(branch=pos, conds=gr_conds)
         for cons in preds:
             node = InfNode(nc, ants, cons[0], rule)
@@ -1333,7 +1335,6 @@ class InfNode(object):
                 if v[0] in self.subs:
                     self.subs[v[0]].add(ant[0])
 
-
 if __name__ == '__main__':
     import datetime
     import pprint
@@ -1355,3 +1356,4 @@ if __name__ == '__main__':
     print '\n---------- RESULTS ----------'
     d2 = datetime.datetime.now()
     print (d2-d1)
+
