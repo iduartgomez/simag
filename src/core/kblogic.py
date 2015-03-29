@@ -99,7 +99,7 @@ class Representation(object):
             else:
                 # It's a complex sentence with various predicates/funcs
                 sent = LogSentence(ori, comp, hier)
-                self.add_cog(sent)
+                self.add_rule(sent)
         else:
             # It's a complex sentence with variables
             sent = LogSentence(ori, comp, hier)
@@ -582,12 +582,10 @@ class Individual(object):
             k = obj+'::'+sbj
             try:
                 ov = self.relations[rel]['iobj'][k]
+                ov = val
             except:
                 mk_rel([rel, 'iobj', k])
                 self.relations[rel]['iobj'][k] = val
-            else:
-                if k in p:
-                    ov = val
 
     def __str__(self):
         s = "\n<individual '" + self.name + "' w/ id: " + self.id + ">"
@@ -896,46 +894,65 @@ class Particle(object):
     def impl(self, proof, ag, key, *args):
         """Procedure for solving implications."""
         current = len(self.results)
-        # if the left branch is examined then solve, else don't.
-        if current == 0:
+        if key[-1] == 103:
+            # Completed
+            self.parent.solve(proof, ag, key)
+        elif current == 0:
             key.append(101)
             self.next[current].solve(proof, ag, key)
-        elif current == 1 and self.results[0] == True:
+        elif current == 1 and self.results[0] is True:
             if self.next[1].cond != ':predicate:':
                 print 'RIGHT BRANCH NOT A PREDICATE!'
             else:
                 key.append(103)
                 self.next[current].solve(proof, ag, key)
+        elif current == 1 and self.result[0] is False:
+            # The left branch was false, so do not continue.
+            proof.result, result = False, False
+            key.append(103)
+            self.parent.solve(proof, ag, key, result)        
         elif current > 1:
+            # The second term of the implication was complex
+            # check the result of it's substitution
             if self.results[0] is None:
                 result = None
             elif self.results[0] is True and self.results[1] is False:
+                proof.result = False
                 result = False
             else:
-                result = True                
+                if hasattr(proof, 'result') is False:
+                    proof.result = True
+                result = True
             key.append(103)
             self.parent.solve(proof, ag, key, result)
         else:
-            # The left branch was false, so do not continue.
-            return False
+            # Not known solution.
+            result = None
+            key.append(103)
+            self.parent.solve(proof, ag, key, result)
 
     def icond(self, proof, ag, key, *args):
         """Procedure for parsign indicative conditional assertions."""
+        current = len(self.results)
         if key[-1] == 103:
             # Completed
-            self.parent.solve(proof, ag, key)
+            self.parent.solve(proof, ag, key)        
+        elif current == 0:
+            key.append(101)
+            self.next[current].solve(proof, ag, key)
+        elif current == 1 and self.results[0] is True:
+            key.append(100)
+            self.next[current].solve(proof, ag, key)
+        elif current == 1 and self.results[0] is False:
+            # The left branch was false, so do not continue.
+            proof.result = False
+            key.append(103)
+            self.parent.solve(proof, ag, key, False)
         else:
-            current = len(self.results)
-            # if the left branch is examined then solve, else don't.
-            if current == 0:
-                key.append(101)
-                self.next[current].solve(proof, ag, key)
-            elif current == 1 and self.results[0] == True:
-                key.append(100)
-                self.next[current].solve(proof, ag, key)
-            else:
-                # The left branch was false, so do not continue.
-                return
+            # Substitution failed.
+            result = None
+            key.append(103)
+            self.parent.solve(proof, ag, key, result)
 
     def conjunction(self, proof, ag, key):
         left_branch = self.results[0]
@@ -953,6 +970,7 @@ class Particle(object):
             else:
                 # fails the proof
                 return False
+        
 
     def disjunction(self, proof, ag, key):
         left_branch = self.results[0]
@@ -1095,8 +1113,9 @@ def infer_facts(kb, parser, sent):
         q = query.query[obj]
         for p in q:
             result, i = None, 0
-            while result is None and i < 1:
-                result = query.chain(p[0])
+            while result is None and i < 2:
+                chk, done = list(), list()
+                result = query.chain(p[0], chk, done)
                 i += 1
                 
     r = query.subkb
@@ -1118,7 +1137,7 @@ class Inference(object):
         self.queue = {}
         self.get_query(*args)
 
-    def chain(self, p, chk=[], done=[]):
+    def chain(self, p, chk, done):
         
         def chk_res():
             for var, pred in self.query.items():
@@ -1128,20 +1147,18 @@ class Inference(object):
                     return
                 for p in pred:
                     if var in self.obj_dic and p[0] in self.obj_dic[var]:
-                        print 'done'
                         return True
                     else:
                         return False
 
-        #print p, chk, done
         if p in self.nodes:
             for node in self.nodes[p]:                
                 self.rcsv_test(node)
                 if p not in done:
-                    chk.extend(node.ants)
+                    chk = list(node.ants) + chk
         solved = chk_res()
         if solved is True:
-            return
+            return True
         elif len(chk) > 0:
             done.append(p)
             p = chk.pop(0)
@@ -1152,9 +1169,18 @@ class Inference(object):
         def add_ctg():
             for r in node.rule.result:
                 if len(r) == 3:
-                    pass
+                    cat, v = r[0], list()
+                    v.append(r[1][0][0])
+                    v.append(r[1][1])
+                    if r[1][2] is not None:
+                        v.append(r[1][2])
+                    for sbs in v:
+                        try:
+                            self.obj_dic[sbs].add(cat)
+                        except:
+                            self.obj_dic[sbs] = set([cat])
                 else:
-                    obj, cat = r[1][0], r[0]
+                    cat, obj = r[0], r[1][0]
                     try:
                         self.obj_dic[obj].add(cat)
                     except:
@@ -1184,7 +1210,7 @@ class Inference(object):
                 if key not in self.queue[node]['pos']:
                     node.rule(self.subkb, args)
                     res = hasattr(node.rule, 'result')
-                    if res is True :
+                    if res is True and node.rule.result is not False:
                         add_ctg()
                         del node.rule.result
                     else:
@@ -1277,18 +1303,15 @@ class Inference(object):
             for sent in chk_rules:
                 preds = sent.get_pred(conds=gr_conds)
                 nc = [y[0] for y in preds]
-                """
+                self.mk_nodes(nc, preds, sent, 'right')
+                nc2 = [e for e in nc if e not in done and e not in ctg]
+                ctg.extend(nc2)
                 if c in nc:
-                    print c, nc
                     preds = sent.get_pred(branch='right', conds=gr_conds)
                     nc = [y[0] for y in preds]
                     self.mk_nodes(nc, preds, sent, 'left')
-                else:
-                    self.mk_nodes(nc, preds, sent, 'right')
-                """
-                self.mk_nodes(nc, preds, sent, 'right')
-                nc = [e for e in nc if e not in done and e not in ctg]
-                ctg.extend(nc)
+                    nc2 = [e for e in nc if e not in done and e not in ctg]
+                    ctg.extend(nc2)
             self.rules = self.rules.union(chk_rules)
             self.get_rules(ctg, done)
         else:
