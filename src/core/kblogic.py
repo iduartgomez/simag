@@ -1095,10 +1095,10 @@ def infer_facts(kb, parser, sent):
         q = query.query[obj]
         for p in q:
             result, i = None, 0
-            while result is None and i < 2:
+            while result is None and i < 1:
                 result = query.chain(p[0])
                 i += 1
-    
+                
     r = query.subkb
     for ind in r.individuals.values():
         print ind
@@ -1134,27 +1134,18 @@ class Inference(object):
                         return False
 
         #print p, chk, done
-        done.append(p)
         if p in self.nodes:
-            for node in self.nodes[p]:
+            for node in self.nodes[p]:                
                 self.rcsv_test(node)
+                if p not in done:
+                    chk.extend(node.ants)
         solved = chk_res()
         if solved is True:
             return
-        if len(chk) > 0:
+        elif len(chk) > 0:
+            done.append(p)
             p = chk.pop(0)
             self.chain(p, chk, done)
-        else:
-            chk = []
-            try:
-                p = done.pop(0)
-                if p in self.nodes:
-                    for node in self.nodes[p]:
-                        chk.extend(node.ants)                
-                self.chain(p, chk, done)
-            except:
-                return
-            
 
     def rcsv_test(self, node):
 
@@ -1284,7 +1275,6 @@ class Inference(object):
                 print 'SOLUTION CANNOT BE FOUND'
                 return
             for sent in chk_rules:
-                # Check for the condition 
                 preds = sent.get_pred(conds=gr_conds)
                 nc = [y[0] for y in preds]
                 """
@@ -1334,6 +1324,7 @@ class InfNode(object):
                 v = ant[1].split(',u')
                 if v[0] in self.subs:
                     self.subs[v[0]].add(ant[0])
+
 
 if __name__ == '__main__':
     import datetime
