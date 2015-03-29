@@ -115,8 +115,7 @@ class Representation(object):
     def ask(self, sent):
         """Parses a sentence, asks the KB and returns the result of that ask.
         """
-        result = infer_facts(self, self.parse_sent, sent)
-        return result
+        inf_proc = Inference(self, self.parse_sent, sent)
 
     def parse_sent(self, sent):
 
@@ -1093,39 +1092,6 @@ class Particle(object):
 # ===================================================================#
 
 gr_conds = [':icond:', ':implies:', ':equiv:']
-    
-def infer_facts(kb, parser, sent):
-    """Inference function from first-order logic sentences.
-    
-    Gets a query from an ASK, encapsulates the query subtitutions, 
-    processes it (including caching of partial results or tracking
-    var substitution) and returns the answer to the query. If new 
-    knowledge is produced then it's passed to an other procedure for
-    addition to the KB.
-    """
-    _, comp, _ = parser(sent)
-    query = Inference(kb, comp)
-    query.rules = set()
-    query.get_rules(query.ctgs)
-    subs_dic = kb.inds_by_cat(query.chk_cats)
-    query.subst_kb(subs_dic)
-    for obj in query.query:
-        q = query.query[obj]
-        for p in q:
-            result, i = None, 0
-            while result is None and i < 2:
-                chk, done = list(), list()
-                result = query.chain(p[0], chk, done)
-                i += 1
-                
-    r = query.subkb
-    for ind in r.individuals.values():
-        print ind
-        print 'Relations:', ind.relations
-        print 'Categories:', ind.categ
-        #print 'cog:', ind.cog
-    print
-    #pprint.pprint(r.classes)
 
 
 class Inference(object):
@@ -1135,29 +1101,63 @@ class Inference(object):
         self.vrs = {}
         self.nodes = {}
         self.queue = {}
-        self.get_query(*args)
+        self.infer_facts(*args)
 
-    def chain(self, p, chk, done):
+    def infer_facts(self, parser, sent):
+        """Inference function from first-order logic sentences.
+
+        Gets a query from an ASK, encapsulates the query subtitutions, 
+        processes it (including caching of partial results or tracking
+        var substitution) and returns the answer to the query. If new 
+        knowledge is produced then it's passed to an other procedure for
+        addition to the KB.
+        """
         
-        def chk_res():
-            for var, pred in self.query.items():
-                if var in self.vrs:
-                    # It's a variable, find every object that fits 
-                    # the criteria
-                    return
-                for p in pred:
-                    if var in self.obj_dic and p[0] in self.obj_dic[var]:
-                        return True
-                    else:
-                        return False
-
+        def chk_result():
+            if var[0] == '$':
+                print self.subkb.individuals[var].get_cat()
+                print preds
+            else:
+                pass
+        
+        _, comp, _ = parser(sent)
+        self.get_query(comp)
+        self.rules = set()
+        self.get_rules()
+        self.obj_dic = self.kb.inds_by_cat(self.chk_cats)
+        self.subst_kb()
+        for var, preds in self.query.items():
+            if var in self.vrs:
+                # It's a variable, find every object that fits 
+                # the criteria
+                print 'It\'s a variable'
+            else:            
+                for pred in preds:
+                    self.actv_q = (var, pred[0])            
+                    result, i = None, 0
+                    while result is not True and i < 2:
+                        chk, done = list(), list()
+                        result = self.chain(pred[0], chk, done)
+                        i += 1
+                    chk_result()
+    
+        r = self.subkb
+        for ind in r.individuals.values():
+            print ind
+            #print 'Relations:', ind.relations
+            print 'Categories:', ind.categ
+            #print 'cog:', ind.cog
+        print
+        #pprint.pprint(r.classes)    
+    
+    def chain(self, p, chk, done):
         if p in self.nodes:
             for node in self.nodes[p]:                
                 self.rcsv_test(node)
                 if p not in done:
                     chk = list(node.ants) + chk
-        solved = chk_res()
-        if solved is True:
+        if self.actv_q[0] in self.obj_dic and \
+        self.actv_q[1] in self.obj_dic[self.actv_q[0]]:
             return True
         elif len(chk) > 0:
             done.append(p)
@@ -1213,8 +1213,10 @@ class Inference(object):
                     if res is True and node.rule.result is not False:
                         add_ctg()
                         del node.rule.result
-                    else:
+                    elif res is True and node.rule.result is False:
                         self.queue[node]['neg'].add(key)
+                elif key in self.queue[node]['neg']:
+                    print args
 
     def map_vars(self, node):
         subactv = {}
@@ -1232,9 +1234,8 @@ class Inference(object):
         else:
             return False
 
-    def subst_kb(self, subs_dic):
+    def subst_kb(self):
         """Create a new, filtered and temporal, work KB."""
-        self.obj_dic = subs_dic
         self.subkb = SubstRepr()
         for s in self.obj_dic:
             if '$' in s[0]:
@@ -1254,6 +1255,50 @@ class Inference(object):
                         rels[rel] = o_ind.relations[rel]
                 n_ind.relations, n_ind.categ = rels, categ
                 self.subkb.individuals[n_ind.name] = n_ind
+
+    def get_rules(self, done=[None]):
+        if len(self.ctgs) > 0:
+            c = self.ctgs.pop()
+        else:
+            c = None
+        if c is not None:
+            done.append(c)
+            try:
+                chk_rules = set(self.kb.classes[c]['cog'])
+                chk_rules = chk_rules.difference(self.rules)
+            except:
+                print 'SOLUTION CANNOT BE FOUND'
+                return
+            for sent in chk_rules:
+                preds = sent.get_pred(conds=gr_conds)
+                nc = [y[0] for y in preds]
+                self.mk_nodes(nc, preds, sent, 'right')
+                nc2 = [e for e in nc if e not in done and e not in self.ctgs]
+                self.ctgs.extend(nc2)
+                if c in nc:
+                    preds = sent.get_pred(branch='right', conds=gr_conds)
+                    nc = [y[0] for y in preds]
+                    self.mk_nodes(nc, preds, sent, 'left')
+                    nc2 = [e for e in nc if e not in done \
+                           and e not in self.ctgs]
+                    self.ctgs.extend(nc2)
+            self.rules = self.rules.union(chk_rules)
+            self.get_rules(done)
+        else:
+            done.pop(0)
+            self.chk_cats = set(done)
+            del self.rules
+            del self.ctgs
+
+    def mk_nodes(self, nc, ants, rule, pos):
+        preds = rule.get_pred(branch=pos, conds=gr_conds)
+        for cons in preds:
+            node = InfNode(nc, ants, cons[0], rule)
+            self.queue[node] = {'neg': set(), 'pos': set()}
+            if node.cons in self.nodes:
+                self.nodes[node.cons].append(node)
+            else:
+                self.nodes[node.cons] = [node]
 
     def get_query(self, comp):
 
@@ -1286,49 +1331,6 @@ class Inference(object):
             else:
                 terms[p[0]].append(tuple(p[1]))
         self.query, self.ctgs = terms, ctgs
-
-    def get_rules(self, ctg, done=[None]):
-        if len(ctg) > 0:
-            c = ctg.pop()
-        else:
-            c = None
-        if c is not None:
-            done.append(c)
-            try:
-                chk_rules = set(self.kb.classes[c]['cog'])
-                chk_rules = chk_rules.difference(self.rules)
-            except:
-                print 'SOLUTION CANNOT BE FOUND'
-                return
-            for sent in chk_rules:
-                preds = sent.get_pred(conds=gr_conds)
-                nc = [y[0] for y in preds]
-                self.mk_nodes(nc, preds, sent, 'right')
-                nc2 = [e for e in nc if e not in done and e not in ctg]
-                ctg.extend(nc2)
-                if c in nc:
-                    preds = sent.get_pred(branch='right', conds=gr_conds)
-                    nc = [y[0] for y in preds]
-                    self.mk_nodes(nc, preds, sent, 'left')
-                    nc2 = [e for e in nc if e not in done and e not in ctg]
-                    ctg.extend(nc2)
-            self.rules = self.rules.union(chk_rules)
-            self.get_rules(ctg, done)
-        else:
-            done.pop(0)
-            self.chk_cats = set(done)
-            del self.rules
-            del self.ctgs
-
-    def mk_nodes(self, nc, ants, rule, pos):
-        preds = rule.get_pred(branch=pos, conds=gr_conds)
-        for cons in preds:
-            node = InfNode(nc, ants, cons[0], rule)
-            self.queue[node] = {'neg': set(), 'pos': set()}
-            if node.cons in self.nodes:
-                self.nodes[node.cons].append(node)
-            else:
-                self.nodes[node.cons] = [node]
 
 
 class InfNode(object):
