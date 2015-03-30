@@ -879,23 +879,23 @@ class Particle(object):
             self.next[current].solve(proof, ag, key)
         elif current == 1 and self.results[0] is True:
             if self.next[1].cond != ':predicate:':
-                print 'RIGHT BRANCH NOT A PREDICATE!'
+                key.append(101)
+                self.next[current].solve(proof, ag, key)
             else:
                 key.append(103)
                 self.next[current].solve(proof, ag, key)
-        elif current == 1 and self.result[0] is False:
+        elif current == 1 and self.results[0] is False:
             # The left branch was false, so do not continue.
             proof.result, result = False, False
             key.append(103)
             self.parent.solve(proof, ag, key, result)        
-        elif current > 1:
+        elif current > 1:            
             # The second term of the implication was complex
             # check the result of it's substitution
-            if self.results[0] is None:
-                result = None
+            if (self.results[0] and self.results[1]) is None:
+                result = None, None
             elif self.results[0] is True and self.results[1] is False:
-                proof.result = False
-                result = False
+                proof.result, result = False, False
             else:
                 if hasattr(proof, 'result') is False:
                     proof.result = True
@@ -904,9 +904,8 @@ class Particle(object):
             self.parent.solve(proof, ag, key, result)
         else:
             # Not known solution.
-            result = None
             key.append(103)
-            self.parent.solve(proof, ag, key, result)
+            self.parent.solve(proof, ag, key, None)
 
     def icond(self, proof, ag, key, *args):
         """Procedure for parsign indicative conditional assertions."""
@@ -927,43 +926,53 @@ class Particle(object):
             self.parent.solve(proof, ag, key, False)
         else:
             # Substitution failed.
-            result = None
             key.append(103)
-            self.parent.solve(proof, ag, key, result)
+            self.parent.solve(proof, ag, key, None)
 
     def conjunction(self, proof, ag, key):
-        left_branch = self.results[0]
-        right_branch = self.results[1]
+        left_branch, right_branch = self.results[0], self.results[1]
         if key[-1] == 101:
-        # Two branches finished, check if both are true.            
-            if (left_branch and right_branch) is True:
-                key.append(102)
-                self.parent.solve(proof, ag, key, True)
+            key.append(102)
+            # Two branches finished, check if both are true.
+            if (left_branch and right_branch) is None:                
+                self.parent.solve(proof, ag, key, None)            
+            elif left_branch == right_branch:
+                self.parent.solve(proof, ag, key, True)            
+            else:
+                self.parent.solve(proof, ag, key, False)
         elif key[-1] == 100:
-        # Test if this conjunction fails
-            if (left_branch and right_branch) is True:
-                # passes the proof
+            # Test if this conjunction fails
+            if (left_branch and right_branch) is None:
+                # unknown
+                return None
+            if left_branch == right_branch:
+                # passes the test
                 return True
             else:
-                # fails the proof
+                # fails the test
                 return False
-        
 
     def disjunction(self, proof, ag, key):
-        left_branch = self.results[0]
-        right_branch = self.results[1]
+        left_branch, right_branch = self.results[0], self.results[1]
         if key[-1] == 101:
-        # Two branches finished, check if both are true.
-            if (left_branch or right_branch) is True:
-                key.append(102)
-                self.parent.solve(proof, ag, key, True)
+            # Two branches finished, check if both are true.
+            key.append(102)
+            if (left_branch and right_branch) is None:
+                self.parent.solve(proof, ag, key, None)
+            elif left_branch != right_branch:
+                self.parent.solve(proof, ag, key, True)            
+            else:
+                self.parent.solve(proof, ag, key, False)
         elif key[-1] == 100:
-        # Test if this disjunction fails
-            if left_branch != right_branch:
-                # passes the proof
+            # Test if this disjunction fails
+            if (left_branch and right_branch) is None:
+                # unknown
+                return None
+            elif left_branch != right_branch:
+                # passes the test
                 return True
             else:
-                # fails the proof
+                # fails the test
                 return False
 
     def ispred(self, proof, ag, key):
@@ -1094,16 +1103,19 @@ class Inference(object):
         def chk_result():
             if var[0] == '$':
                 ctgs = self.subkb.individuals[var].get_cat()
-                val = ctgs[pred[0]]
-                qval = float(pred[1][2:])
-                if pred[1][1] == '=' and val == qval:
-                    return True 
-                elif pred[1][1] == '<' and val < qval:
-                    return True
-                elif pred[1][1] == '>' and val > qval:
-                    return True
+                if pred[0] in ctgs:
+                    val = ctgs[pred[0]]
+                    qval = float(pred[1][2:])
+                    if pred[1][1] == '=' and val == qval:
+                        return True 
+                    elif pred[1][1] == '<' and val < qval:
+                        return True
+                    elif pred[1][1] == '>' and val > qval:
+                        return True
+                    else:
+                        return False
                 else:
-                    return False
+                    return None
             else:
                 # IF IT'S A FUNCTION
                 pass
@@ -1114,7 +1126,7 @@ class Inference(object):
         self.get_rules()
         self.obj_dic = self.kb.inds_by_cat(self.chk_cats)
         self.subst_kb()
-        results = dict()
+        results = dict()        
         for var, preds in self.query.items():
             if var in self.vrs:
                 # It's a variable, find every object that fits 
@@ -1124,11 +1136,10 @@ class Inference(object):
                 results[var] = []
                 for pred in preds:
                     self.actv_q = (var, pred[0])            
-                    result, i = None, 0
-                    while result is not True and i < 2:
+                    result, self.updated = None, True
+                    while (result is not True) and (self.updated is True):
                         chk, done = list(), list()
                         result = self.chain(pred[0], chk, done)
-                        i += 1
                     results[var].append(chk_result())
         print results
 
@@ -1137,16 +1148,19 @@ class Inference(object):
             print ind
             #print 'Relations:', ind.relations
             print 'Categories:', ind.categ
-            #print 'cog:', ind.cog
-        print
-        #pprint.pprint(r.classes)    
     
     def chain(self, p, chk, done):
         if p in self.nodes:
-            for node in self.nodes[p]:                
+            istate, ostate_chng = self.updated, None
+            for node in self.nodes[p]:
+                self.updated = istate             
                 self.rcsv_test(node)
                 if p not in done:
                     chk = list(node.ants) + chk
+                if self.updated != istate:
+                    ostate_chng = self.updated
+            if ostate_chng is not None:
+                self.updated = ostate_chng
         if self.actv_q[0] in self.obj_dic and \
         self.actv_q[1] in self.obj_dic[self.actv_q[0]]:
             return True
@@ -1198,16 +1212,33 @@ class Inference(object):
                 j = len(mapped)
                 args = try_new()
                 key = hash(tuple(args))
-                if key not in self.queue[node]['pos']:
+                if key in self.queue[node]['neg'] and self.updated is True:
+                    self.updated = False
                     node.rule(self.subkb, args)
                     res = hasattr(node.rule, 'result')
-                    if res is True and node.rule.result is not False:
+                    if res is True and (node.rule.result is not False):
+                        self.updated = True
                         add_ctg()
                         del node.rule.result
-                    elif res is True and node.rule.result is False:
+                    elif res is True:
                         self.queue[node]['neg'].add(key)
-                elif key in self.queue[node]['neg']:
-                    print args
+                        del node.rule.result
+                elif (key not in self.queue[node]['pos']) \
+                and (key not in self.queue[node]['neg']):
+                    self.updated = False
+                    node.rule(self.subkb, args)
+                    res = hasattr(node.rule, 'result')
+                    if res is True and (node.rule.result is not False):
+                        self.updated = True
+                        add_ctg()
+                        del node.rule.result
+                    elif res is True:
+                        self.queue[node]['neg'].add(key)
+                        del node.rule.result
+                else:
+                    self.updated = False
+        else:
+            self.updated = False                
 
     def map_vars(self, node):
         subactv = {}
