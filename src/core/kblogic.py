@@ -23,6 +23,10 @@ connectives), that form a well-formed logic formula. These are rulesets
 for reasoning, cataloging objects into sets/classes, and the relationships 
 between these objects.
 """
+
+# TO DO: Optimize chaining algorithm further: in functions it can check 
+# wether the argument position fits or not before trying to solve it.
+
 # ===================================================================#
 #   Imports and constants
 # ===================================================================#
@@ -116,6 +120,8 @@ class Representation(object):
         """Parses a sentence, asks the KB and returns the result of that ask.
         """
         inf_proc = Inference(self, self.parse_sent, sent)
+        print '\n', inf_proc.results
+        #print inf_proc.subkb.bmsWrapper.chgs_dict
 
     def parse_sent(self, sent):
 
@@ -188,7 +194,7 @@ class Representation(object):
         ls = len(comp)
         iter_childs()
         return ori, comp, hier
-        
+
     def declare(self, sent, save=False):
         """Declares an object as a member of a class or the relationship
         between two objects. Declarations parse well-formed statements.
@@ -202,8 +208,9 @@ class Representation(object):
         which are the only member of their class. To denote an entity we use
         the $ symbol before the entity name.
         
-        2) "<friend[$John, $Lucy,u=0.2]>" -> Declares a mapping of the 'friend' type
-        between the entities '$Lucy' and '$John'. $John: friend -> $Lucy, 0.2
+        2) "<friend[$John, $Lucy,u=0.2]>" -> Declares a mapping of the 
+        'friend' type between the entities '$Lucy' and '$John'. 
+        $John: friend -> $Lucy, 0.2
         
         Declarations of mapping can happen between entities, classes, 
         or between an entity and a class (ie. <loves[$Lucy, cats]>).
@@ -456,7 +463,7 @@ class Individual(object):
         if rtype != 'iobj':        
             try:
                 r = self.relations[rel][rtype][obj]
-            except:
+            except KeyError:
                 return None
             else:
                 p = [x for (x, _) in r]
@@ -467,7 +474,7 @@ class Individual(object):
             k = obj+'::'+sbj
             try:
                 r = self.relations[rel][rtype][k]
-            except:
+            except KeyError:
                 return None
             else:
                 return r
@@ -509,7 +516,7 @@ class Individual(object):
                     self.relations[args[0]]
                 else:
                     k[args[0]]
-            except:                
+            except KeyError:                
                 if k is None:
                     x = args.pop(0)
                     self.relations[x] = dict()
@@ -534,7 +541,7 @@ class Individual(object):
         if self.name == sbj:
             try:
                 ov = self.relations[rel]['sbj'][obj]
-            except:
+            except KeyError:
                 mk_rel([rel, 'sbj', obj])
                 self.relations[rel]['sbj'][obj] = [(iobj, val)]
             else:
@@ -546,7 +553,7 @@ class Individual(object):
         elif self.name == obj:
             try:
                 ov = self.relations[rel]['obj'][sbj]
-            except:
+            except KeyError:
                 mk_rel([rel, 'obj', sbj])
                 self.relations[rel]['obj'][sbj] = [(iobj, val)]
             else:
@@ -558,9 +565,8 @@ class Individual(object):
         elif self.name == iobj:
             k = obj+'::'+sbj
             try:
-                ov = self.relations[rel]['iobj'][k]
-                ov = val
-            except:
+                self.relations[rel]['iobj'][k] = val
+            except KeyError:
                 mk_rel([rel, 'iobj', k])
                 self.relations[rel]['iobj'][k] = val
 
@@ -606,26 +612,6 @@ class Part(Category):
     """A special instance of a category. It defines an element
     which is a part of an other object.
     """
-
-
-class SubstRepr(Representation):
-    
-    class FakeBms(object):
-        
-        def check(self, *args):
-            pass
-        
-        def register(self, form, stop=False):
-            pass
-        
-        def prev_blf(self, *args):
-            pass
-        
-    def __init__(self):
-        self.individuals = {}
-        self.classes = {}
-        self.bmsWrapper = self.FakeBms()
-
 
 # ===================================================================#
 #   LOGIC CLASSES AND SUBCLASSES
@@ -737,8 +723,6 @@ class LogSentence(object):
         if len(cond) > 0:
             self.particles.append(Particle(cond[0], depth, part_id, parent, syb))
         elif any(x in form for x in [':forall:', ':exists:']):
-            # Only universal quantifiers are supported right now,
-            # so the quantity is irrelevant (check declare method for more info).
             form = form.split(':')
             cond = ':check_var:'
             for i, a in enumerate(form):
@@ -878,6 +862,8 @@ class Particle(object):
             key.append(101)
             self.next[current].solve(proof, ag, key)
         elif current == 1 and self.results[0] is True:
+            # If it's not a predicate, follow standard FOL
+            # rules for implication
             if self.next[1].cond != ':predicate:':
                 key.append(101)
                 self.next[current].solve(proof, ag, key)
@@ -980,7 +966,7 @@ class Particle(object):
         def isvar(s):
             try:
                 s = proof.assigned[s]
-            except:
+            except KeyError:
                 pass
             return s
         
@@ -1117,8 +1103,8 @@ class Inference(object):
                 else:
                     return None
             else:
-                # IF IT'S A FUNCTION
-                pass
+                # It's a class
+                print "It's a class"
         
         _, comp, _ = parser(sent)
         self.get_query(comp)
@@ -1126,22 +1112,24 @@ class Inference(object):
         self.get_rules()
         self.obj_dic = self.kb.inds_by_cat(self.chk_cats)
         self.subst_kb()
-        results = dict()        
+        self.results = dict()        
         for var, preds in self.query.items():
             if var in self.vrs:
-                # It's a variable, find every object that fits 
-                # the criteria
+                # It's a variable, find every object that fits the criteria
+                # 
+                #
                 print 'It\'s a variable'
             else:
-                results[var] = []
+                self.results[var] = []
                 for pred in preds:
-                    self.actv_q = (var, pred[0])            
-                    result, self.updated = None, True
-                    while (result is not True) and (self.updated is True):
-                        chk, done = list(), list()
+                    self.actv_q, result = (var, pred[0]), None
+                    k, self.updated = True, list()
+                    while result is not True  and k is True:
+                        chk, done = list(), list()                        
                         result = self.chain(pred[0], chk, done)
-                    results[var].append(chk_result())
-        print results
+                        k = True if True in self.updated else False
+                        self.updated = list()
+                    self.results[var].append(chk_result())
 
         r = self.subkb
         for ind in r.individuals.values():
@@ -1151,16 +1139,10 @@ class Inference(object):
     
     def chain(self, p, chk, done):
         if p in self.nodes:
-            istate, ostate_chng = self.updated, None
-            for node in self.nodes[p]:
-                self.updated = istate             
+            for node in self.nodes[p]:       
                 self.rcsv_test(node)
                 if p not in done:
                     chk = list(node.ants) + chk
-                if self.updated != istate:
-                    ostate_chng = self.updated
-            if ostate_chng is not None:
-                self.updated = ostate_chng
         if self.actv_q[0] in self.obj_dic and \
         self.actv_q[1] in self.obj_dic[self.actv_q[0]]:
             return True
@@ -1182,13 +1164,13 @@ class Inference(object):
                     for sbs in v:
                         try:
                             self.obj_dic[sbs].add(cat)
-                        except:
+                        except KeyError:
                             self.obj_dic[sbs] = set([cat])
                 else:
                     cat, obj = r[0], r[1][0]
-                    try:
+                    try :
                         self.obj_dic[obj].add(cat)
-                    except:
+                    except KeyError:
                         self.obj_dic[obj] = set([cat])
             self.queue[node]['pos'].add(key)
 
@@ -1213,11 +1195,10 @@ class Inference(object):
                 args = try_new()
                 key = hash(tuple(args))
                 if key in self.queue[node]['neg'] and self.updated is True:
-                    self.updated = False
                     node.rule(self.subkb, args)
                     res = hasattr(node.rule, 'result')
                     if res is True and (node.rule.result is not False):
-                        self.updated = True
+                        self.updated.append(True)
                         add_ctg()
                         del node.rule.result
                     elif res is True:
@@ -1225,20 +1206,15 @@ class Inference(object):
                         del node.rule.result
                 elif (key not in self.queue[node]['pos']) \
                 and (key not in self.queue[node]['neg']):
-                    self.updated = False
                     node.rule(self.subkb, args)
                     res = hasattr(node.rule, 'result')
                     if res is True and (node.rule.result is not False):
-                        self.updated = True
+                        self.updated.append(True)
                         add_ctg()
                         del node.rule.result
                     elif res is True:
                         self.queue[node]['neg'].add(key)
                         del node.rule.result
-                else:
-                    self.updated = False
-        else:
-            self.updated = False                
 
     def map_vars(self, node):
         subactv = {}
@@ -1356,6 +1332,9 @@ class Inference(object):
 
 
 class InfNode(object):
+    """A support class for logic inference. Shouldn't be instantiated
+    directly. Stores relevante rules and their variables.
+    """
     
     def __init__(self, nc, ants, cons, rule):
         self.rule = rule
@@ -1371,6 +1350,38 @@ class InfNode(object):
                 v = ant[1].split(',u')
                 if v[0] in self.subs:
                     self.subs[v[0]].add(ant[0])
+
+
+class SubstRepr(Representation):
+    """During an inference the original KB is isolated and only
+    the relevant classes and entities are copied into a temporal
+    working KB.
+    
+    Once the inference is done, results are cleaned up, saved
+    in the KB and the BMS routine is ran.
+    """
+    
+    class FakeBms(object):
+        
+        def __init__(self):
+            self.chgs_dict = dict()
+        
+        def register(self, form, stop=False):
+            if stop is False:
+                self.chgs_dict[form] = (list(), list())
+                self.chk_ls = self.chgs_dict[form][0]
+                self.prod = self.chgs_dict[form][1]
+        
+        def prev_blf(self, arg):
+            self.prod.append(arg)
+        
+        def check(self, arg):
+            self.chk_ls.append(arg)
+
+    def __init__(self):
+        self.individuals = {}
+        self.classes = {}
+        self.bmsWrapper = self.FakeBms()
 
 
 if __name__ == '__main__':

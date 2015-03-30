@@ -108,7 +108,7 @@ class BmsWrapper(object):
             self.wrk_bel.remake(pred)
 
 class BeliefRecord(object):
-    """Representation of how a belief become to existence.
+    """Representation of how a belief became to existence.
     
     On initialisation it receives which belief came to existence,
     and the reference of the formula which produced the belief.
@@ -132,8 +132,8 @@ class BeliefRecord(object):
 
     def prev_blf(self, belief):
         """The belief may be a product of past beliefs, the possibility
-        is explored and stores the immeate previous belief that 
-        produced this belief.
+        is explored and stores the immediate previous belief that 
+        produced this belief if so.
         """
         if belief in self.bms.container:
             self.prod.append(belief)
