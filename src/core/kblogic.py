@@ -385,28 +385,6 @@ class Representation(object):
             t = t.union(s)
             cat_dic[ind.name] = t
         return cat_dic
-    
-    def test(self, *args):
-        cats = []
-        for ind in args:
-            if ind in self.individuals:
-                c = self.individuals[ind].get_cat()
-                i = [k for k,_ in c.items()]
-                j = [k for k,_ in self.individuals[ind].relations.items()]
-                cats = cats + i + j
-        tests = []
-        for c in cats:
-            tests = tests + self.classes[c]['cog']
-        tests, tests = set(tests), list(tests)
-        for t in tests:
-            t(self, *args)
-        # Tests are run twice, as the changes from the first run could
-        # have introduced inconsistencies which need to be found.
-        #
-        # MUST BE OPTIMIZED, DETECT CHANGES AND RUN THE APPROPIATE
-        # RULE TEST, not every single test again
-        for t in tests:
-            t(self, *args)
 
 
 class Individual(object):
@@ -1115,9 +1093,19 @@ class Inference(object):
         
         def chk_result():
             if var[0] == '$':
-                print self.subkb.individuals[var].get_cat()
-                print preds
+                ctgs = self.subkb.individuals[var].get_cat()
+                val = ctgs[pred[0]]
+                qval = float(pred[1][2:])
+                if pred[1][1] == '=' and val == qval:
+                    return True 
+                elif pred[1][1] == '<' and val < qval:
+                    return True
+                elif pred[1][1] == '>' and val > qval:
+                    return True
+                else:
+                    return False
             else:
+                # IF IT'S A FUNCTION
                 pass
         
         _, comp, _ = parser(sent)
@@ -1126,12 +1114,14 @@ class Inference(object):
         self.get_rules()
         self.obj_dic = self.kb.inds_by_cat(self.chk_cats)
         self.subst_kb()
+        results = dict()
         for var, preds in self.query.items():
             if var in self.vrs:
                 # It's a variable, find every object that fits 
                 # the criteria
                 print 'It\'s a variable'
-            else:            
+            else:
+                results[var] = []
                 for pred in preds:
                     self.actv_q = (var, pred[0])            
                     result, i = None, 0
@@ -1139,8 +1129,9 @@ class Inference(object):
                         chk, done = list(), list()
                         result = self.chain(pred[0], chk, done)
                         i += 1
-                    chk_result()
-    
+                    results[var].append(chk_result())
+        print results
+
         r = self.subkb
         for ind in r.individuals.values():
             print ind
