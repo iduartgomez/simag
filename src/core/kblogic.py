@@ -36,6 +36,8 @@ between these objects.
 # ===================================================================#
 #   Imports and constants
 # ===================================================================#
+
+
 import re
 import os
 import uuid
@@ -56,6 +58,7 @@ symb_ord = ['|>', '<=>', ' =>', '||', '&&']
 rgx_par = re.compile(r'\{(.*?)\}')
 rgx_ob = re.compile(r'\b(.*?)\]')
 rgx_br = re.compile(r'\}(.*?)\{')
+
 
 # ===================================================================#
 #   REPRESENTATION OBJECTS CLASSES AND SUBCLASSES
@@ -93,16 +96,16 @@ class Representation(object):
         
         >>> r.tell("professor[$Lucy,u=1]")
         will include the individual '$Lucy' in the professor category)
-        >>> r.tell(":forall:x: (professor[x,u=1] |= person[x,u=1])")
+        >>> r.tell(":vars:x: (professor[x,u=1] |= person[x,u=1])")
         all the individuals which are professors will be added to the
         person category, and the formula will be stored in the professor
         class for future use.
         
         For more examples check the LogSentence class docs.
         """
-        ori, comp, hier = self.parse_sent(sent)
+        ori, comp, hier = parse_sent(sent)
         par_form = comp[ori]
-        if not any(x in par_form for x in [':forall:', ':icond:']):
+        if not any(x in par_form for x in [':vars:', ':icond:']):
             if '[' in par_form and len(comp) == 1:
                 # It's a predicate
                 self.declare(par_form)
@@ -123,83 +126,12 @@ class Representation(object):
                                      + ' of an indicative conditional sentence')
     
     def ask(self, sent):
-        """Parses a sentence, asks the KB and returns the result of that ask.
+        """Asks the KB if some fact is true and returns the result of
+        that ask.
         """
-        inf_proc = Inference(self, self.parse_sent, sent)
+        inf_proc = Inference(self, parse_sent(sent)[1])
         print '\n', inf_proc.results
         #print inf_proc.subkb.bmsWrapper.chgs_dict
-
-    def parse_sent(self, sent):
-
-        def decomp_par(s, symb, f=0):
-            initpar = []
-            endpar = []
-            idx = 0
-            while idx < len(s):
-                if s[idx] == symb[0]:
-                    initpar.append(idx)
-                elif s[idx] == symb[1]:
-                    endpar.append(idx)
-                idx += 1
-            min_ = float('inf')
-            for i in initpar:
-                for e in endpar:
-                    diff = abs(e - i)
-                    if diff < min_ and i < e:
-                        min_ = diff
-                        par = (i, e)
-            if len(initpar) == 0 and len(endpar) == 0:
-                comp.append(s[:])
-                s = s.replace(s[:], '{'+str(f)+'}')
-                return
-            elif (len(initpar) == 0 and len(endpar) != 0) or \
-                 (len(initpar) != 0 and len(endpar) == 0):
-                raise AssertionError('Incorrect use of parentheses.')
-            else:
-                elem = s[par[0]+1:par[1]]
-                comp.append(elem)
-                s = s.replace(s[par[0]:par[1]+1], '{'+str(f)+'}')
-                f += 1
-                return decomp_par(s, symb, f)
-
-        def decomp_symbs():
-            symb = [x for x in symb_ord if x in form][0]
-            memb = form.split(symb)
-            if len(memb) > 2:
-                while len(memb) > 2:
-                    last = memb.pop()                        
-                    memb[-1] =  memb[-1] + symb + last
-            x, y = len(comp), len(comp)+1            
-            comp[idx] = '{'+str(x)+'}'+symbs[symb]+'{'+str(y)+'}'
-            comp.append(memb[0])
-            comp.append(memb[1])
-            return True
-        
-        def iter_childs():
-            for n in range(0, ls):
-                exp = comp[n]
-                childs = rgx_par.findall(exp)
-                childs = [int(x) for x in childs]
-                if childs != []:
-                    hier[n] = {'childs': childs, 'parent': -1}
-                else:
-                    hier[n] = {'childs': -1, 'parent': -1}
-            for n in range(0, ls):
-                childs = hier[n]['childs']
-                if childs != -1:
-                    for c in childs:
-                        hier[c]['parent'] = n
-        
-        comp = []
-        hier = {}
-        decomp_par(sent.rstrip('\n'), symb=('(', ')'))
-        ori = len(comp)-1
-        for idx, form in enumerate(comp):            
-            if any(symb in form for symb in symbs.keys()):
-                decomp_symbs()
-        ls = len(comp)
-        iter_childs()
-        return ori, comp, hier
 
     def declare(self, sent, save=False):
         """Declares an object as a member of a class or the relationship
@@ -227,12 +159,11 @@ class Representation(object):
         if ';' in sets[1]:
             sets[1] = sets[1].split(';')
         if '<' in sent:
-            # Is a function declaration > implies an mapping
-            # between an object (or a set) and other object (or set).
-            assert (type(sets[1]) == list), \
-                    'A function/map needs subject and object'       
-            # Here a mapping a 'Function' data structure is created
-            # instead.
+            # Is a function declaration > implies a relation
+            # between different objects or classes.
+              
+            func = make_function(sent)
+            
             u = sets[1][0].split(',u=')
             u[1] = float(u[1])
             x = tuple(u), sets[1][1]
@@ -598,16 +529,16 @@ class Category(dict):
     def __init__(self, name):
         self['name'] = name
         self['cog'] = []
-        
+    
+    def add_cog(self, sent):
+        self['cog'].append(sent)
+    
     def iter_rel(self, rel):
         return [x for (x, _, _) in self[rel]]
     
     def infer(self):
         """Infers attributes of the class from it's members."""
         pass
-    
-    def add_cog(self, sent):
-        self['cog'].append(sent)
 
 
 class Group(Category):
@@ -620,6 +551,148 @@ class Part(Category):
     """A special instance of a category. It defines an element
     which is a part of an other object.
     """
+
+
+class Function(object):
+    types = ['relation']
+    
+    def __init__(self, func, args):
+        self.arity = len(args)
+        self.args = args
+        self.func = func
+    
+    def __eq__(self, other):
+        comparable = self.chk_args_eq(other)
+        if comparable is False:
+            raise NotComparableFunctions() 
+        for x, arg in enumerate(self.args):
+            if isinstance(arg, tuple):
+                if arg[1] == '=' and other.args[x][1] != arg[1]:  
+                    return False                      
+                elif arg[1] == '>'and other.args[x][1] != arg[1]:  
+                    return False     
+                elif arg[1] == '<'and other.args[x][1] != arg[1]:  
+                    return False
+        return True
+    
+    def __ne__(self, other):
+        pass
+
+    def chk_args_eq(self, other):
+        if other.arity != self.arity:
+            return False
+        if other.func != self.arity:
+            return False
+        for x, arg in enumerate(self.args):
+            if isinstance(arg, tuple):
+                if other.args[x][0] != arg[0]: return False
+            else:
+                if other.args[x] != arg: return False
+        return True
+
+def make_function(sent, f_type=None):
+    """Parses and makes a function of n-arity.
+    
+    Functions describe relations between objects (which can be instantiated
+    or variables). This functions can have any number of arguments, the
+    most common being the binary functions.
+    
+    This class is instantiated and provides a common interface for all the 
+    function types, which are registered in this class. It acts as an 
+    abstraction to hide the specific details from the clients.
+    
+    The types are subclasses and will implement the details and internal
+    data structure for the function, but are not meant to be instantiated
+    directly.
+    """
+    class RelationFunc(Function):
+
+        def __init__(self):
+            pass
+    
+    assert (f_type in Function.types or f_type is None), \
+            'Function {0} does not exist.'.format(f_type)
+    if f_type == 'relation':
+        return RelationFunc()
+    else:
+        func = rgx_ob.findall(sent)[0].split('[')
+        func, vrs = func[0], func[1]
+        args = vrs.split(';')
+        print args
+
+
+def parse_sent(sent):
+
+    def decomp_par(s, symb, f=0):
+        initpar = []
+        endpar = []
+        idx = 0
+        while idx < len(s):
+            if s[idx] == symb[0]:
+                initpar.append(idx)
+            elif s[idx] == symb[1]:
+                endpar.append(idx)
+            idx += 1
+        min_ = float('inf')
+        for i in initpar:
+            for e in endpar:
+                diff = abs(e - i)
+                if diff < min_ and i < e:
+                    min_ = diff
+                    par = (i, e)
+        if len(initpar) == 0 and len(endpar) == 0:
+            comp.append(s[:])
+            s = s.replace(s[:], '{'+str(f)+'}')
+            return
+        elif (len(initpar) == 0 and len(endpar) != 0) or \
+             (len(initpar) != 0 and len(endpar) == 0):
+            raise AssertionError('Incorrect use of parentheses.')
+        else:
+            elem = s[par[0]+1:par[1]]
+            comp.append(elem)
+            s = s.replace(s[par[0]:par[1]+1], '{'+str(f)+'}')
+            f += 1
+            return decomp_par(s, symb, f)
+
+    def decomp_symbs():
+        symb = [x for x in symb_ord if x in form][0]
+        memb = form.split(symb)
+        if len(memb) > 2:
+            while len(memb) > 2:
+                last = memb.pop()                        
+                memb[-1] =  memb[-1] + symb + last
+        x, y = len(comp), len(comp)+1            
+        comp[idx] = '{'+str(x)+'}'+symbs[symb]+'{'+str(y)+'}'
+        comp.append(memb[0])
+        comp.append(memb[1])
+        return True
+    
+    def iter_childs():
+        for n in range(0, ls):
+            exp = comp[n]
+            childs = rgx_par.findall(exp)
+            childs = [int(x) for x in childs]
+            if childs != []:
+                hier[n] = {'childs': childs, 'parent': -1}
+            else:
+                hier[n] = {'childs': -1, 'parent': -1}
+        for n in range(0, ls):
+            childs = hier[n]['childs']
+            if childs != -1:
+                for c in childs:
+                    hier[c]['parent'] = n
+    
+    comp = []
+    hier = {}
+    decomp_par(sent.rstrip('\n'), symb=('(', ')'))
+    ori = len(comp) - 1
+    for idx, form in enumerate(comp):            
+        if any(symb in form for symb in symbs.keys()):
+            decomp_symbs()
+    ls = len(comp)
+    iter_childs()
+    return ori, comp, hier
+
 
 # ===================================================================#
 #   LOGIC CLASSES AND SUBCLASSES
@@ -724,11 +797,11 @@ class LogSentence(object):
         if len(cond) > 0:
             self.particles.append(Particle(cond[0], depth, part_id,
                                            parent, syb))
-        elif any(x in form for x in [':forall:', ':exists:']):
+        elif any(x in form for x in [':vars:', ':exists:']):
             form = form.split(':')
             cond = ':stub:'
             for i, a in enumerate(form):
-                if a == 'forall':
+                if a == 'vars':
                     vars_ = form[i+1].split(',')
                     for var in vars_:
                         if var not in self.var_order:
@@ -1070,10 +1143,27 @@ class Particle(object):
 #   LOGIC INFERENCE
 # ===================================================================#
 
+
 gr_conds = [':icond:', ':implies:', ':equiv:']
 
 
 class Inference(object):
+    
+    class InferNode(object):
+        def __init__(self, nc, ants, cons, rule):
+            self.rule = rule
+            self.cons = cons
+            self.ants = tuple(nc)
+            self.subs = {v:set() for v in rule.var_order}
+            for ant in ants:
+                if isinstance(ant[1], tuple):
+                    v = ant[1][1]     
+                    if v in self.subs:
+                        self.subs[v].add(ant[0])
+                else:
+                    v = ant[1].split(',u')
+                    if v[0] in self.subs:
+                        self.subs[v[0]].add(ant[0])
 
     def __init__(self, kb, *args):
         self.kb = kb
@@ -1082,7 +1172,7 @@ class Inference(object):
         self.queue = {}
         self.infer_facts(*args)
 
-    def infer_facts(self, parser, sent):
+    def infer_facts(self, comp):
         """Inference function from first-order logic sentences.
 
         Gets a query from an ASK, encapsulates the query subtitutions, 
@@ -1110,9 +1200,10 @@ class Inference(object):
                     return None
             else:
                 # It's a class
+                #
+                #
                 print "It's a class"
         
-        _, comp, _ = parser(sent)
         self.get_query(comp)
         self.rules = set()
         self.get_rules()
@@ -1297,7 +1388,7 @@ class Inference(object):
     def mk_nodes(self, nc, ants, rule, pos):
         preds = rule.get_pred(branch=pos, conds=gr_conds)
         for cons in preds:
-            node = InfNode(nc, ants, cons[0], rule)
+            node = self.InferNode(nc, ants, cons[0], rule)
             self.queue[node] = {'neg': set(), 'pos': set()}
             if node.cons in self.nodes:
                 self.nodes[node.cons].append(node)
@@ -1323,7 +1414,7 @@ class Inference(object):
             pa = pa.replace(' ','').strip()
             if not any(s in pa for s in symbs.values()):
                 preds.append(pa)
-            if ':forall:' or ':exists:' in pa:
+            if ':vars:' or ':exists:' in pa:
                 pass
         for i, p in enumerate(preds):
             preds[i] = break_pred()
@@ -1335,27 +1426,6 @@ class Inference(object):
             else:
                 terms[p[0]].append(tuple(p[1]))
         self.query, self.ctgs = terms, ctgs
-
-
-class InfNode(object):
-    """A support class for logic inference. Shouldn't be instantiated
-    directly. Stores relevante rules and their variables.
-    """
-    
-    def __init__(self, nc, ants, cons, rule):
-        self.rule = rule
-        self.cons = cons
-        self.ants = tuple(nc)
-        self.subs = {v:set() for v in rule.var_order}
-        for ant in ants:
-            if isinstance(ant[1], tuple):
-                v = ant[1][1]     
-                if v in self.subs:
-                    self.subs[v].add(ant[0])
-            else:
-                v = ant[1].split(',u')
-                if v[0] in self.subs:
-                    self.subs[v[0]].add(ant[0])
 
 
 class SubstRepr(Representation):

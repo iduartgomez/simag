@@ -69,10 +69,10 @@ Here is a detailed description, with examples, of the synthax:
 
 In general, there are no capitalization rules unless stated.
 
-Quantifiers: :forall: or :exists:
-  Quantifies (and declares), a variable, for example: :forall:x: declares
-  that the variable 'x' is universal. :exists:x,y: declares that for the
-  next atom the variables 'x' and 'y' are existential.
+Variable: :vars:
+  Declares a variable, for example: :vars:x: declares
+  that the literal 'x' is a variable. Variables are assumed to be universally
+  quantified.
 
 Constant - individual: $Lucy
   It's a name, and refeers to a single unique object in the world. Constants
@@ -81,15 +81,6 @@ Constant - individual: $Lucy
 Constant - set: professor
   It's a class/set of items, refeers to a class of objects which share some
   attributes.
-
-Variables: x, y
-  Variables are first declared through universal or existential quantifiers
-  split by commas, and then used inside predicates. For example:
-  
-  :forall:x,y: <loves[y;x,u=1]>
-  
-  Here first the variables 'x' and 'y' are declared as universal, and after
-  used inside the function 'loves'.
 
 Predicate assertion atomic sentence: professor[$Lucy,u=1]
   "professor" is the predicate and the variables or terms are passed inside
@@ -119,7 +110,7 @@ Operators (by precedence):
 In the consequent of an indicative implication only && operator can be nested.
 Parentheses can be used to split complex sentences for comprenhension and 
 clarity. An example of a complex sentence:
-  \:forall:x,y: (<takes[$analysis,u=1;x]> && <takes[y,u=1;x]> && course[y,u=1] && 
+  \:vars:x,y: (<takes[$analysis,u=1;x]> && <takes[y,u=1;x]> && course[y,u=1] && 
   student[x,u=1] |> silly[x,u=1])
   
   In natural language: Every student that takes analysis and takes an other 

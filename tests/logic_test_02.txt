@@ -3,41 +3,23 @@ dean[$John,u=1]
 student[$Bill,u=1]
 <criticize[$John,u=1;$Lucy]>
 <takes[$analysis,u=1;$Bill]>
-:forall:x: (dean[x,u=1] |> professor[x,u=1])
-:forall:x: (professor[x,u=1] |> person[x,u=1])
-:forall:x,y: (professor[x,u=1] && dean[y,u=1] => <friend[y,u=1;x]> || <knows[y,u=0;x]>)
-:forall:x,y: (person[x,u=1] && person[y,u=1] && <criticize[y,u=1;x]> |> <friend[x,u=0;y]>)
+:vars:x: (dean[x,u=1] |> professor[x,u=1])
+:vars:x: (professor[x,u=1] |> person[x,u=1])
+:vars:x,y: (professor[x,u=1] && dean[y,u=1] => <friend[y,u=1;x]> || <knows[y,u=0;x]>)
+:vars:x,y: (person[x,u=1] && person[y,u=1] && <criticize[y,u=1;x]> |> <friend[x,u=0;y]>)
 #
 <sister[$Bill,u=1;$Lucy]>
-:forall:x: (student[x,u=1] |> smart[x,u=1])
+:vars:x: (student[x,u=1] |> smart[x,u=1])
 <takes[$analysis,u=1;$Bill]> <=> <takes[$geometry,u=1;$Bill]>
 <takes[$analysis,u=1;$Bill]> || <takes[$geometry,u=1;$Bill]>
 <takes[$geometry,u=1;$Bill]>
 <takes[$analysis,u=1;$Bill]> && <takes[$geometry,u=1;$Bill]> |> silly[$Bill,u=1]
 #
-#
-:forall:x,y,z: (american[x,u=1] && weapon[y,u=1] && <sells[y,u=1;x;z]> && hostile[z] => criminal[x])
 <owns[$M1,u=1;$Nono]>
 missile[$M1,u=1]
-:forall:x: (<owns[x,u=1;$Nono]> && missile[x,u=1] => <sells[x,u=1;$West;$Nono]>)
-:forall:x: (missile[x,u=1] => weapon[x,u=1])
-:forall:x: (<enemy[$America,u=1;x]> => hostile[x,u=1])
 american[$West,u=1]
-<enemy[$America,u=1;$Nono]>
-#
-#
-:forall:x: (:exists:y: (<friend[x;y]>))
-:exists:x: (student[x])
-:exists:x: (student[x] && smart[x])
-:forall:x: (student[x] => :exists:y: (student[y] && <loves[x;y]>))
-:forall:x: (student[x] => :exists:y: (student[y] && ~<eq[x;y]> && <loves(x;y)>))
-:exists:x: (student[x] && :forall:y: (student[y] && ~<eq[x;y]> => <loves[x;y]>))
-:exists:x: (student[x] && <loves[x,u=0;$Bill]>)
-:exists:x: (sister[x;$Bill])
-~:exists::x (sister[x;$Bill])
-:exists:x: (sister[x;$Bill] && :forall:y: (sister[y;$Bill] => <eq[x;y]>))
-:exists:x,y: (sister[x;$Bill] && sister[y;$Bill] && ~<eq[x;y]>)
-:forall:x: (student[x] => :exists:y: (course[y] && <takes[x;y]>))
-:exists:x: (student[x] && <fails[x;$history]> && :forall:y: (student(y) && <fails[y;history]> => <eq[x;y]>))
-~:exists:x: (student[x] && <failed[x;$chemistry]>) && :exists:x: (student[x] && <failed[x;$history]>)
-~:exists:x: (student[x] && :forall:y: (student[y] && ~<eq[x;y]> => <fool[x;y]>))
+<enemy[$Nono,u=1;$America]>
+:vars:x,y,z: (american[x,u=1] && weapon[y,u=1] && <sells[y,u=1;x;z]> && hostile[z,u=1] => criminal[x,u=1])
+:vars:x: (<owns[x,u=1;$Nono]> && missile[x,u=1] => <sells[x,u=1;$West;$Nono]>)
+:vars:x: (missile[x,u=1] => weapon[x,u=1])
+:vars:x: (<enemy[x,u=1;$America]> => hostile[x,u=1])
