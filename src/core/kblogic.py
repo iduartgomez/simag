@@ -26,6 +26,12 @@ between these objects.
 
 # TO DO: Optimize chaining algorithm further: in functions it can check 
 # wether the argument position fits or not before trying to solve it.
+#
+# Aditionally, rewrite how functions are dealt with. Relations are a
+# particular case of a function, where the function is binary/ternary.
+# 
+# Logic proofs need more generalization, both for functions and
+# predicate atoms.
 
 # ===================================================================#
 #   Imports and constants
@@ -215,7 +221,7 @@ class Representation(object):
         Declarations of mapping can happen between entities, classes, 
         or between an entity and a class (ie. <loves[$Lucy, cats]>).
         """
-        sent = sent.replace(' ','')        
+        sent = sent.replace(' ','')
         sets = rgx_ob.findall(sent)
         sets = sets[0].split('[')
         if ';' in sets[1]:
@@ -224,7 +230,9 @@ class Representation(object):
             # Is a function declaration > implies an mapping
             # between an object (or a set) and other object (or set).
             assert (type(sets[1]) == list), \
-                    'A function/map needs subject and object'
+                    'A function/map needs subject and object'       
+            # Here a mapping a 'Function' data structure is created
+            # instead.
             u = sets[1][0].split(',u=')
             u[1] = float(u[1])
             x = tuple(u), sets[1][1]
@@ -269,12 +277,12 @@ class Representation(object):
             self.classes[categ] = nc
 
     def up_rel(self, func):
-        # It's a function declaration between two objs/classes.
+        # It's a relation declaration between two objs/classes.
         relation = func[0]
         subject, obj, val = func[1][1], func[1][0][0], func[1][0][1]
         iobj = func[1][2] if len(func[1]) == 3 else None
         if '$' in subject:
-            #It's a func between an object and other obj/class.
+            #It's a rel between an object and other obj/class.
             if subject not in self.individuals:
                 ind = Individual(subject)
                 ind.add_rel(relation, subject, obj, val, iobj)
@@ -302,7 +310,7 @@ class Representation(object):
                 categ['type'] = 'relation'
                 self.classes[relation] = categ
         else:
-            #It's a func between a class and other class/obj.
+            #It's a rel between a class and other class/obj.
             if subject not in self.classes:
                 categ = Category(subject)
                 categ[relation] = [(obj, val, iobj)]
@@ -701,13 +709,6 @@ class LogSentence(object):
 
     def new_test(self, form, depth, parent, part_id, syb):
 
-        def up_var():
-            vars_ = form[i+1].split(',')
-            for var in vars_:
-                if var not in self.var_order:
-                    self.var_order.append(var)
-            self.particles.append(Particle(cond, depth, part_id, parent, syb))
-
         def break_pred(form):
             p = rgx_ob.findall(form)[0].split('[')
             if ';' in p[1]:
@@ -721,13 +722,19 @@ class LogSentence(object):
         if depth > self.depth:
             self.depth = depth
         if len(cond) > 0:
-            self.particles.append(Particle(cond[0], depth, part_id, parent, syb))
+            self.particles.append(Particle(cond[0], depth, part_id,
+                                           parent, syb))
         elif any(x in form for x in [':forall:', ':exists:']):
             form = form.split(':')
-            cond = ':check_var:'
+            cond = ':stub:'
             for i, a in enumerate(form):
                 if a == 'forall':
-                    up_var()
+                    vars_ = form[i+1].split(',')
+                    for var in vars_:
+                        if var not in self.var_order:
+                            self.var_order.append(var)
+                    self.particles.append(Particle(cond, depth, part_id,
+                                                   parent, syb))
         elif '[' in form:
             cond = ':predicate:'
             form = tuple(break_pred(form))
@@ -742,10 +749,10 @@ class LogSentence(object):
         for p in self.particles:
             p.results = []
 
-    def get_ops(self, p):
+    def get_ops(self, p, chk_c=[':or:', ':implies:', ':equiv:']):
         ops = []
         for p in self:
-            if any(x in p.cond for x in [':or:', ':implies:', ':equiv:']):
+            if any(x in p.cond for x in chk_c):
                 ops.append(p)
         for p in ops:
             x = p
@@ -804,11 +811,10 @@ class Particle(object):
         #print self, '// Key:'+str(key), '// Args:', args
         if key[-1] == 103 and self.parent == -1:
             return
-        if key[-1] == 102 and self.cond \
-        and self.cond != (':check_var' or ':stub:'):
+        if key[-1] == 102 and self.cond and self.cond != ':stub:':
             key.pop()
             self.results.append(args[0])
-        if self.cond == ':check_var:' or self.cond == ':stub:':
+        if self.cond == ':stub:':
             if key[-1] == 102 or key[-1] == 103:
                 self.parent.solve(proof, ag, key, *args)
             else:
@@ -972,7 +978,7 @@ class Particle(object):
         
         if key[-1] == 101:
             if len(self.pred) == 3:
-                # Check mapping of a set/entity to an other set/entity.                
+                # Check funct between a set/entity and other set/entity.                
                 check_func, sbj = self.pred[0], self.pred[1][1]
                 obj, u = self.pred[1][0].split(',u')
                 sbj, obj, uval = isvar(sbj), isvar(obj), float(u[1:])
