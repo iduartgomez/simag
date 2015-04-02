@@ -40,6 +40,7 @@ between these objects.
 import re
 import os
 import uuid
+import copy
 
 import core.bms
 
@@ -229,22 +230,8 @@ class Representation(object):
                     pass
 
     def add_cog(self, sent):
-        preds = []
-        for p in sent:
-            if p.cond == ':predicate:':
-                preds.append(p.pred)
-        for pred in preds:
-            pclass = pred.__class__.__bases__[0]
-            if pclass is Function:
-                if ',u' in pred[1][0]:
-                    sbj, p = pred[1][0].split(',u')[0], pred[0]
-                else:
-                    sbj, p = pred[1][0], pred[0]
-            else:
-                if ',u' in pred[1]:
-                    sbj, p = pred[1].split(',u')[0], pred[0]
-                else:
-                    sbj, p = pred[1], pred[0]
+        
+        def chk_args(p):
             if sbj not in sent.var_order:
                 if '$' in sbj and sbj in self.individuals:
                     self.individuals[sbj].add_cog(p, sent)
@@ -255,7 +242,7 @@ class Representation(object):
                 elif sbj in self.classes:
                     self.classes[sbj].add_cog(sent)
                 else:
-                    c = 'class' if len(sbj) == 2 else 'relation'
+                    c = 'class' if pclass is not LogFunction else 'relation'
                     nc = Category(sbj)
                     nc['type'] = c
                     nc.add_cog(sent)
@@ -264,11 +251,29 @@ class Representation(object):
                 if p in self.classes:
                     self.classes[p].add_cog(sent)
                 else:
-                    c = 'class' if len(pred) == 2 else 'relation'
+                    c = 'class' if pclass is not LogFunction else 'relation'
                     nc = Category(p)
                     nc['type'] = c
                     nc.add_cog(sent)
                     self.classes[p] = nc
+        
+        preds = []
+        for p in sent:
+            if p.cond == ':predicate:':
+                preds.append(p.pred)
+        for pred in preds:
+            pclass = pred.__class__.__bases__[0]
+            if pclass is LogFunction:
+                for arg in pred.args:
+                    if isinstance(arg, tuple): sbj = arg[0]
+                    else: sbj = arg
+                    chk_args(pred.func)
+            else:
+                if ',u' in pred[1]:
+                    sbj, p = pred[1].split(',u')[0], pred[0]
+                else:
+                    sbj, p = pred[1], pred[0]
+                chk_args(p)
 
     def save_rule(self, proof):
         preds = proof.get_pred(conds=[':icond:'])
@@ -361,10 +366,23 @@ class Individual(object):
         s = [c[0] for c in self.categ if c[0] in n]
         return s
     
-    def check_rel(self, func):
-        """Checks if a relation exists; and returns the 'u' value 
-        if it does, else returns none.
+    def test_rel(self, func):
+        """Checks if a relation exists; and returns true if it's 
+        equal to the comparison, false if it's not, and None if it
+        doesn't exist
         """
+        try:
+            funcs = self.relations[func.func]
+        except KeyError:
+            return None      
+        for f in funcs:
+            try:
+                if func == f:
+                    return True
+                else:
+                    return False
+            except NotCompFuncError:
+                pass            
         return None
     
     def get_cat(self):
@@ -382,11 +400,11 @@ class Individual(object):
         return rel         
     
     def add_cog(self, p, sent):
-        if p in self.cog:
+        if p in self.cog and sent not in self.cog[p]:
             self.cog[p].append(sent)
         else:
             self.cog[p] = [sent]
-    
+        
     def add_ctg(self, ctg, val):
         ctg_rec = [x for (x,_) in self.categ]
         if ctg not in ctg_rec:
@@ -424,7 +442,8 @@ class Category(dict):
         self['cog'] = []
     
     def add_cog(self, sent):
-        self['cog'].append(sent)
+        if sent not in self['cog']:
+            self['cog'].append(sent)
     
     def infer(self):
         """Infers attributes of the class from it's members."""
@@ -439,108 +458,6 @@ class Part(Category):
     """A special instance of a category. It defines an element
     which is a part of an other object.
     """
-
-class Function(object):
-    
-    def __init__(self, sent):        
-        self.args = self.mk_args(sent)
-        self.arity = len(self.args)
-    
-    def mk_args(self, sent):
-        func = rgx_ob.findall(sent)[0].split('[')
-        self.func, vrs = func[0], func[1]
-        args = vrs.split(';')
-        for x, arg in enumerate(args):
-            if ',u' in arg:
-                narg = arg.split(',u')
-                narg = narg[0], narg[1][0], float(narg[1][1:])
-                args[x] = narg
-        return args
-    
-    def __eq__(self, other):
-        comparable = self.chk_args_eq(other)
-        if comparable is not True:
-            raise NotCompFuncError(comparable)
-        for x, arg in enumerate(self.args):
-            if isinstance(arg, tuple):
-                if arg[1] == '=' and other.args[x][2] != arg[2]:  
-                    return False              
-                elif arg[1] == '>'and arg[2] < other.args[x][2]:  
-                    return False
-                elif arg[1] == '<'and arg[2] > other.args[x][2]:  
-                    return False
-        return True
-    
-    def __ne__(self, other):
-        comparable = self.chk_args_eq(other)
-        if comparable is not True:
-            raise NotCompFuncError(comparable)
-        for x, arg in enumerate(self.args):
-            if isinstance(arg, tuple):
-                if arg[1] == '=' and other.args[x][2] != arg[2]:  
-                    return False                      
-                elif arg[1] == '>'and arg[2] > other.args[x][2]:  
-                    return False     
-                elif arg[1] == '<'and arg[2] < other.args[x][2]:  
-                    return False
-        return True
-
-    def chk_args_eq(self, other):
-        if other.arity != self.arity:
-            return ('arity', other.arity, self.arity)
-        if other.func != self.func:
-            return ('function', other.func, self.func)
-        for x, arg in enumerate(self.args):
-            if isinstance(arg, tuple):
-                if other.args[x][0] != arg[0]:
-                    return ('args', other.args[x][0], arg[0])
-            else:
-                if other.args[x] != arg:
-                    return ('args', other.args[x], arg)
-        return True
-        
-    def get_args(self):
-        ls = []
-        for arg in self.args:
-            if isinstance(arg, tuple):
-                ls.append(arg[0])
-            else:
-                ls.append(arg)
-        return ls
-
-class NotCompFuncError(Exception):
-    
-    def __init__(self, t, x, y):
-        self.t = t
-        self.x = x
-        self.y = y
-        
-
-def make_function(sent, f_type=None):
-    """Parses and makes a function of n-arity.
-    
-    Functions describe relations between objects (which can be instantiated
-    or variables). This functions can have any number of arguments, the
-    most common being the binary functions.
-    
-    This class is instantiated and provides a common interface for all the 
-    function types, which are registered in this class. It acts as an 
-    abstraction to hide the specific details from the clients.
-    
-    The types are subclasses and will implement the details and internal
-    data structure for the function, but are not meant to be instantiated
-    directly.
-    """
-    types = ['relation']
-    class RelationFunc(Function):
-        pass
-      
-    assert (f_type in types or f_type is None), \
-            'Function {0} does not exist.'.format(f_type)
-    if f_type == 'relation':
-        return RelationFunc(sent)
-    else:
-        return Function(sent)
 
 def parse_sent(sent):
 
@@ -614,6 +531,119 @@ def parse_sent(sent):
     iter_childs()
     return ori, comp, hier
 
+class LogFunction(object):
+    
+    def __init__(self, sent):        
+        self.args = self.mk_args(sent)
+        self.arity = len(self.args)
+    
+    def mk_args(self, sent):
+        func = rgx_ob.findall(sent)[0].split('[')
+        self.func, vrs = func[0], func[1]
+        args = vrs.split(';')
+        for x, arg in enumerate(args):
+            if ',u' in arg:
+                narg = arg.split(',u')
+                narg = narg[0], narg[1][0], float(narg[1][1:])
+                args[x] = narg
+        return args
+    
+    def __eq__(self, other):
+        comparable = self.chk_args_eq(other)
+        if comparable is not True:
+            raise NotCompFuncError(comparable)
+        for x, arg in enumerate(self.args):
+            if isinstance(arg, tuple):
+                if arg[1] == '=' and other.args[x][2] != arg[2]:  
+                    return False              
+                elif arg[1] == '>'and arg[2] < other.args[x][2]:  
+                    return False
+                elif arg[1] == '<'and arg[2] > other.args[x][2]:  
+                    return False
+        return True
+    
+    def __ne__(self, other):
+        comparable = self.chk_args_eq(other)
+        if comparable is not True:
+            raise NotCompFuncError(comparable)
+        for x, arg in enumerate(self.args):
+            if isinstance(arg, tuple):
+                if arg[1] == '=' and other.args[x][2] != arg[2]:  
+                    return False                      
+                elif arg[1] == '>'and arg[2] > other.args[x][2]:  
+                    return False     
+                elif arg[1] == '<'and arg[2] < other.args[x][2]:  
+                    return False
+        return True
+
+    def chk_args_eq(self, other):
+        if other.arity != self.arity:
+            return ('arity', other.arity, self.arity)
+        if other.func != self.func:
+            return ('function', other.func, self.func)
+        for x, arg in enumerate(self.args):
+            if isinstance(arg, tuple):
+                if other.args[x][0] != arg[0]:
+                    return ('args', other.args[x][0], arg[0])
+            else:
+                if other.args[x] != arg:
+                    return ('args', other.args[x], arg)
+        return True
+        
+    def get_args(self):
+        ls = []
+        for arg in self.args:
+            if isinstance(arg, tuple):
+                ls.append(arg[0])
+            else:
+                ls.append(arg)
+        return ls
+    
+    def substitute(self, args):
+        for x, arg in enumerate(self.args):
+            if isinstance(arg, tuple):
+                self.args[x] = list(arg)
+                self.args[x][0] = args[x]
+                self.args[x] = tuple(self.args[x])
+            else:
+                self.args[x] = args[x]
+
+class NotCompFuncError(Exception):
+    
+    def __init__(self, args):
+        self.err, self.arg1, self.arg2 = args   
+
+def make_function(sent, f_type=None, *args):
+    """Parses and makes a function of n-arity.
+    
+    Functions describe relations between objects (which can be instantiated
+    or variables). This functions can have any number of arguments, the
+    most common being the binary functions.
+    
+    This class is instantiated and provides a common interface for all the 
+    function types, which are registered in this class. It acts as an 
+    abstraction to hide the specific details from the clients.
+    
+    The types are subclasses and will implement the details and internal
+    data structure for the function, but are not meant to be instantiated
+    directly.
+    """
+    types = ['relation']
+    class RelationFunc(LogFunction):
+        pass
+    
+    assert (f_type in types or f_type is None), \
+            'Function {0} does not exist.'.format(f_type)
+    if f_type == 'relation':
+        return RelationFunc(sent)
+    else:
+        return LogFunction(sent)
+    
+def clone_and_sub(sent, args):
+    clone = copy.deepcopy(sent)
+    clone.substitute(args)
+    return clone
+
 # ===================================================================#
 #   LOGIC CLASSES AND SUBCLASSES
 # ===================================================================#
@@ -684,10 +714,10 @@ class LogSentence(object):
                 particles.append(part)
                 if part.cond == ':icond:':
                     icond = part
-            lvl -= 1        
+            lvl -= 1
         self.particles = particles
         for p in self.particles:
-            p.connect(self.particles)            
+            p.connect(self.particles)
         # Check for illegal connectives for implicative cond sentences
         self.validity = None
         if icond is not False:
@@ -961,32 +991,23 @@ class Particle(object):
                 pass
             return s
         
-        if key[-1] == 101:
-            if len(self.pred) == 3:
+        pclass = self.pred.__class__.__bases__[0]
+        if key[-1] == 101:            
+            if pclass is LogFunction:                
                 # Check funct between a set/entity and other set/entity.
-                check_func, sbj = self.pred[0], self.pred[1][1]
-                obj, u = self.pred[1][0].split(',u')
-                sbj, obj, uval = isvar(sbj), isvar(obj), float(u[1:])
-                
-                if len(self.pred[1]) == 3:
-                    iobj = isvar(self.pred[1][2])
-                else: iobj = None
-                val = None
-                #val = ag.individuals[sbj].check_rel(check_func, sbj, obj, iobj)
                 result = None
-                if val is not None:
-                    if u[0] == '=' and val == uval:
-                        result = True
-                    elif u[0] == '>' and val > uval:
-                        result = True
-                    elif u[0] == '<' and val < uval:
-                        result = True
-                    else: 
-                        result = False
+                args = self.pred.get_args()
+                for x, arg in enumerate(args):
+                    if arg in proof.assigned:
+                        args[x] = proof.assigned[arg]
+                test = clone_and_sub(self.pred, args)
+                if '$' in args[0][0]:
+                    result = ag.individuals[args[0]].test_rel(test)
+                else:
+                    result = ag.classes[args[0]].test_rel(test)
                 if result is True:
-                    obj = obj + ',u' + u[0] + str(uval)
-                    s = '<' + check_func + '['+sbj+';' + obj + ']>'
-                    ag.bmsWrapper.prev_blf(s)
+                    pass
+                    #ag.bmsWrapper.prev_blf(s)
             else:
                 # Check membership to a set of an entity.
                 sbj, u = self.pred[1].split(',u')
@@ -1015,16 +1036,17 @@ class Particle(object):
             # marked for declaration
             # subtitute var(s) for constants
             # and pass to agent for updating
-            pred = list(self.pred)
-            if type(pred[1]) is tuple:
-                obj, u = pred[1][0].split(',u')
-                obj, sbj = isvar(obj), isvar(pred[1][1])
-                iobj = isvar(pred[1][2]) if len(pred[1]) == 3 else None
-                pred[1] = ([obj, u], sbj, iobj)
-                ag.bmsWrapper.check(pred)
-                pred[1][0][1] = float(u[1:])
+            #pred = list(self.pred)
+            if pclass is LogFunction:                
+                args = self.pred.get_args()
+                for x, arg in enumerate(args):
+                    if arg in proof.assigned:
+                        args[x] = proof.assigned[arg]
+                pred = clone_and_sub(self.pred, args)
+                #ag.bmsWrapper.check(pred)
                 ag.up_rel(pred)
             else:
+                pred = list(self.pred)
                 sbj, u = self.pred[1].split(',u')
                 pred[1] = isvar(sbj)
                 pred = (pred[0], [pred[1], u])
@@ -1067,10 +1089,10 @@ class Inference(object):
             self.ants = tuple(nc)
             self.subs = {v:set() for v in rule.var_order}
             for ant in ants:
-                if isinstance(ant[1], tuple):
-                    v = ant[1][1]     
-                    if v in self.subs:
-                        self.subs[v].add(ant[0])
+                if not isinstance(ant, tuple):
+                    args = ant.get_args()
+                    for v in args:
+                        if v in self.subs: self.subs[v].add(ant.func)
                 else:
                     v = ant[1].split(',u')
                     if v[0] in self.subs:
@@ -1117,7 +1139,7 @@ class Inference(object):
         
         self.get_query(comp)
         self.rules = set()
-        self.get_rules()
+        self.get_rules()            
         self.obj_dic = self.kb.inds_by_cat(self.chk_cats)
         self.subst_kb()
         self.results = dict()        
@@ -1163,17 +1185,14 @@ class Inference(object):
 
         def add_ctg():
             for r in node.rule.result:
-                if len(r) == 3:
-                    cat, v = r[0], list()
-                    v.append(r[1][0][0])
-                    v.append(r[1][1])
-                    if r[1][2] is not None:
-                        v.append(r[1][2])
-                    for sbs in v:
+                pclass = r.__class__.__bases__[0]
+                if pclass is LogFunction:
+                    args = r.get_args()
+                    for sbs in args:
                         try:
-                            self.obj_dic[sbs].add(cat)
+                            self.obj_dic[sbs].add(r.func)
                         except KeyError:
-                            self.obj_dic[sbs] = set([cat])
+                            self.obj_dic[sbs] = set([r.func])
                 else:
                     cat, obj = r[0], r[1][0]
                     try :
@@ -1268,7 +1287,7 @@ class Inference(object):
         else:
             c = None
         if c is not None:
-            done.append(c)
+            done.append(c)            
             try:
                 chk_rules = set(self.kb.classes[c]['cog'])
                 chk_rules = chk_rules.difference(self.rules)
@@ -1277,13 +1296,19 @@ class Inference(object):
                 return
             for sent in chk_rules:
                 preds = sent.get_pred(conds=gr_conds)
-                nc = [y[0] for y in preds]
+                nc = []
+                for y in preds:
+                    if type(y) == tuple: nc.append(y[0])
+                    else: nc.append(y.func)
                 self.mk_nodes(nc, preds, sent, 'right')
                 nc2 = [e for e in nc if e not in done and e not in self.ctgs]
                 self.ctgs.extend(nc2)
                 if c in nc:
                     preds = sent.get_pred(branch='right', conds=gr_conds)
-                    nc = [y[0] for y in preds]
+                    nc = []
+                    for y in preds:
+                        if type(y) == tuple: nc.append(y[0])
+                        else: nc.append(y.func)
                     self.mk_nodes(nc, preds, sent, 'left')
                     nc2 = [e for e in nc if e not in done \
                            and e not in self.ctgs]
@@ -1299,7 +1324,12 @@ class Inference(object):
     def mk_nodes(self, nc, ants, rule, pos):
         preds = rule.get_pred(branch=pos, conds=gr_conds)
         for cons in preds:
-            node = self.InferNode(nc, ants, cons[0], rule)
+            pclass = cons.__class__.__bases__[0]
+            if pclass is LogFunction:
+                pred = cons.func
+            else:
+                pred = cons[0]
+            node = self.InferNode(nc, ants, pred, rule)
             self.queue[node] = {'neg': set(), 'pos': set()}
             if node.cons in self.nodes:
                 self.nodes[node.cons].append(node)
@@ -1390,3 +1420,10 @@ if __name__ == '__main__':
     print '\n---------- RESULTS ----------'
     d2 = datetime.datetime.now()
     print (d2-d1)
+    """
+    print
+    pprint.pprint( r.classes )
+    for n in r.individuals.values():
+        print
+        pprint.pprint( n.__dict__ )
+    """
