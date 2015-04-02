@@ -376,15 +376,11 @@ class Individual(object):
         except KeyError:
             return None      
         for f in funcs:
-            try:
-                if func == f:
-                    return True
-                else:
-                    return False
-            except NotCompFuncError:
-                pass            
+            if f.args_ID == func.args_ID:
+                if func == f: return True
+                else: return False
         return None
-    
+
     def get_cat(self):
         """Returns a dictionary of the categories of the object and
         their 'u' values.
@@ -540,55 +536,17 @@ class LogFunction(object):
     def mk_args(self, sent):
         func = rgx_ob.findall(sent)[0].split('[')
         self.func, vrs = func[0], func[1]
-        args = vrs.split(';')
+        args, hls = vrs.split(';'), list()
         for x, arg in enumerate(args):
             if ',u' in arg:
                 narg = arg.split(',u')
-                narg = narg[0], narg[1][0], float(narg[1][1:])
+                narg = narg[0], float(narg[1][1:]), narg[1][0]
+                hls.append(narg[0])
                 args[x] = narg
-        return args
-    
-    def __eq__(self, other):
-        comparable = self.chk_args_eq(other)
-        if comparable is not True:
-            raise NotCompFuncError(comparable)
-        for x, arg in enumerate(self.args):
-            if isinstance(arg, tuple):
-                if arg[1] == '=' and other.args[x][2] != arg[2]:  
-                    return False              
-                elif arg[1] == '>'and arg[2] < other.args[x][2]:  
-                    return False
-                elif arg[1] == '<'and arg[2] > other.args[x][2]:  
-                    return False
-        return True
-    
-    def __ne__(self, other):
-        comparable = self.chk_args_eq(other)
-        if comparable is not True:
-            raise NotCompFuncError(comparable)
-        for x, arg in enumerate(self.args):
-            if isinstance(arg, tuple):
-                if arg[1] == '=' and other.args[x][2] != arg[2]:  
-                    return False                      
-                elif arg[1] == '>'and arg[2] > other.args[x][2]:  
-                    return False     
-                elif arg[1] == '<'and arg[2] < other.args[x][2]:  
-                    return False
-        return True
-
-    def chk_args_eq(self, other):
-        if other.arity != self.arity:
-            return ('arity', other.arity, self.arity)
-        if other.func != self.func:
-            return ('function', other.func, self.func)
-        for x, arg in enumerate(self.args):
-            if isinstance(arg, tuple):
-                if other.args[x][0] != arg[0]:
-                    return ('args', other.args[x][0], arg[0])
             else:
-                if other.args[x] != arg:
-                    return ('args', other.args[x], arg)
-        return True
+                hls.append(arg)
+        self.args_ID = hash(tuple(hls))
+        return args
         
     def get_args(self):
         ls = []
@@ -600,6 +558,7 @@ class LogFunction(object):
         return ls
     
     def substitute(self, args):
+        self.args_ID = hash(tuple(args))
         for x, arg in enumerate(self.args):
             if isinstance(arg, tuple):
                 self.args[x] = list(arg)
@@ -629,8 +588,54 @@ def make_function(sent, f_type=None, *args):
     directly.
     """
     types = ['relation']
-    class RelationFunc(LogFunction):
-        pass
+    
+    class RelationFunc(LogFunction):        
+    
+        def __eq__(self, other):
+            comparable = self.chk_args_eq(other)
+            if comparable is not True:
+                raise NotCompFuncError(comparable)
+            for x, arg in enumerate(self.args):
+                if isinstance(arg, tuple):
+                    oarg = other.args[x]
+                    if arg[2] == '=' and arg[1] != oarg[1]:  
+                        return False                      
+                    elif arg[2] == '>'and arg[1] > oarg[1]:
+                        return False     
+                    elif arg[2] == '<'and arg[1] < oarg[1]:  
+                        return False
+            return True
+        
+        def __ne__(self, other):
+            comparable = self.chk_args_eq(other)
+            if comparable is not True:
+                raise NotCompFuncError(comparable)
+            for x, arg in enumerate(self.args):
+                if isinstance(arg, tuple):
+                    oarg = other.arg[x]
+                    if arg[2] == '=' and arg[1] != oarg[1]:
+                        return True                      
+                    elif arg[2] == '>'and arg[1] < oarg[1]:
+                        return True     
+                    elif arg[2] == '<'and arg[1] > oarg[1]: 
+                        return True
+            return False
+    
+        def chk_args_eq(self, other):
+            if other.arity != self.arity:
+                return ('arity', other.arity, self.arity)
+            if other.func != self.func:
+                return ('function', other.func, self.func)
+            for x, arg in enumerate(self.args):
+                if isinstance(arg, tuple):
+                    if other.args[x][0] != arg[0]:
+                        return ('args', other.args[x][0], arg[0])
+                else:
+                    if other.args[x] != arg:
+                        return ('args', other.args[x], arg)
+            return True
+    
+    #############################################    
     
     assert (f_type in types or f_type is None), \
             'Function {0} does not exist.'.format(f_type)
@@ -1005,7 +1010,7 @@ class Particle(object):
                     result = ag.individuals[args[0]].test_rel(test)
                 else:
                     result = ag.classes[args[0]].test_rel(test)
-                if result is True:
+                if result is True:                    
                     pass
                     #ag.bmsWrapper.prev_blf(s)
             else:
@@ -1340,6 +1345,9 @@ class Inference(object):
 
         def break_pred():
             pr = rgx_ob.findall(p)[0].split('[')
+            if '<' in p:
+                func = make_function(p, 'relation')
+                return func
             if ';' in pr[1]:
                 t = pr[1].split(';')
                 if len(t) != 3:
@@ -1355,17 +1363,25 @@ class Inference(object):
             pa = pa.replace(' ','').strip()
             if not any(s in pa for s in symbs.values()):
                 preds.append(pa)
-            if ':vars:' or ':exists:' in pa:
+            if ':vars:' in pa:
+                # It's a variable
+                #
+                #
                 pass
         for i, p in enumerate(preds):
             preds[i] = break_pred()
         terms, ctgs = {}, []
         for p in preds:
-            if p[0] not in terms.keys():
+            pclass = p.__class__.__bases__[0]
+            if pclass is LogFunction:
+                ctgs.append(p.func)
+                print p
+            elif p[0] not in terms.keys():
                 terms[p[0]] = [p[1]]
                 ctgs.append(p[1][0])
             else:
                 terms[p[0]].append(tuple(p[1]))
+        print terms, ctgs
         self.query, self.ctgs = terms, ctgs
 
 class SubstRepr(Representation):
@@ -1416,7 +1432,7 @@ if __name__ == '__main__':
     d1 = datetime.datetime.now()
     for form in ls:
         r.tell(form)
-    r.ask('criminal[$West,u=1]')
+    r.ask('criminal[$West,u=1] && <sells[$M1,u=1;$West;$Nono]>')
     print '\n---------- RESULTS ----------'
     d2 = datetime.datetime.now()
     print (d2-d1)

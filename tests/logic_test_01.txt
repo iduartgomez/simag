@@ -2,7 +2,7 @@
 missile[$M1,u=1]
 american[$West,u=1]
 <enemy[$Nono,u=1;$America]>
-:vars:x,y,z: (american[x,u=1] && weapon[y,u=1] && <sells[y,u=1;x;z]> && hostile[z,u=1] => criminal[x,u=1])
+:vars:x,y,z: (american[x,u=1] && weapon[y,u=1] && <sells[y,u>0.5;x;z]> && hostile[z,u=1] => criminal[x,u=1])
 :vars:x: (<owns[x,u=1;$Nono]> && missile[x,u=1] => <sells[x,u=1;$West;$Nono]>)
 :vars:x: (missile[x,u=1] => weapon[x,u=1])
 :vars:x: (<enemy[x,u=1;$America]> => hostile[x,u=1])
