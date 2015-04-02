@@ -37,7 +37,6 @@ between these objects.
 #   Imports and constants
 # ===================================================================#
 
-
 import re
 import os
 import uuid
@@ -59,11 +58,9 @@ rgx_par = re.compile(r'\{(.*?)\}')
 rgx_ob = re.compile(r'\b(.*?)\]')
 rgx_br = re.compile(r'\}(.*?)\{')
 
-
 # ===================================================================#
 #   REPRESENTATION OBJECTS CLASSES AND SUBCLASSES
 # ===================================================================#
-
 
 class Representation(object):
     """This class is a container for internal agent's representations. 
@@ -117,7 +114,7 @@ class Representation(object):
             # It's a complex sentence with variables
             sent = LogSentence(ori, comp, hier)
             if sent.validity is True:
-                sent.validity = None
+                del sent.validity
                 self.save_rule(sent)
             elif sent.validity is None:
                 self.add_cog(sent)
@@ -160,15 +157,9 @@ class Representation(object):
             sets[1] = sets[1].split(';')
         if '<' in sent:
             # Is a function declaration > implies a relation
-            # between different objects or classes.
-              
-            func = make_function(sent)
-            
-            u = sets[1][0].split(',u=')
-            u[1] = float(u[1])
-            x = tuple(u), sets[1][1]
-            func = [sets[0], x, 'map']
-            self.bmsWrapper.add(func, True)
+            # between different objects or classes.              
+            func = make_function(sent, 'relation')
+            #self.bmsWrapper.add(func, True)
             self.up_rel(func)
         else:
             # Is a membership declaration -> the object belongs 
@@ -209,53 +200,33 @@ class Representation(object):
 
     def up_rel(self, func):
         # It's a relation declaration between two objs/classes.
-        relation = func[0]
-        subject, obj, val = func[1][1], func[1][0][0], func[1][0][1]
-        iobj = func[1][2] if len(func[1]) == 3 else None
-        if '$' in subject:
-            #It's a rel between an object and other obj/class.
-            if subject not in self.individuals:
-                ind = Individual(subject)
-                ind.add_rel(relation, subject, obj, val, iobj)
-                self.individuals[subject] = ind
-            else:
-                ind = self.individuals[subject]
-                ind.add_rel(relation, subject, obj, val, iobj)
-            if '$' in obj and obj not in self.individuals:
-                ind = Individual(obj)
-                ind.add_rel(relation, subject, obj, val, iobj)
-                self.individuals[obj] = ind
-            elif '$' in obj:
-                ind = self.individuals[obj]
-                ind.add_rel(relation, subject, obj, val, iobj)
-            if iobj is not None and '$' in iobj \
-            and iobj not in self.individuals:
-                ind = Individual(iobj)
-                ind.add_rel(relation, subject, obj, val, iobj)
-                self.individuals[iobj] = ind
-            elif iobj is not None and '$' in iobj:
-                ind = self.individuals[iobj]
-                ind.add_rel(relation, subject, obj, val, iobj)
-            if relation not in self.classes:
-                categ = Category(relation)
-                categ['type'] = 'relation'
-                self.classes[relation] = categ
-        else:
-            #It's a rel between a class and other class/obj.
-            if subject not in self.classes:
-                categ = Category(subject)
-                categ[relation] = [(obj, val, iobj)]
-                categ['type'] = 'class'
-                self.classes[subject] = categ
-            elif relation not in self.classes[subject]:
-                self.classes[subject][relation] = [(obj, val, iobj)]
-            else:
-                x  = self.classes[subject].iter_rel(relation)
-                if obj not in x:
-                    self.classes[subject][relation].append((obj, val, iobj))
+        relation = func.func
+        for subject in func.get_args():
+            if '$' in subject:
+                #It's a rel between an object and other obj/class.
+                if subject not in self.individuals:
+                    ind = Individual(subject)
+                    ind.add_rel(func)
+                    self.individuals[subject] = ind
                 else:
-                    idx = x.index(obj)
-                    self.classes[subject][relation][idx] = (obj, val, iobj)
+                    ind = self.individuals[subject]
+                    ind.add_rel(func)
+                if relation not in self.classes:
+                    categ = Category(relation)
+                    categ['type'] = 'relation'
+                    self.classes[relation] = categ
+            else:
+                # It's a rel between a class and other class/obj.
+                if subject not in self.classes:
+                    categ = Category(subject)
+                    categ[relation] = [func]
+                    categ['type'] = 'class'
+                    self.classes[subject] = categ
+                elif relation not in self.classes[subject]:
+                    self.classes[subject][relation] = [func]
+                else:
+                    # compare funcs and substitute
+                    pass
 
     def add_cog(self, sent):
         preds = []
@@ -263,7 +234,8 @@ class Representation(object):
             if p.cond == ':predicate:':
                 preds.append(p.pred)
         for pred in preds:
-            if len(pred) == 3:
+            pclass = pred.__class__.__bases__[0]
+            if pclass is Function:
                 if ',u' in pred[1][0]:
                     sbj, p = pred[1][0].split(',u')[0], pred[0]
                 else:
@@ -332,7 +304,6 @@ class Representation(object):
             cat_dic[ind.name] = t
         return cat_dic
 
-
 class Individual(object):
     """An individual is the unique member of it's own class.
     Represents an object which can pertain to multiple classes or sets.
@@ -390,33 +361,10 @@ class Individual(object):
         s = [c[0] for c in self.categ if c[0] in n]
         return s
     
-    def check_rel(self, rel, sbj, obj, iobj):
-        """Checks if a relation, with a specified subject, object and 
-        indirect object, exists; and returns the 'u' value if it does, 
-        else returns none.
+    def check_rel(self, func):
+        """Checks if a relation exists; and returns the 'u' value 
+        if it does, else returns none.
         """
-        if self.name == sbj:
-            rtype = 'sbj'
-        elif self.name == obj:
-            rtype = 'obj'
-        if rtype != 'iobj':        
-            try:
-                r = self.relations[rel][rtype][obj]
-            except KeyError:
-                return None
-            else:
-                p = [x for (x, _) in r]
-                if iobj in p:
-                    i = p.index(iobj)
-                    return r[i][1]
-        if self.name == iobj:
-            k = obj+'::'+sbj
-            try:
-                r = self.relations[rel][rtype][k]
-            except KeyError:
-                return None
-            else:
-                return r
         return None
     
     def get_cat(self):
@@ -447,72 +395,17 @@ class Individual(object):
             idx = ctg_rec.index(ctg)
             self.categ[idx] = (ctg, val)
             
-    def add_rel(self, rel, sbj, obj, val, iobj):
-
-        def mk_rel(args, k=None):
-            try:
-                if k is None:
-                    self.relations[args[0]]
-                else:
-                    k[args[0]]
-            except KeyError:                
-                if k is None:
-                    x = args.pop(0)
-                    self.relations[x] = dict()
-                    k = self.relations[x]
-                    mk_rel(args, k)
-                else:
-                    x = args.pop(0)
-                    k[x] = dict()
-                    k = k[x]
-                    if len(args) > 0:
-                        mk_rel(args, k)
-                    else:
-                        return
-            else:
-                if len(args) > 0:
-                    x = args.pop(0)
-                    k = k[x]
-                    mk_rel(args, k)
-                else:
-                    return
-
-        if self.name == sbj:
-            try:
-                ov = self.relations[rel]['sbj'][obj]
-            except KeyError:
-                mk_rel([rel, 'sbj', obj])
-                self.relations[rel]['sbj'][obj] = [(iobj, val)]
-            else:
-                p = [x for (x, _) in ov]
-                if iobj in p:
-                    ov[p.index(iobj)] = (iobj, val)
-                else:
-                    ov.append((iobj, val))
-        elif self.name == obj:
-            try:
-                ov = self.relations[rel]['obj'][sbj]
-            except KeyError:
-                mk_rel([rel, 'obj', sbj])
-                self.relations[rel]['obj'][sbj] = [(iobj, val)]
-            else:
-                p = [x for (x, _) in ov]
-                if iobj in p:
-                    ov[p.index(iobj)] = (iobj, val)
-                else:
-                    ov.append((iobj, val))
-        elif self.name == iobj:
-            k = obj+'::'+sbj
-            try:
-                self.relations[rel]['iobj'][k] = val
-            except KeyError:
-                mk_rel([rel, 'iobj', k])
-                self.relations[rel]['iobj'][k] = val
+    def add_rel(self, func):
+        try:
+            rel = self.relations[func.func]
+        except KeyError:
+            self.relations[func.func] = [func]
+        else:
+            rel.append(func)
 
     def __str__(self):
-        s = "\n<individual '" + self.name + "' w/ id: " + self.id + ">"
+        s = "<individual '" + self.name + "' w/ id: " + self.id + ">"
         return s
-
 
 class Category(dict):
     """A category is a set/class of entities that share some properties.    
@@ -533,62 +426,95 @@ class Category(dict):
     def add_cog(self, sent):
         self['cog'].append(sent)
     
-    def iter_rel(self, rel):
-        return [x for (x, _, _) in self[rel]]
-    
     def infer(self):
         """Infers attributes of the class from it's members."""
         pass
-
 
 class Group(Category):
     """A special instance of a category. It defines a 'group' of
     elements that pertain to a class.
     """
 
-
 class Part(Category):
     """A special instance of a category. It defines an element
     which is a part of an other object.
     """
 
-
 class Function(object):
-    types = ['relation']
     
-    def __init__(self, func, args):
-        self.arity = len(args)
-        self.args = args
-        self.func = func
+    def __init__(self, sent):        
+        self.args = self.mk_args(sent)
+        self.arity = len(self.args)
+    
+    def mk_args(self, sent):
+        func = rgx_ob.findall(sent)[0].split('[')
+        self.func, vrs = func[0], func[1]
+        args = vrs.split(';')
+        for x, arg in enumerate(args):
+            if ',u' in arg:
+                narg = arg.split(',u')
+                narg = narg[0], narg[1][0], float(narg[1][1:])
+                args[x] = narg
+        return args
     
     def __eq__(self, other):
         comparable = self.chk_args_eq(other)
-        if comparable is False:
-            raise NotComparableFunctions() 
+        if comparable is not True:
+            raise NotCompFuncError(comparable)
         for x, arg in enumerate(self.args):
             if isinstance(arg, tuple):
-                if arg[1] == '=' and other.args[x][1] != arg[1]:  
-                    return False                      
-                elif arg[1] == '>'and other.args[x][1] != arg[1]:  
-                    return False     
-                elif arg[1] == '<'and other.args[x][1] != arg[1]:  
+                if arg[1] == '=' and other.args[x][2] != arg[2]:  
+                    return False              
+                elif arg[1] == '>'and arg[2] < other.args[x][2]:  
+                    return False
+                elif arg[1] == '<'and arg[2] > other.args[x][2]:  
                     return False
         return True
     
     def __ne__(self, other):
-        pass
+        comparable = self.chk_args_eq(other)
+        if comparable is not True:
+            raise NotCompFuncError(comparable)
+        for x, arg in enumerate(self.args):
+            if isinstance(arg, tuple):
+                if arg[1] == '=' and other.args[x][2] != arg[2]:  
+                    return False                      
+                elif arg[1] == '>'and arg[2] > other.args[x][2]:  
+                    return False     
+                elif arg[1] == '<'and arg[2] < other.args[x][2]:  
+                    return False
+        return True
 
     def chk_args_eq(self, other):
         if other.arity != self.arity:
-            return False
-        if other.func != self.arity:
-            return False
+            return ('arity', other.arity, self.arity)
+        if other.func != self.func:
+            return ('function', other.func, self.func)
         for x, arg in enumerate(self.args):
             if isinstance(arg, tuple):
-                if other.args[x][0] != arg[0]: return False
+                if other.args[x][0] != arg[0]:
+                    return ('args', other.args[x][0], arg[0])
             else:
-                if other.args[x] != arg: return False
+                if other.args[x] != arg:
+                    return ('args', other.args[x], arg)
         return True
+        
+    def get_args(self):
+        ls = []
+        for arg in self.args:
+            if isinstance(arg, tuple):
+                ls.append(arg[0])
+            else:
+                ls.append(arg)
+        return ls
+
+class NotCompFuncError(Exception):
+    
+    def __init__(self, t, x, y):
+        self.t = t
+        self.x = x
+        self.y = y
+        
 
 def make_function(sent, f_type=None):
     """Parses and makes a function of n-arity.
@@ -605,21 +531,16 @@ def make_function(sent, f_type=None):
     data structure for the function, but are not meant to be instantiated
     directly.
     """
+    types = ['relation']
     class RelationFunc(Function):
-
-        def __init__(self):
-            pass
-    
-    assert (f_type in Function.types or f_type is None), \
+        pass
+      
+    assert (f_type in types or f_type is None), \
             'Function {0} does not exist.'.format(f_type)
     if f_type == 'relation':
-        return RelationFunc()
+        return RelationFunc(sent)
     else:
-        func = rgx_ob.findall(sent)[0].split('[')
-        func, vrs = func[0], func[1]
-        args = vrs.split(';')
-        print args
-
+        return Function(sent)
 
 def parse_sent(sent):
 
@@ -693,11 +614,9 @@ def parse_sent(sent):
     iter_childs()
     return ori, comp, hier
 
-
 # ===================================================================#
 #   LOGIC CLASSES AND SUBCLASSES
 # ===================================================================#
-
 
 class LogSentence(object):
     """Object to store a first-order logic complex sentence.
@@ -780,16 +699,7 @@ class LogSentence(object):
             if p.parent == -1:
                 self.start = p
 
-    def new_test(self, form, depth, parent, part_id, syb):
-
-        def break_pred(form):
-            p = rgx_ob.findall(form)[0].split('[')
-            if ';' in p[1]:
-                p[1] = tuple(p[1].split(';'))
-            if '<' in form:
-                p.append('map')
-            return p
-        
+    def new_test(self, form, depth, parent, part_id, syb):        
         form = form.replace(' ','').strip()
         cond = rgx_br.findall(form)
         if depth > self.depth:
@@ -810,7 +720,10 @@ class LogSentence(object):
                                                    parent, syb))
         elif '[' in form:
             cond = ':predicate:'
-            form = tuple(break_pred(form))
+            if '<' in form:
+                form = make_function(form, 'relation')
+            else:
+                form = tuple(rgx_ob.findall(form)[0].split('['))
             self.particles.append(Particle(cond, depth, part_id,
                                            parent, syb, form))
         else:
@@ -854,7 +767,6 @@ class LogSentence(object):
 
     def __iter__(self):
         return iter(self.particles)
-
 
 class Particle(object):
     """A particle in a logic sentence, that can be either:
@@ -1051,14 +963,16 @@ class Particle(object):
         
         if key[-1] == 101:
             if len(self.pred) == 3:
-                # Check funct between a set/entity and other set/entity.                
+                # Check funct between a set/entity and other set/entity.
                 check_func, sbj = self.pred[0], self.pred[1][1]
                 obj, u = self.pred[1][0].split(',u')
                 sbj, obj, uval = isvar(sbj), isvar(obj), float(u[1:])
+                
                 if len(self.pred[1]) == 3:
                     iobj = isvar(self.pred[1][2])
                 else: iobj = None
-                val = ag.individuals[sbj].check_rel(check_func, sbj, obj, iobj)
+                val = None
+                #val = ag.individuals[sbj].check_rel(check_func, sbj, obj, iobj)
                 result = None
                 if val is not None:
                     if u[0] == '=' and val == uval:
@@ -1138,14 +1052,11 @@ class Particle(object):
                     self.next[x] = part
                     self.next[x].parent = self
 
-
 # ===================================================================#
 #   LOGIC INFERENCE
 # ===================================================================#
 
-
 gr_conds = [':icond:', ':implies:', ':equiv:']
-
 
 class Inference(object):
     
@@ -1427,7 +1338,6 @@ class Inference(object):
                 terms[p[0]].append(tuple(p[1]))
         self.query, self.ctgs = terms, ctgs
 
-
 class SubstRepr(Representation):
     """During an inference the original KB is isolated and only
     the relevant classes and entities are copied into a temporal
@@ -1459,7 +1369,6 @@ class SubstRepr(Representation):
         self.classes = {}
         self.bmsWrapper = self.FakeBms()
 
-
 if __name__ == '__main__':
     import datetime
     import pprint
@@ -1481,4 +1390,3 @@ if __name__ == '__main__':
     print '\n---------- RESULTS ----------'
     d2 = datetime.datetime.now()
     print (d2-d1)
-
