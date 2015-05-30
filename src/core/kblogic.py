@@ -455,7 +455,12 @@ class Part(Category):
     which is a part of an other object.
     """
 
+# ===================================================================#
+#   LOGIC SENTENCE PARSER
+# ===================================================================#
+
 def parse_sent(sent):
+    """Parser for logic sentences."""
 
     def decomp_par(s, symb, f=0):
         initpar = []
@@ -528,6 +533,7 @@ def parse_sent(sent):
     return ori, comp, hier
 
 class LogFunction(object):
+    """Base class to represent a logic function."""
     
     def __init__(self, sent):        
         self.args = self.mk_args(sent)
@@ -556,18 +562,21 @@ class LogFunction(object):
             else:
                 ls.append(arg)
         return ls
-    
+	
     def substitute(self, args):
-        self.args_ID = hash(tuple(args))
-        for x, arg in enumerate(self.args):
+		subs = copy.deepcopy(self)
+        subs.args_ID = hash(tuple(args))
+        for x, arg in enumerate(subs.args):
             if isinstance(arg, tuple):
-                self.args[x] = list(arg)
-                self.args[x][0] = args[x]
-                self.args[x] = tuple(self.args[x])
+                subs.args[x] = list(arg)
+                subs.args[x][0] = args[x]
+                subs.args[x] = tuple(subs.args[x])
             else:
-                self.args[x] = args[x]
+                subs.args[x] = args[x]
+		return subs
 
 class NotCompFuncError(Exception):
+    """Logic functions are not comparable exception."""
     
     def __init__(self, args):
         self.err, self.arg1, self.arg2 = args   
@@ -635,19 +644,12 @@ def make_function(sent, f_type=None, *args):
                         return ('args', other.args[x], arg)
             return True
     
-    #############################################    
-    
     assert (f_type in types or f_type is None), \
             'Function {0} does not exist.'.format(f_type)
     if f_type == 'relation':
         return RelationFunc(sent)
     else:
         return LogFunction(sent)
-    
-def clone_and_sub(sent, args):
-    clone = copy.deepcopy(sent)
-    clone.substitute(args)
-    return clone
 
 # ===================================================================#
 #   LOGIC CLASSES AND SUBCLASSES
@@ -1005,7 +1007,7 @@ class Particle(object):
                 for x, arg in enumerate(args):
                     if arg in proof.assigned:
                         args[x] = proof.assigned[arg]
-                test = clone_and_sub(self.pred, args)
+                test = self.pred.subsitute(args)
                 if '$' in args[0][0]:
                     result = ag.individuals[args[0]].test_rel(test)
                 else:
@@ -1047,7 +1049,7 @@ class Particle(object):
                 for x, arg in enumerate(args):
                     if arg in proof.assigned:
                         args[x] = proof.assigned[arg]
-                pred = clone_and_sub(self.pred, args)
+                pred = self.pred.substitute(args)
                 #ag.bmsWrapper.check(pred)
                 ag.up_rel(pred)
             else:
