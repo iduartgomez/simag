@@ -22,16 +22,16 @@ Support classes and methods
 connectives), that form a well-formed logic formula. These are rulesets 
 for reasoning, cataloging objects into sets/classes, and the relationships 
 between these objects.
+
+@author: Ignacio Duart Gómez
 """
 
 # TO DO: Optimize chaining algorithm further: in functions it can check 
 # wether the argument position fits or not before trying to solve it.
 #
-# Aditionally, rewrite how functions are dealt with. Relations are a
-# particular case of a function, where the function is binary/ternary.
-# 
-# Logic proofs need more generalization, both for functions and
-# predicate atoms.
+# Add rules in form of log sent
+# Generalize predicates to objects (like functions)
+# Add 'belief maintenance system' functionality.
 
 # ===================================================================#
 #   Imports and constants
@@ -44,17 +44,7 @@ import copy
 
 import core.bms
 
-symbs = dict([
-             ('|>',':icond:'),
-             ('<=>',':equiv:'), 
-             (' =>',':implies:'),
-             ('||',':or:'),
-             ('&&',':and:')
-            ])
-
-symb_ord = ['|>', '<=>', ' =>', '||', '&&']
-
-#Regex
+# Regex
 rgx_par = re.compile(r'\{(.*?)\}')
 rgx_ob = re.compile(r'\b(.*?)\]')
 rgx_br = re.compile(r'\}(.*?)\{')
@@ -128,8 +118,6 @@ class Representation(object):
         that ask.
         """
         inf_proc = Inference(self, parse_sent(sent)[1])
-        print '\n', inf_proc.results
-        #print inf_proc.subkb.bmsWrapper.chgs_dict
 
     def declare(self, sent, save=False):
         """Declares an object as a member of a class or the relationship
@@ -336,7 +324,7 @@ class Individual(object):
         attr -> Implicit attributes of the object, unique to itself.
         cog (opt) -> These are the cognitions attributed to the object by 
         | the agent owning this representation.
-        relations (opt) -> Functions between two objects and/or classes.
+        relations (opt) -> Functions between objects and/or classes.
     """
     def __init__(self, name):
         self.id = str(uuid.uuid4())
@@ -369,7 +357,7 @@ class Individual(object):
     def test_rel(self, func):
         """Checks if a relation exists; and returns true if it's 
         equal to the comparison, false if it's not, and None if it
-        doesn't exist
+        doesn't exist.
         """
         try:
             funcs = self.relations[func.func]
@@ -381,12 +369,21 @@ class Individual(object):
                 else: return False
         return None
 
-    def get_cat(self):
+    def get_cat(self, ctg=None):
         """Returns a dictionary of the categories of the object and
         their 'u' values.
+        
+        If a single category is provided in the 'ctg' keyword argument,
+        then the value for that category is returned. If it doesn't
+        exist, None is returned.
         """
         cat = {k:v for k,v in self.categ}
-        return cat
+        if ctg is None:
+            return cat
+        else:
+            try: x = cat[ctg]
+            except KeyError: return None
+            else: return x
     
     def get_rel(self):
         """Returns a list of the relations the object is involved
@@ -459,6 +456,16 @@ class Part(Category):
 #   LOGIC SENTENCE PARSER
 # ===================================================================#
 
+symbs = dict([
+             ('|>',':icond:'),
+             ('<=>',':equiv:'), 
+             (' =>',':implies:'),
+             ('||',':or:'),
+             ('&&',':and:')
+            ])
+
+symb_ord = ['|>', '<=>', ' =>', '||', '&&']
+
 def parse_sent(sent):
     """Parser for logic sentences."""
 
@@ -485,7 +492,7 @@ def parse_sent(sent):
             return
         elif (len(initpar) == 0 and len(endpar) != 0) or \
              (len(initpar) != 0 and len(endpar) == 0):
-            raise AssertionError('Incorrect use of parentheses.')
+            raise AssertionError('Odd number of parentheses.')
         else:
             elem = s[par[0]+1:par[1]]
             comp.append(elem)
@@ -562,9 +569,9 @@ class LogFunction(object):
             else:
                 ls.append(arg)
         return ls
-	
+    
     def substitute(self, args):
-		subs = copy.deepcopy(self)
+        subs = copy.deepcopy(self)
         subs.args_ID = hash(tuple(args))
         for x, arg in enumerate(subs.args):
             if isinstance(arg, tuple):
@@ -573,13 +580,7 @@ class LogFunction(object):
                 subs.args[x] = tuple(subs.args[x])
             else:
                 subs.args[x] = args[x]
-		return subs
-
-class NotCompFuncError(Exception):
-    """Logic functions are not comparable exception."""
-    
-    def __init__(self, args):
-        self.err, self.arg1, self.arg2 = args   
+        return subs
 
 def make_function(sent, f_type=None, *args):
     """Parses and makes a function of n-arity.
@@ -598,7 +599,13 @@ def make_function(sent, f_type=None, *args):
     """
     types = ['relation']
     
-    class RelationFunc(LogFunction):        
+    class NotCompFuncError(Exception):
+        """Logic functions are not comparable exception."""
+    
+        def __init__(self, args):
+            self.err, self.arg1, self.arg2 = args  
+    
+    class RelationFunc(LogFunction):
     
         def __eq__(self, other):
             comparable = self.chk_args_eq(other)
@@ -786,7 +793,7 @@ class LogSentence(object):
                     x = x.parent
             return True
 
-    def get_pred(self, branch='left', conds=[None]):
+    def get_pred(self, branch='left', conds=[':icond:']):
         preds = []
         for p in self:
             if p.cond == ':predicate:':
@@ -1007,7 +1014,7 @@ class Particle(object):
                 for x, arg in enumerate(args):
                     if arg in proof.assigned:
                         args[x] = proof.assigned[arg]
-                test = self.pred.subsitute(args)
+                test = self.pred.substitute(args)
                 if '$' in args[0][0]:
                     result = ag.individuals[args[0]].test_rel(test)
                 else:
@@ -1142,7 +1149,7 @@ class Inference(object):
                 # It's a class
                 #
                 #
-                print "It's a class"
+                print("It's a class")
         
         self.get_query(comp)
         self.rules = set()
@@ -1155,7 +1162,7 @@ class Inference(object):
                 # It's a variable, find every object that fits the criteria
                 # 
                 #
-                print 'It\'s a variable'
+                print('It\'s a variable')
             else:
                 self.results[var] = []
                 for pred in preds:
@@ -1170,9 +1177,10 @@ class Inference(object):
 
         r = self.subkb
         for ind in r.individuals.values():
-            print ind
+            print(ind)
             #print 'Relations:', ind.relations
-            print 'Categories:', ind.categ
+            print('Categories:', ind.categ)
+        print('\n', self.results)
     
     def chain(self, p, chk, done):
         if p in self.nodes:
@@ -1299,7 +1307,7 @@ class Inference(object):
                 chk_rules = set(self.kb.classes[c]['cog'])
                 chk_rules = chk_rules.difference(self.rules)
             except:
-                print 'SOLUTION CANNOT BE FOUND'
+                print('SOLUTION CANNOT BE FOUND')
                 return
             for sent in chk_rules:
                 preds = sent.get_pred(conds=gr_conds)
@@ -1377,13 +1385,11 @@ class Inference(object):
             pclass = p.__class__.__bases__[0]
             if pclass is LogFunction:
                 ctgs.append(p.func)
-                print p
             elif p[0] not in terms.keys():
                 terms[p[0]] = [p[1]]
                 ctgs.append(p[1][0])
             else:
                 terms[p[0]].append(tuple(p[1]))
-        print terms, ctgs
         self.query, self.ctgs = terms, ctgs
 
 class SubstRepr(Representation):
@@ -1419,7 +1425,6 @@ class SubstRepr(Representation):
 
 if __name__ == '__main__':
     import datetime
-    import pprint
 
     path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     logic_test = os.path.join(path, 'tests', 'logic_test_01.txt')
@@ -1435,13 +1440,6 @@ if __name__ == '__main__':
     for form in ls:
         r.tell(form)
     r.ask('criminal[$West,u=1] && <sells[$M1,u=1;$West;$Nono]>')
-    print '\n---------- RESULTS ----------'
+    print('\n---------- RESULTS ----------')
     d2 = datetime.datetime.now()
     print (d2-d1)
-    """
-    print
-    pprint.pprint( r.classes )
-    for n in r.individuals.values():
-        print
-        pprint.pprint( n.__dict__ )
-    """

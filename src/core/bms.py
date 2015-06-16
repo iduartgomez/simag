@@ -79,7 +79,7 @@ class BmsWrapper(object):
                 elif op is '<' and categs[cat] < val:
                     pass
                 else:
-                    print 'INCONSISTENCY', pred, categs           
+                    print('INCONSISTENCY', pred, categs)    
                     # Inconsitency found between values.
             self.wrk_bel.remake(pred)
         elif len(pred) == 3:
@@ -98,8 +98,8 @@ class BmsWrapper(object):
                     elif op is '<' and rel[obj] < val:
                         pass
                     else:
-                        print 'INCONSISTENCY', rel0 + ': {\''+obj+'\': ' \
-                        + str(val) + '}', rel
+                        print('INCONSISTENCY', rel0 + ': {\''+obj+'\': ' \
+                        + str(val) + '}', rel)
                         # Inconsitency found between values.
                         chk_const(self, pred, rel[obj])
             if not '$' in sbj:
@@ -162,7 +162,7 @@ def chk_const(bms, pred, pval):
         """Reconstructs a logic sequence which represent the beliefs that
         produced an input belief.
         """
-        print bms.container[chk_pred]['form']
+        print(bms.container[chk_pred]['form'])
 
     rel, sbj, obj = pred[0], pred[1][0], pred[1][1][0]
     opred = '<'+rel+'['+sbj+';'+obj+',u='+str(pval)+']>'
