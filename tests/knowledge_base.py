@@ -42,6 +42,23 @@ class AskReprGetAnswer(unittest.TestCase):
                   {'$Lucy': {'person': True}}],
                  {'$West': {'criminal': True}}
                ]
+        self.iter_test(sents, ask, eval)
+               
+    def test_ask_func(self):
+        sents = load_sentences('ask_func.txt')
+        ask = [
+               ['<friend[$Lucy,u=0;$John]>'],
+               ['<friend[$Lucy,u=0;$John]>'],
+               ['<sells[$M1,u=1;$West;$Nono]>']
+              ]
+        eval = [
+                {'$John': {'friend': ('$Lucy', None)}},
+                {'$John': {'friend': ('$Lucy', True)}},
+                {'$West': {'sells': ('$M1', True, '$Nono')}}
+               ]
+        self.iter_test(sents, ask, eval)
+        
+    def iter_test(self, sents, ask, eval):
         for i, test in enumerate(sents):
             with self.subTest(test=i):
                 if isinstance(test, list):
@@ -62,20 +79,7 @@ class AskReprGetAnswer(unittest.TestCase):
                         answ = self.rep.ask(q)
                         for k in eval[i].keys():
                             self.assertEqual(eval[i][k], answ[k])
-    
-    @unittest.skip('')                  
-    def test_ask_func(self):
-        sents = load_sentences('ask_func.txt')
-        ask = [
-               ['<friend[$Lucy,u=0;$John>'],
-               ['<friend[$Lucy,u=0;$John>'],
-               ['<sells[$M1,u=1;$West;$Nono]>']
-              ]
-        eval = [
-                {'$John': {'friend': None}},
-                {'$John': {'friend': True}},
-                {'$West': {'sells': True}}
-               ]
+
 
 @unittest.skip("Test not writte.")
 class EvaluationOfFOLSentences(unittest.TestCase):

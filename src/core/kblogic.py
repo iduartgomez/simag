@@ -1112,7 +1112,7 @@ class Inference(object):
                     v = ant[1].split(',u')
                     if v[0] in self.subs:
                         self.subs[v[0]].add(ant[0])
-
+    
     def __init__(self, kb, *args):
         self.kb = kb
         self.vrs = {}
@@ -1132,8 +1132,7 @@ class Inference(object):
         
         def chk_result():
             if var[0] == '$':
-                try: ctgs = self.subkb.individuals[var].get_cat()
-                except: return None
+                ctgs = self.subkb.individuals[var].get_cat()
                 if pred[0] in ctgs:
                     val = ctgs[pred[0]]
                     qval = float(pred[1][2:])
@@ -1302,8 +1301,7 @@ class Inference(object):
                 chk_rules = set(self.kb.classes[c]['cog'])
                 chk_rules = chk_rules.difference(self.rules)
             except:
-                print('SOLUTION CANNOT BE FOUND')
-                return
+                raise CannotInferSolution(self.query) 
             for sent in chk_rules:
                 preds = sent.get_pred(conds=gr_conds)
                 nc = []
@@ -1387,6 +1385,10 @@ class Inference(object):
                 terms[p[0]].append(tuple(p[1]))
         self.query, self.ctgs = terms, ctgs
 
+class CannotInferSolution(Exception):
+    """Cannot infer a solution exception."""
+    pass
+
 class SubstRepr(Representation):
     """During an inference the original KB is isolated and only
     the relevant classes and entities are copied into a temporal
@@ -1417,4 +1419,29 @@ class SubstRepr(Representation):
         self.individuals = {}
         self.classes = {}
         self.bmsWrapper = self.FakeBms()
+
+if __name__ == '__main__':
+        
+    def load_sentences(test, path):
+        logic_test = os.path.join(path, 'knowledge_base', test)
+        ls, sup_ls = [], []
+        with open(logic_test, 'r') as f:
+            for line in f:
+                if line[0] == '#': pass
+                elif line.strip() == '{':
+                    sup_ls, ls = ls, list()
+                elif line.strip() == '}':
+                    sup_ls.append(ls)
+                    ls = sup_ls
+                else: ls.append(line.strip())
+        return ls
+    
+    path = '/home/nacho/dev/workspace/simag/tests'
+    test = 'ask_func.txt'
+    sents = load_sentences(test, path)
+    r = Representation()
+    for s in sents[2]:
+        r.tell(s)
+    result = r.ask('criminal[$West,u=1] && <sells[$M1,u=1;$West;$Nono]>')
+    print(result)
 

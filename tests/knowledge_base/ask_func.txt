@@ -11,7 +11,6 @@
 	dean[$John,u=1]
 	<criticize[$John,u=1;$Lucy]>
 }
-#
 # Test 2/02
 {
 	<owns[$M1,u=1;$Nono]>
