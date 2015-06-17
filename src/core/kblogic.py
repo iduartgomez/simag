@@ -30,8 +30,10 @@ between these objects.
 # wether the argument position fits or not before trying to solve it.
 #
 # Add rules in form of log sent
+# Add 'equiv' operator parsing and eval
+# Add 
 # Generalize predicates to objects (like functions)
-# Add 'belief maintenance system' functionality.
+# Add 'belief maintenance system' functionality
 
 # ===================================================================#
 #   Imports and constants
@@ -118,6 +120,7 @@ class Representation(object):
         that ask.
         """
         inf_proc = Inference(self, parse_sent(sent)[1])
+        return inf_proc.results
 
     def declare(self, sent, save=False):
         """Declares an object as a member of a class or the relationship
@@ -463,8 +466,8 @@ symbs = dict([
              ('||',':or:'),
              ('&&',':and:')
             ])
-
 symb_ord = ['|>', '<=>', ' =>', '||', '&&']
+gr_conds = [':icond:', ':implies:', ':equiv:']
 
 def parse_sent(sent):
     """Parser for logic sentences."""
@@ -793,7 +796,7 @@ class LogSentence(object):
                     x = x.parent
             return True
 
-    def get_pred(self, branch='left', conds=[':icond:']):
+    def get_pred(self, branch='left', conds=gr_conds):
         preds = []
         for p in self:
             if p.cond == ':predicate:':
@@ -815,7 +818,7 @@ class LogSentence(object):
 class Particle(object):
     """A particle in a logic sentence, that can be either:
     * An operator of the following types: 
-    indicative conditional, implies, equals, and, or.
+    indicative conditional, implies, equiv, and, or.
     * A predicate, declaring a variable/constant as a member of a set, 
     or a function between two variables.
     * A quantifier for a variable: universal or existential.
@@ -1092,8 +1095,6 @@ class Particle(object):
 #   LOGIC INFERENCE
 # ===================================================================#
 
-gr_conds = [':icond:', ':implies:', ':equiv:']
-
 class Inference(object):
     
     class InferNode(object):
@@ -1131,7 +1132,8 @@ class Inference(object):
         
         def chk_result():
             if var[0] == '$':
-                ctgs = self.subkb.individuals[var].get_cat()
+                try: ctgs = self.subkb.individuals[var].get_cat()
+                except: return None
                 if pred[0] in ctgs:
                     val = ctgs[pred[0]]
                     qval = float(pred[1][2:])
@@ -1164,7 +1166,7 @@ class Inference(object):
                 #
                 print('It\'s a variable')
             else:
-                self.results[var] = []
+                self.results[var] = {}
                 for pred in preds:
                     self.actv_q, result = (var, pred[0]), None
                     k, self.updated = True, list()
@@ -1173,14 +1175,7 @@ class Inference(object):
                         result = self.chain(pred[0], chk, done)
                         k = True if True in self.updated else False
                         self.updated = list()
-                    self.results[var].append(chk_result())
-
-        r = self.subkb
-        for ind in r.individuals.values():
-            print(ind)
-            #print 'Relations:', ind.relations
-            print('Categories:', ind.categ)
-        print('\n', self.results)
+                    self.results[var][pred[0]] = chk_result()
     
     def chain(self, p, chk, done):
         if p in self.nodes:
@@ -1423,23 +1418,3 @@ class SubstRepr(Representation):
         self.classes = {}
         self.bmsWrapper = self.FakeBms()
 
-if __name__ == '__main__':
-    import datetime
-
-    path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    logic_test = os.path.join(path, 'tests', 'logic_test_01.txt')
-    ls = []
-    with open(logic_test, 'r') as f:
-        for line in f:
-            if line[0] == '#':
-                pass
-            else:
-                ls.append(line)
-    r = Representation()
-    d1 = datetime.datetime.now()
-    for form in ls:
-        r.tell(form)
-    r.ask('criminal[$West,u=1] && <sells[$M1,u=1;$West;$Nono]>')
-    print('\n---------- RESULTS ----------')
-    d2 = datetime.datetime.now()
-    print (d2-d1)

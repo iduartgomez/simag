@@ -4,16 +4,100 @@
 import unittest
 from core.kblogic import *
 
+#====================#
+#    UNIT TESTING    #
+#====================#
+
 def load_sentences(test):
     path = os.path.dirname(__file__)
     logic_test = os.path.join(path, 'knowledge_base', test)
-    ls = []
+    ls, sup_ls = [], []
     with open(logic_test, 'r') as f:
         for line in f:
             if line[0] == '#': pass
-            elif line.strip() == '/*': pass
+            elif line.strip() == '{':
+                sup_ls, ls = ls, list()
+            elif line.strip() == '}':
+                sup_ls.append(ls)
+                ls = sup_ls
             else: ls.append(line.strip())
     return ls
+
+
+class AskReprGetAnswer(unittest.TestCase):
+    
+    def setUp(self):
+        self.rep = Representation()
+    
+    def test_ask_pred(self):
+        sents = load_sentences('ask_pred.txt')
+        ask = [
+                ['professor[$Lucy,u=1] && person[$Lucy,u=0]'],
+                ['professor[$Lucy,u=1]', 'person[$Lucy,u=1]'],
+                ['criminal[$West,u=1]']
+              ]
+        eval = [
+                 {'$Lucy': {'professor': None, 'person': None}},
+                 [{'$Lucy': {'professor': True}},
+                  {'$Lucy': {'person': True}}],
+                 {'$West': {'criminal': True}}
+               ]
+        for i, test in enumerate(sents):
+            with self.subTest(test=i):
+                if isinstance(test, list):
+                    for s in test:
+                        self.rep.tell(s)
+                    for j, q in enumerate(ask[i]):
+                        if isinstance(eval[i], list):
+                            answ = self.rep.ask(q)
+                            for k in eval[i][j].keys():
+                                self.assertEqual(eval[i][j][k], answ[k])
+                        else:
+                            answ = self.rep.ask(q)
+                            for k in eval[i].keys():
+                                self.assertEqual(eval[i][k], answ[k])
+                else:
+                    self.rep.tell(s)
+                    for q in ask[i]:
+                        answ = self.rep.ask(q)
+                        for k in eval[i].keys():
+                            self.assertEqual(eval[i][k], answ[k])
+    
+    @unittest.skip('')                  
+    def test_ask_func(self):
+        sents = load_sentences('ask_func.txt')
+        ask = [
+               ['<friend[$Lucy,u=0;$John>'],
+               ['<friend[$Lucy,u=0;$John>'],
+               ['<sells[$M1,u=1;$West;$Nono]>']
+              ]
+        eval = [
+                {'$John': {'friend': None}},
+                {'$John': {'friend': True}},
+                {'$West': {'sells': True}}
+               ]
+
+@unittest.skip("Test not writte.")
+class EvaluationOfFOLSentences(unittest.TestCase):
+    
+    def setUp(self):
+        self.rep = Representation()
+    
+    def test_eval_icond(self):
+        pass
+    
+    def test_eval_impl(self):
+        pass
+    
+    def test_eval_equiv(self):
+        pass
+    
+    def test_eval_or(self):
+        pass
+    
+    def test_eval_and(self):
+        pass
+
 
 class LogicSentenceParsing(unittest.TestCase):
     
@@ -30,7 +114,7 @@ class LogicSentenceParsing(unittest.TestCase):
                 ('$M1', 'missile', 1),
                 ('$West', 'american', 1)]
         for x, sent in enumerate(sents):
-            with self.subTest(sent=sent):
+            with self.subTest(sent=x):
                 self.rep.tell(sent)
                 name, ctg, val = objs[x][0], objs[x][1], objs[x][2]
                 obj = self.rep.individuals[name]
@@ -48,7 +132,7 @@ class LogicSentenceParsing(unittest.TestCase):
                 ('$Nono', 'owns', ('$M1', 1, '=')),
                 ('$America', 'enemy', ('$Nono', 1, '='))]
         for x, sent in enumerate(sents):
-            with self.subTest(sent=sent):
+            with self.subTest(sent=x):
                 self.rep.tell(sent)
                 name, rel, val = objs[x][0], objs[x][1], objs[x][2]
                 obj = self.rep.individuals[name]
@@ -56,21 +140,20 @@ class LogicSentenceParsing(unittest.TestCase):
                 self.assertIsInstance(func, LogFunction)
                 self.assertTupleEqual(func.args[0], val)
     
-    def test_tell_sentence_with_vars(self):
+    def test_parse_sentence_with_vars(self):
         """Test parsing logic sentences with variables.
         """
-        sents = load_sentences('tell_sentence_with_vars.txt')
+        sents = load_sentences('parse_sentence_with_vars.txt')
         objs = [('dean','professor'),
                 ('professor','person'),
                 ('professor','dean','friend','knows'),
                 ('person','criticize','friend'),
-                ('student','smart'),
                 ('american','weapon','sells','hostile','criminal'),
                 ('owns','missile','sells'),
                 ('missile','weapon',),
                 ('enemy','hostile')]
         for x, sent in enumerate(sents):
-            with self.subTest(sent=sent):
+            with self.subTest(sent=x):
                 ori, comp, hier = parse_sent(sent)
                 lg_sent = LogSentence(ori, comp, hier)
                 preds = lg_sent.get_pred(conds=gr_conds)
@@ -83,10 +166,10 @@ class LogicSentenceParsing(unittest.TestCase):
                     self.assertIn(obj, chk)
 
     @unittest.skip("Method not implemented.")
-    def test_tell_complx_sent(self):
-        sents = load_sentences('tell_complx_sent.txt')
-        for x, sent in enumerate(sents):
-            with self.subTest(sent=sent):
+    def test_parse_complx_sent(self):
+        sents = load_sentences('parse_complx_sent.txt')
+        for i, sent in enumerate(sents):
+            with self.subTest(sent=i):
                 self.rep.tell(sent)
 
 if __name__ == "__main__":

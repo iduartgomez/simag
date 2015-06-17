@@ -1,7 +1,8 @@
-<owns[$M1,u=1;$Nono]>
-missile[$M1,u=1]
-american[$West,u=1]
-<enemy[$Nono,u=1;$America]>
+:vars:x: (dean[x,u=1] |> professor[x,u=1])
+:vars:x: (professor[x,u=1] |> person[x,u=1])
+:vars:x,y: (professor[x,u=1] && dean[y,u=1] => <friend[y,u=1;x]> || <knows[y,u=0;x]>)
+:vars:x,y: (person[x,u=1] && person[y,u=1] && <criticize[y,u=1;x]> |> <friend[x,u=0;y]>)
+#
 :vars:x,y,z: (american[x,u=1] && weapon[y,u=1] && <sells[y,u>0.5;x;z]> && hostile[z,u=1] => criminal[x,u=1])
 :vars:x: (<owns[x,u=1;$Nono]> && missile[x,u=1] => <sells[x,u=1;$West;$Nono]>)
 :vars:x: (missile[x,u=1] => weapon[x,u=1])
