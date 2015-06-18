@@ -31,8 +31,6 @@ between these objects.
 #
 # Add rules in form of log sent
 # Add 'equiv' operator parsing and eval
-# Add 
-# Generalize predicates to objects (like functions)
 # Add 'belief maintenance system' functionality
 
 # ===================================================================#
@@ -45,6 +43,7 @@ import uuid
 import copy
 
 import core.bms
+from builtins import ValueError
 
 # Regex
 rgx_par = re.compile(r'\{(.*?)\}')
@@ -142,31 +141,42 @@ class Representation(object):
         Declarations of mapping can happen between entities, classes, 
         or between an entity and a class (ie. <loves[$Lucy, cats]>).
         """
+        
+        def declare():
+            assert ('=' in e), "It's a predicate, must assign truth value."
+            assert ('$' in e), 'The object is not an unique entity.'
+            u = e.split(',u=')
+            u[1] = float(u[1])
+            pred = sets[0], (u[0], u[1])
+            if (u[1] > 1 or u[1] < 0): 
+                m = "Illegal value: {0}, must be > 0, or < 1.".format(u[1])
+                raise AssertionError(m)
+            self.bmsWrapper.add(pred, True)
+            check = self.bmsWrapper.add(pred, True)
+            self.up_memb(pred)
+            if check is False:
+                self.bmsWrapper.add(pred, True)
+        
         sent = sent.replace(' ','')
         sets = rgx_ob.findall(sent)
         sets = sets[0].split('[')
         if ';' in sets[1]:
             sets[1] = sets[1].split(';')
-        if '<' in sent:
+        if '<' in sent[0]:
             # Is a function declaration > implies a relation
             # between different objects or classes.              
             func = make_function(sent, 'relation')
             #self.bmsWrapper.add(func, True)
             self.up_rel(func)
         else:
-            # Is a membership declaration -> the object belongs 
+            # Is a membership declaration -> the object(s) belong(s) 
             # to a set of objects.
-            assert (type(sets[1]) != tuple), \
-                    'Only one object can be declared as member of a set at once.'
-            assert ('$' in sets[1]), 'The object is not an unique entity.'
-            u = sets[1].split(',u=')
-            u[1] = float(u[1])
-            pred = sets[0], (u[0], u[1])
-            self.bmsWrapper.add(pred, True)
-            check = self.bmsWrapper.add(pred, True)
-            self.up_memb(pred)
-            if check is False:
-                self.bmsWrapper.add(pred, True)
+            if isinstance(sets[1], list):
+                for e in sets[1]:
+                    declare()
+            else:
+                e = sets[1]
+                declare()            
 
     def up_memb(self, pred):
         # It's a membership declaration.
@@ -545,7 +555,7 @@ def parse_sent(sent):
 class LogFunction(object):
     """Base class to represent a logic function."""
     
-    def __init__(self, sent):        
+    def __init__(self, sent):
         self.args = self.mk_args(sent)
         self.arity = len(self.args)
     
@@ -557,6 +567,8 @@ class LogFunction(object):
             if ',u' in arg:
                 narg = arg.split(',u')
                 narg = narg[0], float(narg[1][1:]), narg[1][0]
+                if narg[1] > 1 or narg[1] < 0:
+                    raise ValueError(narg[1])
                 hls.append(narg[0])
                 args[x] = narg
             else:
@@ -855,6 +867,8 @@ class Particle(object):
             self.icond(proof, ag, key, *args)
         elif self.cond == ':implies:':
             self.impl(proof, ag, key, *args)
+        elif self.cond == ':equiv:':
+            self.equiv(proof, ag, key, *args)
         elif self.cond == ':or:' or self.cond == ':and:':
             current = len(self.results)
             if key[-1] == 103 and len(self.next) >= 2:
@@ -889,7 +903,65 @@ class Particle(object):
             if x != 100:
                 key.append(102)
                 self.parent.solve(proof, ag, key, result)
-
+    
+    def icond(self, proof, ag, key, *args):
+        """Procedure for parsign indicative conditional assertions."""
+        current = len(self.results)
+        if key[-1] == 103:
+            # Completed
+            self.parent.solve(proof, ag, key)        
+        elif current == 0:
+            key.append(101)
+            self.next[current].solve(proof, ag, key)
+        elif current == 1 and self.results[0] is True:
+            key.append(100)
+            self.next[current].solve(proof, ag, key)
+        elif current == 1 and self.results[0] is False:
+            # The left branch was false, so do not continue.
+            proof.result = False
+            key.append(103)
+            self.parent.solve(proof, ag, key, False)
+        else:
+            # Substitution failed.
+            key.append(103)
+            self.parent.solve(proof, ag, key, None)
+    
+    def equiv(self, proof, ag, key, *args):
+        """Procedure for solving equivalences."""
+        current = len(self.results)
+        if key[-1] == 103:
+            # Completed
+            self.parent.solve(proof, ag, key)
+        elif current == 0:
+            key.append(101)
+            self.next[current].solve(proof, ag, key)
+        elif current == 1 and self.results[0] is True:
+            # If it's not a predicate, follow standard FOL
+            # rules for equiv
+            if self.next[1].cond != ':predicate:':
+                key.append(101)
+                self.next[1].solve(proof, ag, key)
+            else:
+                key.append(103)
+                self.next[1].solve(proof, ag, key)
+        elif current > 1:
+            # The second term of the implication was complex
+            # check the result of it's substitution
+            if (self.results[0] and self.results[1]) is None:
+                result = None, None
+            elif self.results[0] == self.results[1]:
+                proof.result, result = True, True
+            else:
+                if hasattr(proof, 'result') is False:
+                    proof.result = True
+                result = True
+            key.append(103)
+            self.parent.solve(proof, ag, key, result)
+        else:
+            # Not known solution.
+            key.append(103)
+            self.parent.solve(proof, ag, key, None)
+    
     def impl(self, proof, ag, key, *args):
         """Procedure for solving implications."""
         current = len(self.results)
@@ -930,29 +1002,7 @@ class Particle(object):
             # Not known solution.
             key.append(103)
             self.parent.solve(proof, ag, key, None)
-
-    def icond(self, proof, ag, key, *args):
-        """Procedure for parsign indicative conditional assertions."""
-        current = len(self.results)
-        if key[-1] == 103:
-            # Completed
-            self.parent.solve(proof, ag, key)        
-        elif current == 0:
-            key.append(101)
-            self.next[current].solve(proof, ag, key)
-        elif current == 1 and self.results[0] is True:
-            key.append(100)
-            self.next[current].solve(proof, ag, key)
-        elif current == 1 and self.results[0] is False:
-            # The left branch was false, so do not continue.
-            proof.result = False
-            key.append(103)
-            self.parent.solve(proof, ag, key, False)
-        else:
-            # Substitution failed.
-            key.append(103)
-            self.parent.solve(proof, ag, key, None)
-
+    
     def conjunction(self, proof, ag, key):
         left_branch, right_branch = self.results[0], self.results[1]
         if key[-1] == 101:
@@ -1053,7 +1103,6 @@ class Particle(object):
             # marked for declaration
             # subtitute var(s) for constants
             # and pass to agent for updating
-            #pred = list(self.pred)
             if pclass is LogFunction:                
                 args = self.pred.get_args()
                 for x, arg in enumerate(args):
@@ -1070,7 +1119,7 @@ class Particle(object):
                 ag.bmsWrapper.check(pred)
                 pred[1][1] = float(u[1:])
                 ag.up_memb(pred)
-            if key[-1] == 103 and hasattr(proof, 'result'):
+            if key[-1] == 103 and hasattr(proof, 'result'):                
                 proof.result.append(pred)
             elif key[-1] == 103:
                 proof.result = [pred]
@@ -1132,20 +1181,22 @@ class Inference(object):
         
         def chk_result():
             if var[0] == '$':
-                ctgs = self.subkb.individuals[var].get_cat()
-                if pred[0] in ctgs:
-                    val = ctgs[pred[0]]
-                    qval = float(pred[1][2:])
-                    if pred[1][1] == '=' and val == qval:
-                        return True 
-                    elif pred[1][1] == '<' and val < qval:
-                        return True
-                    elif pred[1][1] == '>' and val > qval:
-                        return True
-                    else:
-                        return False
+                try: ctgs = self.subkb.individuals[var].get_cat()
+                except KeyError: return None
                 else:
-                    return None
+                    if pred[0] in ctgs:
+                        val = ctgs[pred[0]]
+                        qval = float(pred[1][2:])
+                        if pred[1][1] == '=' and val == qval:
+                            return True 
+                        elif pred[1][1] == '<' and val < qval:
+                            return True
+                        elif pred[1][1] == '>' and val > qval:
+                            return True
+                        else:
+                            return False
+                    else:
+                        return None
             else:
                 # It's a class
                 #
@@ -1421,7 +1472,7 @@ class SubstRepr(Representation):
         self.bmsWrapper = self.FakeBms()
 
 if __name__ == '__main__':
-        
+    
     def load_sentences(test, path):
         logic_test = os.path.join(path, 'knowledge_base', test)
         ls, sup_ls = [], []

@@ -1,4 +1,0 @@
-<takes[$analysis,u=1;$Bill]> <=> <takes[$geometry,u=1;$Bill]>
-<takes[$analysis,u=1;$Bill]> || <takes[$geometry,u=1;$Bill]>
-<takes[$geometry,u=1;$Bill]>
-<takes[$analysis,u=1;$Bill]> && <takes[$geometry,u=1;$Bill]> |> silly[$Bill,u=1]

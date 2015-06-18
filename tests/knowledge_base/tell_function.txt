@@ -1,5 +1,0 @@
-<criticize[$John,u=1;$Lucy]>
-<takes[$analysis,u=1;$Bill]>
-<sister[$Bill,u=1;$Lucy]>
-<owns[$M1,u=1;$Nono]>
-<enemy[$Nono,u=1;$America]>

@@ -23,6 +23,28 @@ def load_sentences(test):
             else: ls.append(line.strip())
     return ls
 
+def iter_test(self, sents, ask, eval):
+    for i, test in enumerate(sents):
+        with self.subTest(test='subtest {0}: {1}'.format(i,test)):
+            if isinstance(test, list):
+                for s in test:
+                    self.rep.tell(s)
+                for j, q in enumerate(ask[i]):
+                    if isinstance(eval[i], list):
+                        answ = self.rep.ask(q)
+                        for k in eval[i][j].keys():
+                            self.assertEqual(eval[i][j][k], answ[k])
+                    else:
+                        answ = self.rep.ask(q)
+                        for k in eval[i].keys():
+                            self.assertEqual(eval[i][k], answ[k])
+            else:
+                self.rep.tell(s)
+                for q in ask[i]:
+                    answ = self.rep.ask(q)
+                    for k in eval[i].keys():
+                        self.assertEqual(eval[i][k], answ[k])
+
 
 class AskReprGetAnswer(unittest.TestCase):
     
@@ -42,8 +64,9 @@ class AskReprGetAnswer(unittest.TestCase):
                   {'$Lucy': {'person': True}}],
                  {'$West': {'criminal': True}}
                ]
-        self.iter_test(sents, ask, eval)
-               
+        iter_test(self, sents, ask, eval)
+    
+    @unittest.skip('')
     def test_ask_func(self):
         sents = load_sentences('ask_func.txt')
         ask = [
@@ -56,29 +79,7 @@ class AskReprGetAnswer(unittest.TestCase):
                 {'$John': {'friend': ('$Lucy', True)}},
                 {'$West': {'sells': ('$M1', True, '$Nono')}}
                ]
-        self.iter_test(sents, ask, eval)
-        
-    def iter_test(self, sents, ask, eval):
-        for i, test in enumerate(sents):
-            with self.subTest(test=i):
-                if isinstance(test, list):
-                    for s in test:
-                        self.rep.tell(s)
-                    for j, q in enumerate(ask[i]):
-                        if isinstance(eval[i], list):
-                            answ = self.rep.ask(q)
-                            for k in eval[i][j].keys():
-                                self.assertEqual(eval[i][j][k], answ[k])
-                        else:
-                            answ = self.rep.ask(q)
-                            for k in eval[i].keys():
-                                self.assertEqual(eval[i][k], answ[k])
-                else:
-                    self.rep.tell(s)
-                    for q in ask[i]:
-                        answ = self.rep.ask(q)
-                        for k in eval[i].keys():
-                            self.assertEqual(eval[i][k], answ[k])
+        iter_test(self, sents, ask, eval)
 
 
 @unittest.skip("Test not writte.")
@@ -86,10 +87,11 @@ class EvaluationOfFOLSentences(unittest.TestCase):
     
     def setUp(self):
         self.rep = Representation()
-    
+        self.sents = load_sentences('eval_fol.txt')
+        
     def test_eval_icond(self):
-        pass
-    
+        res = []
+        
     def test_eval_impl(self):
         pass
     
@@ -105,44 +107,57 @@ class EvaluationOfFOLSentences(unittest.TestCase):
 
 class LogicSentenceParsing(unittest.TestCase):
     
-    def setUp(self):
-        self.rep = Representation()
-    
-    def test_tell_predicate(self):
-        """Test parsing and declaration of simple predicates.
+    def test_parse_predicate(self):
+        """Test parsing of predicates.
         """
-        sents = load_sentences('tell_predicate.txt')
+        
+        def test():
+            name, ctg, val = e[0], e[1], e[2]
+            obj = rep.individuals[name]
+            chk_ctg = obj.check_cat([ctg])
+            self.assertIn(ctg, chk_ctg, "Category not declared.")
+            self.assertEqual(val, obj.get_cat(ctg=ctg))
+                            
+        rep = Representation()
+        sents = load_sentences('parse_predicate.txt')
         objs = [('$Lucy', 'professor', 1),
-                ('$John', 'dean', 1),
-                ('$Bill', 'student', 1),
-                ('$M1', 'missile', 1),
-                ('$West', 'american', 1)]
+                ('$John', 'dean', 0),
+                (('$Bill', 'student', 1), ('$John', 'student', 1))]
+        failures = [3, 4, 5, 6]
         for x, sent in enumerate(sents):
-            with self.subTest(sent=x):
-                self.rep.tell(sent)
-                name, ctg, val = objs[x][0], objs[x][1], objs[x][2]
-                obj = self.rep.individuals[name]
-                chk_ctg = obj.check_cat([ctg])
-                self.assertIn(ctg, chk_ctg, "Category not declared.")
-                self.assertEqual(val, obj.get_cat(ctg=ctg))
+            with self.subTest(sent='subtest {0}: {1}'.format(x,sent)):
+                if x not in failures:
+                    rep.tell(sent)
+                    if isinstance(objs[x][0], tuple):
+                        for e in objs[x]:
+                            test()
+                    else:
+                        e = objs[x]
+                        test()
+                else:
+                    self.assertRaises(AssertionError, rep.tell, sent)
     
-    def test_tell_function(self):
-        """Test parsing and declaration of simple functions.
+    def test_parse_function(self):
+        """Test parsing of functions.
         """
-        sents = load_sentences('tell_function.txt')
-        objs = [('$Lucy', 'criticize', ('$John', 1, '=')),
-                ('$Bill', 'takes', ('$analysis', 1, '=')),
-                ('$Lucy', 'sister', ('$Bill', 1, '=')),
-                ('$Nono', 'owns', ('$M1', 1, '=')),
-                ('$America', 'enemy', ('$Nono', 1, '='))]
+        sents = load_sentences('parse_function.txt')
+        eval = [
+                ([('$John', 1, '='), '$Lucy'], 'criticize'),
+                ([('$analysis', 0, '>'), '$Bill'], 'takes'),
+                ([('$Bill', 1, '<'), '$Lucy'], 'sister'),
+                ([('$M1', 0, '<'), '$Nono'], 'owns'),
+                ([('$Nono', 2, '>'), '$America'], 'enemy'),
+                ([('$Bill', 0.5, '='), '$Lucy'], 'sister')
+               ]
+        failures = [3, 4]
         for x, sent in enumerate(sents):
-            with self.subTest(sent=x):
-                self.rep.tell(sent)
-                name, rel, val = objs[x][0], objs[x][1], objs[x][2]
-                obj = self.rep.individuals[name]
-                func = obj.relations[rel][0]
-                self.assertIsInstance(func, LogFunction)
-                self.assertTupleEqual(func.args[0], val)
+            with self.subTest(sent='subtest {0}: {1}'.format(x,sent)):
+                if x not in failures:
+                    func = make_function(sent)
+                    self.assertEqual(func.func, eval[x][1])
+                    self.assertListEqual(func.args, eval[x][0])
+                else:
+                    self.assertRaises(ValueError, make_function, sent)
     
     def test_parse_sentence_with_vars(self):
         """Test parsing logic sentences with variables.
@@ -154,10 +169,10 @@ class LogicSentenceParsing(unittest.TestCase):
                 ('person','criticize','friend'),
                 ('american','weapon','sells','hostile','criminal'),
                 ('owns','missile','sells'),
-                ('missile','weapon',),
-                ('enemy','hostile')]
+                ('missile','weapon'),
+                ('enemy','hostile')]        
         for x, sent in enumerate(sents):
-            with self.subTest(sent=x):
+            with self.subTest(sent='subtest {0}: {1}'.format(x,sent)):
                 ori, comp, hier = parse_sent(sent)
                 lg_sent = LogSentence(ori, comp, hier)
                 preds = lg_sent.get_pred(conds=gr_conds)
@@ -169,12 +184,6 @@ class LogicSentenceParsing(unittest.TestCase):
                 for obj in objs[x]:
                     self.assertIn(obj, chk)
 
-    @unittest.skip("Method not implemented.")
-    def test_parse_complx_sent(self):
-        sents = load_sentences('parse_complx_sent.txt')
-        for i, sent in enumerate(sents):
-            with self.subTest(sent=i):
-                self.rep.tell(sent)
-
 if __name__ == "__main__":
     unittest.main()
+
