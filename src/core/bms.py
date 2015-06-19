@@ -45,17 +45,17 @@ class BmsWrapper(object):
 
     def register(self, form, stop=False):
         if stop is True:
-            self.wrk_bel.save()
+            self.wrk_blf.save()
         else:
-            self.wrk_bel = BeliefRecord(form, self)
+            self.wrk_blf = BeliefRecord(form, self)
 
     def add(self, *args):
         if args[1] is True:
-            self.wrk_bel = self.WrappDecl(self)
+            self.wrk_blf = self.WrappDecl(self)
             self.check(args[0])
 
     def prev_blf(self, *args):
-        self.wrk_bel.prev_blf(*args)
+        self.wrk_blf.prev_blf(*args)
 
     def check(self, pred):
         """Initialises the sequence to detect inconsistencies between new

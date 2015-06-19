@@ -22,11 +22,3 @@
 	:vars:x: (missile[x,u=1] => weapon[x,u=1])
 	:vars:x: (<enemy[x,u=1;$America]> => hostile[x,u=1])
 }
-# Test 3/03
-{
-	dealer[$West,u=1]
-	good[$West,u=1]
-	silly[$West,u=1]
-	scum[$West,u=0]
-	:vars:x: (dealer[x,u=1] <=> scum[x,u=0] && good[x,u=1] && silly[x,u=0])
-}

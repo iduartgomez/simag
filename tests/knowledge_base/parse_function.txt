@@ -3,4 +3,3 @@
 <sister[$Bill,u<1;$Lucy]>
 <owns[$M1,u<-1;$Nono]>
 <enemy[$Nono,u>2;$America]>
-<sister[$Bill,u=0.5;$Lucy]>

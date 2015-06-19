@@ -1,14 +1,22 @@
-# Test 1.1/00: FOL forms w/ icond
+# Test 1.1/00: None answer
 {
-	:vars:x: (dean[x,u=1] |> professor[x,u=1])
-	:vars:x: (professor[x,u=1] |> person[x,u=1])
+	professor[$Lucy,u=1]
 }
-# Test 1.2/01: predicates
+# Test 1.2/01: separate ask
 {
 	professor[$Lucy,u=1]
 	dean[$John,u=1]
+	:vars:x: (dean[x,u=1] |> professor[x,u=1])
+	:vars:x: (professor[x,u=1] |> person[x,u=1])
 }
-# Test 2/02
+# Test 1.3/02: complex ask
+{
+	professor[$Lucy,u=1]
+	dean[$John,u=1]
+	:vars:x: (dean[x,u=1] |> professor[x,u=1])
+	:vars:x: (professor[x,u=1] |> person[x,u=1])
+}
+# Test 2/03
 {
 	<owns[$M1,u=1;$Nono]>
 	missile[$M1,u=1]

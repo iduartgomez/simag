@@ -29,9 +29,8 @@ between these objects.
 # TO DO: Optimize chaining algorithm further: in functions it can check 
 # wether the argument position fits or not before trying to solve it.
 #
-# Add rules in form of log sent
-# Add 'equiv' operator parsing and eval
-# Add 'belief maintenance system' functionality
+# Make declaration, save_rules and inference work with categories.
+# Add 'belief maintenance system' functionality.
 
 # ===================================================================#
 #   Imports and constants
@@ -49,6 +48,8 @@ from builtins import ValueError
 rgx_par = re.compile(r'\{(.*?)\}')
 rgx_ob = re.compile(r'\b(.*?)\]')
 rgx_br = re.compile(r'\}(.*?)\{')
+
+gr_conds = [':icond:', ':implies:', ':equiv:']
 
 # ===================================================================#
 #   REPRESENTATION OBJECTS CLASSES AND SUBCLASSES
@@ -94,31 +95,37 @@ class Representation(object):
         """
         ori, comp, hier = parse_sent(sent)
         par_form = comp[ori]
-        if not any(x in par_form for x in [':vars:', ':icond:']):
+        if not ':vars:' in par_form:
             if '[' in par_form and len(comp) == 1:
                 # It's a predicate
                 self.declare(par_form)
             else:
                 # It's a complex sentence with various predicates/funcs
                 sent = LogSentence(ori, comp, hier)
-                self.add_rule(sent)
+                if sent.validity is True:
+                    del sent.validity
+                    self.save_rule(sent)
+                else:
+                    msg = "Illegal connectives used in the consequent " \
+                        + " of an indicative conditional sentence."
+                    raise AssertionError(msg)
         else:
             # It's a complex sentence with variables
             sent = LogSentence(ori, comp, hier)
-            if sent.validity is True:
-                del sent.validity
-                self.save_rule(sent)
-            elif sent.validity is None:
-                self.add_cog(sent)
-            else:
-                raise AssertionError('Illegal connectives used in the consequent' \
-                                     + ' of an indicative conditional sentence')
+            self.add_cog(sent)
     
-    def ask(self, sent):
+    def ask(self, sent, single=False):
         """Asks the KB if some fact is true and returns the result of
         that ask.
         """
         inf_proc = Inference(self, parse_sent(sent)[1])
+        print(inf_proc.results)
+        if single is True:
+            for answ in inf_proc.results.values():
+                for pred in answ.values():
+                    if pred is False: return False
+                    if pred is None: return None
+            return True
         return inf_proc.results
 
     def declare(self, sent, save=False):
@@ -142,7 +149,7 @@ class Representation(object):
         or between an entity and a class (ie. <loves[$Lucy, cats]>).
         """
         
-        def declare():
+        def declare_memb():
             assert ('=' in e), "It's a predicate, must assign truth value."
             assert ('$' in e), 'The object is not an unique entity.'
             u = e.split(',u=')
@@ -151,11 +158,7 @@ class Representation(object):
             if (u[1] > 1 or u[1] < 0): 
                 m = "Illegal value: {0}, must be > 0, or < 1.".format(u[1])
                 raise AssertionError(m)
-            self.bmsWrapper.add(pred, True)
-            check = self.bmsWrapper.add(pred, True)
             self.up_memb(pred)
-            if check is False:
-                self.bmsWrapper.add(pred, True)
         
         sent = sent.replace(' ','')
         sets = rgx_ob.findall(sent)
@@ -163,23 +166,25 @@ class Representation(object):
         if ';' in sets[1]:
             sets[1] = sets[1].split(';')
         if '<' in sent[0]:
-            # Is a function declaration > implies a relation
-            # between different objects or classes.              
-            func = make_function(sent, 'relation')
-            #self.bmsWrapper.add(func, True)
+            # Is a function declaration -> implies a relation
+            # between different objects or classes.           
+            func = make_function(sent, 'relation')            
             self.up_rel(func)
         else:
             # Is a membership declaration -> the object(s) belong(s) 
             # to a set of objects.
             if isinstance(sets[1], list):
                 for e in sets[1]:
-                    declare()
+                    declare_memb()
             else:
                 e = sets[1]
-                declare()            
+                declare_memb()
 
     def up_memb(self, pred):
         # It's a membership declaration.
+        #
+        # Here the change should be recorded in the BMS
+        # self.bmsWrapper.add(pred, True)
         categ, subject, val = pred[0], pred[1][0], pred[1][1]
         if subject not in self.individuals and '$' in subject:
             # An individual which is member of a class
@@ -187,13 +192,13 @@ class Representation(object):
             ind.add_ctg(categ, val)
             self.individuals[subject] = ind
         elif '$' in subject:
-            # Add/replace an other class membership to an exisiting individual
+            # Add/replace an other class membership to an existing individual
             self.individuals[subject].add_ctg(categ, val)            
         elif subject in self.classes:
-            # Is a new subclass of an other class
+            # Is an existing subclass subclass of an other class
             pass
         else:
-            # Is an existing subclass of an other class
+            # Is a new subclass of an other class
             pass
         if categ not in self.classes:
             nc = Category(categ)
@@ -201,11 +206,14 @@ class Representation(object):
             self.classes[categ] = nc
 
     def up_rel(self, func):
-        # It's a relation declaration between two objs/classes.
+        # It's a function declaration.
+        #
+        # Here the change should be recorded in the BMS 
+        # self.bmsWrapper.add(func, True)
         relation = func.func
         for subject in func.get_args():
             if '$' in subject:
-                #It's a rel between an object and other obj/class.
+                # It's a rel between an object and other obj/class.
                 if subject not in self.individuals:
                     ind = Individual(subject)
                     ind.add_rel(func)
@@ -214,21 +222,19 @@ class Representation(object):
                     ind = self.individuals[subject]
                     ind.add_rel(func)
                 if relation not in self.classes:
-                    categ = Category(relation)
-                    categ['type'] = 'relation'
-                    self.classes[relation] = categ
+                    rel = Relation(relation)
+                    self.classes[relation] = rel
             else:
                 # It's a rel between a class and other class/obj.
                 if subject not in self.classes:
                     categ = Category(subject)
-                    categ[relation] = [func]
-                    categ['type'] = 'class'
+                    categ.add_rel(func)
                     self.classes[subject] = categ
-                elif relation not in self.classes[subject]:
-                    self.classes[subject][relation] = [func]
                 else:
-                    # compare funcs and substitute
-                    pass
+                    self.classes[subject].add_rel(func)
+                if relation not in self.classes:
+                    rel = Relation(relation)
+                    self.classes[relation] = rel
 
     def add_cog(self, sent):
         
@@ -277,7 +283,8 @@ class Representation(object):
                 chk_args(p)
 
     def save_rule(self, proof):
-        preds = proof.get_pred(conds=[':icond:'])
+        preds = proof.get_pred()
+        preds.extend(proof.get_pred(branch='r'))
         for name in preds:
             if name[0] in self.classes and \
             proof not in self.classes[name[0]]['cog']:
@@ -289,16 +296,12 @@ class Representation(object):
                 nc.add_cog(proof)
                 self.classes[name[0]] = nc
         n = [x[0] for x in preds]
-        # Run the new formula with every unique object that matches.
-        for ind in self.individuals.values():
-            common = ind.check_cat(n)
-            proof(self, ind.name)
-            tests = None
-            for cat in common:
-                tests = self.classes[cat]['cog']
-            if tests:
-                for test in tests:
-                    test(self, ind.name)
+        # Run the new formula with individuals/classes that matches.
+        obj_dic = self.inds_by_cat(set(n))
+        subrpr = SubstRepr(self, obj_dic)
+        for ind in subrpr.individuals.keys():
+            proof(subrpr, ind)
+        self.push(subrpr)
 
     def inds_by_cat(self, ctgs):
         cat_dic = {}
@@ -309,6 +312,13 @@ class Representation(object):
             t = t.union(s)
             cat_dic[ind.name] = t
         return cat_dic
+    
+    def push(self, subs):
+        """Takes a SubstRepr object and pushes changes to self.
+        It calls the BMS to record any changes and inconsistencies.
+        """
+        self.individuals.update(subs.individuals)
+        self.classes.update(subs.classes)
 
 class Individual(object):
     """An individual is the unique member of it's own class.
@@ -454,6 +464,24 @@ class Category(dict):
     def infer(self):
         """Infers attributes of the class from it's members."""
         pass
+    
+    def add_rel(self, func):
+        if not self.relations:
+            self.relations = dict()
+            self.relations[func.func] = [func]
+        else:
+            try:
+                rel = self.relations[func.func]
+            except KeyError:
+                self.relations[func.func] = [func]
+            else:
+                rel.append(func)
+
+class Relation(Category):
+    
+    @property
+    def add_rel(self, func):
+        raise AttributeError("'Relation' object has no attribute 'add_rel'.")
 
 class Group(Category):
     """A special instance of a category. It defines a 'group' of
@@ -477,7 +505,6 @@ symbs = dict([
              ('&&',':and:')
             ])
 symb_ord = ['|>', '<=>', ' =>', '||', '&&']
-gr_conds = [':icond:', ':implies:', ':equiv:']
 
 def parse_sent(sent):
     """Parser for logic sentences."""
@@ -714,7 +741,9 @@ class LogSentence(object):
             self.start.solve(self, ag, key=[0])
             ag.bmsWrapper.register(self, stop=True)
         elif len(self.var_order) == 0:
+            ag.bmsWrapper.register(self)
             self.start.solve(self, ag, key=[0])
+            ag.bmsWrapper.register(self, stop=True)
         else:
             return
 
@@ -806,7 +835,7 @@ class LogSentence(object):
                     return False
                 else:
                     x = x.parent
-            return True
+        return True
 
     def get_pred(self, branch='left', conds=gr_conds):
         preds = []
@@ -1072,9 +1101,8 @@ class Particle(object):
                     result = ag.individuals[args[0]].test_rel(test)
                 else:
                     result = ag.classes[args[0]].test_rel(test)
-                if result is True:                    
-                    pass
-                    #ag.bmsWrapper.prev_blf(s)
+                if result is True:
+                    ag.bmsWrapper.prev_blf(test)
             else:
                 # Check membership to a set of an entity.
                 sbj, u = self.pred[1].split(',u')
@@ -1109,7 +1137,7 @@ class Particle(object):
                     if arg in proof.assigned:
                         args[x] = proof.assigned[arg]
                 pred = self.pred.substitute(args)
-                #ag.bmsWrapper.check(pred)
+                ag.bmsWrapper.check(pred)
                 ag.up_rel(pred)
             else:
                 pred = list(self.pred)
@@ -1203,18 +1231,23 @@ class Inference(object):
                 #
                 print("It's a class")
         
+        # Parse the query
         self.get_query(comp)
+        # Get relevant rules to infer the query
         self.rules = set()
-        self.get_rules()            
+        self.get_rules()
+        # Get the caterogies for each individual
         self.obj_dic = self.kb.inds_by_cat(self.chk_cats)
-        self.subst_kb()
+        # Create a new, filtered and temporal, work KB
+        self.subkb = SubstRepr(self.kb, self.obj_dic)
+        # Start inference process
         self.results = dict()        
         for var, preds in self.query.items():
             if var in self.vrs:
                 # It's a variable, find every object that fits the criteria
                 # 
                 #
-                print('It\'s a variable')
+                print("It's a variable")
             else:
                 self.results[var] = {}
                 for pred in preds:
@@ -1319,28 +1352,6 @@ class Inference(object):
         else:
             return False
 
-    def subst_kb(self):
-        """Create a new, filtered and temporal, work KB."""
-        self.subkb = SubstRepr()
-        for s in self.obj_dic:
-            if '$' in s[0]:
-                o_ind = self.kb.individuals[s]
-                n_ind = Individual(s)
-                for attr, val in o_ind.__dict__.items():
-                    if attr != 'relations' or attr != 'categ':
-                        n_ind.__dict__[attr] = val
-                nrm_ctg = self.obj_dic[s]
-                categ = []
-                for c in o_ind.categ:
-                    if c[0] in nrm_ctg:
-                        categ.append(c)
-                rels = {}
-                for rel in o_ind.relations:
-                    if rel in nrm_ctg:
-                        rels[rel] = o_ind.relations[rel]
-                n_ind.relations, n_ind.categ = rels, categ
-                self.subkb.individuals[n_ind.name] = n_ind
-
     def get_rules(self, done=[None]):
         if len(self.ctgs) > 0:
             c = self.ctgs.pop()
@@ -1352,7 +1363,7 @@ class Inference(object):
                 chk_rules = set(self.kb.classes[c]['cog'])
                 chk_rules = chk_rules.difference(self.rules)
             except:
-                raise CannotInferSolution(self.query) 
+                raise CannotInferSolutionError(self.query) 
             for sent in chk_rules:
                 preds = sent.get_pred(conds=gr_conds)
                 nc = []
@@ -1436,8 +1447,8 @@ class Inference(object):
                 terms[p[0]].append(tuple(p[1]))
         self.query, self.ctgs = terms, ctgs
 
-class CannotInferSolution(Exception):
-    """Cannot infer a solution exception."""
+class CannotInferSolutionError(Exception):
+    """Cannot infer a solution error."""
     pass
 
 class SubstRepr(Representation):
@@ -1466,10 +1477,36 @@ class SubstRepr(Representation):
         def check(self, arg):
             self.chk_ls.append(arg)
 
-    def __init__(self):
+    def __init__(self, *args):
         self.individuals = {}
         self.classes = {}
         self.bmsWrapper = self.FakeBms()
+        self.make(*args)
+    
+    def make(self, kb, obj_dic):
+        for s in obj_dic:
+            if '$' in s[0]:
+                o_ind = kb.individuals[s]
+                n_ind = Individual(s)
+                for attr, val in o_ind.__dict__.items():
+                    if attr != 'relations' or attr != 'categ':
+                        n_ind.__dict__[attr] = val
+                nrm_ctg = obj_dic[s]
+                categ = []
+                for c in o_ind.categ:
+                    if c[0] in nrm_ctg:
+                        categ.append(c)
+                rels = {}
+                for rel in o_ind.relations:
+                    if rel in nrm_ctg:
+                        rels[rel] = o_ind.relations[rel]
+                n_ind.relations, n_ind.categ = rels, categ
+                self.individuals[n_ind.name] = n_ind
+            else:
+                # It's a class
+                #
+                #
+                pass
 
 if __name__ == '__main__':
     
@@ -1488,11 +1525,11 @@ if __name__ == '__main__':
         return ls
     
     path = '/home/nacho/dev/workspace/simag/tests'
-    test = 'ask_func.txt'
+    test = 'eval_fol.txt'
     sents = load_sentences(test, path)
     r = Representation()
-    for s in sents[2]:
+    for s in sents[0]:
         r.tell(s)
-    result = r.ask('criminal[$West,u=1] && <sells[$M1,u=1;$West;$Nono]>')
+    result = r.ask('scum[$West,u=1] && good[$West,u=0]', single=True)
     print(result)
 

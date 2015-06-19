@@ -1,3 +1,5 @@
-# Test 1/00
+# Test 1.1/00 -> Evaluate an indicative conditional statement
 {
+	drugDealer[$West,u=1]
+	drugDealer[$West,u=1] |> scum[$West,u=1] && good[$West,u=0]
 }

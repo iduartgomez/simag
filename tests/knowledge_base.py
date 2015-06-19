@@ -1,12 +1,9 @@
 """
 @author: Ignacio Duart Gomez
 """
+
 import unittest
 from core.kblogic import *
-
-#====================#
-#    UNIT TESTING    #
-#====================#
 
 def load_sentences(test):
     path = os.path.dirname(__file__)
@@ -45,6 +42,9 @@ def iter_test(self, sents, ask, eval):
                     for k in eval[i].keys():
                         self.assertEqual(eval[i][k], answ[k])
 
+#====================#
+#    UNIT TESTING    #
+#====================#
 
 class AskReprGetAnswer(unittest.TestCase):
     
@@ -54,19 +54,20 @@ class AskReprGetAnswer(unittest.TestCase):
     def test_ask_pred(self):
         sents = load_sentences('ask_pred.txt')
         ask = [
-                ['professor[$Lucy,u=1] && person[$Lucy,u=0]'],
-                ['professor[$Lucy,u=1]', 'person[$Lucy,u=1]'],
-                ['criminal[$West,u=1]']
+               ['professor[$Lucy,u=1] && person[$Lucy,u=0]'],
+               ['professor[$Lucy,u=1]', 'person[$John,u=1]'],
+               ['professor[$Lucy,u=1] && person[$Lucy,u=0]'],
+               ['criminal[$West,u=1]']
               ]
         eval = [
-                 {'$Lucy': {'professor': None, 'person': None}},
-                 [{'$Lucy': {'professor': True}},
-                  {'$Lucy': {'person': True}}],
-                 {'$West': {'criminal': True}}
+                {'$Lucy': {'professor': True, 'person': None}},
+                [{'$Lucy': {'professor': True}},{'$John': {'person': True}}],
+                {'$Lucy': {'professor': True, 'person': True}},
+                {'$West': {'criminal': True}}
                ]
         iter_test(self, sents, ask, eval)
     
-    @unittest.skip('')
+    @unittest.skip('Not ready')
     def test_ask_func(self):
         sents = load_sentences('ask_func.txt')
         ask = [
@@ -82,7 +83,6 @@ class AskReprGetAnswer(unittest.TestCase):
         iter_test(self, sents, ask, eval)
 
 
-@unittest.skip("Test not writte.")
 class EvaluationOfFOLSentences(unittest.TestCase):
     
     def setUp(self):
@@ -90,7 +90,12 @@ class EvaluationOfFOLSentences(unittest.TestCase):
         self.sents = load_sentences('eval_fol.txt')
         
     def test_eval_icond(self):
-        res = []
+        ask = [
+               'scum[$West,u=1] && good[$West,u=0]',
+              ]
+        for s in self.sents[0]:
+            self.rep.tell(s)
+        self.assertIs(self.rep.ask(ask[0],single=True), True)
         
     def test_eval_impl(self):
         pass
@@ -104,7 +109,7 @@ class EvaluationOfFOLSentences(unittest.TestCase):
     def test_eval_and(self):
         pass
 
-
+@unittest.skip('')
 class LogicSentenceParsing(unittest.TestCase):
     
     def test_parse_predicate(self):
@@ -120,9 +125,11 @@ class LogicSentenceParsing(unittest.TestCase):
                             
         rep = Representation()
         sents = load_sentences('parse_predicate.txt')
-        objs = [('$Lucy', 'professor', 1),
+        objs = [
+                ('$Lucy', 'professor', 1),
                 ('$John', 'dean', 0),
-                (('$Bill', 'student', 1), ('$John', 'student', 1))]
+                (('$Bill', 'student', 1), ('$John', 'student', 1))
+               ]
         failures = [3, 4, 5, 6]
         for x, sent in enumerate(sents):
             with self.subTest(sent='subtest {0}: {1}'.format(x,sent)):
@@ -145,9 +152,6 @@ class LogicSentenceParsing(unittest.TestCase):
                 ([('$John', 1, '='), '$Lucy'], 'criticize'),
                 ([('$analysis', 0, '>'), '$Bill'], 'takes'),
                 ([('$Bill', 1, '<'), '$Lucy'], 'sister'),
-                ([('$M1', 0, '<'), '$Nono'], 'owns'),
-                ([('$Nono', 2, '>'), '$America'], 'enemy'),
-                ([('$Bill', 0.5, '='), '$Lucy'], 'sister')
                ]
         failures = [3, 4]
         for x, sent in enumerate(sents):
