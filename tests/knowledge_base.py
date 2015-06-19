@@ -11,7 +11,7 @@ def load_sentences(test):
     ls, sup_ls = [], []
     with open(logic_test, 'r') as f:
         for line in f:
-            if line[0] == '#': pass
+            if line.strip()[0] == '#': pass
             elif line.strip() == '{':
                 sup_ls, ls = ls, list()
             elif line.strip() == '}':
@@ -46,6 +46,7 @@ def iter_test(self, sents, ask, eval):
 #    UNIT TESTING    #
 #====================#
 
+@unittest.skip('')
 class AskReprGetAnswer(unittest.TestCase):
     
     def setUp(self):
@@ -87,19 +88,27 @@ class EvaluationOfFOLSentences(unittest.TestCase):
     
     def setUp(self):
         self.rep = Representation()
-        self.sents = load_sentences('eval_fol.txt')
+        self.tests = load_sentences('eval_fol.txt')
         
     def test_eval_icond(self):
-        ask = [
-               'scum[$West,u=1] && good[$West,u=0]',
-              ]
-        for s in self.sents[0]:
+        ask = ['scum[$West,u=1] && good[$West,u=0]']
+        for s in self.tests[0]:
             self.rep.tell(s)
         self.assertIs(self.rep.ask(ask[0],single=True), True)
         
     def test_eval_impl(self):
-        pass
-    
+        num = [1, 2]
+        results = [False, True]
+        tests = [test for x, test in enumerate(self.tests) if x in num]
+        for x, test in enumerate(tests):
+            with self.subTest(sent='subtest {0}: {1}'.format(x,test[0])):
+                for s in test[1:]:
+                    self.rep.tell(s)
+                ori, comp, hier = parse_sent(test[0])
+                proof = LogSentence(ori, comp, hier)
+                proof(self.rep, '$West')
+                self.assertIs(proof.result, results[x])
+        
     def test_eval_equiv(self):
         pass
     
@@ -113,9 +122,8 @@ class EvaluationOfFOLSentences(unittest.TestCase):
 class LogicSentenceParsing(unittest.TestCase):
     
     def test_parse_predicate(self):
-        """Test parsing of predicates.
-        """
-        
+        """Test parsing of predicates."""
+            
         def test():
             name, ctg, val = e[0], e[1], e[2]
             obj = rep.individuals[name]
@@ -145,8 +153,8 @@ class LogicSentenceParsing(unittest.TestCase):
                     self.assertRaises(AssertionError, rep.tell, sent)
     
     def test_parse_function(self):
-        """Test parsing of functions.
-        """
+        """Test parsing of functions."""
+        
         sents = load_sentences('parse_function.txt')
         eval = [
                 ([('$John', 1, '='), '$Lucy'], 'criticize'),
@@ -164,8 +172,8 @@ class LogicSentenceParsing(unittest.TestCase):
                     self.assertRaises(ValueError, make_function, sent)
     
     def test_parse_sentence_with_vars(self):
-        """Test parsing logic sentences with variables.
-        """
+        """Test parsing logic sentences with variables."""
+        
         sents = load_sentences('parse_sentence_with_vars.txt')
         objs = [('dean','professor'),
                 ('professor','person'),

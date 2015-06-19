@@ -1,5 +1,20 @@
 # Test 1.1/00 -> Evaluate an indicative conditional statement
-{
-	drugDealer[$West,u=1]
+{	
 	drugDealer[$West,u=1] |> scum[$West,u=1] && good[$West,u=0]
+	#
+	drugDealer[$West,u=1]
+}
+# Test 2.0/01 -> Evaluate a material implication statement
+{
+	drugDealer[$West,u=1] => scum[$West,u=1] && good[$West,u=0]
+	#
+	drugDealer[$West,u=0]
+}
+# Test 2.1/03 -> Evaluate a material implication statement
+{
+	drugDealer[$West,u=1] => scum[$West,u=1] && good[$West,u=0]
+	#
+	drugDealer[$West,u=1]
+	scum[$West,u=1]
+	good[$West,u=0]
 }

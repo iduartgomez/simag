@@ -102,7 +102,7 @@ class Representation(object):
             else:
                 # It's a complex sentence with various predicates/funcs
                 sent = LogSentence(ori, comp, hier)
-                if sent.validity is True:
+                if sent.validity is True or sent.validity is None:
                     del sent.validity
                     self.save_rule(sent)
                 else:
@@ -119,7 +119,6 @@ class Representation(object):
         that ask.
         """
         inf_proc = Inference(self, parse_sent(sent)[1])
-        print(inf_proc.results)
         if single is True:
             for answ in inf_proc.results.values():
                 for pred in answ.values():
@@ -301,6 +300,7 @@ class Representation(object):
         subrpr = SubstRepr(self, obj_dic)
         for ind in subrpr.individuals.keys():
             proof(subrpr, ind)
+            del proof.result
         self.push(subrpr)
 
     def inds_by_cat(self, ctgs):
@@ -318,7 +318,7 @@ class Representation(object):
         It calls the BMS to record any changes and inconsistencies.
         """
         self.individuals.update(subs.individuals)
-        self.classes.update(subs.classes)
+        #self.classes.update(subs.classes)
 
 class Individual(object):
     """An individual is the unique member of it's own class.
@@ -786,8 +786,17 @@ class LogSentence(object):
             p.results = []
             if p.parent == -1:
                 self.start = p
+        """
+        for p in iter(p for p in self.particles if p.cond == ':stub:'):
+            for e in p.next:
+                e.depth = p.depth
+                e.parent = p.parent
+                if hasattr(self, 'start') and self.start is p:
+                    self.start = e
+            del p
+        """
 
-    def new_test(self, form, depth, parent, part_id, syb):        
+    def new_test(self, form, depth, parent, part_id, syb):      
         form = form.replace(' ','').strip()
         cond = rgx_br.findall(form)
         if depth > self.depth:
@@ -881,7 +890,7 @@ class Particle(object):
         102: Incoming truthiness of an operation for recording.
         103: Return to parent atom.
         """
-        #print self, '// Key:'+str(key), '// Args:', args
+        #print(self, '// Key:'+str(key), '// Args:', args)
         if key[-1] == 103 and self.parent == -1:
             return
         if key[-1] == 102 and self.cond and self.cond != ':stub:':
@@ -935,44 +944,39 @@ class Particle(object):
     
     def icond(self, proof, ag, key, *args):
         """Procedure for parsign indicative conditional assertions."""
-        current = len(self.results)
-        if key[-1] == 103:
-            # Completed
-            self.parent.solve(proof, ag, key)        
-        elif current == 0:
+        current, next_ = len(self.results), None   
+        if current == 0:
             key.append(101)
-            self.next[current].solve(proof, ag, key)
+            next_ = True
         elif current == 1 and self.results[0] is True:
             key.append(100)
-            self.next[current].solve(proof, ag, key)
+            next_ = True
         elif current == 1 and self.results[0] is False:
             # The left branch was false, so do not continue.
             proof.result = False
             key.append(103)
-            self.parent.solve(proof, ag, key, False)
         else:
             # Substitution failed.
             key.append(103)
-            self.parent.solve(proof, ag, key, None)
+        if self.parent != -1 and next is None:
+            self.parent.solve(proof, ag, key, result)
+        elif next_ is True:
+            self.next[current].solve(proof, ag, key)
     
     def equiv(self, proof, ag, key, *args):
         """Procedure for solving equivalences."""
-        current = len(self.results)
-        if key[-1] == 103:
-            # Completed
-            self.parent.solve(proof, ag, key)
-        elif current == 0:
+        current, next_ = len(self.results), None
+        if current == 0:
             key.append(101)
-            self.next[current].solve(proof, ag, key)
+            next_ = True
         elif current == 1 and self.results[0] is True:
             # If it's not a predicate, follow standard FOL
             # rules for equiv
             if self.next[1].cond != ':predicate:':
                 key.append(101)
-                self.next[1].solve(proof, ag, key)
             else:
                 key.append(103)
-                self.next[1].solve(proof, ag, key)
+            next_ = True
         elif current > 1:
             # The second term of the implication was complex
             # check the result of it's substitution
@@ -985,35 +989,33 @@ class Particle(object):
                     proof.result = True
                 result = True
             key.append(103)
-            self.parent.solve(proof, ag, key, result)
         else:
             # Not known solution.
             key.append(103)
-            self.parent.solve(proof, ag, key, None)
+            result = None
+        if self.parent != -1 and next_ is None:
+            self.parent.solve(proof, ag, key, result)
+        elif next_ is True:
+            self.next[current].solve(proof, ag, key)
     
     def impl(self, proof, ag, key, *args):
         """Procedure for solving implications."""
-        current = len(self.results)
-        if key[-1] == 103:
-            # Completed
-            self.parent.solve(proof, ag, key)
-        elif current == 0:
+        current, next_ = len(self.results), None
+        if current == 0:
             key.append(101)
-            self.next[current].solve(proof, ag, key)
+            next_ = True
         elif current == 1 and self.results[0] is True:
             # If it's not a predicate, follow standard FOL
             # rules for implication
             if self.next[1].cond != ':predicate:':
                 key.append(101)
-                self.next[current].solve(proof, ag, key)
             else:
-                key.append(103)
-                self.next[current].solve(proof, ag, key)
+                key.append(100)
+            next_ = True
         elif current == 1 and self.results[0] is False:
             # The left branch was false, so do not continue.
             proof.result, result = False, False
             key.append(103)
-            self.parent.solve(proof, ag, key, result)        
         elif current > 1:            
             # The second term of the implication was complex
             # check the result of it's substitution
@@ -1026,57 +1028,52 @@ class Particle(object):
                     proof.result = True
                 result = True
             key.append(103)
-            self.parent.solve(proof, ag, key, result)
         else:
             # Not known solution.
             key.append(103)
-            self.parent.solve(proof, ag, key, None)
+            result = None
+        if self.parent != -1 and next_ is None:
+            self.parent.solve(proof, ag, key, result)
+        elif next_ is True:
+            self.next[current].solve(proof, ag, key)
     
     def conjunction(self, proof, ag, key):
         left_branch, right_branch = self.results[0], self.results[1]
+        parent = None
         if key[-1] == 101:
+            parent = True
             key.append(102)
             # Two branches finished, check if both are true.
-            if (left_branch and right_branch) is None:                
-                self.parent.solve(proof, ag, key, None)            
-            elif left_branch == right_branch:
-                self.parent.solve(proof, ag, key, True)            
-            else:
-                self.parent.solve(proof, ag, key, False)
+            if (left_branch and right_branch) is None: result = None           
+            elif left_branch == right_branch: result = True       
+            else: result = False
         elif key[-1] == 100:
             # Test if this conjunction fails
-            if (left_branch and right_branch) is None:
-                # unknown
-                return None
-            if left_branch == right_branch:
-                # passes the test
-                return True
-            else:
-                # fails the test
-                return False
+            if (left_branch and right_branch) is None: return None
+            if left_branch == right_branch: return True
+            else: return False
+        if self.parent != -1 and parent is not None:
+            self.parent.solve(proof, ag, key, result)
+        else: proof.result = result
 
     def disjunction(self, proof, ag, key):
         left_branch, right_branch = self.results[0], self.results[1]
+        parent = None
         if key[-1] == 101:
-            # Two branches finished, check if both are true.
+            parent = True
             key.append(102)
-            if (left_branch and right_branch) is None:
-                self.parent.solve(proof, ag, key, None)
-            elif left_branch != right_branch:
-                self.parent.solve(proof, ag, key, True)            
-            else:
-                self.parent.solve(proof, ag, key, False)
+            # Two branches finished, check if both are true.            
+            if (left_branch and right_branch) is None: result = None
+            elif left_branch != right_branch: result = True           
+            else: result = False
         elif key[-1] == 100:
             # Test if this disjunction fails
-            if (left_branch and right_branch) is None:
-                # unknown
-                return None
-            elif left_branch != right_branch:
-                # passes the test
-                return True
-            else:
-                # fails the test
-                return False
+            if (left_branch and right_branch) is None: return None
+            elif left_branch != right_branch: return True
+            else: return False
+        if self.parent != -1 and parent is not None:
+            self.parent.solve(proof, ag, key, result)
+        else: proof.result = result
 
     def ispred(self, proof, ag, key):
         
@@ -1169,7 +1166,7 @@ class Particle(object):
                     self.next[x].parent = self
 
 # ===================================================================#
-#   LOGIC INFERENCE
+#   LOGIC INFERENCE                                                  #
 # ===================================================================#
 
 class Inference(object):
@@ -1208,7 +1205,7 @@ class Inference(object):
         """
         
         def chk_result():
-            if var[0] == '$':
+            if var[0] == '$':                
                 try: ctgs = self.subkb.individuals[var].get_cat()
                 except KeyError: return None
                 else:
@@ -1237,11 +1234,12 @@ class Inference(object):
         self.rules = set()
         self.get_rules()
         # Get the caterogies for each individual
+        self.chk_cats = set(['scum', 'drugDealer', 'good'])
         self.obj_dic = self.kb.inds_by_cat(self.chk_cats)
         # Create a new, filtered and temporal, work KB
         self.subkb = SubstRepr(self.kb, self.obj_dic)
         # Start inference process
-        self.results = dict()        
+        self.results = dict()
         for var, preds in self.query.items():
             if var in self.vrs:
                 # It's a variable, find every object that fits the criteria
@@ -1445,6 +1443,7 @@ class Inference(object):
                 ctgs.append(p[1][0])
             else:
                 terms[p[0]].append(tuple(p[1]))
+                ctgs.append(p[1][0])
         self.query, self.ctgs = terms, ctgs
 
 class CannotInferSolutionError(Exception):
