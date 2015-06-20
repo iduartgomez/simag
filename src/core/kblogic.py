@@ -38,7 +38,6 @@ between these objects.
 # ===================================================================#
 
 import re
-import os
 import uuid
 import copy
 
@@ -1231,9 +1230,10 @@ class Inference(object):
         self.get_query(comp)
         # Get relevant rules to infer the query
         self.rules = set()
-        self.get_rules()
+        while hasattr(self, 'ctgs'):
+            try: self.get_rules()
+            except NoSolutionError: pass
         # Get the caterogies for each individual
-        self.chk_cats = set(['scum', 'drugDealer', 'good'])
         self.obj_dic = self.kb.inds_by_cat(self.chk_cats)
         # Create a new, filtered and temporal, work KB
         self.subkb = SubstRepr(self.kb, self.obj_dic)
@@ -1360,7 +1360,7 @@ class Inference(object):
                 chk_rules = set(self.kb.classes[c]['cog'])
                 chk_rules = chk_rules.difference(self.rules)
             except:
-                raise CannotInferSolutionError(self.query) 
+                raise NoSolutionError(c)
             for sent in chk_rules:
                 preds = sent.get_pred(conds=gr_conds)
                 nc = []
@@ -1445,7 +1445,7 @@ class Inference(object):
                 ctgs.append(p[1][0])
         self.query, self.ctgs = terms, ctgs
 
-class CannotInferSolutionError(Exception):
+class NoSolutionError(Exception):
     """Cannot infer a solution error."""
     pass
 

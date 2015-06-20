@@ -3,6 +3,8 @@
 """
 
 import unittest
+import os
+
 from core.kblogic import *
 
 def load_sentences(test):
@@ -27,12 +29,12 @@ def iter_test(self, sents, ask, eval):
                 for s in test:
                     self.rep.tell(s)
                 for j, q in enumerate(ask[i]):
+                    answ = self.rep.ask(q)
+                    print(answ)
                     if isinstance(eval[i], list):
-                        answ = self.rep.ask(q)
                         for k in eval[i][j].keys():
                             self.assertEqual(eval[i][j][k], answ[k])
                     else:
-                        answ = self.rep.ask(q)
                         for k in eval[i].keys():
                             self.assertEqual(eval[i][k], answ[k])
             else:
@@ -58,7 +60,7 @@ class AskReprGetAnswer(unittest.TestCase):
                ['professor[$Lucy,u=1] && person[$Lucy,u=0]'],
                ['criminal[$West,u=1]'],]
         eval = [{'$Lucy': {'professor': True, 'person': None}},
-                [{'$Lucy': {'professor': True}},{'$John': {'person': True}}],
+                [{'$John': {'professor': True}},{'$John': {'person': True}}],
                 {'$Lucy': {'professor': True, 'person': True}},
                 {'$West': {'criminal': True}},]
         iter_test(self, sents, ask, eval)
@@ -98,7 +100,6 @@ class EvaluationOfFOLSentences(unittest.TestCase):
         assert_this = ['$West','$West','$West','$West','$West']
         tests = [test for x, test in enumerate(self.tests) if x in num]
         self.check(tests, assert_this, results)
-        
     
     def test_eval_equiv(self):
         num = [6,7,8,9]
