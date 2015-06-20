@@ -46,7 +46,6 @@ def iter_test(self, sents, ask, eval):
 #    UNIT TESTING    #
 #====================#
 
-@unittest.skip('')
 class AskReprGetAnswer(unittest.TestCase):
     
     def setUp(self):
@@ -54,33 +53,25 @@ class AskReprGetAnswer(unittest.TestCase):
     
     def test_ask_pred(self):
         sents = load_sentences('ask_pred.txt')
-        ask = [
-               ['professor[$Lucy,u=1] && person[$Lucy,u=0]'],
+        ask = [['professor[$Lucy,u=1] && person[$Lucy,u=0]'],
                ['professor[$Lucy,u=1]', 'person[$John,u=1]'],
                ['professor[$Lucy,u=1] && person[$Lucy,u=0]'],
-               ['criminal[$West,u=1]']
-              ]
-        eval = [
-                {'$Lucy': {'professor': True, 'person': None}},
+               ['criminal[$West,u=1]'],]
+        eval = [{'$Lucy': {'professor': True, 'person': None}},
                 [{'$Lucy': {'professor': True}},{'$John': {'person': True}}],
                 {'$Lucy': {'professor': True, 'person': True}},
-                {'$West': {'criminal': True}}
-               ]
+                {'$West': {'criminal': True}},]
         iter_test(self, sents, ask, eval)
     
     @unittest.skip('Not ready')
     def test_ask_func(self):
         sents = load_sentences('ask_func.txt')
-        ask = [
+        ask = [['<friend[$Lucy,u=0;$John]>'],
                ['<friend[$Lucy,u=0;$John]>'],
-               ['<friend[$Lucy,u=0;$John]>'],
-               ['<sells[$M1,u=1;$West;$Nono]>']
-              ]
-        eval = [
-                {'$John': {'friend': ('$Lucy', None)}},
+               ['<sells[$M1,u=1;$West;$Nono]>'],]
+        eval = [{'$John': {'friend': ('$Lucy', None)}},
                 {'$John': {'friend': ('$Lucy', True)}},
-                {'$West': {'sells': ('$M1', True, '$Nono')}}
-               ]
+                {'$West': {'sells': ('$M1', True, '$Nono')}},]
         iter_test(self, sents, ask, eval)
 
 
@@ -89,36 +80,51 @@ class EvaluationOfFOLSentences(unittest.TestCase):
     def setUp(self):
         self.rep = Representation()
         self.tests = load_sentences('eval_fol.txt')
-        
+    
     def test_eval_icond(self):
-        ask = ['scum[$West,u=1] && good[$West,u=0]']
-        for s in self.tests[0]:
-            self.rep.tell(s)
-        self.assertIs(self.rep.ask(ask[0],single=True), True)
-        
-    def test_eval_impl(self):
-        num = [1, 2]
-        results = [False, True]
+        num = [0,10]
+        results = [True,False]
+        assert_this = ['$West','$West']
         tests = [test for x, test in enumerate(self.tests) if x in num]
         for x, test in enumerate(tests):
             with self.subTest(sent='subtest {0}: {1}'.format(x,test[0])):
-                for s in test[1:]:
+                for s in test:
                     self.rep.tell(s)
-                ori, comp, hier = parse_sent(test[0])
-                proof = LogSentence(ori, comp, hier)
-                proof(self.rep, '$West')
-                self.assertIs(proof.result, results[x])
+                self.assertIs(self.rep.ask(test[0],single=True), results[x])
+    
+    def test_eval_impl(self):
+        num = [1,2,3,4,5]
+        results = [None,True,True,False,True]
+        assert_this = ['$West','$West','$West','$West','$West']
+        tests = [test for x, test in enumerate(self.tests) if x in num]
+        self.check(tests, assert_this, results)
         
+    
     def test_eval_equiv(self):
-        pass
+        num = [6,7,8,9]
+        results = [None,False,True,True]
+        assert_this = ['$West','$West','$West','$West']
+        tests = [test for x, test in enumerate(self.tests) if x in num]
+        self.check(tests, assert_this, results)
     
     def test_eval_or(self):
         pass
     
     def test_eval_and(self):
         pass
+    
+    def check(self, tests, assert_this, results):
+        for x, test in enumerate(tests):
+            #print('\n===== SUBTEST =====')
+            #print('subtest',x,'|',test,'\n')
+            with self.subTest(sent='subtest {0}: {1}'.format(x,test[0])):
+                for s in test[1:]:
+                    self.rep.tell(s)
+                ori, comp, hier = parse_sent(test[0])
+                proof = LogSentence(ori, comp, hier)
+                proof(self.rep, assert_this[x])
+                self.assertIs(proof.result, results[x])
 
-@unittest.skip('')
 class LogicSentenceParsing(unittest.TestCase):
     
     def test_parse_predicate(self):
@@ -133,11 +139,9 @@ class LogicSentenceParsing(unittest.TestCase):
                             
         rep = Representation()
         sents = load_sentences('parse_predicate.txt')
-        objs = [
-                ('$Lucy', 'professor', 1),
+        objs = [('$Lucy', 'professor', 1),
                 ('$John', 'dean', 0),
-                (('$Bill', 'student', 1), ('$John', 'student', 1))
-               ]
+                (('$Bill', 'student', 1), ('$John', 'student', 1)),]
         failures = [3, 4, 5, 6]
         for x, sent in enumerate(sents):
             with self.subTest(sent='subtest {0}: {1}'.format(x,sent)):
@@ -156,11 +160,9 @@ class LogicSentenceParsing(unittest.TestCase):
         """Test parsing of functions."""
         
         sents = load_sentences('parse_function.txt')
-        eval = [
-                ([('$John', 1, '='), '$Lucy'], 'criticize'),
+        eval = [([('$John', 1, '='), '$Lucy'], 'criticize'),
                 ([('$analysis', 0, '>'), '$Bill'], 'takes'),
-                ([('$Bill', 1, '<'), '$Lucy'], 'sister'),
-               ]
+                ([('$Bill', 1, '<'), '$Lucy'], 'sister'),]
         failures = [3, 4]
         for x, sent in enumerate(sents):
             with self.subTest(sent='subtest {0}: {1}'.format(x,sent)):
@@ -175,14 +177,14 @@ class LogicSentenceParsing(unittest.TestCase):
         """Test parsing logic sentences with variables."""
         
         sents = load_sentences('parse_sentence_with_vars.txt')
-        objs = [('dean','professor'),
+        eval = [('dean','professor'),
                 ('professor','person'),
                 ('professor','dean','friend','knows'),
                 ('person','criticize','friend'),
                 ('american','weapon','sells','hostile','criminal'),
                 ('owns','missile','sells'),
                 ('missile','weapon'),
-                ('enemy','hostile')]        
+                ('enemy','hostile')]
         for x, sent in enumerate(sents):
             with self.subTest(sent='subtest {0}: {1}'.format(x,sent)):
                 ori, comp, hier = parse_sent(sent)
@@ -193,7 +195,7 @@ class LogicSentenceParsing(unittest.TestCase):
                           if isinstance(p,LogFunction)]
                 chk = [x[0] for x in preds if isinstance(x, tuple)]
                 chk.extend(p_func)
-                for obj in objs[x]:
+                for obj in eval[x]:
                     self.assertIn(obj, chk)
 
 if __name__ == "__main__":

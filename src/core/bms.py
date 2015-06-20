@@ -16,7 +16,6 @@ import datetime
 #   Recording subsystem
 # ===================================================================#
 
-
 class BmsWrapper(object):
     """Acts as a wrapper for the Belief Maintenance System for a given
     agent. 
@@ -153,7 +152,6 @@ class BeliefRecord(object):
 # ===================================================================#
 #   Maintenance subsystem
 # ===================================================================#
-
 
 def chk_const(bms, pred, pval):
     """Check what predicates are the cause of the inconsistency."""

@@ -31,6 +31,7 @@ between these objects.
 #
 # Make declaration, save_rules and inference work with categories.
 # Add 'belief maintenance system' functionality.
+# Refactor 'Particle' so different atoms are subclasses
 
 # ===================================================================#
 #   Imports and constants
@@ -786,7 +787,6 @@ class LogSentence(object):
             p.results = []
             if p.parent == -1:
                 self.start = p
-        """
         for p in iter(p for p in self.particles if p.cond == ':stub:'):
             for e in p.next:
                 e.depth = p.depth
@@ -794,7 +794,6 @@ class LogSentence(object):
                 if hasattr(self, 'start') and self.start is p:
                     self.start = e
             del p
-        """
 
     def new_test(self, form, depth, parent, part_id, syb):      
         form = form.replace(' ','').strip()
@@ -893,15 +892,10 @@ class Particle(object):
         #print(self, '// Key:'+str(key), '// Args:', args)
         if key[-1] == 103 and self.parent == -1:
             return
-        if key[-1] == 102 and self.cond and self.cond != ':stub:':
+        if key[-1] == 102 and self.cond :
             key.pop()
             self.results.append(args[0])
-        if self.cond == ':stub:':
-            if key[-1] == 102 or key[-1] == 103:
-                self.parent.solve(proof, ag, key, *args)
-            else:
-                self.next[0].solve(proof, ag, key, *args)
-        elif self.cond == ':icond:':
+        if self.cond == ':icond:':
             self.icond(proof, ag, key, *args)
         elif self.cond == ':implies:':
             self.impl(proof, ag, key, *args)
@@ -944,7 +938,7 @@ class Particle(object):
     
     def icond(self, proof, ag, key, *args):
         """Procedure for parsign indicative conditional assertions."""
-        current, next_ = len(self.results), None   
+        current, next_ = len(self.results), None 
         if current == 0:
             key.append(101)
             next_ = True
@@ -953,23 +947,28 @@ class Particle(object):
             next_ = True
         elif current == 1 and self.results[0] is False:
             # The left branch was false, so do not continue.
-            proof.result = False
+            if hasattr(proof, 'result') is False: 
+                proof.result = False
+            result = False
             key.append(103)
         else:
             # Substitution failed.
+            if hasattr(proof, 'result') is False: 
+                proof.result = None
+            result = None
             key.append(103)
-        if self.parent != -1 and next is None:
+        if self.parent != -1 and next_ is None:
             self.parent.solve(proof, ag, key, result)
         elif next_ is True:
             self.next[current].solve(proof, ag, key)
     
     def equiv(self, proof, ag, key, *args):
         """Procedure for solving equivalences."""
-        current, next_ = len(self.results), None
+        current, next_ = len(self.results), None 
         if current == 0:
             key.append(101)
             next_ = True
-        elif current == 1 and self.results[0] is True:
+        elif current == 1 and self.results[0] is not None:
             # If it's not a predicate, follow standard FOL
             # rules for equiv
             if self.next[1].cond != ':predicate:':
@@ -980,19 +979,19 @@ class Particle(object):
         elif current > 1:
             # The second term of the implication was complex
             # check the result of it's substitution
-            if (self.results[0] and self.results[1]) is None:
-                result = None, None
+            if self.results[1] is None:
+                proof.result, result = None, None
             elif self.results[0] == self.results[1]:
                 proof.result, result = True, True
             else:
                 if hasattr(proof, 'result') is False:
-                    proof.result = True
-                result = True
+                    proof.result = False
+                result = False
             key.append(103)
         else:
-            # Not known solution.
+            # Not known solution.      
+            proof.result, result = None, None
             key.append(103)
-            result = None
         if self.parent != -1 and next_ is None:
             self.parent.solve(proof, ag, key, result)
         elif next_ is True:
@@ -1004,23 +1003,17 @@ class Particle(object):
         if current == 0:
             key.append(101)
             next_ = True
-        elif current == 1 and self.results[0] is True:
+        elif current == 1 and self.results[0] is not None:
             # If it's not a predicate, follow standard FOL
             # rules for implication
-            if self.next[1].cond != ':predicate:':
-                key.append(101)
-            else:
-                key.append(100)
+            if self.next[1].cond != ':predicate:': key.append(101)
+            elif self.results[0] is True: key.append(100)
             next_ = True
-        elif current == 1 and self.results[0] is False:
-            # The left branch was false, so do not continue.
-            proof.result, result = False, False
-            key.append(103)
-        elif current > 1:            
+        elif current > 1:
             # The second term of the implication was complex
             # check the result of it's substitution
             if (self.results[0] and self.results[1]) is None:
-                result = None, None
+                proof.result, result = None, None
             elif self.results[0] is True and self.results[1] is False:
                 proof.result, result = False, False
             else:
@@ -1031,7 +1024,7 @@ class Particle(object):
         else:
             # Not known solution.
             key.append(103)
-            result = None
+            proof.result, result = None, None
         if self.parent != -1 and next_ is None:
             self.parent.solve(proof, ag, key, result)
         elif next_ is True:
@@ -1042,15 +1035,17 @@ class Particle(object):
         parent = None
         if key[-1] == 101:
             parent = True
-            key.append(102)
             # Two branches finished, check if both are true.
             if (left_branch and right_branch) is None: result = None           
-            elif left_branch == right_branch: result = True       
+            elif left_branch == right_branch and left_branch is True:
+                result = True       
             else: result = False
+            key.append(102)
         elif key[-1] == 100:
             # Test if this conjunction fails
             if (left_branch and right_branch) is None: return None
-            if left_branch == right_branch: return True
+            elif left_branch == right_branch and left_branch is True:
+                result = True
             else: return False
         if self.parent != -1 and parent is not None:
             self.parent.solve(proof, ag, key, result)
@@ -1064,12 +1059,16 @@ class Particle(object):
             key.append(102)
             # Two branches finished, check if both are true.            
             if (left_branch and right_branch) is None: result = None
-            elif left_branch != right_branch: result = True           
+            elif left_branch != right_branch or \
+            (left_branch and right_branch) is True: 
+                result = True         
             else: result = False
         elif key[-1] == 100:
             # Test if this disjunction fails
             if (left_branch and right_branch) is None: return None
-            elif left_branch != right_branch: return True
+            elif left_branch != right_branch or \
+            (left_branch and right_branch) is True: 
+                result = True
             else: return False
         if self.parent != -1 and parent is not None:
             self.parent.solve(proof, ag, key, result)
@@ -1506,29 +1505,4 @@ class SubstRepr(Representation):
                 #
                 #
                 pass
-
-if __name__ == '__main__':
-    
-    def load_sentences(test, path):
-        logic_test = os.path.join(path, 'knowledge_base', test)
-        ls, sup_ls = [], []
-        with open(logic_test, 'r') as f:
-            for line in f:
-                if line[0] == '#': pass
-                elif line.strip() == '{':
-                    sup_ls, ls = ls, list()
-                elif line.strip() == '}':
-                    sup_ls.append(ls)
-                    ls = sup_ls
-                else: ls.append(line.strip())
-        return ls
-    
-    path = '/home/nacho/dev/workspace/simag/tests'
-    test = 'eval_fol.txt'
-    sents = load_sentences(test, path)
-    r = Representation()
-    for s in sents[0]:
-        r.tell(s)
-    result = r.ask('scum[$West,u=1] && good[$West,u=0]', single=True)
-    print(result)
 

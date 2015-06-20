@@ -1,16 +1,18 @@
-# Test 1.1/00 -> Evaluate an indicative conditional statement
+# Test 1.0/00 -> Evaluate an indicative conditional statement
+# If the first branch is true then the second must be true
 {	
 	drugDealer[$West,u=1] |> scum[$West,u=1] && good[$West,u=0]
 	#
 	drugDealer[$West,u=1]
 }
-# Test 2.0/01 -> Evaluate a material implication statement
+# Test 2 => Evaluate a material implication statement
+# Test 2.0/01 -> Cannot be solved: None
 {
 	drugDealer[$West,u=1] => scum[$West,u=1] && good[$West,u=0]
 	#
-	drugDealer[$West,u=0]
+	drugDealer[$West,u=1]
 }
-# Test 2.1/03 -> Evaluate a material implication statement
+# Test 2.1/02 -> True (true => true)
 {
 	drugDealer[$West,u=1] => scum[$West,u=1] && good[$West,u=0]
 	#
@@ -18,3 +20,70 @@
 	scum[$West,u=1]
 	good[$West,u=0]
 }
+# Test 2.2/03 -> True (false => true)
+{
+	drugDealer[$West,u=1] => scum[$West,u=1] && good[$West,u=0]
+	#
+	drugDealer[$West,u=0]
+	scum[$West,u=1]
+	good[$West,u=0]
+}
+# Test 2.3/04 -> false (true => false)
+{
+	drugDealer[$West,u=1] => scum[$West,u=1] && good[$West,u=0]
+	#
+	drugDealer[$West,u=1]
+	scum[$West,u=0]
+	good[$West,u=1]
+}
+# Test 2.4/05 -> true (false => false)
+{
+	drugDealer[$West,u=1] => scum[$West,u=1] && good[$West,u=0]
+	#
+	drugDealer[$West,u=0]
+	scum[$West,u=0]
+	good[$West,u=1]
+}
+# Test 3 => Evaluate an equivalence (IFF) statements
+# Test 3.0/06 ->  Cannot be solved: None (none <=> true)
+{
+	drugDealer[$West,u=1] <=> scum[$West,u=1] && good[$West,u=0]
+	#
+	scum[$West,u=1]
+	good[$West,u=0]
+}
+# Test 3.1/07 -> Is false (false <=> true )
+{
+	drugDealer[$West,u=1] <=> scum[$West,u=1] && good[$West,u=0]
+	#
+	scum[$West,u=1]
+	good[$West,u=0]
+	drugDealer[$West,u=0]
+}
+# Test 3.2/08 -> Is true ( true <=> true )
+{
+	drugDealer[$West,u=1] <=> scum[$West,u=1] && good[$West,u=0]
+	#
+	scum[$West,u=1]
+	good[$West,u=0]
+	drugDealer[$West,u=1]
+}
+# Test 3.3/09 -> Is true ( false <=> false )
+{
+	drugDealer[$West,u=1] <=> scum[$West,u=1] && good[$West,u=0]
+	#
+	scum[$West,u=0]
+	good[$West,u=1]
+	drugDealer[$West,u=0]
+}
+# Test 1.1/10 -> Evaluate an indicative conditional statement
+# If the first is false, do not continue
+{	
+	drugDealer[$West,u=1] |> scum[$West,u=1] && good[$West,u=0]
+	#
+	drugDealer[$West,u=0]
+}
+# Test 4 => Evaluate logical disjunction
+#
+# Test 5 => Evaluate logical conjunction
+#
