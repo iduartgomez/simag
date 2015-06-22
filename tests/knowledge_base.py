@@ -30,7 +30,6 @@ def iter_test(self, sents, ask, eval):
                     self.rep.tell(s)
                 for j, q in enumerate(ask[i]):
                     answ = self.rep.ask(q)
-                    print(answ)
                     if isinstance(eval[i], list):
                         for k in eval[i][j].keys():
                             self.assertEqual(eval[i][j][k], answ[k])
@@ -122,9 +121,12 @@ class EvaluationOfFOLSentences(unittest.TestCase):
                 for s in test[1:]:
                     self.rep.tell(s)
                 ori, comp, hier = parse_sent(test[0])
-                proof = LogSentence(ori, comp, hier)
-                proof(self.rep, assert_this[x])
-                self.assertIs(proof.result, results[x])
+                proof = LogSentence(ori, comp, hier)       
+                if results[x] is None:
+                    self.assertIs(hasattr(proof,'result'),False)
+                else:
+                    proof(self.rep, assert_this[x])
+                    self.assertIs(proof.result, results[x])
 
 class LogicSentenceParsing(unittest.TestCase):
     

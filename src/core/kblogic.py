@@ -119,12 +119,13 @@ class Representation(object):
         that ask.
         """
         inf_proc = Inference(self, parse_sent(sent)[1])
+        self.inf = inf_proc
         if single is True:
             for answ in inf_proc.results.values():
                 for pred in answ.values():
                     if pred is False: return False
                     if pred is None: return None
-            return True
+            return True        
         return inf_proc.results
 
     def declare(self, sent, save=False):
@@ -952,8 +953,6 @@ class Particle(object):
             key.append(103)
         else:
             # Substitution failed.
-            if hasattr(proof, 'result') is False: 
-                proof.result = None
             result = None
             key.append(103)
         if self.parent != -1 and next_ is None:
@@ -979,7 +978,7 @@ class Particle(object):
             # The second term of the implication was complex
             # check the result of it's substitution
             if self.results[1] is None:
-                proof.result, result = None, None
+                result = None
             elif self.results[0] == self.results[1]:
                 proof.result, result = True, True
             else:
@@ -989,7 +988,7 @@ class Particle(object):
             key.append(103)
         else:
             # Not known solution.      
-            proof.result, result = None, None
+            result = None
             key.append(103)
         if self.parent != -1 and next_ is None:
             self.parent.solve(proof, ag, key, result)
@@ -1012,7 +1011,7 @@ class Particle(object):
             # The second term of the implication was complex
             # check the result of it's substitution
             if (self.results[0] and self.results[1]) is None:
-                proof.result, result = None, None
+                result = None
             elif self.results[0] is True and self.results[1] is False:
                 proof.result, result = False, False
             else:
@@ -1023,7 +1022,7 @@ class Particle(object):
         else:
             # Not known solution.
             key.append(103)
-            proof.result, result = None, None
+            result = None
         if self.parent != -1 and next_ is None:
             self.parent.solve(proof, ag, key, result)
         elif next_ is True:
@@ -1142,9 +1141,9 @@ class Particle(object):
                 ag.bmsWrapper.check(pred)
                 pred[1][1] = float(u[1:])
                 ag.up_memb(pred)
-            if key[-1] == 103 and hasattr(proof, 'result'):                
+            if key[-1] == 100 and hasattr(proof, 'result'):                
                 proof.result.append(pred)
-            elif key[-1] == 103:
+            elif key[-1] == 100:
                 proof.result = [pred]
 
     def __str__(self):
@@ -1203,7 +1202,7 @@ class Inference(object):
         """
         
         def chk_result():
-            if var[0] == '$':                
+            if var[0] == '$':               
                 try: ctgs = self.subkb.individuals[var].get_cat()
                 except KeyError: return None
                 else:
@@ -1211,7 +1210,7 @@ class Inference(object):
                         val = ctgs[pred[0]]
                         qval = float(pred[1][2:])
                         if pred[1][1] == '=' and val == qval:
-                            return True 
+                            return True
                         elif pred[1][1] == '<' and val < qval:
                             return True
                         elif pred[1][1] == '>' and val > qval:
@@ -1239,6 +1238,7 @@ class Inference(object):
         self.subkb = SubstRepr(self.kb, self.obj_dic)
         # Start inference process
         self.results = dict()
+        run = 'result: {0}, updated: {1} // rerun: {2}'
         for var, preds in self.query.items():
             if var in self.vrs:
                 # It's a variable, find every object that fits the criteria
@@ -1247,14 +1247,19 @@ class Inference(object):
                 print("It's a variable")
             else:
                 self.results[var] = {}
-                for pred in preds:
+                for pred in preds:                    
                     self.actv_q, result = (var, pred[0]), None
                     k, self.updated = True, list()
+                    print('\nquery: {0}'.format(self.actv_q))
                     while result is not True  and k is True:
-                        chk, done = list(), list()                        
+                        # Run the query, if there is no result and there is
+                        # an update, then rerun it again, else stop
+                        chk, done = list(), list()              
                         result = self.chain(pred[0], chk, done)
-                        k = True if True in self.updated else False
+                        k = True if True in self.updated else False            
+                        print(run.format(result, self.updated ,k ))
                         self.updated = list()
+                    # Update the result from the subtitution repr
                     self.results[var][pred[0]] = chk_result()
     
     def chain(self, p, chk, done):
@@ -1302,7 +1307,7 @@ class Inference(object):
                     break
                 args.append(x)
             return args
-
+        
         mapped = self.map_vars(node)
         i, j = len(node.subs), len(mapped)
         if mapped is not False:
@@ -1314,7 +1319,7 @@ class Inference(object):
                 if key in self.queue[node]['neg'] and self.updated is True:
                     node.rule(self.subkb, args)
                     res = hasattr(node.rule, 'result')
-                    if res is True and (node.rule.result is not False):
+                    if res is True and node.rule.result is not False:
                         self.updated.append(True)
                         add_ctg()
                         del node.rule.result
@@ -1325,7 +1330,7 @@ class Inference(object):
                 and (key not in self.queue[node]['neg']):
                     node.rule(self.subkb, args)
                     res = hasattr(node.rule, 'result')
-                    if res is True and (node.rule.result is not False):
+                    if res is True and node.rule.result is not False:
                         self.updated.append(True)
                         add_ctg()
                         del node.rule.result
@@ -1504,5 +1509,33 @@ class SubstRepr(Representation):
                 # It's a class
                 #
                 #
-                pass
+                print("It's a class. Subtitute repr make")
 
+
+if __name__ == '__main__':
+    import os
+    def load_sentences(test, path):
+        logic_test = os.path.join(path, 'knowledge_base', test)
+        ls, sup_ls = [], []
+        with open(logic_test, 'r') as f:
+            for line in f:
+                if line.strip()[0] == '#': pass
+                elif line.strip() == '{':
+                    sup_ls, ls = ls, list()
+                elif line.strip() == '}':
+                    sup_ls.append(ls)
+                    ls = sup_ls
+                else: ls.append(line.strip())
+        return ls    
+
+    path = '/home/nacho/dev/workspace/simag/tests'
+    test = 'ask_pred.txt'
+    sents = load_sentences(test, path)
+    r = Representation()
+    for s in sents[3]:
+        r.tell(s)
+    q1 = 'person[$Lucy,u=1] && person[$John,u=1]'
+    q2 = 'criminal[$West,u=1]'
+    result = r.ask(q2, single=False)
+    print('\n==== RESULTS ====')
+    print(result)
