@@ -119,7 +119,6 @@ class Representation(object):
         that ask.
         """
         inf_proc = Inference(self, parse_sent(sent)[1])
-        self.inf = inf_proc
         if single is True:
             for answ in inf_proc.results.values():
                 for pred in answ.values():
@@ -1188,7 +1187,6 @@ class Inference(object):
         self.kb = kb
         self.vrs = {}
         self.nodes = {}
-        self.queue = {}
         self.infer_facts(*args)
 
     def infer_facts(self, comp):
@@ -1237,27 +1235,28 @@ class Inference(object):
         # Create a new, filtered and temporal, work KB
         self.subkb = SubstRepr(self.kb, self.obj_dic)
         # Start inference process
-        self.results = dict()
-        run = 'result: {0}, updated: {1} // rerun: {2}'
+        self.results = dict()        
         for var, preds in self.query.items():
             if var in self.vrs:
                 # It's a variable, find every object that fits the criteria
                 # 
                 #
                 print("It's a variable")
-            else:
-                self.results[var] = {}
-                for pred in preds:                    
+            else:                
+                self.results[var] = {}                
+                for pred in preds:
+                    self.node_tracker()           
                     self.actv_q, result = (var, pred[0]), None
-                    k, self.updated = True, list()
+                    k, self.updated = True, list()                    
                     print('\nquery: {0}'.format(self.actv_q))
                     while result is not True  and k is True:
                         # Run the query, if there is no result and there is
                         # an update, then rerun it again, else stop
                         chk, done = list(), list()              
                         result = self.chain(pred[0], chk, done)
-                        k = True if True in self.updated else False            
-                        print(run.format(result, self.updated ,k ))
+                        k = True if True in self.updated else False
+                        #run = 'result: {0}, updated: {1} // rerun: {2}'
+                        #print(run.format(result, self.updated ,k ))
                         self.updated = list()
                     # Update the result from the subtitution repr
                     self.results[var][pred[0]] = chk_result()
@@ -1402,11 +1401,20 @@ class Inference(object):
             else:
                 pred = cons[0]
             node = self.InferNode(nc, ants, pred, rule)
-            self.queue[node] = {'neg': set(), 'pos': set()}
             if node.cons in self.nodes:
                 self.nodes[node.cons].append(node)
             else:
                 self.nodes[node.cons] = [node]
+
+    def node_tracker(self):
+        if hasattr(self, 'queue') is False:
+            self.queue = dict()
+            for query in self.nodes.values():
+                for node in query:
+                    self.queue[node] = {'neg': set(), 'pos': set()}
+        else:
+            for node in query:
+                self.queue[node] = {'neg': set(), 'pos': set()}
 
     def get_query(self, comp):
 
@@ -1514,6 +1522,7 @@ class SubstRepr(Representation):
 
 if __name__ == '__main__':
     import os
+    
     def load_sentences(test, path):
         logic_test = os.path.join(path, 'knowledge_base', test)
         ls, sup_ls = [], []
@@ -1532,10 +1541,12 @@ if __name__ == '__main__':
     test = 'ask_pred.txt'
     sents = load_sentences(test, path)
     r = Representation()
-    for s in sents[3]:
+    for s in sents[1]:
         r.tell(s)
-    q1 = 'person[$Lucy,u=1] && person[$John,u=1]'
-    q2 = 'criminal[$West,u=1]'
-    result = r.ask(q2, single=False)
+    ask1 = ['professor[$Lucy,u=1]','person[$John,u=1]']
+    ask2 = ['person[$John,u=1]','professor[$Lucy,u=1]']
     print('\n==== RESULTS ====')
-    print(result)
+    for q in ask1:
+        result = r.ask(q, single=False)
+        print(result)    
+    

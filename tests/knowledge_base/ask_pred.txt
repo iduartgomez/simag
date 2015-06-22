@@ -9,7 +9,7 @@
 	:vars:x: (dean[x,u=1] |> professor[x,u=1])
 	:vars:x: (professor[x,u=1] |> person[x,u=1])
 }
-# Test 1.3/02: complex ask
+# Test 1.3/02: complex ask / answer: 
 {
 	professor[$Lucy,u=1]
 	dean[$John,u=1]

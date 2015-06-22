@@ -24,7 +24,8 @@ def load_sentences(test):
 
 def iter_test(self, sents, ask, eval):
     for i, test in enumerate(sents):
-        with self.subTest(test='subtest {0}: {1}'.format(i,test)):
+        print('\n==========')
+        with self.subTest(test='subtest {0}: {1}'.format(i,ask[i])):
             if isinstance(test, list):
                 for s in test:
                     self.rep.tell(s)
@@ -54,13 +55,13 @@ class AskReprGetAnswer(unittest.TestCase):
     
     def test_ask_pred(self):
         sents = load_sentences('ask_pred.txt')
-        ask = [['professor[$Lucy,u=1] && person[$Lucy,u=0]'],
+        ask = [['professor[$Lucy,u=1] && person[$Lucy,u=1]'],
                ['professor[$Lucy,u=1]', 'person[$John,u=1]'],
                ['professor[$Lucy,u=1] && person[$Lucy,u=0]'],
                ['criminal[$West,u=1]'],]
         eval = [{'$Lucy': {'professor': True, 'person': None}},
-                [{'$John': {'professor': True}},{'$John': {'person': True}}],
-                {'$Lucy': {'professor': True, 'person': True}},
+                [{'$Lucy': {'professor': True}},{'$John': {'person': True}}],
+                {'$Lucy': {'professor': True, 'person': False}},
                 {'$West': {'criminal': True}},]
         iter_test(self, sents, ask, eval)
     
@@ -74,8 +75,8 @@ class AskReprGetAnswer(unittest.TestCase):
                 {'$John': {'friend': ('$Lucy', True)}},
                 {'$West': {'sells': ('$M1', True, '$Nono')}},]
         iter_test(self, sents, ask, eval)
-
-
+        
+@unittest.skip('')
 class EvaluationOfFOLSentences(unittest.TestCase):
     
     def setUp(self):
