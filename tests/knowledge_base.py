@@ -122,7 +122,7 @@ class EvaluationOfFOLSentences(unittest.TestCase):
                 for s in test[1:]:
                     self.rep.tell(s)
                 ori, comp, hier = parse_sent(test[0])
-                proof = LogSentence(ori, comp, hier)       
+                proof = make_logic_sent(ori, comp, hier)     
                 if results[x] is None:
                     self.assertIs(hasattr(proof,'result'),False)
                 else:
@@ -192,7 +192,7 @@ class LogicSentenceParsing(unittest.TestCase):
         for x, sent in enumerate(sents):
             with self.subTest(sent='subtest {0}: {1}'.format(x,sent)):
                 ori, comp, hier = parse_sent(sent)
-                lg_sent = LogSentence(ori, comp, hier)
+                lg_sent = make_logic_sent(ori, comp, hier)
                 preds = lg_sent.get_pred(conds=gr_conds)
                 preds.extend(lg_sent.get_pred(branch='r',conds=gr_conds))
                 p_func = [p.func for p in preds \

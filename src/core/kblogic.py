@@ -29,7 +29,7 @@ between these objects.
 # TO DO: Optimize chaining algorithm further: in functions it can check 
 # wether the argument position fits or not before trying to solve it.
 #
-# Make declaration, save_rules and inference work with categories.
+# Make declaration, save_rules and inference work with classes.
 # Add 'belief maintenance system' functionality.
 # Refactor 'Particle' so different atoms are subclasses
 
@@ -101,7 +101,7 @@ class Representation(object):
                 self.declare(par_form)
             else:
                 # It's a complex sentence with various predicates/funcs
-                sent = LogSentence(ori, comp, hier)
+                sent = make_logic_sent(ori, comp, hier)
                 if sent.validity is True or sent.validity is None:
                     del sent.validity
                     self.save_rule(sent)
@@ -111,7 +111,7 @@ class Representation(object):
                     raise AssertionError(msg)
         else:
             # It's a complex sentence with variables
-            sent = LogSentence(ori, comp, hier)
+            sent = make_logic_sent(ori, comp, hier)
             self.add_cog(sent)
     
     def ask(self, sent, single=False):
@@ -716,12 +716,10 @@ class LogSentence(object):
     2) n strins which will subsitute the variables in the sentence
        or a list of string.
     """
-    def __init__(self, ori, comp, hier):
+    def __init__(self):
         self.depth = 0
         self.var_order = []
         self.particles = []
-        self.make_parts(ori, comp, hier)
-        self.connect_parts()
 
     def __call__(self, ag, *args):
         if isinstance(args[0], list):
@@ -746,85 +744,6 @@ class LogSentence(object):
             ag.bmsWrapper.register(self, stop=True)
         else:
             return
-
-    def make_parts(self, ori, comp, hier, depth=0):
-        form = comp[ori]
-        childs = hier[ori]['childs']
-        parent = hier[ori]['parent']
-        self.new_test(form, depth, parent, ori, childs)
-        depth += 1
-        for child in childs:
-            syb = hier[child]['childs']
-            if syb != -1:
-                self.make_parts(child, comp, hier, depth)
-            else:
-                form = comp[child]
-                parent = hier[child]['parent']
-                self.new_test(form, depth, parent, child, syb=[-1])
-
-    def connect_parts(self):
-        particles = []
-        icond = False
-        lvl = self.depth
-        while lvl > -1:
-            p = [part for part in self.particles if part.depth == lvl]
-            for part in p:
-                particles.append(part)
-                if part.cond == ':icond:':
-                    icond = part
-            lvl -= 1
-        self.particles = particles
-        for p in self.particles:
-            p.connect(self.particles)
-        # Check for illegal connectives for implicative cond sentences
-        self.validity = None
-        if icond is not False:
-            self.validity = self.get_ops(icond)
-        for p in self.particles:
-            del p.pID
-            p.sent = self
-            p.results = []
-            if p.parent == -1:
-                self.start = p
-        for p in iter(p for p in self.particles if p.cond == ':stub:'):
-            for e in p.next:
-                e.depth = p.depth
-                e.parent = p.parent
-                if hasattr(self, 'start') and self.start is p:
-                    self.start = e
-            del p
-
-    def new_test(self, form, depth, parent, part_id, syb):      
-        form = form.replace(' ','').strip()
-        cond = rgx_br.findall(form)
-        if depth > self.depth:
-            self.depth = depth
-        if len(cond) > 0:
-            self.particles.append(Particle(cond[0], depth, part_id,
-                                           parent, syb))
-        elif any(x in form for x in [':vars:', ':exists:']):
-            form = form.split(':')
-            cond = ':stub:'
-            for i, a in enumerate(form):
-                if a == 'vars':
-                    vars_ = form[i+1].split(',')
-                    for var in vars_:
-                        if var not in self.var_order:
-                            self.var_order.append(var)
-                    self.particles.append(Particle(cond, depth, part_id,
-                                                   parent, syb))
-        elif '[' in form:
-            cond = ':predicate:'
-            if '<' in form:
-                form = make_function(form, 'relation')
-            else:
-                form = tuple(rgx_ob.findall(form)[0].split('['))
-            self.particles.append(Particle(cond, depth, part_id,
-                                           parent, syb, form))
-        else:
-            cond = ':stub:'
-            self.particles.append(Particle(cond, depth, part_id,
-                                           parent, syb, form))
     
     def cln_res(self):
         for p in self.particles:
@@ -1161,6 +1080,92 @@ class Particle(object):
                     self.next[x] = part
                     self.next[x].parent = self
 
+def make_logic_sent(ori, comp, hier):
+    
+    def make_parts(ori, comp, hier, depth=0):
+        form = comp[ori]
+        childs = hier[ori]['childs']
+        parent = hier[ori]['parent']
+        new_atom(form, depth, parent, ori, childs)
+        depth += 1
+        for child in childs:
+            syb = hier[child]['childs']
+            if syb != -1:
+                make_parts(child, comp, hier, depth)
+            else:
+                form = comp[child]
+                parent = hier[child]['parent']
+                new_atom(form, depth, parent, child, syb=[-1])
+    
+    def new_atom(form, depth, parent, part_id, syb):      
+        form = form.replace(' ','').strip()
+        cond = rgx_br.findall(form)
+        if depth > sent.depth:
+            sent.depth = depth
+        if len(cond) > 0:
+            sent.particles.append(Particle(cond[0], depth, part_id,
+                                           parent, syb))
+        elif any(x in form for x in [':vars:', ':exists:']):
+            form = form.split(':')
+            cond = ':stub:'
+            for i, a in enumerate(form):
+                if a == 'vars':
+                    vars_ = form[i+1].split(',')
+                    for var in vars_:
+                        if var not in sent.var_order:
+                            sent.var_order.append(var)
+                    sent.particles.append(Particle(cond, depth, part_id,
+                                                   parent, syb))
+        elif '[' in form:
+            cond = ':predicate:'
+            if '<' in form:
+                form = make_function(form, 'relation')
+            else:
+                form = tuple(rgx_ob.findall(form)[0].split('['))
+            sent.particles.append(Particle(cond, depth, part_id,
+                                           parent, syb, form))
+        else:
+            cond = ':stub:'
+            sent.particles.append(Particle(cond, depth, part_id,
+                                           parent, syb, form))
+    
+    def connect_parts():
+        particles = []
+        icond = False
+        lvl = sent.depth
+        while lvl > -1:
+            p = [part for part in sent.particles if part.depth == lvl]
+            for part in p:
+                particles.append(part)
+                if part.cond == ':icond:':
+                    icond = part
+            lvl -= 1
+        sent.particles = particles
+        for p in sent.particles:
+            p.connect(sent.particles)
+        # Check for illegal connectives for implicative cond sentences
+        sent.validity = None
+        if icond is not False:
+            sent.validity = sent.get_ops(icond)
+        for p in sent.particles:
+            del p.pID
+            p.sent = sent
+            p.results = []
+            if p.parent == -1:
+                sent.start = p
+        for p in iter(p for p in sent.particles if p.cond == ':stub:'):
+            for e in p.next:
+                e.depth = p.depth
+                e.parent = p.parent
+                if hasattr(sent, 'start') and sent.start is p:
+                    sent.start = e
+            del p
+    
+    sent = LogSentence()
+    make_parts(ori, comp, hier,)
+    connect_parts()
+    return sent
+
 # ===================================================================#
 #   LOGIC INFERENCE                                                  #
 # ===================================================================#
@@ -1413,7 +1418,7 @@ class Inference(object):
                 for node in query:
                     self.queue[node] = {'neg': set(), 'pos': set()}
         else:
-            for node in query:
+            for node in self.query:
                 self.queue[node] = {'neg': set(), 'pos': set()}
 
     def get_query(self, comp):
@@ -1548,5 +1553,5 @@ if __name__ == '__main__':
     print('\n==== RESULTS ====')
     for q in ask1:
         result = r.ask(q, single=False)
-        print(result)    
-    
+        print(result)
+
