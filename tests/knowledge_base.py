@@ -22,7 +22,7 @@ def load_sentences(test):
             else: ls.append(line.strip())
     return ls
 
-def iter_test(self, sents, ask, eval):
+def iter_test(self, sents, ask, eval, single=False):
     for i, test in enumerate(sents):        
         with self.subTest(test='subtest {0}: {1}'.format(i,ask[i])):
             #print('\n===== SUBTEST =====')
@@ -31,13 +31,19 @@ def iter_test(self, sents, ask, eval):
                 for s in test:
                     self.rep.tell(s)
                 for j, q in enumerate(ask[i]):
-                    answ = self.rep.ask(q)
+                    answ = self.rep.ask(q,single=single)                    
                     if isinstance(eval[i], list):
-                        for k in eval[i][j].keys():
-                            self.assertEqual(eval[i][j][k], answ[k])
+                        if single is not True:
+                            for k in eval[i][j].keys():
+                                self.assertEqual(eval[i][j][k], answ[k])
+                        else:
+                            self.assertEqual(eval[i][j], answ)
                     else:
-                        for k in eval[i].keys():
-                            self.assertEqual(eval[i][k], answ[k])
+                        if single is not True:
+                            for k in eval[i].keys():
+                                self.assertEqual(eval[i][k], answ[k])
+                        else:
+                            self.assertEqual(eval[i], answ)
             else:
                 self.rep.tell(s)
                 for q in ask[i]:
@@ -60,22 +66,23 @@ class AskReprGetAnswer(unittest.TestCase):
                ['professor[$Lucy,u=1]', 'person[$John,u=1]'],
                ['professor[$Lucy,u>0] && person[$Lucy,u<1]'],
                ['criminal[$West,u=1]'],]
-        eval = [{'$Lucy': {'professor': True, 'person': None}},
+        """eval = [{'$Lucy': {'professor': True, 'person': None}},
                 [{'$Lucy': {'professor': True}},{'$John': {'person': True}}],
                 {'$Lucy': {'professor': True, 'person': False}},
-                {'$West': {'criminal': True}},]
-        iter_test(self, sents, ask, eval)
+                {'$West': {'criminal': True}},]"""
+        eval = [None, [True,True], False, True]
+        iter_test(self, sents, ask, eval, single=True)
     
-    @unittest.skip('Not ready')
     def test_ask_func(self):
         sents = load_sentences('ask_func.txt')
-        ask = [['<friend[$Lucy,u=0;$John]>'],
+        ask = [['<criticize[$John,u=1;$Lucy]>'],
                ['<friend[$Lucy,u=0;$John]>'],
                ['<sells[$M1,u=1;$West;$Nono]>'],]
-        eval = [{'$John': {'friend': ('$Lucy', None)}},
+        """eval = [{'$John': {'friend': ('$Lucy', None)}},
                 {'$John': {'friend': ('$Lucy', True)}},
-                {'$West': {'sells': ('$M1', True, '$Nono')}},]
-        iter_test(self, sents, ask, eval)
+                {'$West': {'sells': ('$M1', True, '$Nono')}},]"""
+        eval = [True,True,True]
+        iter_test(self, sents, ask, eval, single=True)
         
 
 class EvaluationOfFOLSentences(unittest.TestCase):

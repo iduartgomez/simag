@@ -1,15 +1,18 @@
-# Test 1.1/00: FOL forms w/ icond
+# Test 1.1/00:
 {
-	:vars:x: (dean[x,u=1] |> professor[x,u=1])
-	:vars:x: (professor[x,u=1] |> person[x,u=1])
-	:vars:x,y: (professor[x,u=1] && dean[y,u=1] => <friend[y,u=1;x]> || <knows[y,u=0;x]>)
-	:vars:x,y: (person[x,u=1] && person[y,u=1] && <criticize[y,u=1;x]> |> <friend[x,u=0;y]>)
+	professor[$Lucy,u=1]
+	dean[$John,u=1]
+	<criticize[$John,u=1;$Lucy]>	
 }
-# Test 1.2/01: predicates
+# Test 1.2/01:
 {
 	professor[$Lucy,u=1]
 	dean[$John,u=1]
 	<criticize[$John,u=1;$Lucy]>
+	:vars:x: (dean[x,u=1] |> professor[x,u=1])
+	:vars:x: (professor[x,u=1] |> person[x,u=1])	
+	:vars:x,y: (person[x,u=1] && person[y,u=1] && <criticize[y,u=1;x]> |> <friend[x,u=0;y]>)
+	#:vars:x,y: (professor[x,u=1] && dean[y,u=1] => <friend[y,u=1;x]> || <knows[y,u=0;x]>)
 }
 # Test 2/02
 {

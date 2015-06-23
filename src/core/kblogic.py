@@ -29,6 +29,9 @@ between these objects.
 # TO DO: Optimize chaining algorithm further: in functions it can check 
 # wether the argument position fits or not before trying to solve it.
 #
+# On ASK, fix it so it can deal with queries that ask about relations
+# of the same type with several objects.
+#
 # Make declaration, save_rules and inference work with classes.
 # Add 'belief maintenance system' functionality.
 # Refactor 'Particle' so different atoms are subclasses
@@ -1004,8 +1007,8 @@ class Particle(object):
             return s
         
         pclass = self.pred.__class__.__bases__[0]
-        if key[-1] == 101:            
-            if pclass is LogFunction:                
+        if key[-1] == 101:
+            if pclass is LogFunction:
                 # Check funct between a set/entity and other set/entity.
                 result = None
                 args = self.pred.get_args()
@@ -1210,22 +1213,28 @@ class Inference(object):
         
         def chk_result():
             if var[0] == '$':
-                try: ctgs = self.subkb.individuals[var].get_cat()
-                except KeyError: return None
+                if pclass is LogFunction:
+                    try: res = self.subkb.individuals[var].test_rel(pred)
+                    except KeyError: res = None
+                    #else: 
+                    #    args = pred.get_args()
+                    #    args.pop(args.index(var))
+                    #    args.append(res)
+                    #    res = args
+                    self.results[var][q] = res
                 else:
-                    if pred[0] in ctgs:
-                        val = ctgs[pred[0]]
-                        qval = float(pred[1][2:])
-                        if pred[1][1] == '=' and val == qval:
-                            return True
-                        elif pred[1][1] == '<' and val < qval:
-                            return True
-                        elif pred[1][1] == '>' and val > qval:
-                            return True
-                        else:
-                            return False
+                    try: ctgs = self.subkb.individuals[var].get_cat()
+                    except KeyError: res = None
                     else:
-                        return None
+                        if pred[0] in ctgs:
+                            val = ctgs[pred[0]]
+                            qval = float(pred[1][2:])
+                            if pred[1][1] == '=' and val == qval: res = True
+                            elif pred[1][1] == '<' and val < qval: res = True
+                            elif pred[1][1] == '>' and val > qval: res = True
+                            else: res = False
+                        else: res = None
+                    self.results[var][q] = res
             else:
                 # It's a class
                 #
@@ -1252,23 +1261,29 @@ class Inference(object):
                 #
                 print("It's a variable")
             else:
-                self.results[var] = {}                
-                for pred in preds:                    
-                    self.node_tracker()           
-                    self.actv_q, result = (var, pred[0]), None
-                    k, self.updated = True, list()                    
+                self.results[var] = {}
+                for pred in preds:
+                    pclass = pred.__class__.__bases__[0]
+                    self.rule_tracker()
+                    if pclass is LogFunction: 
+                        self.actv_q, q = (var, pred.func), pred.func
+                    else: 
+                        self.actv_q, q = (var, pred[0]), pred[0]             
+                    k, result, self.updated = True, None, list()                    
                     #print('query: {0}'.format(self.actv_q))
                     while result is not True  and k is True:
                         # Run the query, if there is no result and there is
                         # an update, then rerun it again, else stop
                         chk, done = list(), list()              
-                        result = self.chain(pred[0], chk, done)
+                        result = self.chain(q, chk, done)
                         k = True if True in self.updated else False
                         #run = 'result: {0}, updated: {1} // rerun: {2}'
                         #print(run.format(result, self.updated ,k ))
                         self.updated = list()
                     # Update the result from the subtitution repr
-                    self.results[var][pred[0]] = chk_result()
+                    chk_result()
+        for ind in self.subkb.individuals.values():
+            print(ind.relations)
     
     def chain(self, p, chk, done):
         if p in self.nodes:
@@ -1415,7 +1430,7 @@ class Inference(object):
             else:
                 self.nodes[node.cons] = [node]
 
-    def node_tracker(self):
+    def rule_tracker(self):
         if hasattr(self, 'queue') is False:
             self.queue = dict()
             for query in self.nodes.values():
@@ -1429,9 +1444,14 @@ class Inference(object):
 
         def break_pred():
             pr = rgx_ob.findall(p)[0].split('[')
-            if '<' in p[0]:
+            # It's a function
+            if '<' in p[0]:                
+                t = pr[1].split(';')
+                for x, obj in enumerate(t):
+                    t[x] = obj.split(',')[0]
                 func = make_function(p, 'relation')
-                return func
+                return (t, func)                
+            # It's a predicate
             if ';' in pr[1]:
                 t = pr[1].split(';')
                 if len(t) != 3:
@@ -1456,14 +1476,20 @@ class Inference(object):
             preds[i] = break_pred()
         terms, ctgs = {}, []
         for p in preds:
-            pclass = p.__class__.__bases__[0]
+            names, pclass = p[0], p[1].__class__.__bases__[0]
             if pclass is LogFunction:
-                ctgs.append(p.func)
-            elif p[0] not in terms.keys():
-                terms[p[0]] = [p[1]]
+                func = p[1]
+                ctgs.append(func.func)
+                for obj in names:
+                    if obj not in terms.keys():
+                        terms[obj] = [func]
+                    else:
+                        terms[obj].append(func)
+            elif names not in terms.keys():
+                terms[names] = [p[1]]
                 ctgs.append(p[1][0])
             else:
-                terms[p[0]].append(tuple(p[1]))
+                terms[names].append(tuple(p[1]))
                 ctgs.append(p[1][0])
         self.query, self.ctgs = terms, ctgs
 
@@ -1547,15 +1573,14 @@ if __name__ == '__main__':
         return ls    
 
     path = '/home/nacho/dev/workspace/simag/tests'
-    test = 'ask_pred.txt'
+    test = 'ask_func.txt'
     sents = load_sentences(test, path)
     r = Representation()
     for s in sents[1]:
         r.tell(s)
-    ask1 = ['person[$Lucy,u=1]','person[$John,u=1]']
-    ask2 = ['person[$John,u=1]','person[$Lucy,u=1]']
+    ask1 = ['<friend[$Lucy,u=0;$John]>']
     results = []
-    for q in ask2:
+    for q in ask1:
         results.append(r.ask(q, single=False))
     print('\n==== RESULTS ====')
     for r in results:
