@@ -1235,7 +1235,7 @@ class Inference(object):
         # Parse the query
         self.get_query(comp)
         # Get relevant rules to infer the query
-        self.rules = set()
+        self.rules, self.done = set(), [None]
         while hasattr(self, 'ctgs'):
             try: self.get_rules()
             except NoSolutionError: pass
@@ -1253,11 +1253,11 @@ class Inference(object):
                 print("It's a variable")
             else:
                 self.results[var] = {}                
-                for pred in preds:
+                for pred in preds:                    
                     self.node_tracker()           
                     self.actv_q, result = (var, pred[0]), None
                     k, self.updated = True, list()                    
-                    #print('\nquery: {0}'.format(self.actv_q))
+                    #print('query: {0}'.format(self.actv_q))
                     while result is not True  and k is True:
                         # Run the query, if there is no result and there is
                         # an update, then rerun it again, else stop
@@ -1363,13 +1363,11 @@ class Inference(object):
         else:
             return False
 
-    def get_rules(self, done=[None]):
-        if len(self.ctgs) > 0:
-            c = self.ctgs.pop()
-        else:
-            c = None
+    def get_rules(self):
+        if len(self.ctgs) > 0: c = self.ctgs.pop()
+        else: c = None
         if c is not None:
-            done.append(c)            
+            self.done.append(c)            
             try:
                 chk_rules = set(self.kb.classes[c]['cog'])
                 chk_rules = chk_rules.difference(self.rules)
@@ -1382,7 +1380,7 @@ class Inference(object):
                     if type(y) == tuple: nc.append(y[0])
                     else: nc.append(y.func)
                 self.mk_nodes(nc, preds, sent, 'right')
-                nc2 = [e for e in nc if e not in done and e not in self.ctgs]
+                nc2 = [e for e in nc if e not in self.done and e not in self.ctgs]
                 self.ctgs.extend(nc2)
                 if c in nc:
                     preds = sent.get_pred(branch='right', conds=gr_conds)
@@ -1391,14 +1389,15 @@ class Inference(object):
                         if type(y) == tuple: nc.append(y[0])
                         else: nc.append(y.func)
                     self.mk_nodes(nc, preds, sent, 'left')
-                    nc2 = [e for e in nc if e not in done \
+                    nc2 = [e for e in nc if e not in self.done \
                            and e not in self.ctgs]
                     self.ctgs.extend(nc2)
             self.rules = self.rules.union(chk_rules)
-            self.get_rules(done)
+            self.get_rules()
         else:
-            done.pop(0)
-            self.chk_cats = set(done)
+            self.done.pop(0)
+            self.chk_cats = set(self.done)
+            del self.done
             del self.rules
             del self.ctgs
 
@@ -1553,10 +1552,10 @@ if __name__ == '__main__':
     r = Representation()
     for s in sents[1]:
         r.tell(s)
-    ask1 = ['professor[$Lucy,u=1]','person[$John,u=1]']
-    ask2 = ['person[$John,u=1]','professor[$Lucy,u=1]']
+    ask1 = ['person[$Lucy,u=1]','person[$John,u=1]']
+    ask2 = ['person[$John,u=1]','person[$Lucy,u=1]']
     results = []
-    for q in ask1:
+    for q in ask2:
         results.append(r.ask(q, single=False))
     print('\n==== RESULTS ====')
     for r in results:
