@@ -23,9 +23,10 @@ def load_sentences(test):
     return ls
 
 def iter_test(self, sents, ask, eval):
-    for i, test in enumerate(sents):
-        print('\n==========')
+    for i, test in enumerate(sents):        
         with self.subTest(test='subtest {0}: {1}'.format(i,ask[i])):
+            #print('\n===== SUBTEST =====')
+            #print('subtest',x,'|',test,'\n')
             if isinstance(test, list):
                 for s in test:
                     self.rep.tell(s)
@@ -57,7 +58,7 @@ class AskReprGetAnswer(unittest.TestCase):
         sents = load_sentences('ask_pred.txt')
         ask = [['professor[$Lucy,u=1] && person[$Lucy,u=1]'],
                ['professor[$Lucy,u=1]', 'person[$John,u=1]'],
-               ['professor[$Lucy,u=1] && person[$Lucy,u=0]'],
+               ['professor[$Lucy,u>0] && person[$Lucy,u<1]'],
                ['criminal[$West,u=1]'],]
         eval = [{'$Lucy': {'professor': True, 'person': None}},
                 [{'$Lucy': {'professor': True}},{'$John': {'person': True}}],
@@ -76,22 +77,21 @@ class AskReprGetAnswer(unittest.TestCase):
                 {'$West': {'sells': ('$M1', True, '$Nono')}},]
         iter_test(self, sents, ask, eval)
         
-@unittest.skip('')
+
 class EvaluationOfFOLSentences(unittest.TestCase):
     
     def setUp(self):
-        self.rep = Representation()
         self.tests = load_sentences('eval_fol.txt')
     
     def test_eval_icond(self):
         num = [0,10]
-        results = [True,False]
-        assert_this = ['$West','$West']
+        results = [True,None]
         tests = [test for x, test in enumerate(self.tests) if x in num]
         for x, test in enumerate(tests):
+            self.rep = Representation()
             with self.subTest(sent='subtest {0}: {1}'.format(x,test[0])):
-                for s in test:
-                    self.rep.tell(s)
+                for y, s in enumerate(test):
+                    if y > 0: self.rep.tell(s)
                 self.assertIs(self.rep.ask(test[0],single=True), results[x])
     
     def test_eval_impl(self):
@@ -116,6 +116,7 @@ class EvaluationOfFOLSentences(unittest.TestCase):
     
     def check(self, tests, assert_this, results):
         for x, test in enumerate(tests):
+            self.rep = Representation()
             #print('\n===== SUBTEST =====')
             #print('subtest',x,'|',test,'\n')
             with self.subTest(sent='subtest {0}: {1}'.format(x,test[0])):

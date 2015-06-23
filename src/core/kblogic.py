@@ -99,7 +99,7 @@ class Representation(object):
             if '[' in par_form and len(comp) == 1:
                 # It's a predicate
                 self.declare(par_form)
-            else:
+            elif any(symb in par_form for symb in gr_conds):
                 # It's a complex sentence with various predicates/funcs
                 sent = make_logic_sent(ori, comp, hier)
                 if sent.validity is True or sent.validity is None:
@@ -109,6 +109,10 @@ class Representation(object):
                     msg = "Illegal connectives used in the consequent " \
                         + " of an indicative conditional sentence."
                     raise AssertionError(msg)
+            else:
+                msg = "No indicative conditional, implication or " \
+                "equality found."
+                raise AssertionError(msg)
         else:
             # It's a complex sentence with variables
             sent = make_logic_sent(ori, comp, hier)
@@ -300,7 +304,7 @@ class Representation(object):
         subrpr = SubstRepr(self, obj_dic)
         for ind in subrpr.individuals.keys():
             proof(subrpr, ind)
-            del proof.result
+            if hasattr(proof,'result'): del proof.result
         self.push(subrpr)
 
     def inds_by_cat(self, ctgs):
@@ -744,15 +748,11 @@ class LogSentence(object):
             ag.bmsWrapper.register(self, stop=True)
         else:
             return
-    
-    def cln_res(self):
-        for p in self.particles:
-            p.results = []
 
-    def get_ops(self, p, chk_c=[':or:', ':implies:', ':equiv:']):
+    def get_ops(self, p, chk_op=[':or:', ':implies:', ':equiv:']):
         ops = []
         for p in self:
-            if any(x in p.cond for x in chk_c):
+            if any(x in p.cond for x in chk_op):
                 ops.append(p)
         for p in ops:
             x = p
@@ -763,7 +763,7 @@ class LogSentence(object):
                     x = x.parent
         return True
 
-    def get_pred(self, branch='left', conds=gr_conds):
+    def get_pred(self, branch='l', conds=gr_conds):
         preds = []
         for p in self:
             if p.cond == ':predicate:':
@@ -773,11 +773,15 @@ class LogSentence(object):
             x = p
             while x.parent.cond not in conds:
                 x = x.parent
-            if branch == 'left' and x.parent.next[0] == x:
+            if branch == 'l' and x.parent.next[0] == x:
                 res.append(p.pred)
-            elif branch != 'left' and x.parent.next[1] == x:
+            elif branch != 'l' and x.parent.next[1] == x:
                 res.append(p.pred)
         return res
+    
+    def cln_res(self):
+        for p in self.particles:
+            p.results = []
 
     def __iter__(self):
         return iter(self.particles)
@@ -1205,7 +1209,7 @@ class Inference(object):
         """
         
         def chk_result():
-            if var[0] == '$':               
+            if var[0] == '$':
                 try: ctgs = self.subkb.individuals[var].get_cat()
                 except KeyError: return None
                 else:
@@ -1240,20 +1244,20 @@ class Inference(object):
         # Create a new, filtered and temporal, work KB
         self.subkb = SubstRepr(self.kb, self.obj_dic)
         # Start inference process
-        self.results = dict()        
+        self.results = dict()
         for var, preds in self.query.items():
             if var in self.vrs:
                 # It's a variable, find every object that fits the criteria
                 # 
                 #
                 print("It's a variable")
-            else:                
+            else:
                 self.results[var] = {}                
                 for pred in preds:
                     self.node_tracker()           
                     self.actv_q, result = (var, pred[0]), None
                     k, self.updated = True, list()                    
-                    print('\nquery: {0}'.format(self.actv_q))
+                    #print('\nquery: {0}'.format(self.actv_q))
                     while result is not True  and k is True:
                         # Run the query, if there is no result and there is
                         # an update, then rerun it again, else stop
@@ -1317,7 +1321,8 @@ class Inference(object):
         if mapped is not False:
             res = hasattr(node.rule, 'result')
             while res is False and i == j:
-                j = len(mapped)
+                if i == 0: j = -1
+                else: j = len(mapped)
                 args = try_new()
                 key = hash(tuple(args))
                 if key in self.queue[node]['neg'] and self.updated is True:
@@ -1425,7 +1430,7 @@ class Inference(object):
 
         def break_pred():
             pr = rgx_ob.findall(p)[0].split('[')
-            if '<' in p:
+            if '<' in p[0]:
                 func = make_function(p, 'relation')
                 return func
             if ';' in pr[1]:
@@ -1550,8 +1555,9 @@ if __name__ == '__main__':
         r.tell(s)
     ask1 = ['professor[$Lucy,u=1]','person[$John,u=1]']
     ask2 = ['person[$John,u=1]','professor[$Lucy,u=1]']
-    print('\n==== RESULTS ====')
+    results = []
     for q in ask1:
-        result = r.ask(q, single=False)
-        print(result)
-
+        results.append(r.ask(q, single=False))
+    print('\n==== RESULTS ====')
+    for r in results:
+        print(r)

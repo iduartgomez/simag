@@ -1,8 +1,9 @@
 # Test 1.0/00 -> Evaluate an indicative conditional statement
 # If the first branch is true then the second must be true
 {	
-	drugDealer[$West,u=1] |> scum[$West,u=1] && good[$West,u=0]
+	scum[$West,u=1] && good[$West,u=0]
 	#
+	drugDealer[$West,u=1] |> scum[$West,u=1] && good[$West,u=0]
 	drugDealer[$West,u=1]
 }
 # Test 2 => Evaluate a material implication statement
@@ -77,10 +78,11 @@
 	drugDealer[$West,u=0]
 }
 # Test 1.1/10 -> Evaluate an indicative conditional statement
-# If the first is false, do not continue
+# If the first is false, do not continue; (false |> none)
 {	
-	drugDealer[$West,u=1] |> scum[$West,u=1] && good[$West,u=0]
+	scum[$West,u=1] && good[$West,u=0]
 	#
+	drugDealer[$West,u=1] |> scum[$West,u=1] && good[$West,u=0]
 	drugDealer[$West,u=0]
 }
 # Test 4 => Evaluate logical disjunction
