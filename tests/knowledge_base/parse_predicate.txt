@@ -1,6 +1,7 @@
 professor[$Lucy,u=1]
 dean[$John,u=0]
 student[$Bill,u=1;$John,u=1]
+animal[cow,u=1]
 student[$Bill,u<0]
 missile[$M1,u>1]
 american[$West,u=1.5]

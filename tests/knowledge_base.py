@@ -135,29 +135,38 @@ class LogicSentenceParsing(unittest.TestCase):
     def test_parse_predicate(self):
         """Test parsing of predicates."""
             
-        def test():
+        def assert_res(cls=False):
             name, ctg, val = e[0], e[1], e[2]
-            obj = rep.individuals[name]
-            chk_ctg = obj.check_cat([ctg])
+            if cls is False:
+                obj = rep.individuals[name]
+                chk_ctg = obj.check_cat([ctg])            
+                self.assertEqual(val, obj.get_cat(ctg=ctg))
+            else:
+                obj = rep.classes[name]
+                chk_ctg = obj.check_parent([ctg])
+                self.assertEqual(val, obj.get_parents(ctg=ctg))
             self.assertIn(ctg, chk_ctg, "Category not declared.")
-            self.assertEqual(val, obj.get_cat(ctg=ctg))
-                            
+        
         rep = Representation()
         sents = load_sentences('parse_predicate.txt')
-        objs = [('$Lucy', 'professor', 1),
-                ('$John', 'dean', 0),
-                (('$Bill', 'student', 1), ('$John', 'student', 1)),]
-        failures = [3, 4, 5, 6]
+        objs = [('$Lucy','professor', 1),
+                ('$John','dean', 0),
+                (('$Bill','student', 1),('$John','student',1)),
+                ('cow','animal',1)]
+        isactg = [3]
+        failures = [4, 5, 6, 7]
         for x, sent in enumerate(sents):
             with self.subTest(sent='subtest {0}: {1}'.format(x,sent)):
+                if x in isactg: cls = True
+                else: cls = False
                 if x not in failures:
                     rep.tell(sent)
                     if isinstance(objs[x][0], tuple):
                         for e in objs[x]:
-                            test()
+                            assert_res(cls=cls)
                     else:
                         e = objs[x]
-                        test()
+                        assert_res(cls=cls)
                 else:
                     self.assertRaises(AssertionError, rep.tell, sent)
     
@@ -167,8 +176,9 @@ class LogicSentenceParsing(unittest.TestCase):
         sents = load_sentences('parse_function.txt')
         eval = [([('$John', 1, '='), '$Lucy'], 'criticize'),
                 ([('$analysis', 0, '>'), '$Bill'], 'takes'),
-                ([('$Bill', 1, '<'), '$Lucy'], 'sister'),]
-        failures = [3, 4]
+                ([('$Bill', 1, '<'), '$Lucy'], 'sister'),
+                ([('cow', 1, '='), 'bull'], 'loves')]
+        failures = [4, 5]
         for x, sent in enumerate(sents):
             with self.subTest(sent='subtest {0}: {1}'.format(x,sent)):
                 if x not in failures:

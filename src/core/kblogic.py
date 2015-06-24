@@ -32,10 +32,10 @@ between these objects.
 # On ASK, fix it so it can deal with queries that ask about relations
 # of the same type with several objects.
 #
-# Make declaration, save_rules and inference work with classes.
+# Make save_rules and inference work with classes.
 # Add 'belief maintenance system' functionality.
 # Refactor 'Particle' so different atoms are subclasses
-# Refactor categories to new class/subclass instead of raw tuples
+# Refactor categories ownership to new class/subclass instead of raw tuples
 
 # ===================================================================#
 #   Imports and constants
@@ -158,7 +158,6 @@ class Representation(object):
         
         def declare_memb():
             assert ('=' in e), "It's a predicate, must assign truth value."
-            assert ('$' in e), 'The object is not an unique entity.'
             u = e.split(',u=')
             u[1] = float(u[1])
             pred = sets[0], (u[0], u[1])
@@ -201,12 +200,14 @@ class Representation(object):
         elif '$' in subject:
             # Add/replace an other class membership to an existing individual
             self.individuals[subject].add_ctg(categ, val)            
-        elif subject in self.classes:
-            # Is an existing subclass subclass of an other class
-            pass
+        elif subject in self.classes:            
+            self.classes[subject].add_parent((categ,val))
         else:
             # Is a new subclass of an other class
-            pass
+            cls = Category(subject)
+            cls['type'] = 'class'
+            cls.add_parent((categ,val))
+            self.classes[subject] = cls
         if categ not in self.classes:
             nc = Category(categ)
             nc['type'] = 'class'
@@ -402,7 +403,7 @@ class Individual(object):
 
     def get_cat(self, ctg=None):
         """Returns a dictionary of the categories of the object and
-        their 'u' values.
+        their truth values.
         
         If a single category is provided in the 'ctg' keyword argument,
         then the value for that category is returned. If it doesn't
@@ -461,13 +462,16 @@ class Category(dict):
     All the attributes of a category are inherited by their members
     (to a degree).
     """
-    def __init__(self, name):
+    def __init__(self, name, **kwargs):
         self['name'] = name
         self['cog'] = []
+        if kwargs:
+            for k, v in kwargs.items():
+                if k == 'parents': setattr(self, 'parents', v)
+                else: self[k] = v
     
     def add_cog(self, sent):
-        if sent not in self['cog']:
-            self['cog'].append(sent)
+        if sent not in self['cog']: self['cog'].append(sent)
     
     def infer(self):
         """Infers attributes of the class from it's members."""
@@ -478,13 +482,36 @@ class Category(dict):
             self.relations = dict()
             self.relations[func.func] = [func]
         else:
-            try:
-                rel = self.relations[func.func]
-            except KeyError:
-                self.relations[func.func] = [func]
-            else:
-                rel.append(func)
-
+            try: rel = self.relations[func.func]
+            except KeyError: self.relations[func.func] = [func]
+            else: rel.append(func)
+    
+    def check_parent(self, n):
+        """Returns a list that is the intersection of the input iterable
+        and the parents of the object.
+        """
+        if not hasattr(self,'parents'): return list()
+        return [c[0] for c in self.parents if c[0] in n]
+    
+    def get_parents(self, ctg=None):
+        """Returns a dictionary of the parents of this class and
+        their truth values.
+        
+        If a single category is provided in the 'ctg' keyword argument,
+        then the value for that category is returned. If it doesn't
+        exist, None is returned.
+        """
+        cat = {k:v for k,v in self.parents}
+        if ctg is None: return cat
+        else:
+            try: x = cat[ctg]
+            except KeyError: return None
+            else: return x
+    
+    def add_parent(self, ctg):
+        if not hasattr(self,'parents'): self.parents = [ctg]
+        else: self.parents.append(ctg)
+    
 class Relation(Category):
     
     @property
@@ -1560,17 +1587,24 @@ if __name__ == '__main__':
                     ls = sup_ls
                 else: ls.append(line.strip())
         return ls    
-
+    
+    def test_ask(path, test, ask):        
+        sents = load_sentences(test, path)        
+        for s in sents[1]:
+            r.tell(s)        
+        results = []
+        for q in ask:
+            results.append(r.ask(q, single=False))
+        print('\n==== RESULTS ====')
+        for res in results:
+            print(res)
+    
+    r = Representation()
     path = '/home/nacho/dev/workspace/simag/tests'
     test = 'ask_func.txt'
-    sents = load_sentences(test, path)
-    r = Representation()
-    for s in sents[1]:
-        r.tell(s)
-    ask1 = ['<friend[$Lucy,u=0;$John]>']
-    results = []
-    for q in ask1:
-        results.append(r.ask(q, single=False))
-    print('\n==== RESULTS ====')
-    for r in results:
-        print(r)
+    ask = ['<friend[$Lucy,u=0;$John]>']
+    #test_ask(path, test, ask)
+    r.tell('animal[cow,u=1]')
+    print(r.classes)
+    
+    
