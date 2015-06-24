@@ -66,10 +66,6 @@ class AskReprGetAnswer(unittest.TestCase):
                ['professor[$Lucy,u=1]', 'person[$John,u=1]'],
                ['professor[$Lucy,u>0] && person[$Lucy,u<1]'],
                ['criminal[$West,u=1]'],]
-        """eval = [{'$Lucy': {'professor': True, 'person': None}},
-                [{'$Lucy': {'professor': True}},{'$John': {'person': True}}],
-                {'$Lucy': {'professor': True, 'person': False}},
-                {'$West': {'criminal': True}},]"""
         eval = [None, [True,True], False, True]
         iter_test(self, sents, ask, eval, single=True)
     
@@ -78,9 +74,6 @@ class AskReprGetAnswer(unittest.TestCase):
         ask = [['<criticize[$John,u=1;$Lucy]>'],
                ['<friend[$Lucy,u=0;$John]>'],
                ['<sells[$M1,u=1;$West;$Nono]>'],]
-        """eval = [{'$John': {'friend': ('$Lucy', None)}},
-                {'$John': {'friend': ('$Lucy', True)}},
-                {'$West': {'sells': ('$M1', True, '$Nono')}},]"""
         eval = [True,True,True]
         iter_test(self, sents, ask, eval, single=True)
         

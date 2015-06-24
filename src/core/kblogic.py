@@ -35,6 +35,7 @@ between these objects.
 # Make declaration, save_rules and inference work with classes.
 # Add 'belief maintenance system' functionality.
 # Refactor 'Particle' so different atoms are subclasses
+# Refactor categories to new class/subclass instead of raw tuples
 
 # ===================================================================#
 #   Imports and constants
@@ -729,7 +730,7 @@ class LogSentence(object):
         self.particles = []
 
     def __call__(self, ag, *args):
-        if isinstance(args[0], list):
+        if type(args[0]) is tuple or type(args[0] is list):
             args = args[0]
         # Clean up previous results.
         self.assigned = {}
@@ -1282,12 +1283,10 @@ class Inference(object):
                         self.updated = list()
                     # Update the result from the subtitution repr
                     chk_result()
-        for ind in self.subkb.individuals.values():
-            print(ind.relations)
     
     def chain(self, p, chk, done):
         if p in self.nodes:
-            for node in self.nodes[p]:       
+            for node in self.nodes[p]:     
                 self.rcsv_test(node)
                 if p not in done:
                     chk = list(node.ants) + chk
@@ -1300,8 +1299,10 @@ class Inference(object):
             self.chain(p, chk, done)
 
     def rcsv_test(self, node):
-
+        import itertools
+        
         def add_ctg():
+            # added category/function to the object dictionary
             for r in node.rule.result:
                 pclass = r.__class__.__bases__[0]
                 if pclass is LogFunction:
@@ -1318,65 +1319,51 @@ class Inference(object):
                     except KeyError:
                         self.obj_dic[obj] = set([cat])
             self.queue[node]['pos'].add(key)
-
-        def try_new():
-            args = []
-            for v in node.rule.var_order:
-                if v in mapped and len(mapped[v]) > 0:
-                    x = mapped[v].pop()
-                else:
-                    if v in mapped:
-                        del mapped[v]
-                    break
-                args.append(x)
-            return args
         
+        # check what are the possible var substitutions
         mapped = self.map_vars(node)
-        i, j = len(node.subs), len(mapped)
-        if mapped is not False:
-            res = hasattr(node.rule, 'result')
-            while res is False and i == j:
-                if i == 0: j = -1
-                else: j = len(mapped)
-                args = try_new()
-                key = hash(tuple(args))
-                if key in self.queue[node]['neg'] and self.updated is True:
-                    node.rule(self.subkb, args)
-                    res = hasattr(node.rule, 'result')
-                    if res is True and node.rule.result is not False:
-                        self.updated.append(True)
-                        add_ctg()
-                        del node.rule.result
-                    elif res is True:
-                        self.queue[node]['neg'].add(key)
-                        del node.rule.result
-                elif (key not in self.queue[node]['pos']) \
-                and (key not in self.queue[node]['neg']):
-                    node.rule(self.subkb, args)
-                    res = hasattr(node.rule, 'result')
-                    if res is True and node.rule.result is not False:
-                        self.updated.append(True)
-                        add_ctg()
-                        del node.rule.result
-                    elif res is True:
-                        self.queue[node]['neg'].add(key)
-                        del node.rule.result
+        # permute and find every argument combination
+        mapped = list(itertools.product(*mapped))
+        # run proof until a solution is found or there aren't more
+        # combinations
+        res = hasattr(node.rule, 'result')
+        while res is False and (len(mapped) > 0):
+            args = mapped.pop()
+            key = hash(args)
+            if key in self.queue[node]['neg'] and self.updated is True:
+                node.rule(self.subkb, args)
+                res = hasattr(node.rule, 'result')
+                if res is True and node.rule.result is not False:
+                    self.updated.append(True)
+                    add_ctg()
+                    del node.rule.result
+                elif res is True:
+                    self.queue[node]['neg'].add(key)
+                    del node.rule.result
+            elif (key not in self.queue[node]['pos']) \
+            and (key not in self.queue[node]['neg']):
+                node.rule(self.subkb, args)
+                res = hasattr(node.rule, 'result')
+                if res is True and node.rule.result is not False:
+                    self.updated.append(True)
+                    add_ctg()
+                    del node.rule.result
+                elif res is True:
+                    self.queue[node]['neg'].add(key)
+                    del node.rule.result
 
-    def map_vars(self, node):
-        subactv = {}
-        for vr, t in node.subs.items():
-            subactv[vr] = []
+    def map_vars(self, node):        
+        subs_num = len(node.subs)
+        subactv = [set()] * subs_num
+        for i, t in enumerate(node.subs.values()):
             y = len(t)               
             for obj, s in self.obj_dic.items():
                 x = len(s)            
                 if x >= y:
                     r = s.intersection(t)
                     if len(r) == y:
-                        subactv[vr].append(obj)
-        if len(node.subs) == len(subactv):
-            return subactv
-        else:
-            return False
+                        subactv[i].add(obj)
+        return subactv
 
     def get_rules(self):
         if len(self.ctgs) > 0: c = self.ctgs.pop()
@@ -1417,6 +1404,7 @@ class Inference(object):
             del self.ctgs
 
     def mk_nodes(self, nc, ants, rule, pos):
+        # makes inference nodes for the evaluation
         preds = rule.get_pred(branch=pos, conds=gr_conds)
         for cons in preds:
             pclass = cons.__class__.__bases__[0]
@@ -1431,6 +1419,7 @@ class Inference(object):
                 self.nodes[node.cons] = [node]
 
     def rule_tracker(self):
+        # create a dictionary for tracking what proofs have been run or not
         if hasattr(self, 'queue') is False:
             self.queue = dict()
             for query in self.nodes.values():
