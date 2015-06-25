@@ -73,10 +73,10 @@ class AskReprGetAnswer(unittest.TestCase):
         sents = load_sentences('ask_func.txt')
         ask = [['<criticize[$John,u=1;$Lucy]>'],
                ['<friend[$Lucy,u=0;$John]>'],
-               ['<sells[$M1,u=1;$West;$Nono]>'],]
-        eval = [True,True,True]
+               ['<sells[$M1,u=1;$West;$Nono]>'],
+               ['<produce[milk,u=1;cow]>']]
+        eval = [True,True,True,True]
         iter_test(self, sents, ask, eval, single=True)
-        
 
 class EvaluationOfFOLSentences(unittest.TestCase):
     
@@ -143,7 +143,7 @@ class LogicSentenceParsing(unittest.TestCase):
                 self.assertEqual(val, obj.get_cat(ctg=ctg))
             else:
                 obj = rep.classes[name]
-                chk_ctg = obj.check_parent([ctg])
+                chk_ctg = obj.check_parents([ctg])
                 self.assertEqual(val, obj.get_parents(ctg=ctg))
             self.assertIn(ctg, chk_ctg, "Category not declared.")
         

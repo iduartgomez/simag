@@ -32,7 +32,6 @@ between these objects.
 # On ASK, fix it so it can deal with queries that ask about relations
 # of the same type with several objects.
 #
-# Make save_rules and inference work with classes.
 # Add 'belief maintenance system' functionality.
 # Refactor 'Particle' so different atoms are subclasses
 # Refactor categories ownership to new class/subclass instead of raw tuples
@@ -205,12 +204,12 @@ class Representation(object):
         else:
             # Is a new subclass of an other class
             cls = Category(subject)
-            cls['type'] = 'class'
+            cls.type_ = 'class'
             cls.add_parent((categ,val))
             self.classes[subject] = cls
         if categ not in self.classes:
             nc = Category(categ)
-            nc['type'] = 'class'
+            nc.type_ = 'class'
             self.classes[categ] = nc
 
     def up_rel(self, func):
@@ -259,7 +258,7 @@ class Representation(object):
                 else:
                     c = 'class' if pclass is not LogFunction else 'relation'
                     nc = Category(sbj)
-                    nc['type'] = c
+                    nc.type_ = c
                     nc.add_cog(sent)
                     self.classes[sbj] = nc
             else:
@@ -268,7 +267,7 @@ class Representation(object):
                 else:
                     c = 'class' if pclass is not LogFunction else 'relation'
                     nc = Category(p)
-                    nc['type'] = c
+                    nc.type_ = c
                     nc.add_cog(sent)
                     self.classes[p] = nc
         
@@ -293,19 +292,25 @@ class Representation(object):
     def save_rule(self, proof):
         preds = proof.get_pred()
         preds.extend(proof.get_pred(branch='r'))
-        for name in preds:
-            if name[0] in self.classes and \
-            proof not in self.classes[name[0]]['cog']:
-                self.classes[name[0]].add_cog(proof)
+        n = []
+        for p in preds:
+            pclass = p.__class__.__bases__[0]
+            if pclass is LogFunction: name = p.func
+            else: name = p[0]
+            n.append(name)
+            if name in self.classes and \
+            proof not in self.classes[name].cog:
+                self.classes[name].add_cog(proof)
             else:
                 c = 'class' if len(name) == 2 else 'relation'
-                nc = Category(name[0])
-                nc['type'] = c
+                nc = Category(name)
+                nc.type_ = c
                 nc.add_cog(proof)
-                self.classes[name[0]] = nc
-        n = [x[0] for x in preds]
+                self.classes[name] = nc
         # Run the new formula with individuals/classes that matches.
         obj_dic = self.inds_by_cat(set(n))
+        cls_dic = self.cls_by_cat(set(n))
+        obj_dic.update(cls_dic)
         subrpr = SubstRepr(self, obj_dic)
         for ind in subrpr.individuals.keys():
             proof(subrpr, ind)
@@ -313,21 +318,33 @@ class Representation(object):
         self.push(subrpr)
 
     def inds_by_cat(self, ctgs):
-        cat_dic = {}
+        ctg_dic = {}
         for ind in self.individuals.values():
             s = ind.check_cat(ctgs)
             t = set(ind.get_rel())
             t = t.intersection(ctgs)
             t = t.union(s)
-            cat_dic[ind.name] = t
-        return cat_dic
+            ctg_dic[ind.name] = t
+        return ctg_dic
+    
+    def cls_by_cat(self, ctgs):
+        ctg_dic = {}
+        for cls in self.classes.values():
+            s = cls.check_parents(ctgs)
+            t = set(cls.get_rel())
+            t = t.intersection(ctgs)
+            t = t.union(s)
+            ctg_dic[cls.name] = t
+        return ctg_dic
     
     def push(self, subs):
         """Takes a SubstRepr object and pushes changes to self.
         It calls the BMS to record any changes and inconsistencies.
         """
-        self.individuals.update(subs.individuals)
-        #self.classes.update(subs.classes)
+        if hasattr(subs,'individuals'):
+            self.individuals.update(subs.individuals)
+        if hasattr(subs,'classes'):
+            self.classes.update(subs.classes)
 
 class Individual(object):
     """An individual is the unique member of it's own class.
@@ -354,15 +371,15 @@ class Individual(object):
         categ -> Categories to which the object belongs.
         | Includes the degree of membership (ie. ('cold', 0.9)).
         attr -> Implicit attributes of the object, unique to itself.
-        cog (opt) -> These are the cognitions attributed to the object by 
-        | the agent owning this representation.
+        cog (opt) -> These are the cognitions/relations attributed to the
+        | object by the agent owning this representation.
         relations (opt) -> Functions between objects and/or classes.
     """
     def __init__(self, name):
         self.id = str(uuid.uuid4())
         self.name = name
-        self.attr = {}
         self.categ = []
+        self.attr = {}
         self.relations = {}
         self.cog = {}
 
@@ -379,27 +396,26 @@ class Individual(object):
         """Inferes attributes of the entity from it's classes."""
         pass
     
+    def add_cog(self, p, sent):
+        if p in self.cog and sent not in self.cog[p]:
+            self.cog[p].append(sent)
+        else:
+            self.cog[p] = [sent]
+        
+    def add_ctg(self, ctg, val):
+        ctg_rec = [x for (x,_) in self.categ]
+        if ctg not in ctg_rec:
+            self.categ.append((ctg, val))
+        else:
+            idx = ctg_rec.index(ctg)
+            self.categ[idx] = (ctg, val)
+    
     def check_cat(self, n):
         """Returns a list that is the intersection of the input iterable
         and the categories of the object.
         """
         s = [c[0] for c in self.categ if c[0] in n]
         return s
-    
-    def test_rel(self, func):
-        """Checks if a relation exists; and returns true if it's 
-        equal to the comparison, false if it's not, and None if it
-        doesn't exist.
-        """
-        try:
-            funcs = self.relations[func.func]
-        except KeyError:
-            return None      
-        for f in funcs:
-            if f.args_ID == func.args_ID:
-                if func == f: return True
-                else: return False
-        return None
 
     def get_cat(self, ctg=None):
         """Returns a dictionary of the categories of the object and
@@ -417,27 +433,6 @@ class Individual(object):
             except KeyError: return None
             else: return x
     
-    def get_rel(self):
-        """Returns a list of the relations the object is involved
-        either as subject, object or indirect object.
-        """
-        rel = [k for k in self.relations]
-        return rel         
-    
-    def add_cog(self, p, sent):
-        if p in self.cog and sent not in self.cog[p]:
-            self.cog[p].append(sent)
-        else:
-            self.cog[p] = [sent]
-        
-    def add_ctg(self, ctg, val):
-        ctg_rec = [x for (x,_) in self.categ]
-        if ctg not in ctg_rec:
-            self.categ.append((ctg, val))
-        else:
-            idx = ctg_rec.index(ctg)
-            self.categ[idx] = (ctg, val)
-            
     def add_rel(self, func):
         try:
             rel = self.relations[func.func]
@@ -445,15 +440,36 @@ class Individual(object):
             self.relations[func.func] = [func]
         else:
             rel.append(func)
+    
+    def get_rel(self):
+        """Returns a list of the relations the object is involved
+        either as subject, object or indirect object.
+        """
+        rel = [k for k in self.relations]
+        return rel
+    
+    def test_rel(self, func):
+        """Checks if a relation exists; and returns true if it's 
+        equal to the comparison, false if it's not, and None if it
+        doesn't exist.
+        """
+        try:
+            funcs = self.relations[func.func]
+        except KeyError:
+            return None      
+        for f in funcs:
+            if f.args_ID == func.args_ID:
+                if func == f: return True
+                else: return False
+        return None
 
     def __str__(self):
         s = "<individual '" + self.name + "' w/ id: " + self.id + ">"
         return s
 
-class Category(dict):
+class Category(object):
     """A category is a set/class of entities that share some properties.    
-    It can be a subset of others supersets, and viceversa. It inherits
-    from the dict class.
+    It can be a subset of others supersets, and viceversa.
     
     Membership is not binary, but fuzzy, being the extreme cases (0, 1)
     the classic binary membership. Likewise, membership to a class can be 
@@ -463,22 +479,22 @@ class Category(dict):
     (to a degree).
     """
     def __init__(self, name, **kwargs):
-        self['name'] = name
-        self['cog'] = []
+        self.name = name
+        self.cog = []
         if kwargs:
             for k, v in kwargs.items():
                 if k == 'parents': setattr(self, 'parents', v)
                 else: self[k] = v
     
-    def add_cog(self, sent):
-        if sent not in self['cog']: self['cog'].append(sent)
-    
     def infer(self):
         """Infers attributes of the class from it's members."""
         pass
     
+    def add_cog(self, sent):
+        if sent not in self.cog: self.cog.append(sent)
+    
     def add_rel(self, func):
-        if not self.relations:
+        if not hasattr(self, 'relations'):
             self.relations = dict()
             self.relations[func.func] = [func]
         else:
@@ -486,7 +502,30 @@ class Category(dict):
             except KeyError: self.relations[func.func] = [func]
             else: rel.append(func)
     
-    def check_parent(self, n):
+    def get_rel(self):
+        """Returns a list of the relations the object is involved
+        either as subject, object or indirect object.
+        """
+        if hasattr(self, 'relations'): rel = [k for k in self.relations]
+        else: rel = []
+        return rel
+    
+    def test_rel(self, func):
+        """Checks if a relation exists; and returns true if it's 
+        equal to the comparison, false if it's not, and None if it
+        doesn't exist.
+        """
+        try:
+            funcs = self.relations[func.func]
+        except KeyError:
+            return None      
+        for f in funcs:
+            if f.args_ID == func.args_ID:
+                if func == f: return True
+                else: return False
+        return None
+    
+    def check_parents(self, n):
         """Returns a list that is the intersection of the input iterable
         and the parents of the object.
         """
@@ -658,6 +697,9 @@ class LogFunction(object):
             else:
                 subs.args[x] = args[x]
         return subs
+    
+    def __str__(self):
+        return '<LogFunction {0} -> args: {1}>'.format(self.func,self.args)
 
 def make_function(sent, f_type=None, *args):
     """Parses and makes a function of n-arity.
@@ -1028,10 +1070,8 @@ class Particle(object):
     def ispred(self, proof, ag, key):
         
         def isvar(s):
-            try:
-                s = proof.assigned[s]
-            except KeyError:
-                pass
+            try: s = proof.assigned[s]
+            except KeyError: pass
             return s
         
         pclass = self.pred.__class__.__bases__[0]
@@ -1054,7 +1094,8 @@ class Particle(object):
                 # Check membership to a set of an entity.
                 sbj, u = self.pred[1].split(',u')
                 sbj = isvar(sbj)
-                categs = ag.individuals[sbj].get_cat()
+                if '$' not in sbj[0]: categs = ag.classes[sbj].get_parents()
+                else: categs = ag.individuals[sbj].get_cat()
                 check_set = self.pred[0]
                 uval = float(u[1:])
                 # If is True, then the object belongs to the set.
@@ -1240,34 +1281,31 @@ class Inference(object):
         """
         
         def chk_result():
-            if var[0] == '$':
-                if pclass is LogFunction:
-                    try: res = self.subkb.individuals[var].test_rel(pred)
-                    except KeyError: res = None
-                    #else: 
-                    #    args = pred.get_args()
-                    #    args.pop(args.index(var))
-                    #    args.append(res)
-                    #    res = args
-                    self.results[var][q] = res
-                else:
-                    try: ctgs = self.subkb.individuals[var].get_cat()
-                    except KeyError: res = None
+            isind = True if var[0] == '$' else False
+            if pclass is LogFunction:
+                try:
+                    if isind is True: 
+                        res = self.subkb.individuals[var].test_rel(pred)
                     else:
-                        if pred[0] in ctgs:
-                            val = ctgs[pred[0]]
-                            qval = float(pred[1][2:])
-                            if pred[1][1] == '=' and val == qval: res = True
-                            elif pred[1][1] == '<' and val < qval: res = True
-                            elif pred[1][1] == '>' and val > qval: res = True
-                            else: res = False
-                        else: res = None
-                    self.results[var][q] = res
+                        res = self.subkb.classes[var].test_rel(pred)
+                except KeyError: res = None
             else:
-                # It's a class
-                #
-                #
-                print("It's a class")
+                try:
+                    if isind is True:
+                        ctgs = self.subkb.individuals[var].get_cat()
+                    else:
+                        ctgs = self.subkb.classes[var].get_parents()
+                except KeyError: res = None
+                else:
+                    if pred[0] in ctgs:
+                        val = ctgs[pred[0]]
+                        qval = float(pred[1][2:])
+                        if pred[1][1] == '=' and val == qval: res = True
+                        elif pred[1][1] == '<' and val < qval: res = True
+                        elif pred[1][1] == '>' and val > qval: res = True
+                        else: res = False
+                    else: res = None
+            self.results[var][q] = res
         
         # Parse the query
         self.get_query(comp)
@@ -1276,8 +1314,10 @@ class Inference(object):
         while hasattr(self, 'ctgs'):
             try: self.get_rules()
             except NoSolutionError: pass
-        # Get the caterogies for each individual
+        # Get the caterogies for each individual/class
         self.obj_dic = self.kb.inds_by_cat(self.chk_cats)
+        cls_dic = self.kb.cls_by_cat(self.chk_cats)
+        self.obj_dic.update(cls_dic)
         # Create a new, filtered and temporal, work KB
         self.subkb = SubstRepr(self.kb, self.obj_dic)
         # Start inference process
@@ -1398,7 +1438,7 @@ class Inference(object):
         if c is not None:
             self.done.append(c)            
             try:
-                chk_rules = set(self.kb.classes[c]['cog'])
+                chk_rules = set(self.kb.classes[c].cog)
                 chk_rules = chk_rules.difference(self.rules)
             except:
                 raise NoSolutionError(c)
@@ -1548,6 +1588,7 @@ class SubstRepr(Representation):
     def make(self, kb, obj_dic):
         for s in obj_dic:
             if '$' in s[0]:
+                # It's an individual
                 o_ind = kb.individuals[s]
                 n_ind = Individual(s)
                 for attr, val in o_ind.__dict__.items():
@@ -1566,10 +1607,27 @@ class SubstRepr(Representation):
                 self.individuals[n_ind.name] = n_ind
             else:
                 # It's a class
-                #
-                #
-                print("It's a class. Subtitute repr make")
-
+                o_cls = kb.classes[s]
+                n_cls = Category(s)
+                for attr, val in o_cls.__dict__.items():
+                    if attr != 'relations' or attr != 'parents':
+                        n_cls.__dict__[attr] = val
+                nrm_ctg = obj_dic[s]
+                categ = []
+                if hasattr(o_cls, 'parents'):
+                    for c in o_cls.parents:
+                        if c[0] in nrm_ctg:
+                            categ.append(c)
+                    o_cls.parents = categ
+                if hasattr(o_cls, 'relations'):
+                    rels = {}
+                    for rel in o_cls.relations:
+                        if rel in nrm_ctg:
+                            rels[rel] = o_cls.relations[rel]
+                    n_cls.relations = rels
+                n_cls.parents = categ
+                self.classes[n_cls.name] = n_cls
+        
 
 if __name__ == '__main__':
     import os
@@ -1600,11 +1658,16 @@ if __name__ == '__main__':
             print(res)
     
     r = Representation()
-    path = '/home/nacho/dev/workspace/simag/tests'
+    path = '~/dev/workspace/simag/tests'
     test = 'ask_func.txt'
     ask = ['<friend[$Lucy,u=0;$John]>']
     #test_ask(path, test, ask)
-    r.tell('animal[cow,u=1]')
-    print(r.classes)
+    fol = ['animal[cow,u=1]',
+           'female[cow,u=1]',
+           'animal[cow,u=1] && female[cow,u=1] => <produce[milk,u=1;cow]>',]
+    for s in fol:
+        r.tell(s)
+    res = r.ask('<produce[milk,u=1;cow]>')
+    print(res)
     
     
