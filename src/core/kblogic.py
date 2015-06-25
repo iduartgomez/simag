@@ -26,15 +26,12 @@ between these objects.
 @author: Ignacio Duart Gómez
 """
 
-# TO DO: Optimize chaining algorithm further: in functions it can check 
-# wether the argument position fits or not before trying to solve it.
-#
 # On ASK, fix it so it can deal with queries that ask about relations
 # of the same type with several objects.
 #
 # Add 'belief maintenance system' functionality.
 # Refactor 'Particle' so different atoms are subclasses
-# Refactor categories ownership to new class/subclass instead of raw tuples
+# Refactor class membership to new data structure instead of raw tuples
 
 # ===================================================================#
 #   Imports and constants
@@ -572,12 +569,12 @@ class Part(Category):
 # ===================================================================#
 
 symbs = dict([
-             ('|>',':icond:'),
-             ('<=>',':equiv:'), 
-             (' =>',':implies:'),
-             ('||',':or:'),
-             ('&&',':and:')
-            ])
+               ('|>',':icond:'),
+               ('<=>',':equiv:'), 
+               (' =>',':implies:'),
+               ('||',':or:'),
+               ('&&',':and:')
+             ])
 symb_ord = ['|>', '<=>', ' =>', '||', '&&']
 
 def parse_sent(sent):
@@ -1266,7 +1263,7 @@ class Inference(object):
     
     def __init__(self, kb, *args):
         self.kb = kb
-        self.vrs = {}
+        self.vrs = set()
         self.nodes = {}
         self.infer_facts(*args)
 
@@ -1324,10 +1321,15 @@ class Inference(object):
         self.results = dict()
         for var, preds in self.query.items():
             if var in self.vrs:
-                # It's a variable, find every object that fits the criteria
-                # 
-                #
-                print("It's a variable")
+                for pred in preds:
+                    pclass = pred.__class__.__bases__[0]
+                    if pclass is LogFunction: q = pred.func
+                    else: q = pred[0]
+                    for var,v in self.obj_dic.items():
+                        if q in v:
+                            if var not in self.results:         
+                                self.results[var] = {}
+                            chk_result()
             else:
                 self.results[var] = {}
                 for pred in preds:
@@ -1350,7 +1352,7 @@ class Inference(object):
                         self.updated = list()
                     # Update the result from the subtitution repr
                     chk_result()
-    
+
     def chain(self, p, chk, done):
         if p in self.nodes:
             for node in self.nodes[p]:     
@@ -1518,16 +1520,19 @@ class Inference(object):
                 pr = t[0], (pr[0], t[1])
             return pr
         
-        preds = []
-        for pa in comp:
-            pa = pa.replace(' ','').strip()
-            if not any(s in pa for s in symbs.values()):
-                preds.append(pa)
+        preds, del_ = list(), list()
+        for i, pa in enumerate(comp):
+            pa = pa.replace(' ','').strip()            
             if ':vars:' in pa:
-                # It's a variable
-                #
-                #
-                pass
+                form = pa.split(':')
+                for i, a in enumerate(form):
+                    if a == 'vars':
+                        vars_ = form[i+1].split(',')
+                        for var in vars_: self.vrs.add(var)
+                        del_.append(i)
+            elif not any(s in pa for s in symbs.values()):
+                preds.append(pa)
+        for x in del_: comp.pop(x)
         for i, p in enumerate(preds):
             preds[i] = break_pred()
         terms, ctgs = {}, []
@@ -1663,11 +1668,10 @@ if __name__ == '__main__':
     ask = ['<friend[$Lucy,u=0;$John]>']
     #test_ask(path, test, ask)
     fol = ['animal[cow,u=1]',
-           'female[cow,u=1]',
-           'animal[cow,u=1] && female[cow,u=1] => <produce[milk,u=1;cow]>',]
+           'animal[chicken,u=1]']
     for s in fol:
         r.tell(s)
-    res = r.ask('<produce[milk,u=1;cow]>')
+    res = r.ask(':vars:x: (animal[x,u=1])')
     print(res)
     
     
