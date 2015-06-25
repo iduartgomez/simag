@@ -854,46 +854,161 @@ class LogSentence(object):
             p.results = []
 
     def __iter__(self):
-        return iter(self.particles)
+        return iter(self.particles) 
 
-class Particle(object):
-    """A particle in a logic sentence, that can be either:
-    * An operator of the following types: 
-    indicative conditional, implies, equiv, and, or.
-    * A predicate, declaring a variable/constant as a member of a set, 
-    or a function between two variables.
-    * A quantifier for a variable: universal or existential.
+def make_logic_sent(ori, comp, hier):
+    """Takes a parsed FOL sentence and makes a data structure
+    to process queries.
     """
-    def __init__(self, cond, depth, id_, parent, syb, *args):
-        self.pID = id_
-        self.depth = depth
-        self.cond = cond
-        self.next = syb
-        self.parent = parent
-        self.results = []
-        if cond == ':predicate:':
-            self.pred = args[0]
-
-    def solve(self, proof, ag, key, *args):
-        """Keys for solving proofs:
-        100: Substitute a child's predicates.
-        101: Check the truthiness of a child atom.
-        102: Incoming truthiness of an operation for recording.
-        103: Return to parent atom.
+    
+    class Particle(object):
+        """This is the base class to create logic particles
+        which pertain to a given sentence.
         """
-        #print(self, '// Key:'+str(key), '// Args:', args)
-        if key[-1] == 103 and self.parent == -1:
-            return
-        if key[-1] == 102 and self.cond :
-            key.pop()
-            self.results.append(args[0])
-        if self.cond == ':icond:':
-            self.icond(proof, ag, key, *args)
-        elif self.cond == ':implies:':
-            self.impl(proof, ag, key, *args)
-        elif self.cond == ':equiv:':
-            self.equiv(proof, ag, key, *args)
-        elif self.cond == ':or:' or self.cond == ':and:':
+        def __init__(self, cond, depth, id_, parent, syb, *args):
+            self.pID = id_
+            self.depth = depth
+            self.cond = cond
+            self.next = syb
+            self.parent = parent
+            self.results = []
+            if cond == ':predicate:':
+                self.pred = args[0]
+    
+        def __str__(self):
+            if self.cond != ':predicate:':
+                s = '<operator ' + ' (depth:' + str(self.depth) + ') "' \
+                + str(self.cond) + '">'
+            else:
+                s = '<predicate ' + ' (depth:' + str(self.depth) + '): ' \
+                + str(self.pred) + '>'
+            return s
+        
+        def connect(self, part_list):
+            for x, child in enumerate(self.next):
+                for part in part_list:
+                    if part.pID == child:
+                        self.next[x] = part
+                        self.next[x].parent = self
+    
+    class LogicIndCond(Particle):
+    
+        def solve(self, proof, ag, key, *args):            
+            #print(self, '// Key:'+str(key), '// Args:', args)
+            if key[-1] == 103 and self.parent == -1: return
+            if key[-1] == 102:
+                key.pop()
+                self.results.append(args[0])
+            current, next_ = len(self.results), None 
+            if current == 0:
+                key.append(101)
+                next_ = True
+            elif current == 1 and self.results[0] is True:
+                key.append(100)
+                next_ = True
+            elif current == 1 and self.results[0] is False:
+                # The left branch was false, so do not continue.
+                if hasattr(proof, 'result') is False: 
+                    proof.result = False
+                result = False
+                key.append(103)
+            else:
+                # Substitution failed.
+                result = None
+                key.append(103)
+            if self.parent != -1 and next_ is None:
+                self.parent.solve(proof, ag, key, result)
+            elif next_ is True:
+                self.next[current].solve(proof, ag, key)
+    
+    class LogicEquivalence(Particle):
+    
+        def solve(self, proof, ag, key, *args):            
+            #print(self, '// Key:'+str(key), '// Args:', args)
+            if key[-1] == 103 and self.parent == -1: return
+            if key[-1] == 102:
+                key.pop()
+                self.results.append(args[0])
+            current, next_ = len(self.results), None 
+            if current == 0:
+                key.append(101)
+                next_ = True
+            elif current == 1 and self.results[0] is not None:
+                # If it's not a predicate, follow standard FOL
+                # rules for equiv
+                if self.next[1].cond != ':predicate:':
+                    key.append(101)
+                else:
+                    key.append(103)
+                next_ = True
+            elif current > 1:
+                # The second term of the implication was complex
+                # check the result of it's substitution
+                if self.results[1] is None:
+                    result = None
+                elif self.results[0] == self.results[1]:
+                    proof.result, result = True, True
+                else:
+                    if hasattr(proof, 'result') is False:
+                        proof.result = False
+                    result = False
+                key.append(103)
+            else:
+                # Not known solution.      
+                result = None
+                key.append(103)
+            if self.parent != -1 and next_ is None:
+                self.parent.solve(proof, ag, key, result)
+            elif next_ is True:
+                self.next[current].solve(proof, ag, key)
+    
+    class LogicImplication(Particle):
+    
+        def solve(self, proof, ag, key, *args):            
+            #print(self, '// Key:'+str(key), '// Args:', args)
+            if key[-1] == 103 and self.parent == -1: return
+            if key[-1] == 102:
+                key.pop()
+                self.results.append(args[0])
+            current, next_ = len(self.results), None
+            if current == 0:
+                key.append(101)
+                next_ = True
+            elif current == 1 and self.results[0] is not None:
+                # If it's not a predicate, follow standard FOL
+                # rules for implication
+                if self.next[1].cond != ':predicate:': key.append(101)
+                elif self.results[0] is True: key.append(100)
+                next_ = True
+            elif current > 1:
+                # The second term of the implication was complex
+                # check the result of it's substitution
+                if (self.results[0] and self.results[1]) is None:
+                    result = None
+                elif self.results[0] is True and self.results[1] is False:
+                    proof.result, result = False, False
+                else:
+                    if hasattr(proof, 'result') is False:
+                        proof.result = True
+                    result = True
+                key.append(103)
+            else:
+                # Not known solution.
+                key.append(103)
+                result = None
+            if self.parent != -1 and next_ is None:
+                self.parent.solve(proof, ag, key, result)
+            elif next_ is True:
+                self.next[current].solve(proof, ag, key)
+    
+    class LogicConjunction(Particle):
+    
+        def solve(self, proof, ag, key, *args):
+            #print(self, '// Key:'+str(key), '// Args:', args)
+            if key[-1] == 103 and self.parent == -1: return
+            if key[-1] == 102:
+                key.pop()
+                self.results.append(args[0])
             current = len(self.results)
             if key[-1] == 103 and len(self.next) >= 2:
                 self.parent.solve(proof, ag, key)
@@ -903,13 +1018,7 @@ class Particle(object):
                 if current < len(self.next):
                     key.append(101)
                     self.next[current].solve(proof, ag, key)
-                else:
-                    if self.cond == ':or:':
-                        # Two branches finished, check if one is true.
-                        self.disjunction(proof, ag, key)
-                    elif self.cond == ':and:':
-                        # Two branches finished, check if both are true.
-                        self.conjunction(proof, ag, key)
+                else: self.test(proof, ag, key)
             elif key[-1] == 100:
                 if current < len(self.next) and \
                 self.next[current].cond == ':predicate:':
@@ -921,239 +1030,167 @@ class Particle(object):
                     # All substitutions done
                     key.append(103)
                     self.parent.solve(proof, ag, key)
-        elif self.pred:
-            result = self.ispred(proof, ag, key)
+        
+        def test(self, proof, ag, key):
+            left_branch, right_branch = self.results[0], self.results[1]
+            parent = None
+            if key[-1] == 101:
+                parent = True
+                # Two branches finished, check if both are true.
+                if (left_branch and right_branch) is None: result = None           
+                elif left_branch == right_branch and left_branch is True:
+                    result = True       
+                else: result = False
+                key.append(102)
+            elif key[-1] == 100:
+                # Test if this conjunction fails
+                if (left_branch and right_branch) is None: return None
+                elif left_branch == right_branch and left_branch is True:
+                    result = True
+                else: return False
+            if self.parent != -1 and parent is not None:
+                self.parent.solve(proof, ag, key, result)
+            else: proof.result = result
+    
+    class LogicDisjunction(Particle):
+    
+        def solve(self, proof, ag, key, *args):
+            #print(self, '// Key:'+str(key), '// Args:', args)
+            if key[-1] == 103 and self.parent == -1: return
+            if key[-1] == 102:
+                key.pop()
+                self.results.append(args[0])
+            current = len(self.results)
+            if key[-1] == 103 and len(self.next) >= 2:
+                self.parent.solve(proof, ag, key)
+            elif key[-1] == 103:
+                key.pop()
+            elif key[-1] == 101:
+                if current < len(self.next):
+                    key.append(101)
+                    self.next[current].solve(proof, ag, key)
+                else: self.test(proof, ag, key)
+            elif key[-1] == 100:
+                if current < len(self.next) and \
+                self.next[current].cond == ':predicate:':
+                    key.append(103)
+                    self.next[current].solve(proof, ag, key)
+                elif current < len(self.next):
+                    self.next[current].solve(proof, ag, key)
+                else:
+                    # All substitutions done
+                    key.append(103)
+                    self.parent.solve(proof, ag, key)
+        
+        def test(self, proof, ag, key):
+            left_branch, right_branch = self.results[0], self.results[1]
+            parent = None
+            if key[-1] == 101:
+                parent = True
+                key.append(102)
+                # Two branches finished, check if both are true.            
+                if (left_branch and right_branch) is None: result = None
+                elif left_branch != right_branch or \
+                (left_branch and right_branch) is True: 
+                    result = True         
+                else: result = False
+            elif key[-1] == 100:
+                # Test if this disjunction fails
+                if (left_branch and right_branch) is None: return None
+                elif left_branch != right_branch or \
+                (left_branch and right_branch) is True: 
+                    result = True
+                else: return False
+            if self.parent != -1 and parent is not None:
+                self.parent.solve(proof, ag, key, result)
+            else: proof.result = result
+    
+    class LogicAtom(Particle):
+    
+        def solve(self, proof, ag, key, *args):
+            #print(self, '// Key:'+str(key), '// Args:', args)
+            if key[-1] == 103 and self.parent == -1: return
+            if key[-1] == 102:
+                key.pop()
+                self.results.append(args[0])        
+            result = self.test(proof, ag, key)
             x = key.pop()
             if x != 100:
                 key.append(102)
                 self.parent.solve(proof, ag, key, result)
-    
-    def icond(self, proof, ag, key, *args):
-        """Procedure for parsign indicative conditional assertions."""
-        current, next_ = len(self.results), None 
-        if current == 0:
-            key.append(101)
-            next_ = True
-        elif current == 1 and self.results[0] is True:
-            key.append(100)
-            next_ = True
-        elif current == 1 and self.results[0] is False:
-            # The left branch was false, so do not continue.
-            if hasattr(proof, 'result') is False: 
-                proof.result = False
-            result = False
-            key.append(103)
-        else:
-            # Substitution failed.
-            result = None
-            key.append(103)
-        if self.parent != -1 and next_ is None:
-            self.parent.solve(proof, ag, key, result)
-        elif next_ is True:
-            self.next[current].solve(proof, ag, key)
-    
-    def equiv(self, proof, ag, key, *args):
-        """Procedure for solving equivalences."""
-        current, next_ = len(self.results), None 
-        if current == 0:
-            key.append(101)
-            next_ = True
-        elif current == 1 and self.results[0] is not None:
-            # If it's not a predicate, follow standard FOL
-            # rules for equiv
-            if self.next[1].cond != ':predicate:':
-                key.append(101)
-            else:
-                key.append(103)
-            next_ = True
-        elif current > 1:
-            # The second term of the implication was complex
-            # check the result of it's substitution
-            if self.results[1] is None:
-                result = None
-            elif self.results[0] == self.results[1]:
-                proof.result, result = True, True
-            else:
-                if hasattr(proof, 'result') is False:
-                    proof.result = False
-                result = False
-            key.append(103)
-        else:
-            # Not known solution.      
-            result = None
-            key.append(103)
-        if self.parent != -1 and next_ is None:
-            self.parent.solve(proof, ag, key, result)
-        elif next_ is True:
-            self.next[current].solve(proof, ag, key)
-    
-    def impl(self, proof, ag, key, *args):
-        """Procedure for solving implications."""
-        current, next_ = len(self.results), None
-        if current == 0:
-            key.append(101)
-            next_ = True
-        elif current == 1 and self.results[0] is not None:
-            # If it's not a predicate, follow standard FOL
-            # rules for implication
-            if self.next[1].cond != ':predicate:': key.append(101)
-            elif self.results[0] is True: key.append(100)
-            next_ = True
-        elif current > 1:
-            # The second term of the implication was complex
-            # check the result of it's substitution
-            if (self.results[0] and self.results[1]) is None:
-                result = None
-            elif self.results[0] is True and self.results[1] is False:
-                proof.result, result = False, False
-            else:
-                if hasattr(proof, 'result') is False:
-                    proof.result = True
-                result = True
-            key.append(103)
-        else:
-            # Not known solution.
-            key.append(103)
-            result = None
-        if self.parent != -1 and next_ is None:
-            self.parent.solve(proof, ag, key, result)
-        elif next_ is True:
-            self.next[current].solve(proof, ag, key)
-    
-    def conjunction(self, proof, ag, key):
-        left_branch, right_branch = self.results[0], self.results[1]
-        parent = None
-        if key[-1] == 101:
-            parent = True
-            # Two branches finished, check if both are true.
-            if (left_branch and right_branch) is None: result = None           
-            elif left_branch == right_branch and left_branch is True:
-                result = True       
-            else: result = False
-            key.append(102)
-        elif key[-1] == 100:
-            # Test if this conjunction fails
-            if (left_branch and right_branch) is None: return None
-            elif left_branch == right_branch and left_branch is True:
-                result = True
-            else: return False
-        if self.parent != -1 and parent is not None:
-            self.parent.solve(proof, ag, key, result)
-        else: proof.result = result
-
-    def disjunction(self, proof, ag, key):
-        left_branch, right_branch = self.results[0], self.results[1]
-        parent = None
-        if key[-1] == 101:
-            parent = True
-            key.append(102)
-            # Two branches finished, check if both are true.            
-            if (left_branch and right_branch) is None: result = None
-            elif left_branch != right_branch or \
-            (left_branch and right_branch) is True: 
-                result = True         
-            else: result = False
-        elif key[-1] == 100:
-            # Test if this disjunction fails
-            if (left_branch and right_branch) is None: return None
-            elif left_branch != right_branch or \
-            (left_branch and right_branch) is True: 
-                result = True
-            else: return False
-        if self.parent != -1 and parent is not None:
-            self.parent.solve(proof, ag, key, result)
-        else: proof.result = result
-
-    def ispred(self, proof, ag, key):
         
-        def isvar(s):
-            try: s = proof.assigned[s]
-            except KeyError: pass
-            return s
-        
-        pclass = self.pred.__class__.__bases__[0]
-        if key[-1] == 101:
-            if pclass is LogFunction:
-                # Check funct between a set/entity and other set/entity.
-                result = None
-                args = self.pred.get_args()
-                for x, arg in enumerate(args):
-                    if arg in proof.assigned:
-                        args[x] = proof.assigned[arg]
-                test = self.pred.substitute(args)
-                if '$' in args[0][0]:
-                    result = ag.individuals[args[0]].test_rel(test)
-                else:
-                    result = ag.classes[args[0]].test_rel(test)
-                if result is True:
-                    ag.bmsWrapper.prev_blf(test)
-            else:
-                # Check membership to a set of an entity.
-                sbj, u = self.pred[1].split(',u')
-                sbj = isvar(sbj)
-                if '$' not in sbj[0]: categs = ag.classes[sbj].get_parents()
-                else: categs = ag.individuals[sbj].get_cat()
-                check_set = self.pred[0]
-                uval = float(u[1:])
-                # If is True, then the object belongs to the set.
-                # Else, must be False, and the object must not belong.
-                result = None
-                if check_set in categs:
-                    val = categs[check_set]
-                    if u[0] == '=' and uval == val:
-                        result = True
-                    elif u[0] == '>' and uval > val:
-                        result = True
-                    elif u[0] == '<' and uval == val:
-                        result = True
+        def test(self, proof, ag, key):
+            
+            def isvar(s):
+                try: s = proof.assigned[s]
+                except KeyError: pass
+                return s
+            
+            pclass = self.pred.__class__.__bases__[0]
+            if key[-1] == 101:
+                if pclass is LogFunction:
+                    # Check funct between a set/entity and other set/entity.
+                    result = None
+                    args = self.pred.get_args()
+                    for x, arg in enumerate(args):
+                        if arg in proof.assigned:
+                            args[x] = proof.assigned[arg]
+                    test = self.pred.substitute(args)
+                    if '$' in args[0][0]:
+                        result = ag.individuals[args[0]].test_rel(test)
                     else:
-                        result = False
-                if result is True:
-                    s = check_set+'['+sbj+',u'+u[0]+str(uval)+']'
-                    ag.bmsWrapper.prev_blf(s)
-            return result
-        else:
-            # marked for declaration
-            # subtitute var(s) for constants
-            # and pass to agent for updating
-            if pclass is LogFunction:                
-                args = self.pred.get_args()
-                for x, arg in enumerate(args):
-                    if arg in proof.assigned:
-                        args[x] = proof.assigned[arg]
-                pred = self.pred.substitute(args)
-                ag.bmsWrapper.check(pred)
-                ag.up_rel(pred)
+                        result = ag.classes[args[0]].test_rel(test)
+                    if result is True:
+                        ag.bmsWrapper.prev_blf(test)
+                else:
+                    # Check membership to a set of an entity.
+                    sbj, u = self.pred[1].split(',u')
+                    sbj = isvar(sbj)
+                    if '$' not in sbj[0]: categs = ag.classes[sbj].get_parents()
+                    else: categs = ag.individuals[sbj].get_cat()
+                    check_set = self.pred[0]
+                    uval = float(u[1:])
+                    # If is True, then the object belongs to the set.
+                    # Else, must be False, and the object must not belong.
+                    result = None
+                    if check_set in categs:
+                        val = categs[check_set]
+                        if u[0] == '=' and uval == val:
+                            result = True
+                        elif u[0] == '>' and uval > val:
+                            result = True
+                        elif u[0] == '<' and uval == val:
+                            result = True
+                        else:
+                            result = False
+                    if result is True:
+                        s = check_set+'['+sbj+',u'+u[0]+str(uval)+']'
+                        ag.bmsWrapper.prev_blf(s)
+                return result
             else:
-                pred = list(self.pred)
-                sbj, u = self.pred[1].split(',u')
-                pred[1] = isvar(sbj)
-                pred = (pred[0], [pred[1], u])
-                ag.bmsWrapper.check(pred)
-                pred[1][1] = float(u[1:])
-                ag.up_memb(pred)
-            if key[-1] == 100 and hasattr(proof, 'result'):                
-                proof.result.append(pred)
-            elif key[-1] == 100:
-                proof.result = [pred]
-
-    def __str__(self):
-        if self.cond != ':predicate:':
-            s = '<operator ' + ' (depth:' + str(self.depth) + ') "' \
-            + str(self.cond) + '">'
-        else:
-            s = '<predicate ' + ' (depth:' + str(self.depth) + '): ' \
-            + str(self.pred) + '>'
-        return s
-    
-    def connect(self, part_list):
-        for x, child in enumerate(self.next):
-            for part in part_list:
-                if part.pID == child:
-                    self.next[x] = part
-                    self.next[x].parent = self
-
-def make_logic_sent(ori, comp, hier):
+                # marked for declaration
+                # subtitute var(s) for constants
+                # and pass to agent for updating
+                if pclass is LogFunction:                
+                    args = self.pred.get_args()
+                    for x, arg in enumerate(args):
+                        if arg in proof.assigned:
+                            args[x] = proof.assigned[arg]
+                    pred = self.pred.substitute(args)
+                    ag.bmsWrapper.check(pred)
+                    ag.up_rel(pred)
+                else:
+                    pred = list(self.pred)
+                    sbj, u = self.pred[1].split(',u')
+                    pred[1] = isvar(sbj)
+                    pred = (pred[0], [pred[1], u])
+                    ag.bmsWrapper.check(pred)
+                    pred[1][1] = float(u[1:])
+                    ag.up_memb(pred)
+                if key[-1] == 100 and hasattr(proof, 'result'):                
+                    proof.result.append(pred)
+                elif key[-1] == 100:
+                    proof.result = [pred]
     
     def make_parts(ori, comp, hier, depth=0):
         form = comp[ori]
@@ -1176,8 +1213,18 @@ def make_logic_sent(ori, comp, hier):
         if depth > sent.depth:
             sent.depth = depth
         if len(cond) > 0:
-            sent.particles.append(Particle(cond[0], depth, part_id,
-                                           parent, syb))
+            type_ = cond[0]
+            if type_ == ':icond:':                
+                l = LogicIndCond(type_, depth, part_id, parent, syb)
+            elif type_ == ':equiv:':
+                l = LogicEquivalence(type_, depth, part_id, parent, syb)
+            elif type_ == ':implies:':
+                l = LogicImplication(type_, depth, part_id, parent, syb)
+            elif type_ == ':and:':
+                l = LogicConjunction(type_, depth, part_id, parent, syb)
+            elif type_ == ':or:':
+                l = LogicDisjunction(type_, depth, part_id, parent, syb)            
+            sent.particles.append(l)
         elif any(x in form for x in [':vars:', ':exists:']):
             form = form.split(':')
             cond = ':stub:'
@@ -1187,20 +1234,20 @@ def make_logic_sent(ori, comp, hier):
                     for var in vars_:
                         if var not in sent.var_order:
                             sent.var_order.append(var)
-                    sent.particles.append(Particle(cond, depth, part_id,
-                                                   parent, syb))
+                    p = Particle(cond, depth, part_id, parent, syb, form)
+                    sent.particles.append(p)
         elif '[' in form:
             cond = ':predicate:'
             if '<' in form:
                 form = make_function(form, 'relation')
             else:
                 form = tuple(rgx_ob.findall(form)[0].split('['))
-            sent.particles.append(Particle(cond, depth, part_id,
-                                           parent, syb, form))
+            p = LogicAtom(cond, depth, part_id, parent, syb, form)
+            sent.particles.append(p)
         else:
             cond = ':stub:'
-            sent.particles.append(Particle(cond, depth, part_id,
-                                           parent, syb, form))
+            p = Particle(cond, depth, part_id, parent, syb, form)
+            sent.particles.append(p)
     
     def connect_parts():
         particles = []
