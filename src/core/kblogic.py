@@ -30,11 +30,10 @@ between these objects.
 # of the same type with several objects.
 #
 # Add 'belief maintenance system' functionality.
-# Refactor 'Particle' so different atoms are subclasses
 # Refactor class membership to new data structure instead of raw tuples
 
 # ===================================================================#
-#   Imports and constants
+#   Imports and globals
 # ===================================================================#
 
 import re
@@ -42,7 +41,6 @@ import uuid
 import copy
 
 import core.bms
-from builtins import ValueError
 
 # Regex
 rgx_par = re.compile(r'\{(.*?)\}')
@@ -253,7 +251,9 @@ class Representation(object):
                 elif sbj in self.classes:
                     self.classes[sbj].add_cog(sent)
                 else:
-                    c = 'class' if pclass is not LogFunction else 'relation'
+                    if not issubclass(pclass, LogFunction): 
+                        c = 'class'
+                    else: c = 'relation'
                     nc = Category(sbj)
                     nc.type_ = c
                     nc.add_cog(sent)
@@ -262,7 +262,9 @@ class Representation(object):
                 if p in self.classes:
                     self.classes[p].add_cog(sent)
                 else:
-                    c = 'class' if pclass is not LogFunction else 'relation'
+                    if not issubclass(pclass, LogFunction): 
+                        c = 'class'
+                    else: c = 'relation'
                     nc = Category(p)
                     nc.type_ = c
                     nc.add_cog(sent)
@@ -273,8 +275,8 @@ class Representation(object):
             if p.cond == ':predicate:':
                 preds.append(p.pred)
         for pred in preds:
-            pclass = pred.__class__.__bases__[0]
-            if pclass is LogFunction:
+            pclass = pred.__class__
+            if issubclass(pclass, LogFunction):
                 for arg in pred.args:
                     if isinstance(arg, tuple): sbj = arg[0]
                     else: sbj = arg
@@ -291,8 +293,7 @@ class Representation(object):
         preds.extend(proof.get_pred(branch='r'))
         n = []
         for p in preds:
-            pclass = p.__class__.__bases__[0]
-            if pclass is LogFunction: name = p.func
+            if issubclass(p.__class__, LogFunction): name = p.func
             else: name = p[0]
             n.append(name)
             if name in self.classes and \
@@ -651,7 +652,8 @@ def parse_sent(sent):
     return ori, comp, hier
 
 class LogFunction(object):
-    """Base class to represent a logic function."""
+    """Base class to represent a logic function."""    
+    types = ['relation']
     
     def __init__(self, sent):
         self.args = self.mk_args(sent)
@@ -713,8 +715,7 @@ def make_function(sent, f_type=None, *args):
     data structure for the function, but are not meant to be instantiated
     directly.
     """
-    types = ['relation']
-    
+        
     class NotCompFuncError(Exception):
         """Logic functions are not comparable exception."""
     
@@ -767,7 +768,7 @@ def make_function(sent, f_type=None, *args):
                         return ('args', other.args[x], arg)
             return True
     
-    assert (f_type in types or f_type is None), \
+    assert (f_type in LogFunction.types or f_type is None), \
             'Function {0} does not exist.'.format(f_type)
     if f_type == 'relation':
         return RelationFunc(sent)
@@ -778,92 +779,94 @@ def make_function(sent, f_type=None, *args):
 #   LOGIC CLASSES AND SUBCLASSES
 # ===================================================================#
 
-class LogSentence(object):
-    """Object to store a first-order logic complex sentence.
-
-    This sentence is the result of parsing a sentence and encode
-    it in an usable form for the agent to classify and reason about
-    objects and relations, cannot be instantiated directly.
-    
-    It's callable when instantiated, accepts as arguments:
-    1) the working knowledge-base
-    2) n strins which will subsitute the variables in the sentence
-       or a list of string.
-    """
-    def __init__(self):
-        self.depth = 0
-        self.var_order = []
-        self.particles = []
-
-    def __call__(self, ag, *args):
-        if type(args[0]) is tuple or type(args[0] is list):
-            args = args[0]
-        # Clean up previous results.
-        self.assigned = {}
-        self.cln_res()
-        if len(self.var_order) == len(args):
-            # Check the properties/classes an obj belongs to
-            for n, const in enumerate(args):
-                if const not in ag.individuals:
-                    return
-                var_name = self.var_order[n]
-                # Assign an entity to a variable by order.
-                self.assigned[var_name] = const
-            ag.bmsWrapper.register(self)
-            self.start.solve(self, ag, key=[0])
-            ag.bmsWrapper.register(self, stop=True)
-        elif len(self.var_order) == 0:
-            ag.bmsWrapper.register(self)
-            self.start.solve(self, ag, key=[0])
-            ag.bmsWrapper.register(self, stop=True)
-        else:
-            return
-
-    def get_ops(self, p, chk_op=[':or:', ':implies:', ':equiv:']):
-        ops = []
-        for p in self:
-            if any(x in p.cond for x in chk_op):
-                ops.append(p)
-        for p in ops:
-            x = p
-            while x.cond != ':icond:' or x.parent == -1:
-                if x.parent.cond == ':icond:' and x.parent.next[1] == x:
-                    return False
-                else:
-                    x = x.parent
-        return True
-
-    def get_pred(self, branch='l', conds=gr_conds):
-        preds = []
-        for p in self:
-            if p.cond == ':predicate:':
-                preds.append(p)
-        res = []
-        for p in preds:
-            x = p
-            while x.parent.cond not in conds:
-                x = x.parent
-            if branch == 'l' and x.parent.next[0] == x:
-                res.append(p.pred)
-            elif branch != 'l' and x.parent.next[1] == x:
-                res.append(p.pred)
-        return res
-    
-    def cln_res(self):
-        for p in self.particles:
-            p.results = []
-
-    def __iter__(self):
-        return iter(self.particles) 
-
 def make_logic_sent(ori, comp, hier):
-    """Takes a parsed FOL sentence and makes a data structure
-    to process queries.
+    """Takes a parsed FOL sentence and creates an object with
+    the embedded methods to resolve it.
     """
+    
+    class LogSentence(object):
+        """Object to store a first-order logic complex sentence.
+    
+        This sentence is the result of parsing a sentence and encode
+        it in an usable form for the agent to classify and reason about
+        objects and relations, cannot be instantiated directly.
+        
+        It's callable when instantiated, accepts as arguments:
+        1) the working knowledge-base
+        2) n strins which will subsitute the variables in the sentence
+           or a list of string.
+        """
+        def __init__(self):
+            self.depth = 0
+            self.var_order = []
+            self.particles = []
+        
+        def __call__(self, ag, *args):
+            if type(args[0]) is tuple or type(args[0] is list):
+                args = args[0]
+            # Clean up previous results.
+            self.assigned = {}
+            self.cln_res()
+            if len(self.var_order) == len(args):
+                # Check the properties/classes an obj belongs to
+                for n, const in enumerate(args):
+                    if const not in ag.individuals:
+                        return
+                    var_name = self.var_order[n]
+                    # Assign an entity to a variable by order.
+                    self.assigned[var_name] = const
+                ag.bmsWrapper.register(self)
+                self.start.solve(self, ag, key=[0])
+            elif len(self.var_order) == 0:
+                ag.bmsWrapper.register(self)
+                self.start.solve(self, ag, key=[0])
+            else: return
+    
+        def get_ops(self, p, chk_op=[':or:', ':implies:', ':equiv:']):
+            ops = []
+            for p in self:
+                if any(x in p.cond for x in chk_op):
+                    ops.append(p)
+            for p in ops:
+                x = p
+                while x.cond != ':icond:' or x.parent == -1:
+                    if x.parent.cond == ':icond:' and x.parent.next[1] == x:
+                        return False
+                    else:
+                        x = x.parent
+            return True
+    
+        def get_pred(self, branch='l', conds=gr_conds):
+            preds = []
+            for p in self:
+                if p.cond == ':predicate:':
+                    preds.append(p)
+            res = []
+            for p in preds:
+                x = p
+                while x.parent.cond not in conds:
+                    x = x.parent
+                if branch == 'l' and x.parent.next[0] == x:
+                    res.append(p.pred)
+                elif branch != 'l' and x.parent.next[1] == x:
+                    res.append(p.pred)
+            return res
+        
+        def cln_res(self):
+            for p in self.particles:
+                p.results = []
+    
+        def __iter__(self):
+            return iter(self.particles)
     
     class Particle(object):
         """This is the base class to create logic particles
         which pertain to a given sentence.
+        
+        Keys for solving proofs:
+        100: Substitute a child's predicates.
+        101: Check the truthiness of a child atom.
+        103: Return to parent atom.
         """
         def __init__(self, cond, depth, id_, parent, syb, *args):
             self.pID = id_
@@ -890,15 +893,16 @@ def make_logic_sent(ori, comp, hier):
                     if part.pID == child:
                         self.next[x] = part
                         self.next[x].parent = self
+        
+        def returning_value(self, proof, ag, key, truth):
+            self.results.append(truth)
+            self.solve(proof, ag, key)
     
     class LogicIndCond(Particle):
     
         def solve(self, proof, ag, key, *args):            
             #print(self, '// Key:'+str(key), '// Args:', args)
             if key[-1] == 103 and self.parent == -1: return
-            if key[-1] == 102:
-                key.pop()
-                self.results.append(args[0])
             current, next_ = len(self.results), None 
             if current == 0:
                 key.append(101)
@@ -926,9 +930,6 @@ def make_logic_sent(ori, comp, hier):
         def solve(self, proof, ag, key, *args):            
             #print(self, '// Key:'+str(key), '// Args:', args)
             if key[-1] == 103 and self.parent == -1: return
-            if key[-1] == 102:
-                key.pop()
-                self.results.append(args[0])
             current, next_ = len(self.results), None 
             if current == 0:
                 key.append(101)
@@ -967,9 +968,6 @@ def make_logic_sent(ori, comp, hier):
         def solve(self, proof, ag, key, *args):            
             #print(self, '// Key:'+str(key), '// Args:', args)
             if key[-1] == 103 and self.parent == -1: return
-            if key[-1] == 102:
-                key.pop()
-                self.results.append(args[0])
             current, next_ = len(self.results), None
             if current == 0:
                 key.append(101)
@@ -1006,9 +1004,6 @@ def make_logic_sent(ori, comp, hier):
         def solve(self, proof, ag, key, *args):
             #print(self, '// Key:'+str(key), '// Args:', args)
             if key[-1] == 103 and self.parent == -1: return
-            if key[-1] == 102:
-                key.pop()
-                self.results.append(args[0])
             current = len(self.results)
             if key[-1] == 103 and len(self.next) >= 2:
                 self.parent.solve(proof, ag, key)
@@ -1033,33 +1028,28 @@ def make_logic_sent(ori, comp, hier):
         
         def test(self, proof, ag, key):
             left_branch, right_branch = self.results[0], self.results[1]
-            parent = None
             if key[-1] == 101:
-                parent = True
                 # Two branches finished, check if both are true.
                 if (left_branch and right_branch) is None: result = None           
                 elif left_branch == right_branch and left_branch is True:
                     result = True       
                 else: result = False
-                key.append(102)
+                if self.parent != -1: 
+                    self.parent.returning_value(proof, ag, key, result)
+                else: proof.result = result
             elif key[-1] == 100:
                 # Test if this conjunction fails
                 if (left_branch and right_branch) is None: return None
                 elif left_branch == right_branch and left_branch is True:
                     result = True
                 else: return False
-            if self.parent != -1 and parent is not None:
-                self.parent.solve(proof, ag, key, result)
-            else: proof.result = result
+                proof.result = result
     
     class LogicDisjunction(Particle):
     
         def solve(self, proof, ag, key, *args):
             #print(self, '// Key:'+str(key), '// Args:', args)
             if key[-1] == 103 and self.parent == -1: return
-            if key[-1] == 102:
-                key.pop()
-                self.results.append(args[0])
             current = len(self.results)
             if key[-1] == 103 and len(self.next) >= 2:
                 self.parent.solve(proof, ag, key)
@@ -1084,16 +1074,16 @@ def make_logic_sent(ori, comp, hier):
         
         def test(self, proof, ag, key):
             left_branch, right_branch = self.results[0], self.results[1]
-            parent = None
             if key[-1] == 101:
-                parent = True
-                key.append(102)
                 # Two branches finished, check if both are true.            
                 if (left_branch and right_branch) is None: result = None
                 elif left_branch != right_branch or \
                 (left_branch and right_branch) is True: 
                     result = True         
                 else: result = False
+                if self.parent != -1: 
+                    self.parent.returning_value(proof, ag, key, result)
+                else: proof.result = result
             elif key[-1] == 100:
                 # Test if this disjunction fails
                 if (left_branch and right_branch) is None: return None
@@ -1101,23 +1091,17 @@ def make_logic_sent(ori, comp, hier):
                 (left_branch and right_branch) is True: 
                     result = True
                 else: return False
-            if self.parent != -1 and parent is not None:
-                self.parent.solve(proof, ag, key, result)
-            else: proof.result = result
+                proof.result = result
     
     class LogicAtom(Particle):
     
         def solve(self, proof, ag, key, *args):
             #print(self, '// Key:'+str(key), '// Args:', args)
-            if key[-1] == 103 and self.parent == -1: return
-            if key[-1] == 102:
-                key.pop()
-                self.results.append(args[0])        
+            if key[-1] == 103 and self.parent == -1: return   
             result = self.test(proof, ag, key)
             x = key.pop()
             if x != 100:
-                key.append(102)
-                self.parent.solve(proof, ag, key, result)
+                self.parent.returning_value(proof, ag, key, result)
         
         def test(self, proof, ag, key):
             
@@ -1126,9 +1110,8 @@ def make_logic_sent(ori, comp, hier):
                 except KeyError: pass
                 return s
             
-            pclass = self.pred.__class__.__bases__[0]
             if key[-1] == 101:
-                if pclass is LogFunction:
+                if issubclass(self.pred.__class__, LogFunction):
                     # Check funct between a set/entity and other set/entity.
                     result = None
                     args = self.pred.get_args()
@@ -1171,7 +1154,7 @@ def make_logic_sent(ori, comp, hier):
                 # marked for declaration
                 # subtitute var(s) for constants
                 # and pass to agent for updating
-                if pclass is LogFunction:                
+                if issubclass(self.pred.__class__, LogFunction):                
                     args = self.pred.get_args()
                     for x, arg in enumerate(args):
                         if arg in proof.assigned:
@@ -1326,7 +1309,7 @@ class Inference(object):
         
         def chk_result():
             isind = True if var[0] == '$' else False
-            if pclass is LogFunction:
+            if issubclass(pclass, LogFunction):
                 try:
                     if isind is True: 
                         res = self.subkb.individuals[var].test_rel(pred)
@@ -1369,8 +1352,8 @@ class Inference(object):
         for var, preds in self.query.items():
             if var in self.vrs:
                 for pred in preds:
-                    pclass = pred.__class__.__bases__[0]
-                    if pclass is LogFunction: q = pred.func
+                    pclass = pred.__class__
+                    if issubclass(pclass, LogFunction): q = pred.func
                     else: q = pred[0]
                     for var,v in self.obj_dic.items():
                         if q in v:
@@ -1380,9 +1363,9 @@ class Inference(object):
             else:
                 self.results[var] = {}
                 for pred in preds:
-                    pclass = pred.__class__.__bases__[0]
+                    pclass = pred.__class__
                     self.rule_tracker()
-                    if pclass is LogFunction: 
+                    if issubclass(pclass, LogFunction): 
                         self.actv_q, q = (var, pred.func), pred.func
                     else: 
                         self.actv_q, q = (var, pred[0]), pred[0]             
@@ -1420,8 +1403,7 @@ class Inference(object):
         def add_ctg():
             # added category/function to the object dictionary
             for r in node.rule.result:
-                pclass = r.__class__.__bases__[0]
-                if pclass is LogFunction:
+                if issubclass(r.__class__, LogFunction):
                     args = r.get_args()
                     for sbs in args:
                         try:
@@ -1523,8 +1505,7 @@ class Inference(object):
         # makes inference nodes for the evaluation
         preds = rule.get_pred(branch=pos, conds=gr_conds)
         for cons in preds:
-            pclass = cons.__class__.__bases__[0]
-            if pclass is LogFunction:
+            if issubclass(cons.__class__, LogFunction):
                 pred = cons.func
             else:
                 pred = cons[0]
@@ -1584,8 +1565,8 @@ class Inference(object):
             preds[i] = break_pred()
         terms, ctgs = {}, []
         for p in preds:
-            names, pclass = p[0], p[1].__class__.__bases__[0]
-            if pclass is LogFunction:
+            names, pclass = p[0], p[1].__class__
+            if issubclass(pclass, LogFunction):
                 func = p[1]
                 ctgs.append(func.func)
                 for obj in names:
@@ -1619,11 +1600,10 @@ class SubstRepr(Representation):
         def __init__(self):
             self.chgs_dict = dict()
         
-        def register(self, form, stop=False):
-            if stop is False:
-                self.chgs_dict[form] = (list(), list())
-                self.chk_ls = self.chgs_dict[form][0]
-                self.prod = self.chgs_dict[form][1]
+        def register(self, form):
+            self.chgs_dict[form] = (list(), list())
+            self.chk_ls = self.chgs_dict[form][0]
+            self.prod = self.chgs_dict[form][1]
         
         def prev_blf(self, arg):
             self.prod.append(arg)
@@ -1636,6 +1616,9 @@ class SubstRepr(Representation):
         self.classes = {}
         self.bmsWrapper = self.FakeBms()
         self.make(*args)
+    
+    def register(self, form):        
+        self.bmsWrapped.register(form)
     
     def make(self, kb, obj_dic):
         for s in obj_dic:

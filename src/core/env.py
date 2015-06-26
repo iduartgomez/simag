@@ -71,3 +71,4 @@ class Env(object):
         if type_ in ag_types:
             self.agents[oID] = (self.total_obj, obj)
         self.world = np.append(self.world, [pos], axis=0)
+

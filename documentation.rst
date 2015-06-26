@@ -36,7 +36,8 @@ Categories
 Categories or classes have several properties:
 
 1. Attributes. Attributes common to to every member of the class.
-2. Tests.
+2. Rules. Those are 'cognitions' in the form of FOL/fuzzy logic that are
+applied to infer qualities about objects and classes.
 
 ******************************
 Synthax and semantics of SimAg
