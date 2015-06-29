@@ -9,7 +9,7 @@ from core.kblogic import *
 
 def load_sentences(test):
     path = os.path.dirname(__file__)
-    logic_test = os.path.join(path, 'knowledge_base', test)
+    logic_test = os.path.join(path, 'kblogic', test)
     ls, sup_ls = [], []
     with open(logic_test, 'r') as f:
         for line in f:
@@ -204,14 +204,15 @@ class LogicSentenceParsing(unittest.TestCase):
             with self.subTest(sent='subtest {0}: {1}'.format(x,sent)):
                 ori, comp, hier = parse_sent(sent)
                 lg_sent = make_logic_sent(ori, comp, hier)
-                preds = lg_sent.get_pred(conds=gr_conds)
-                preds.extend(lg_sent.get_pred(branch='r',conds=gr_conds))
+                preds = lg_sent.get_pred(conds=G_P_CONDS)
+                preds.extend(lg_sent.get_pred(branch='r',conds=G_P_CONDS))
                 p_func = [p.func for p in preds \
                           if isinstance(p,LogFunction)]
                 chk = [x[0] for x in preds if isinstance(x, tuple)]
                 chk.extend(p_func)
                 for obj in eval[x]:
                     self.assertIn(obj, chk)
+
 
 if __name__ == "__main__":
     unittest.main()

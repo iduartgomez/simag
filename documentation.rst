@@ -1,6 +1,6 @@
-********************
-Agents inner working
-********************
+************************
+Agents Inner Functioning
+************************
 
 Representation of knowledge
 ===========================
