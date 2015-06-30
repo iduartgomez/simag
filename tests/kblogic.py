@@ -1,55 +1,7 @@
-"""
-@author: Ignacio Duart Gomez
-"""
-
 import unittest
 import os
 
 from core.kblogic import *
-
-def load_sentences(test):
-    path = os.path.dirname(__file__)
-    logic_test = os.path.join(path, 'kblogic', test)
-    ls, sup_ls = [], []
-    with open(logic_test, 'r') as f:
-        for line in f:
-            if line.strip()[0] == '#': pass
-            elif line.strip() == '{':
-                sup_ls, ls = ls, list()
-            elif line.strip() == '}':
-                sup_ls.append(ls)
-                ls = sup_ls
-            else: ls.append(line.strip())
-    return ls
-
-def iter_test(self, sents, ask, eval, single=False):
-    for i, test in enumerate(sents):        
-        with self.subTest(test='subtest {0}: {1}'.format(i,ask[i])):
-            #print('\n===== SUBTEST =====')
-            #print('subtest',x,'|',test,'\n')
-            if isinstance(test, list):
-                for s in test:
-                    self.rep.tell(s)
-                for j, q in enumerate(ask[i]):
-                    answ = self.rep.ask(q,single=single)                    
-                    if isinstance(eval[i], list):
-                        if single is not True:
-                            for k in eval[i][j].keys():
-                                self.assertEqual(eval[i][j][k], answ[k])
-                        else:
-                            self.assertEqual(eval[i][j], answ)
-                    else:
-                        if single is not True:
-                            for k in eval[i].keys():
-                                self.assertEqual(eval[i][k], answ[k])
-                        else:
-                            self.assertEqual(eval[i], answ)
-            else:
-                self.rep.tell(s)
-                for q in ask[i]:
-                    answ = self.rep.ask(q)
-                    for k in eval[i].keys():
-                        self.assertEqual(eval[i][k], answ[k])
 
 #====================#
 #    UNIT TESTING    #
@@ -212,6 +164,54 @@ class LogicSentenceParsing(unittest.TestCase):
                 chk.extend(p_func)
                 for obj in eval[x]:
                     self.assertIn(obj, chk)
+
+#====================#
+#    HELP FUNCTIONS  #
+#====================#
+
+def load_sentences(test):
+    path = os.path.dirname(__file__)
+    logic_test = os.path.join(path, 'kblogic', test)
+    ls, sup_ls = [], []
+    with open(logic_test, 'r') as f:
+        for line in f:
+            if line.strip()[0] == '#': pass
+            elif line.strip() == '{':
+                sup_ls, ls = ls, list()
+            elif line.strip() == '}':
+                sup_ls.append(ls)
+                ls = sup_ls
+            else: ls.append(line.strip())
+    return ls
+
+def iter_test(self, sents, ask, eval, single=False):
+    for i, test in enumerate(sents):        
+        with self.subTest(test='subtest {0}: {1}'.format(i,ask[i])):
+            #print('\n===== SUBTEST =====')
+            #print('subtest',x,'|',test,'\n')
+            if isinstance(test, list):
+                for s in test:
+                    self.rep.tell(s)
+                for j, q in enumerate(ask[i]):
+                    answ = self.rep.ask(q,single=single)                    
+                    if isinstance(eval[i], list):
+                        if single is not True:
+                            for k in eval[i][j].keys():
+                                self.assertEqual(eval[i][j][k], answ[k])
+                        else:
+                            self.assertEqual(eval[i][j], answ)
+                    else:
+                        if single is not True:
+                            for k in eval[i].keys():
+                                self.assertEqual(eval[i][k], answ[k])
+                        else:
+                            self.assertEqual(eval[i], answ)
+            else:
+                self.rep.tell(s)
+                for q in ask[i]:
+                    answ = self.rep.ask(q)
+                    for k in eval[i].keys():
+                        self.assertEqual(eval[i][k], answ[k])
 
 
 if __name__ == "__main__":

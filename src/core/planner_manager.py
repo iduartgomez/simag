@@ -22,8 +22,8 @@ class Context:
     """Wrapps the context data and acts as an interface for the
     different problem sets. Decission is delegated then to an
     the strategy manager based on the problem set.
-    """    
-    pass
+    """
+    
 
 def context_manager():
     """Extracts the data from the current agent knowledge necessary
@@ -115,11 +115,6 @@ class ProblemDomain(metaclass=ProblemMeta):
         else: 
             raise AttributeError('Need to set default algorithm, ' \
             'use the set_default method.')
-
-    def add_algo(self, *algos):
-        for algo in algos:
-            f = MethodType(algo, self)
-            setattr(self, algo.__name__, f)
         
     def set_algo(self, func=None, subplans=None):
         if func is None: del self.default
@@ -127,13 +122,18 @@ class ProblemDomain(metaclass=ProblemMeta):
             if hasattr(self, func.__name__):
                 self.default = getattr(self, func.__name__)
             else:
-                self.add_algo(func)
+                self.__add_algo(func)
                 self.default = getattr(self, func.__name__)
         elif type(func) is type:
             if subplans is not None: self.default = func(subplans=subplans)
             else: self.default = func()
         else:
             self.default = func
+    
+    def __add_algo(self, *algos):
+        for algo in algos:
+            f = MethodType(algo, self)
+            setattr(self, algo.__name__, f)
             
     def inspect_domain(self, init=False):
         """Inspects the problem domain definition and continues 
@@ -168,17 +168,19 @@ class ProblemDomain(metaclass=ProblemMeta):
         for rel in relations:
             if rel not in cls.relations:
                 cls.relations.append(rel)
+        self.inspect_domain()
     
     def require_knowledge(self, knowledge):
         cls = self.__class__
         for cog in knowledge:
             if cog not in cls.knowledge:
                 cls.relations.append(cog)
+        self.inspect_domain()
                 
     def __str__(self):
         return '<'+str(self.__class__.__name__)+'>'
 
-class SolveTemplate:
+class SolveTemplate(object):
     """A helper template class for constructing resolution algorithms.
     
     This class includes several methods that can be executed by the algorithm:
@@ -254,7 +256,7 @@ class SolveProblemWithAlgo1(SolveTemplate):
         m = "attempting solution with algo {0} to problem {1}:\n" \
         "{2}\n".format(self,self.masterplan,kw['test'])
         print(m)
-        self.call_plan(SolveProblemWithAlgo2, subplans=[SolveProblemWithAlgo3])
+        self.call_plan(SolveProblemWithAlgo2,subplans=[SolveProblemWithAlgo3])
 
 class SolveProblemWithAlgo2(SolveTemplate):
     def solve(self):
@@ -264,7 +266,7 @@ class SolveProblemWithAlgo2(SolveTemplate):
         self.call_plan(SolveProblemWithAlgo3, test=test)
 
 class SolveProblemWithAlgo3(SolveTemplate):
-    def solve(self,**kw):
+    def solve(self, **kw):
         m = "attempting solution with algo {0} to problem {1}\n" \
         "{2}\n".format(self,self.masterplan,kw['test'])
         print(m)
@@ -274,6 +276,5 @@ test = 'THIS IS A SAMPLE OF A TEST'
 #
 problem1 = ExampleProblem1()
 problem1.set_algo(SolveProblemWithAlgo1,subplans=[SolveProblemWithAlgo2])
-problem1.add_algo()
 problem1(agent, test=test)
 

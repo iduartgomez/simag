@@ -160,17 +160,6 @@ class Representation(object):
         Declarations of mapping can happen between entities, classes, 
         or between an entity and a class (ie. <loves[cats,u=1, $Lucy]>).
         """
-        
-        def declare_memb():
-            assert ('=' in e), "It's a predicate, must assign truth value."
-            u = e.split(',u=')
-            u[1] = float(u[1])
-            pred = sets[0], (u[0], u[1])
-            if (u[1] > 1 or u[1] < 0): 
-                m = "Illegal value: {0}, must be > 0, or < 1.".format(u[1])
-                raise AssertionError(m)
-            self.up_memb(pred)
-        
         sent = sent.replace(' ','')
         sets = rgx_ob.findall(sent)
         sets = sets[0].split('[')
@@ -186,32 +175,33 @@ class Representation(object):
             # to a set of objects.
             if isinstance(sets[1], list):
                 for e in sets[1]:
-                    declare_memb()
+                    fact = make_fact([sets[0],e], 'grounded_term')
+                    self.up_memb(fact)
             else:
-                e = sets[1]
-                declare_memb()
+                fact = make_fact(sets, 'grounded_term')
+                self.up_memb(fact)
 
     def up_memb(self, pred):
         # It's a membership declaration.
         #
         # Here the change should be recorded in the BMS
         # self.bmsWrapper.add(pred, True)
-        categ, subject, val = pred[0], pred[1][0], pred[1][1]
+        subject, categ = pred.term, pred.parent
         if subject not in self.individuals and '$' in subject:
             # An individual which is member of a class
             ind = Individual(subject)
-            ind.add_ctg(categ, val)
+            ind.add_ctg(pred)
             self.individuals[subject] = ind
         elif '$' in subject:
             # Add/replace an other class membership to an existing individual
-            self.individuals[subject].add_ctg(categ, val)            
+            self.individuals[subject].add_ctg(pred)          
         elif subject in self.classes:            
-            self.classes[subject].add_parent((categ,val))
+            self.classes[subject].add_parent(pred)
         else:
             # Is a new subclass of an other class
             cls = Category(subject)
             cls.type_ = 'class'
-            cls.add_parent((categ,val))
+            cls.add_parent(pred)
             self.classes[subject] = cls
         if categ not in self.classes:
             nc = Category(categ)
@@ -411,19 +401,20 @@ class Individual(object):
         else:
             self.cog[p] = [sent]
         
-    def add_ctg(self, ctg, val):
-        ctg_rec = [x for (x,_) in self.categ]
-        if ctg not in ctg_rec:
-            self.categ.append((ctg, val))
-        else:
-            idx = ctg_rec.index(ctg)
-            self.categ[idx] = (ctg, val)
+    def add_ctg(self, fact):
+        if issubclass(fact.__class__, LogPredicate):
+            ctg_rec = [fact.parent for fact in self.categ]
+            if fact.parent not in ctg_rec:
+                self.categ.append(fact)
+            else:
+                idx = ctg_rec.index(fact.parent)
+                self.categ[idx] = fact
     
     def check_cat(self, n):
         """Returns a list that is the intersection of the input iterable
         and the categories of the object.
         """
-        s = [c[0] for c in self.categ if c[0] in n]
+        s = [c.parent for c in self.categ if c.parent in n]
         return s
 
     def get_cat(self, ctg=None):
@@ -434,7 +425,7 @@ class Individual(object):
         then the value for that category is returned. If it doesn't
         exist, None is returned.
         """
-        cat = {k:v for k,v in self.categ}
+        cat = {ctg.parent:ctg.value for ctg in self.categ}
         if ctg is None:
             return cat
         else:
@@ -539,7 +530,7 @@ class Category(object):
         and the parents of the object.
         """
         if not hasattr(self,'parents'): return list()
-        return [c[0] for c in self.parents if c[0] in n]
+        return [c.parent for c in self.parents if c.parent in n]
     
     def get_parents(self, ctg=None):
         """Returns a dictionary of the parents of this class and
@@ -549,16 +540,16 @@ class Category(object):
         then the value for that category is returned. If it doesn't
         exist, None is returned.
         """
-        cat = {k:v for k,v in self.parents}
+        cat = {ctg.parent:ctg.value for ctg in self.parents}
         if ctg is None: return cat
         else:
             try: x = cat[ctg]
             except KeyError: return None
             else: return x
     
-    def add_parent(self, ctg):
-        if not hasattr(self,'parents'): self.parents = [ctg]
-        else: self.parents.append(ctg)
+    def add_parent(self, fact):
+        if not hasattr(self,'parents'): self.parents = [fact]
+        else: self.parents.append(fact)
     
 class Relation(Category):
     
@@ -678,13 +669,13 @@ class Inference(object):
                     if issubclass(pclass, LogFunction): 
                         self.actv_q, q = (var, pred.func), pred.func
                     else: 
-                        self.actv_q, q = (var, pred[0]), pred[0]             
-                    k, result, self.updated = True, None, list()                    
+                        self.actv_q, q = (var, pred[0]), pred[0]        
+                    k, result, self.updated = True, None, list()               
                     #print('query: {0}'.format(self.actv_q))
                     while result is not True  and k is True:
                         # Run the query, if there is no result and there is
                         # an update, then rerun it again, else stop
-                        chk, done = list(), list()              
+                        chk, done = list(), list()
                         result = self.unify(q, chk, done)
                         k = True if True in self.updated else False
                         #run = 'result: {0}, updated: {1} // rerun: {2}'
@@ -721,7 +712,7 @@ class Inference(object):
                         except KeyError:
                             self.obj_dic[sbs] = set([r.func])
                 else:
-                    cat, obj = r[0], r[1][0]
+                    cat, obj = r.parent, r.term
                     try :
                         self.obj_dic[obj].add(cat)
                     except KeyError:
@@ -859,8 +850,8 @@ class Inference(object):
                 pr = t[0], (pr[0], t[1])
             return pr
         
-        preds, del_ = list(), list()
-        for i, pa in enumerate(comp):
+        preds = []
+        for i, pa in enumerate(iter(comp)):
             pa = pa.replace(' ','').strip()            
             if ':vars:' in pa:
                 form = pa.split(':')
@@ -868,10 +859,9 @@ class Inference(object):
                     if a == 'vars':
                         vars_ = form[i+1].split(',')
                         for var in vars_: self.vrs.add(var)
-                        del_.append(i)
+                        comp.pop(i)
             elif not any(s in pa for s in SYMBS.values()):
                 preds.append(pa)
-        for x in del_: comp.pop(x)
         for i, p in enumerate(preds):
             preds[i] = break_pred()
         terms, ctgs = {}, []
@@ -924,7 +914,7 @@ class SubstRepr(Representation):
         self.bmsWrapper = self.FakeBms()
         self.make(*args)
     
-    def register(self, form):        
+    def register(self, form):
         self.bmsWrapped.register(form)
     
     def make(self, kb, obj_dic):
@@ -939,7 +929,7 @@ class SubstRepr(Representation):
                 nrm_ctg = obj_dic[s]
                 categ = []
                 for c in o_ind.categ:
-                    if c[0] in nrm_ctg:
+                    if c.parent in nrm_ctg:
                         categ.append(c)
                 rels = {}
                 for rel in o_ind.relations:
@@ -958,7 +948,7 @@ class SubstRepr(Representation):
                 categ = []
                 if hasattr(o_cls, 'parents'):
                     for c in o_cls.parents:
-                        if c[0] in nrm_ctg:
+                        if c.parent in nrm_ctg:
                             categ.append(c)
                     o_cls.parents = categ
                 if hasattr(o_cls, 'relations'):

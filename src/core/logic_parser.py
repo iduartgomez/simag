@@ -5,7 +5,8 @@
 import re
 import copy
 
-__all__ = ['make_function','make_logic_sent','parse_sent','LogFunction']
+__all__ = ['make_function','make_logic_sent','parse_sent','LogFunction',
+           'make_fact', 'LogPredicate']
 
 GL_PCONDS = [':icond:', ':implies:', ':equiv:']
 SYMBS = dict([
@@ -485,14 +486,13 @@ def make_logic_sent(ori, comp, hier):
                     ag.bmsWrapper.check(pred)
                     ag.up_rel(pred)
                 else:
-                    pred = list(self.pred)
-                    sbj, u = self.pred[1].split(',u')
-                    pred[1] = isvar(sbj)
-                    pred = (pred[0], [pred[1], u])
+                    pred = make_fact(list(self.pred), 'grounded_term')
+                    sbj = self.pred[1].split(',u')
+                    sbj = isvar(sbj[0])
+                    pred.term = sbj
                     ag.bmsWrapper.check(pred)
-                    pred[1][1] = float(u[1:])
-                    ag.up_memb(pred)
-                if key[-1] == 100 and hasattr(proof, 'result'):                
+                    ag.up_memb(pred)                
+                if key[-1] == 100 and hasattr(proof, 'result'):
                     proof.result.append(pred)
                 elif key[-1] == 100:
                     proof.result = [pred]
@@ -512,7 +512,7 @@ def make_logic_sent(ori, comp, hier):
                 parent = hier[child]['parent']
                 new_atom(form, depth, parent, child, syb=[-1])
     
-    def new_atom(form, depth, parent, part_id, syb):      
+    def new_atom(form, depth, parent, part_id, syb):
         form = form.replace(' ','').strip()
         cond = rgx_br.findall(form)
         if depth > sent.depth:
@@ -595,15 +595,37 @@ def make_logic_sent(ori, comp, hier):
 #   LOGIC CLASSES AND SUBCLASSES
 # ===================================================================#
 
+class LogPredicate(object):
+    """Base class to represent a ground predicate."""
+    types = ['grounded_term']
+    
+    def __init__(self, pred):
+        assert ('=' in pred[1]), \
+        "It's a grounded predicate, must assign truth value."
+        u = pred[1].split(',u=')
+        u[1] = float(u[1])
+        if (u[1] > 1 or u[1] < 0): 
+            m = "Illegal value: {0}, must be > 0, or < 1.".format(u[1])
+            raise AssertionError(m)
+        self.parent = pred[0]
+        self.term = u[0] 
+        self.value = u[1]
+
+def make_fact(pred, f_type=None, *args):
+    """Parses a grounded predicate and returns a 'fact'."""
+    
+    class GroundedTerm(LogPredicate): pass
+    
+    assert (f_type in LogPredicate.types or f_type is None), \
+            'Function {0} does not exist.'.format(f_type)
+    if f_type == 'grounded_term': return GroundedTerm(pred)
+    else: return LogPredicate(pred)
+
 class LogFunction(object):
     """Base class to represent a logic function."""    
     types = ['relation']
     
     def __init__(self, sent):
-        self.args = self.mk_args(sent)
-        self.arity = len(self.args)
-    
-    def mk_args(self, sent):
         func = rgx_ob.findall(sent)[0].split('[')
         self.func, vrs = func[0], func[1]
         args, hls = vrs.split(';'), list()
@@ -618,7 +640,8 @@ class LogFunction(object):
             else:
                 hls.append(arg)
         self.args_ID = hash(tuple(hls))
-        return args
+        self.args = args
+        self.arity = len(self.args)
         
     def get_args(self):
         ls = []
