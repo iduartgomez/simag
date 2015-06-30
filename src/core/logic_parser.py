@@ -450,28 +450,19 @@ def make_logic_sent(ori, comp, hier):
                         ag.bmsWrapper.prev_blf(test)
                 else:
                     # Check membership to a set of an entity.
-                    sbj, u = self.pred[1].split(',u')
-                    sbj = isvar(sbj)
+                    sbj = isvar(self.pred.term)
                     if '$' not in sbj[0]: categs = ag.classes[sbj].get_parents()
                     else: categs = ag.individuals[sbj].get_cat()
-                    check_set = self.pred[0]
-                    uval = float(u[1:])
                     # If is True, then the object belongs to the set.
-                    # Else, must be False, and the object must not belong.
+                    # Else, must be False, and the object doesn't belong.
                     result = None
-                    if check_set in categs:
-                        val = categs[check_set]
-                        if u[0] == '=' and uval == val:
-                            result = True
-                        elif u[0] == '>' and uval > val:
-                            result = True
-                        elif u[0] == '<' and uval == val:
-                            result = True
-                        else:
-                            result = False
+                    if self.pred.parent in categs:
+                        val = categs[self.pred.parent]
+                        test = self.pred.substitute(sbj, val)
+                        if self.pred == test: result = True                        
+                        else: result = False
                     if result is True:
-                        s = check_set+'['+sbj+',u'+u[0]+str(uval)+']'
-                        ag.bmsWrapper.prev_blf(s)
+                        ag.bmsWrapper.prev_blf('placeholder')
                 return result
             else:
                 # marked for declaration
@@ -486,10 +477,8 @@ def make_logic_sent(ori, comp, hier):
                     ag.bmsWrapper.check(pred)
                     ag.up_rel(pred)
                 else:
-                    pred = make_fact(list(self.pred), 'grounded_term')
-                    sbj = self.pred[1].split(',u')
-                    sbj = isvar(sbj[0])
-                    pred.term = sbj
+                    sbj = isvar(self.pred.term)
+                    pred = self.pred.substitute(sbj, val=None)
                     ag.bmsWrapper.check(pred)
                     ag.up_memb(pred)                
                 if key[-1] == 100 and hasattr(proof, 'result'):
@@ -546,7 +535,7 @@ def make_logic_sent(ori, comp, hier):
             if '<' in form:
                 form = make_function(form, 'relation')
             else:
-                form = tuple(rgx_ob.findall(form)[0].split('['))
+                form = make_fact(form, 'free_term')
             p = LogicAtom(cond, depth, part_id, parent, syb, form)
             sent.particles.append(p)
         else:
@@ -597,28 +586,59 @@ def make_logic_sent(ori, comp, hier):
 
 class LogPredicate(object):
     """Base class to represent a ground predicate."""
-    types = ['grounded_term']
+    types = ['grounded_term', 'free_term']
     
     def __init__(self, pred):
-        assert ('=' in pred[1]), \
-        "It's a grounded predicate, must assign truth value."
-        u = pred[1].split(',u=')
-        u[1] = float(u[1])
-        if (u[1] > 1 or u[1] < 0): 
+        if type(pred) is str:
+            pred = pred.replace(' ','')
+            pred = rgx_ob.findall(pred)
+            pred = pred[0].split('[')
+        u = pred[1].split(',u')
+        op, u[1] = u[1][0], float(u[1][1:])
+        if (u[1] > 1 or u[1] < 0):
             m = "Illegal value: {0}, must be > 0, or < 1.".format(u[1])
             raise AssertionError(m)
-        self.parent = pred[0]
-        self.term = u[0] 
-        self.value = u[1]
+        return pred, u, op
+    
+    def substitute(self, sbj=None, val=None):
+        subs = copy.deepcopy(self)
+        if sbj is not None: subs.term = sbj
+        if val is not None: subs.value = val
+        return subs
 
 def make_fact(pred, f_type=None, *args):
     """Parses a grounded predicate and returns a 'fact'."""
     
-    class GroundedTerm(LogPredicate): pass
+    class GroundedTerm(LogPredicate):        
+        def __init__(self, pred):
+            pred, val, _ = super(GroundedTerm, self).__init__(pred)
+            assert ('=' in pred[1]), \
+            "It's a grounded predicate, must assign truth value."
+            self.parent = pred[0]
+            self.term = val[0]
+            self.value = val[1]
+    
+    class FreeTerm(LogPredicate):
+        def __init__(self, pred):
+            pred, val, op = super(FreeTerm, self).__init__(pred)
+            self.parent = pred[0]
+            self.term = val[0]
+            self.value = val[1]
+            self.op = op
+        
+        def __eq__(self, other):
+            if self.op == '=' and other.value == self.value:
+                return True
+            elif self.op == '>' and other.value > self.value:
+                return True
+            elif self.op == '<' and other.value < self.value:
+                return True
+            else: return False
     
     assert (f_type in LogPredicate.types or f_type is None), \
             'Function {0} does not exist.'.format(f_type)
     if f_type == 'grounded_term': return GroundedTerm(pred)
+    elif f_type == 'free_term': return FreeTerm(pred)
     else: return LogPredicate(pred)
 
 class LogFunction(object):

@@ -283,10 +283,7 @@ class Representation(object):
                     else: sbj = arg
                     chk_args(pred.func)
             else:
-                if ',u' in pred[1]:
-                    sbj, p = pred[1].split(',u')[0], pred[0]
-                else:
-                    sbj, p = pred[1], pred[0]
+                sbj, p = pred.term, pred.parent
                 chk_args(p)
 
     def save_rule(self, proof):
@@ -295,7 +292,7 @@ class Representation(object):
         n = []
         for p in preds:
             if issubclass(p.__class__, LogFunction): name = p.func
-            else: name = p[0]
+            else: name = p.parent
             n.append(name)
             if name in self.classes and \
             proof not in self.classes[name].cog:
@@ -580,14 +577,13 @@ class Inference(object):
             self.ants = tuple(nc)
             self.subs = {v:set() for v in rule.var_order}
             for ant in ants:
-                if not isinstance(ant, tuple):
+                if issubclass(ant.__class__, LogFunction):
                     args = ant.get_args()
                     for v in args:
                         if v in self.subs: self.subs[v].add(ant.func)
                 else:
-                    v = ant[1].split(',u')
-                    if v[0] in self.subs:
-                        self.subs[v[0]].add(ant[0])
+                    if ant.term in self.subs:
+                        self.subs[ant.term].add(ant.parent)
     
     class NoSolutionError(Exception):
         """Cannot infer a solution error."""
@@ -779,7 +775,8 @@ class Inference(object):
                 preds = sent.get_pred(conds=GL_PCONDS)
                 nc = []
                 for y in preds:
-                    if type(y) == tuple: nc.append(y[0])
+                    if issubclass(y.__class__, LogPredicate): 
+                        nc.append(y.parent)
                     else: nc.append(y.func)
                 self.mk_nodes(nc, preds, sent, 'right')
                 nc2 = [e for e in nc if e not in self.done and e not in self.ctgs]
@@ -788,7 +785,8 @@ class Inference(object):
                     preds = sent.get_pred(branch='right', conds=GL_PCONDS)
                     nc = []
                     for y in preds:
-                        if type(y) == tuple: nc.append(y[0])
+                        if issubclass(y.__class__,LogPredicate): 
+                            nc.append(y.parent)
                         else: nc.append(y.func)
                     self.mk_nodes(nc, preds, sent, 'left')
                     nc2 = [e for e in nc if e not in self.done \
@@ -810,7 +808,7 @@ class Inference(object):
             if issubclass(cons.__class__, LogFunction):
                 pred = cons.func
             else:
-                pred = cons[0]
+                pred = cons.parent
             node = self.InferNode(nc, ants, pred, rule)
             if node.cons in self.nodes:
                 self.nodes[node.cons].append(node)
