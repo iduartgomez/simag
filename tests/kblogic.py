@@ -204,8 +204,8 @@ class LogicSentenceParsing(unittest.TestCase):
             with self.subTest(sent='subtest {0}: {1}'.format(x,sent)):
                 ori, comp, hier = parse_sent(sent)
                 lg_sent = make_logic_sent(ori, comp, hier)
-                preds = lg_sent.get_pred(conds=G_P_CONDS)
-                preds.extend(lg_sent.get_pred(branch='r',conds=G_P_CONDS))
+                preds = lg_sent.get_pred(conds=GL_PCONDS)
+                preds.extend(lg_sent.get_pred(branch='r',conds=GL_PCONDS))
                 p_func = [p.func for p in preds \
                           if isinstance(p,LogFunction)]
                 chk = [x[0] for x in preds if isinstance(x, tuple)]

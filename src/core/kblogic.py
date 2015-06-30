@@ -50,7 +50,7 @@ import re
 import core.bms
 from core.logic_parser import *
 
-G_P_CONDS = [':icond:', ':implies:', ':equiv:']
+GL_PCONDS = [':icond:', ':implies:', ':equiv:']
 SYMBS = dict([
                ('|>',':icond:'),
                ('<=>',':equiv:'), 
@@ -108,7 +108,7 @@ class Representation(object):
             if '[' in par_form and len(comp) == 1:
                 # It's a predicate
                 self.declare(par_form)
-            elif any(symb in par_form for symb in G_P_CONDS):
+            elif any(symb in par_form for symb in GL_PCONDS):
                 # It's a complex sentence with various predicates/funcs
                 sent = make_logic_sent(ori, comp, hier)
                 if sent.validity is True or sent.validity is None:
@@ -598,6 +598,9 @@ class Inference(object):
                     if v[0] in self.subs:
                         self.subs[v[0]].add(ant[0])
     
+    class NoSolutionError(Exception):
+        """Cannot infer a solution error."""
+    
     def __init__(self, kb, *args):
         self.kb = kb
         self.vrs = set()
@@ -647,7 +650,7 @@ class Inference(object):
         self.rules, self.done = set(), [None]
         while hasattr(self, 'ctgs'):
             try: self.get_rules()
-            except NoSolutionError: pass
+            except Inference.NoSolutionError: pass
         # Get the caterogies for each individual/class
         self.obj_dic = self.kb.inds_by_cat(self.chk_cats)
         cls_dic = self.kb.cls_by_cat(self.chk_cats)
@@ -780,9 +783,9 @@ class Inference(object):
                 chk_rules = set(self.kb.classes[c].cog)
                 chk_rules = chk_rules.difference(self.rules)
             except:
-                raise NoSolutionError(c)
+                raise Inference.NoSolutionError(c)
             for sent in chk_rules:
-                preds = sent.get_pred(conds=G_P_CONDS)
+                preds = sent.get_pred(conds=GL_PCONDS)
                 nc = []
                 for y in preds:
                     if type(y) == tuple: nc.append(y[0])
@@ -791,7 +794,7 @@ class Inference(object):
                 nc2 = [e for e in nc if e not in self.done and e not in self.ctgs]
                 self.ctgs.extend(nc2)
                 if c in nc:
-                    preds = sent.get_pred(branch='right', conds=G_P_CONDS)
+                    preds = sent.get_pred(branch='right', conds=GL_PCONDS)
                     nc = []
                     for y in preds:
                         if type(y) == tuple: nc.append(y[0])
@@ -811,7 +814,7 @@ class Inference(object):
 
     def mk_nodes(self, nc, ants, rule, pos):
         # makes inference nodes for the evaluation
-        preds = rule.get_pred(branch=pos, conds=G_P_CONDS)
+        preds = rule.get_pred(branch=pos, conds=GL_PCONDS)
         for cons in preds:
             if issubclass(cons.__class__, LogFunction):
                 pred = cons.func
@@ -889,10 +892,6 @@ class Inference(object):
                 terms[names].append(tuple(p[1]))
                 ctgs.append(p[1][0])
         self.query, self.ctgs = terms, ctgs
-
-class NoSolutionError(Exception):
-    """Cannot infer a solution error."""
-    pass
 
 class SubstRepr(Representation):
     """During an inference the original KB is isolated and only

@@ -7,7 +7,7 @@ import copy
 
 __all__ = ['make_function','make_logic_sent','parse_sent','LogFunction']
 
-G_P_CONDS = [':icond:', ':implies:', ':equiv:']
+GL_PCONDS = [':icond:', ':implies:', ':equiv:']
 SYMBS = dict([
                ('|>',':icond:'),
                ('<=>',':equiv:'), 
@@ -158,7 +158,7 @@ def make_logic_sent(ori, comp, hier):
                         x = x.parent
             return True
     
-        def get_pred(self, branch='l', conds=G_P_CONDS):
+        def get_pred(self, branch='l', conds=GL_PCONDS):
             preds = []
             for p in self:
                 if p.cond == ':predicate:':
