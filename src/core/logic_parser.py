@@ -27,6 +27,7 @@ rgx_br = re.compile(r'\}(.*?)\{')
 #   LOGIC SENTENCE PARSER
 # ===================================================================#
 
+
 def parse_sent(sent):
     """Parser for logic sentences."""
 
@@ -99,7 +100,6 @@ def parse_sent(sent):
     ls = len(comp)
     iter_childs()
     return ori, comp, hier
-
 
 
 def make_logic_sent(ori, comp, hier):
@@ -447,7 +447,7 @@ def make_logic_sent(ori, comp, hier):
                     else:
                         result = ag.classes[args[0]].test_rel(test)
                     if result is True:
-                        ag.bmsWrapper.prev_blf(test)
+                        ag.bmsWrapper.prev_blf('PLACEHOLDER')
                 else:
                     # Check membership to a set of an entity.
                     sbj = isvar(self.pred.term)
@@ -462,7 +462,7 @@ def make_logic_sent(ori, comp, hier):
                         if self.pred == test: result = True                        
                         else: result = False
                     if result is True:
-                        ag.bmsWrapper.prev_blf('placeholder')
+                        ag.bmsWrapper.prev_blf('PLACEHOLDER')
                 return result
             else:
                 # marked for declaration
@@ -474,13 +474,13 @@ def make_logic_sent(ori, comp, hier):
                         if arg in proof.assigned:
                             args[x] = proof.assigned[arg]
                     pred = self.pred.substitute(args)
-                    ag.bmsWrapper.check(pred)
+                    ag.bmsWrapper.check('PLACEHOLDER')
                     ag.up_rel(pred)
                 else:
                     sbj = isvar(self.pred.term)
                     pred = self.pred.substitute(sbj, val=None)
-                    ag.bmsWrapper.check(pred)
-                    ag.up_memb(pred)                
+                    ag.bmsWrapper.check('PLACEHOLDER')
+                    ag.up_memb(pred)  
                 if key[-1] == 100 and hasattr(proof, 'result'):
                     proof.result.append(pred)
                 elif key[-1] == 100:
@@ -584,6 +584,7 @@ def make_logic_sent(ori, comp, hier):
 #   LOGIC CLASSES AND SUBCLASSES
 # ===================================================================#
 
+
 class LogPredicate(object):
     """Base class to represent a ground predicate."""
     types = ['grounded_term', 'free_term']
@@ -599,12 +600,6 @@ class LogPredicate(object):
             m = "Illegal value: {0}, must be > 0, or < 1.".format(u[1])
             raise AssertionError(m)
         return pred, u, op
-    
-    def substitute(self, sbj=None, val=None):
-        subs = copy.deepcopy(self)
-        if sbj is not None: subs.term = sbj
-        if val is not None: subs.value = val
-        return subs
 
 def make_fact(pred, f_type=None, *args):
     """Parses a grounded predicate and returns a 'fact'."""
@@ -634,12 +629,19 @@ def make_fact(pred, f_type=None, *args):
             elif self.op == '<' and other.value < self.value:
                 return True
             else: return False
+        
+        def substitute(self, sbj=None, val=None):
+            subs = copy.deepcopy(self)
+            if sbj is not None: subs.term = sbj
+            if val is not None: subs.value = val
+            return subs
     
     assert (f_type in LogPredicate.types or f_type is None), \
             'Function {0} does not exist.'.format(f_type)
     if f_type == 'grounded_term': return GroundedTerm(pred)
     elif f_type == 'free_term': return FreeTerm(pred)
     else: return LogPredicate(pred)
+
 
 class LogFunction(object):
     """Base class to represent a logic function."""    

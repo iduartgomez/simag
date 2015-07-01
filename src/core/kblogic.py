@@ -33,11 +33,11 @@ solving the query (including query parsing, data fetching and unification).
 @author: Ignacio Duart Gómez
 """
 
-# On ASK, fix it so it can deal with queries that ask about relations
-# of the same type with several objects.
+# TODO:
 #
-# Add 'belief maintenance system' functionality.
-# Refactor class membership to new data structure instead of raw tuples
+# * On ASK, fix it so it can deal with queries that ask about relations
+# of the same type with several objects.
+# * Add 'belief maintenance system' functionality.
 
 # ===================================================================#
 #   Imports and globals

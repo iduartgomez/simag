@@ -158,12 +158,13 @@ class LogicSentenceParsing(unittest.TestCase):
                 lg_sent = make_logic_sent(ori, comp, hier)
                 preds = lg_sent.get_pred(conds=GL_PCONDS)
                 preds.extend(lg_sent.get_pred(branch='r',conds=GL_PCONDS))
-                p_func = [p.func for p in preds \
-                          if isinstance(p,LogFunction)]
-                chk = [x[0] for x in preds if isinstance(x, tuple)]
-                chk.extend(p_func)
+                chk1 = [p.func for p in preds if \
+                       issubclass(p.__class__,LogFunction)]
+                chk2 = [p.parent for p in preds if \
+                       issubclass(p.__class__,LogPredicate)]
+                chk1.extend(chk2)
                 for obj in eval[x]:
-                    self.assertIn(obj, chk)
+                    self.assertIn(obj, chk1)
 
 #====================#
 #    HELP FUNCTIONS  #
