@@ -1,0 +1,26 @@
+{
+	"name": "MoveBoxToTable",
+	"variables": ["B1", "T1"],
+	"init": [ 
+		"box[B1,u=1]",
+		"table[T1,u=1]",
+		"red[B1,u=0]"
+	],
+	"goals": [
+		"<on[B1,u=1;T1]>",
+		"red[B1,u=1]"
+	],
+	"requiriments": {
+		"actions": [
+		 	"move_box",
+			"drop_box",
+			"pick_box",
+			"paint"
+		],
+		"money": 0
+	},
+	"resources": {
+		"red_paint_liters": 5
+	},
+	"description": "Drop a box on the table only when the box is red."
+}

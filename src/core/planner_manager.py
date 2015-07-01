@@ -14,7 +14,7 @@ for planning and the selection of the different algorithms based on context.
 
 from types import MethodType, FunctionType
 
-from core.logic_parser import parse_sent
+from core.logic_parser import *
 
 # ===================================================================#
 #   CONTEXT MANAGER
@@ -87,27 +87,72 @@ class ProblemDomain(metaclass=ProblemMeta):
     particular set of problems.
     """
     def __init__(self,
-                 actions=None,
-                 knowledge=None,
-                 relations=None,
-                 goal=None,
+                 requiriments=None,
+                 goals=None,
                  init=None):
-        cls = self.__class__
-        args = ['actions','knowledge','relations','goal','init']
+        cls = self.__class__        
+        args = ['actions','knowledge','relations','goals','init']
+        other_req = {}
+        if requiriments is not None:
+            for k,val in requiriments.items():
+                if k == 'actions': actions = val
+                if k == 'knowledge': knowledge = val
+                if k == 'relations': relations = val
+                else: other_req[k] = val
         for attr in args:
             val = locals().get(attr)
             if not hasattr(cls, attr):
                 setattr(cls, attr, val)
             elif val is not None:
                 setattr(cls, attr, val)
-            if getattr(cls, attr) is None:
-                if attr == 'knowledge' or attr == 'relations': pass
+            if getattr(cls, attr) is None:                
+                if attr == 'knowledge' or attr == 'relations': 
+                    delattr(cls, attr)
                 else:
                     m = "Need to provide '{0}' argument.".format(attr)
                     raise AttributeError(m)
-        self.lookup_init()
+        self.vars = {}
+        if hasattr(self.__class__,'variables'):
+            t = {var:list() for var in self.__class__.variables}
+            self.vars.update(t)
+        # parse and look for vars in the initial conditions
+        init = self.__class__.init
+        for i, cond in enumerate(init):
+            parsed = GlobalLogicParser(cond)
+            pclass = parsed.__class__
+            if issubclass(pclass, LogSentence):
+                # check if it is a complex grounded logic formula or 
+                # if it has variable terms, in this case adds to the list
+                # of the local problem variable list
+                if len(parsed.var_order) > 0:
+                    for j, var in enumerate(parsed.var_order):
+                        if var not in self.vars: self.vars[var] = [(j, parsed)]
+                        else: self.vars[var].append((j, parsed))
+            init[i] = parsed
+        # parse and look for vars in the goals
+        goals = self.__class__.goals
+        for i, goal in enumerate(goals):
+            parsed = GlobalLogicParser(goal)
+            pclass = parsed.__class__
+            if issubclass(pclass, LogSentence):
+                if len(parsed.var_order) > 0:
+                    for j, var in enumerate(parsed.var_order):
+                        if var not in self.vars: self.vars[var] = [(j, parsed)]
+                        else: self.vars[var].append((j, parsed))
+            goals[i] = parsed
+        # look up for vars in particles which are not sentences
+        non_sentences = init + goals
+        non_sentences = [part for part in non_sentences \
+                         if not issubclass(part.__class__,LogSentence)]
+        for i, part in enumerate(non_sentences):
+            pclass = part.__class__
+            if issubclass(pclass, LogFunction):
+                for j, var in enumerate(part.get_args()):
+                    if var in self.vars: self.vars[var].append((j,part))
+            if issubclass(pclass, LogPredicate):                
+                if part.term in self.vars: self.vars[part.term].append((0,part))
     
-    def __call__(self, agent, **kwargs):
+    def __call__(self, agent, vars=None, **kwargs):
         if hasattr(self, 'default'):
             self.agent = agent
             chk = self.inspect_domain()
@@ -121,11 +166,6 @@ class ProblemDomain(metaclass=ProblemMeta):
             raise AttributeError('Need to set default algorithm, ' \
             'use the set_default method.')
     
-    def lookup_init(self):
-        for cond in self.__class__.init:
-            parsed = parse_sent(cond)
-            print(parsed)
-            
     def inspect_domain(self, init=True, req=True):
         """Inspects the problem domain definition and continues 
         if there isn't any incompatibility problem found."""
@@ -133,7 +173,7 @@ class ProblemDomain(metaclass=ProblemMeta):
         # a solution is going to be attempted by an agent
         if init is True:
             for cond in self.__class__.init:
-                if self.agent.ask(cond, single=True) is False:
+                if self.agent.ask(cond, single=True) is False or None:
                     err = ValueError("The initial condition '{0}' is not " \
                     "present right now.".format(cond))
                     return err
@@ -178,7 +218,7 @@ class ProblemDomain(metaclass=ProblemMeta):
         for algo in algos:
             f = MethodType(algo, self)
             setattr(self, algo.__name__, f)
-            
+    
     def require_relations(self, relations):
         cls = self.__class__
         for rel in relations:
@@ -200,14 +240,14 @@ class SolutionTemplate(object):
     """A helper template class for constructing resolution algorithms.
     
     This class includes several methods that can be executed by the algorithm:
-    :method: observe -> Calls the agent perceived state and returns whether
-    the query is true or false, this is useful if the previously perceived 
-    state of the world needs to be updated in case it must be re-evaluated.
-    :method: review -> It reviews if the current plan still is valid and
-    will reach the goal. Useful to call after a critical action (with 
-    unforeseen consequences) has been executed, for example.
-    :method: call_plan -> Starts the execution of a new (sub)plan.
-    :method: solve -> Call to start the execution of the algorithm.
+    * observe -> Calls the agent perceived state and returns whether
+    |the query is true or false, this is useful if the previously perceived 
+    |state of the world needs to be updated in case it must be re-evaluated.
+    * review -> It reviews if the current plan still is valid and
+    |will reach the goal. Useful to call after a critical action (with 
+    |unforeseen consequences) has been executed, for example.
+    * call_plan -> Starts the execution of a new (sub)plan.
+    * solve -> Call to start the execution of the algorithm.
     
     Those four methods allow for the building of increasingly complex plans
     while retaining the flexibility to return control to the agent.
@@ -244,6 +284,40 @@ class SolutionTemplate(object):
     def __str__(self):
         return '<'+str(self.__class__.__name__)+'>'
 
+
+# ===================================================================#
+#   HELPER FUNCTIONS AND CLASSES
+# ===================================================================#
+
+def makeProblemDomain(source):
+    """Parses a JSON object (from a file or a string) or a dictionary 
+    and creates a 'problem domain' from it.
+    """
+    import json
+    if source.strip()[0] != '{': 
+        file = open(source, 'r')
+        data = json.load(file)
+    elif type(source) == dict: data = source
+    else: data = json.loads(source)
+    req_field = ['name','init','goals','requiriments']
+    for field in req_field:
+        if field not in data:
+            raise AssertionError("No '{0}' field in {1} ".format(field,source))
+    req_attr = ['actions','knowledge','relations']
+    for k,v in data['requiriments'].items():
+        if k in req_attr: 
+            data[k] = v
+    for k in req_attr: 
+        try: del data['requiriments'][k]
+        except KeyError: pass
+    name = data['name']
+    del data['name']
+    if 'description' in data: 
+        data['__doc__'] = data['description']
+        del data['description']
+    return type(name, (ProblemDomain, ), data)
+    
+    
 #=============================================================#
     
 class SolveProblemWithAlgo1(SolutionTemplate):
