@@ -14,6 +14,8 @@ for planning and the selection of the different algorithms based on context.
 
 from types import MethodType, FunctionType
 
+from core.logic_parser import parse_sent
+
 # ===================================================================#
 #   CONTEXT MANAGER
 # ===================================================================#
@@ -99,8 +101,11 @@ class ProblemDomain(metaclass=ProblemMeta):
             elif val is not None:
                 setattr(cls, attr, val)
             if getattr(cls, attr) is None:
-                m = "Need to provide '{0}' argument.".format(attr)
-                raise AttributeError(m)
+                if attr == 'knowledge' or attr == 'relations': pass
+                else:
+                    m = "Need to provide '{0}' argument.".format(attr)
+                    raise AttributeError(m)
+        self.lookup_init()
     
     def __call__(self, agent, **kwargs):
         if hasattr(self, 'default'):
@@ -108,14 +113,53 @@ class ProblemDomain(metaclass=ProblemMeta):
             chk = self.inspect_domain()
             if chk is not None: raise chk
             # run the resolution algorithm
-            if issubclass(self.default.__class__, SolveTemplate):
+            if issubclass(self.default.__class__, SolutionTemplate):
                 self.default(agent, self, **kwargs)
             else:
                 self.default(**kwargs)
         else: 
             raise AttributeError('Need to set default algorithm, ' \
             'use the set_default method.')
-        
+    
+    def lookup_init(self):
+        for cond in self.__class__.init:
+            parsed = parse_sent(cond)
+            print(parsed)
+            
+    def inspect_domain(self, init=True, req=True):
+        """Inspects the problem domain definition and continues 
+        if there isn't any incompatibility problem found."""
+        # check initial conditions of the problem, this is done when
+        # a solution is going to be attempted by an agent
+        if init is True:
+            for cond in self.__class__.init:
+                if self.agent.ask(cond, single=True) is False:
+                    err = ValueError("The initial condition '{0}' is not " \
+                    "present right now.".format(cond))
+                    return err
+        # check for other requirements for the plan, if this fails
+        # the agent cannot use this plan
+        if req is True:
+            # check if the required agent actions exists
+            for action in self.__class__.actions:
+                if action not in self.agent.actions:
+                    err = AttributeError("The agent {0} doesn't have " \
+                    "the required action.".format(self.agent))
+                    return err
+            # check if the a priori knowledge and relations exist
+            if hasattr(self.__class__, 'relations'):
+                for relation in self.__class__.relations:
+                    if self.agent.has_relation(relation) is False:
+                        err = AttributeError("The agent {0} doesn't have " \
+                        "the required relation.".format(self.agent))
+                        return err
+            if hasattr(self.__class__, 'knowledge'):
+                for cog in self.__class__.knowledge:
+                    if self.agent.has_knowledge(cog) is False:
+                        err = AttributeError("The agent {0} doesn't have " \
+                        "the required knowledge.".format(self.agent))
+                        return err
+    
     def set_algo(self, func=None, subplans=None):
         if func is None: del self.default
         elif type(func) is FunctionType:
@@ -135,52 +179,24 @@ class ProblemDomain(metaclass=ProblemMeta):
             f = MethodType(algo, self)
             setattr(self, algo.__name__, f)
             
-    def inspect_domain(self, init=False):
-        """Inspects the problem domain definition and continues 
-        if there isn't any incompatibility problem found."""
-        # check initial conditions of the problem
-        for cond in self.__class__.init:
-            if self.agent.ask(cond, single=True) is False:
-                err = ValueError("The initial condition '{0}' is not " \
-                "present right now.".format(cond))
-                return err
-        if init is False:
-            # check if the required agent actions exists
-            for action in self.__class__.actions:
-                if action not in self.agent.actions:
-                    err = AttributeError("The agent {0} doesn't have " \
-                    "the required action.".format(self.agent))
-                    return err
-            # check if the a priori knowledge and relations exist
-            for relation in self.__class__.relations:
-                if self.agent.has_relation(relation) is False:
-                    err = AttributeError("The agent {0} doesn't have " \
-                    "the required relation.".format(self.agent))
-                    return err
-            for cog in self.__class__.knowledge:
-                if self.agent.has_knowledge(cog) is False:
-                    err = AttributeError("The agent {0} doesn't have " \
-                    "the required knowledge.".format(self.agent))
-                    return err
-    
     def require_relations(self, relations):
         cls = self.__class__
         for rel in relations:
             if rel not in cls.relations:
                 cls.relations.append(rel)
-        self.inspect_domain()
+        self.inspect_domain(init=False)
     
     def require_knowledge(self, knowledge):
         cls = self.__class__
         for cog in knowledge:
             if cog not in cls.knowledge:
                 cls.relations.append(cog)
-        self.inspect_domain()
+        self.inspect_domain(init=False)
                 
     def __str__(self):
         return '<'+str(self.__class__.__name__)+'>'
 
-class SolveTemplate(object):
+class SolutionTemplate(object):
     """A helper template class for constructing resolution algorithms.
     
     This class includes several methods that can be executed by the algorithm:
@@ -210,7 +226,7 @@ class SolveTemplate(object):
         
     def review(self):
         # is the goal reachable in the current conditions?
-        self.masterplan.inspect_domain(init=True)
+        self.masterplan.inspect_domain(req=False)
     
     def call_plan(self, plan, subplans=None, **kwargs):
         if hasattr(self, 'subplans') and plan in self.subplans:
@@ -229,52 +245,24 @@ class SolveTemplate(object):
         return '<'+str(self.__class__.__name__)+'>'
 
 #=============================================================#
-
-class FakeAgent(object):
     
-    def __init__(self):
-        self.actions = {'fake_action1':True, 'fake_action2':True}
-        
-    def has_relation(self, *args): return True
-    
-    def has_knowledge(self, *args): return True
-    
-    def ask(self, sent, single=False): return True        
-    
-    def action(self, act): 
-        if act in self.action: return True
-
-class ExampleProblem1(ProblemDomain):
-    relations = ['relations ag should have']
-    knowledge = ['knowledge ag should have']
-    actions = ['fake_action1', 'fake_action2']
-    goal = ['<on[table,box]>']
-    init = ['this would be the initial conditions']
-    
-class SolveProblemWithAlgo1(SolveTemplate):    
+class SolveProblemWithAlgo1(SolutionTemplate):
     def solve(self, **kw):
         m = "attempting solution with algo {0} to problem {1}:\n" \
         "{2}\n".format(self,self.masterplan,kw['test'])
         print(m)
         self.call_plan(SolveProblemWithAlgo2,subplans=[SolveProblemWithAlgo3])
 
-class SolveProblemWithAlgo2(SolveTemplate):
-    def solve(self):
+class SolveProblemWithAlgo2(SolutionTemplate):
+    def solve(self, **kw):
         m = "attempting solution with algo {0} to problem {1}\n" \
         "".format(self,self.masterplan)
         print(m)
-        self.call_plan(SolveProblemWithAlgo3, test=test)
+        self.call_plan(SolveProblemWithAlgo3, **kw)
 
-class SolveProblemWithAlgo3(SolveTemplate):
+class SolveProblemWithAlgo3(SolutionTemplate):
     def solve(self, **kw):
         m = "attempting solution with algo {0} to problem {1}\n" \
         "{2}\n".format(self,self.masterplan,kw['test'])
         print(m)
-
-agent = FakeAgent()
-test = 'THIS IS A SAMPLE OF A TEST'
-#
-problem1 = ExampleProblem1()
-problem1.set_algo(SolveProblemWithAlgo1,subplans=[SolveProblemWithAlgo2])
-problem1(agent, test=test)
 

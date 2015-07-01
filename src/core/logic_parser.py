@@ -5,8 +5,8 @@
 import re
 import copy
 
-__all__ = ['make_function','make_logic_sent','parse_sent','LogFunction',
-           'make_fact', 'LogPredicate']
+__all__ = ['GlobalLogicParser', 'LogFunction', 'LogPredicate',
+           'LogSentence',]
 
 GL_PCONDS = [':icond:', ':implies:', ':equiv:']
 SYMBS = dict([
@@ -27,6 +27,54 @@ rgx_br = re.compile(r'\}(.*?)\{')
 #   LOGIC SENTENCE PARSER
 # ===================================================================#
 
+def GlobalLogicParser(sent):
+    """Takes a string, discovers type and returns the corresponding
+    object.
+    
+    This is a global parsing function for logic functions.
+    """    
+    ori, comp, hier = parse_sent(sent)
+    par_form = comp[ori]
+    if not ':vars:' in par_form:
+        if '[' in par_form and len(comp) == 1:
+            # It's a predicate
+            pred = par_form.replace(' ','')
+            sets = rgx_ob.findall(pred)
+            sets = sets[0].split('[')
+            if ';' in sets[1]:
+                sets[1] = sets[1].split(';')
+            if '<' in pred[0]:
+                # Is a function declaration -> implies a relation
+                # between different objects or classes.           
+                return make_function(pred, 'relation')
+            else:
+                # Is a membership declaration -> the object(s) belong(s) 
+                # to a set of objects.
+                if isinstance(sets[1], list):
+                    facts = []
+                    for e in sets[1]:
+                        facts.append(make_fact([sets[0],e], 'grounded_term'))
+                    return facts
+                else:
+                    return make_fact(sets, 'grounded_term')
+        elif any(symb in par_form for symb in GL_PCONDS):
+            # It's a complex sentence with various predicates/funcs
+            sent = make_logic_sent(ori, comp, hier)
+            if sent.validity is True or sent.validity is None:
+                del sent.validity
+                return sent
+            else:
+                msg = "Illegal connectives used in the consequent " \
+                    + " of an indicative conditional sentence."
+                raise AssertionError(msg)
+        else:
+            msg = "No indicative conditional, implication or " \
+            "equality found."
+            raise AssertionError(msg)
+    else:
+        # It's a complex sentence with variables
+        sent = make_logic_sent(ori, comp, hier)
+        return sent
 
 def parse_sent(sent):
     """Parser for logic sentences."""
@@ -102,85 +150,85 @@ def parse_sent(sent):
     return ori, comp, hier
 
 
+class LogSentence(object):
+    """Object to store a first-order logic complex sentence.
+
+    This sentence is the result of parsing a sentence and encode
+    it in an usable form for the agent to classify and reason about
+    objects and relations, cannot be instantiated directly.
+    
+    It's callable when instantiated, accepts as arguments:
+    1) the working knowledge-base
+    2) n strins which will subsitute the variables in the sentence
+       or a list of string.
+    """
+    def __init__(self):
+        self.depth = 0
+        self.var_order = []
+        self.particles = []
+    
+    def __call__(self, ag, *args):
+        if type(args[0]) is tuple or type(args[0] is list):
+            args = args[0]
+        # Clean up previous results.
+        self.assigned = {}
+        self.cln_res()
+        if len(self.var_order) == len(args):
+            # Check the properties/classes an obj belongs to
+            for n, const in enumerate(args):
+                if const not in ag.individuals:
+                    return
+                var_name = self.var_order[n]
+                # Assign an entity to a variable by order.
+                self.assigned[var_name] = const
+            ag.bmsWrapper.register(self)
+            self.start.solve(self, ag, key=[0])
+        elif len(self.var_order) == 0:
+            ag.bmsWrapper.register(self)
+            self.start.solve(self, ag, key=[0])
+        else: return
+
+    def get_ops(self, p, chk_op=[':or:', ':implies:', ':equiv:']):
+        ops = []
+        for p in self:
+            if any(x in p.cond for x in chk_op):
+                ops.append(p)
+        for p in ops:
+            x = p
+            while x.cond != ':icond:' or x.parent == -1:
+                if x.parent.cond == ':icond:' and x.parent.next[1] == x:
+                    return False
+                else:
+                    x = x.parent
+        return True
+
+    def get_pred(self, branch='l', conds=GL_PCONDS):
+        preds = []
+        for p in self:
+            if p.cond == ':predicate:':
+                preds.append(p)
+        res = []
+        for p in preds:
+            x = p
+            while x.parent.cond not in conds:
+                x = x.parent
+            if branch == 'l' and x.parent.next[0] == x:
+                res.append(p.pred)
+            elif branch != 'l' and x.parent.next[1] == x:
+                res.append(p.pred)
+        return res
+    
+    def cln_res(self):
+        for p in self.particles:
+            p.results = []
+
+    def __iter__(self):
+        return iter(self.particles)
+
 def make_logic_sent(ori, comp, hier):
     """Takes a parsed FOL sentence and creates an object with
     the embedded methods to resolve it.
     """
-    
-    class LogSentence(object):
-        """Object to store a first-order logic complex sentence.
-    
-        This sentence is the result of parsing a sentence and encode
-        it in an usable form for the agent to classify and reason about
-        objects and relations, cannot be instantiated directly.
-        
-        It's callable when instantiated, accepts as arguments:
-        1) the working knowledge-base
-        2) n strins which will subsitute the variables in the sentence
-           or a list of string.
-        """
-        def __init__(self):
-            self.depth = 0
-            self.var_order = []
-            self.particles = []
-        
-        def __call__(self, ag, *args):
-            if type(args[0]) is tuple or type(args[0] is list):
-                args = args[0]
-            # Clean up previous results.
-            self.assigned = {}
-            self.cln_res()
-            if len(self.var_order) == len(args):
-                # Check the properties/classes an obj belongs to
-                for n, const in enumerate(args):
-                    if const not in ag.individuals:
-                        return
-                    var_name = self.var_order[n]
-                    # Assign an entity to a variable by order.
-                    self.assigned[var_name] = const
-                ag.bmsWrapper.register(self)
-                self.start.solve(self, ag, key=[0])
-            elif len(self.var_order) == 0:
-                ag.bmsWrapper.register(self)
-                self.start.solve(self, ag, key=[0])
-            else: return
-    
-        def get_ops(self, p, chk_op=[':or:', ':implies:', ':equiv:']):
-            ops = []
-            for p in self:
-                if any(x in p.cond for x in chk_op):
-                    ops.append(p)
-            for p in ops:
-                x = p
-                while x.cond != ':icond:' or x.parent == -1:
-                    if x.parent.cond == ':icond:' and x.parent.next[1] == x:
-                        return False
-                    else:
-                        x = x.parent
-            return True
-    
-        def get_pred(self, branch='l', conds=GL_PCONDS):
-            preds = []
-            for p in self:
-                if p.cond == ':predicate:':
-                    preds.append(p)
-            res = []
-            for p in preds:
-                x = p
-                while x.parent.cond not in conds:
-                    x = x.parent
-                if branch == 'l' and x.parent.next[0] == x:
-                    res.append(p.pred)
-                elif branch != 'l' and x.parent.next[1] == x:
-                    res.append(p.pred)
-            return res
-        
-        def cln_res(self):
-            for p in self.particles:
-                p.results = []
-    
-        def __iter__(self):
-            return iter(self.particles)
     
     class Particle(object):
         """This is the base class to create logic particles
@@ -622,6 +670,9 @@ def make_fact(pred, f_type=None, *args):
             self.op = op
         
         def __eq__(self, other):
+            if not issubclass(other.__class__, LogPredicate):
+                m = "{0} and {1} are not comparable.".format(other, LogPredicate)
+                raise TypeError(m)
             if self.op == '=' and other.value == self.value:
                 return True
             elif self.op == '>' and other.value > self.value:

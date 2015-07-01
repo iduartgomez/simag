@@ -49,6 +49,7 @@ import re
 
 import core.bms
 from core.logic_parser import *
+from core.logic_parser import make_function, make_fact, parse_sent
 
 GL_PCONDS = [':icond:', ':implies:', ':equiv:']
 SYMBS = dict([
@@ -101,31 +102,23 @@ class Representation(object):
         class for future use.
         
         For more examples check the LogSentence class docs.
-        """
-        ori, comp, hier = parse_sent(sent)
-        par_form = comp[ori]
-        if not ':vars:' in par_form:
-            if '[' in par_form and len(comp) == 1:
-                # It's a predicate
-                self.declare(par_form)
-            elif any(symb in par_form for symb in GL_PCONDS):
-                # It's a complex sentence with various predicates/funcs
-                sent = make_logic_sent(ori, comp, hier)
-                if sent.validity is True or sent.validity is None:
-                    del sent.validity
-                    self.save_rule(sent)
-                else:
-                    msg = "Illegal connectives used in the consequent " \
-                        + " of an indicative conditional sentence."
-                    raise AssertionError(msg)
-            else:
-                msg = "No indicative conditional, implication or " \
-                "equality found."
-                raise AssertionError(msg)
+        """            
+        def process():
+            if isinstance(processed, LogSentence):
+                if len(processed.var_order) == 0: self.save_rule(processed)
+                else: self.add_cog(processed)
+            elif issubclass(processed.__class__, LogFunction): 
+                self.up_rel(processed)
+            elif issubclass(processed.__class__, LogPredicate): 
+                self.up_memb(processed)
+        
+        result = GlobalLogicParser(sent)
+        if type(result) is list:
+            for processed in result:
+                process()
         else:
-            # It's a complex sentence with variables
-            sent = make_logic_sent(ori, comp, hier)
-            self.add_cog(sent)
+            processed = result
+            process()
     
     def ask(self, sent, single=False):
         """Asks the KB if some fact is true and returns the result of

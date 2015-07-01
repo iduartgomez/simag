@@ -2,6 +2,7 @@ import unittest
 import os
 
 from core.kblogic import *
+from core.logic_parser import make_logic_sent
 
 #====================#
 #    UNIT TESTING    #

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<problem xmlns:domain="problem">
+	<init>
+		<condition></condition>
+	</init>
+	<required>
+		<actions>
+			<action>move_box</action>
+			<action>drop_box</action>
+		</actions>
+		<relations></relations>
+		<knowledge></knowledge>
+	</required>
+	<goal></goal>
+</problem>
