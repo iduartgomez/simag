@@ -649,9 +649,9 @@ class LogPredicate(object):
             raise AssertionError(m)
         return pred, u, op
     
-    def change_params(self, param, newParam, revert=False):
+    def change_params(self, new=None, revert=False):
         if revert is not True:
-            self.oldTerm, self.term = self.term, newParam
+            self.oldTerm, self.term = self.term, new
         else:
             self.term = self.oldTerm
             del self.oldTerm
@@ -745,16 +745,16 @@ class LogFunction(object):
                 subs.args[x] = args[x]
         return subs
     
-    def change_params(self, params, newParams, revert=False):
+    def change_params(self, new=None, revert=False):
         if revert is False:
             self.oldTerm = self.args.copy()
             for x, arg in enumerate(self.args):
                 if isinstance(arg, tuple):
                     self.args[x] = list(arg)
-                    self.args[x][0] = newParams[x]
+                    self.args[x][0] = new[x]
                     self.args[x] = tuple(self.args[x])
                 else:
-                    self.args[x] = newParams[x]
+                    self.args[x] = new[x]
         else:
             self.term = self.oldTerm
             del self.oldTerm 

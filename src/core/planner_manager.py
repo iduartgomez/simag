@@ -153,7 +153,7 @@ class ProblemDomain(metaclass=ProblemMeta):
                     for var in args:
                         if var not in subst: new_args.append(var)
                         else: new_args.append(vrs[var])
-                    part.change_params(args, new_args)
+                    part.change_params(new=new_args)
             # inspect if the problem domain is consistent with the 
             # current environment
             chk = self.inspect_domain()
@@ -163,7 +163,10 @@ class ProblemDomain(metaclass=ProblemMeta):
                 self.default(agent, self, **kwargs)
             else:
                 self.default(**kwargs)
-        else: 
+            # clean up substitution
+            for [part, args] in self.vars:
+                part.change_params(revert=True)
+        else:
             raise AttributeError('Need to set default algorithm, ' \
             'use the set_default method.')
     
