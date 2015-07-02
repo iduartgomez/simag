@@ -111,50 +111,51 @@ class ProblemDomain(metaclass=ProblemMeta):
                 else:
                     m = "Need to provide '{0}' argument.".format(attr)
                     raise AttributeError(m)
-        self.vars = {}
+        self.lookup_vars()
+    
+    def lookup_vars(self):        
+        def mk_part(sent):
+            parsed = GlobalLogicParser(sent)
+            pclass = parsed.__class__
+            if issubclass(pclass, LogSentence):
+                if len(parsed.var_order) > 0:
+                    self.vars.append([parsed, parsed.var_order])
+                    self.tvl = self.tvl.union(parsed.var_order)
+            elif issubclass(pclass, LogFunction):
+                args = parsed.get_args()
+                self.vars.append([parsed, args])
+            elif issubclass(pclass, LogPredicate):                
+                self.vars.append([parsed, [parsed.term]])
+            return parsed
+            
+        self.vars = []
         if hasattr(self.__class__,'variables'):
-            t = {var:list() for var in self.__class__.variables}
-            self.vars.update(t)
+            self.tvl = set(self.__class__.variables)
+        else: self.tvl = set()
         # parse and look for vars in the initial conditions
         init = self.__class__.init
         for i, cond in enumerate(init):
-            parsed = GlobalLogicParser(cond)
-            pclass = parsed.__class__
-            if issubclass(pclass, LogSentence):
-                # check if it is a complex grounded logic formula or 
-                # if it has variable terms, in this case adds to the list
-                # of the local problem variable list
-                if len(parsed.var_order) > 0:
-                    for j, var in enumerate(parsed.var_order):
-                        if var not in self.vars: self.vars[var] = [(j, parsed)]
-                        else: self.vars[var].append((j, parsed))
-            init[i] = parsed
+            init[i] = mk_part(cond)
         # parse and look for vars in the goals
         goals = self.__class__.goals
         for i, goal in enumerate(goals):
-            parsed = GlobalLogicParser(goal)
-            pclass = parsed.__class__
-            if issubclass(pclass, LogSentence):
-                if len(parsed.var_order) > 0:
-                    for j, var in enumerate(parsed.var_order):
-                        if var not in self.vars: self.vars[var] = [(j, parsed)]
-                        else: self.vars[var].append((j, parsed))
-            goals[i] = parsed
-        # look up for vars in particles which are not sentences
-        non_sentences = init + goals
-        non_sentences = [part for part in non_sentences \
-                         if not issubclass(part.__class__,LogSentence)]
-        for i, part in enumerate(non_sentences):
-            pclass = part.__class__
-            if issubclass(pclass, LogFunction):
-                for j, var in enumerate(part.get_args()):
-                    if var in self.vars: self.vars[var].append((j,part))
-            if issubclass(pclass, LogPredicate):                
-                if part.term in self.vars: self.vars[part.term].append((0,part))
-    
-    def __call__(self, agent, vars=None, **kwargs):
+            goals[i] = mk_part(goal)
+        
+    def __call__(self, agent, vrs=None, **kwargs):
         if hasattr(self, 'default'):
             self.agent = agent
+            # if variables values are provided, subtitute
+            var_names = vrs.keys()
+            for [part, args] in self.vars:
+                subst = [var for var in var_names if var in args]
+                if any(subst) is True:
+                    new_args = list()
+                    for var in args:
+                        if var not in subst: new_args.append(var)
+                        else: new_args.append(vrs[var])
+                    part.change_params(args, new_args)
+            # inspect if the problem domain is consistent with the 
+            # current environment
             chk = self.inspect_domain()
             if chk is not None: raise chk
             # run the resolution algorithm

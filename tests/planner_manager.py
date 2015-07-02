@@ -17,7 +17,7 @@ class test_solve_problem(unittest.TestCase):
         MoveBoxToTable = makeProblemDomain(file)
         init_problem = MoveBoxToTable()
         init_problem.set_algo(SolveProblemWithAlgo3)
-        init_problem(ag, test='TEST')
+        init_problem(ag, vrs={'B1':'blue_box','T1':'table'}, test='TEST')
 
 #==============================#
 #    HELP FUNCTIONS & CLASSES  #

@@ -648,6 +648,13 @@ class LogPredicate(object):
             m = "Illegal value: {0}, must be > 0, or < 1.".format(u[1])
             raise AssertionError(m)
         return pred, u, op
+    
+    def change_params(self, param, newParam, revert=False):
+        if revert is not True:
+            self.oldTerm, self.term = self.term, newParam
+        else:
+            self.term = self.oldTerm
+            del self.oldTerm
 
 def make_fact(pred, f_type=None, *args):
     """Parses a grounded predicate and returns a 'fact'."""
@@ -713,6 +720,7 @@ class LogFunction(object):
             else:
                 hls.append(arg)
         self.args_ID = hash(tuple(hls))
+        self._id = self.args_ID
         self.args = args
         self.arity = len(self.args)
         
@@ -737,8 +745,22 @@ class LogFunction(object):
                 subs.args[x] = args[x]
         return subs
     
+    def change_params(self, params, newParams, revert=False):
+        if revert is False:
+            self.oldTerm = self.args.copy()
+            for x, arg in enumerate(self.args):
+                if isinstance(arg, tuple):
+                    self.args[x] = list(arg)
+                    self.args[x][0] = newParams[x]
+                    self.args[x] = tuple(self.args[x])
+                else:
+                    self.args[x] = newParams[x]
+        else:
+            self.term = self.oldTerm
+            del self.oldTerm 
+    
     def __str__(self):
-        return '<LogFunction {0} -> args: {1}>'.format(self.func,self.args)
+        return "<LogFunction '{0}' -> args: {1}>".format(self.func,self.args)
 
 def make_function(sent, f_type=None, *args):
     """Parses and makes a function of n-arity.
