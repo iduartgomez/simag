@@ -124,7 +124,7 @@ class Representation(object):
         """Asks the KB if some fact is true and returns the result of
         that ask.
         """
-        inf_proc = Inference(self, parse_sent(sent)[1])
+        inf_proc = Inference(self, sent)
         if single is True:
             for answ in inf_proc.results.values():
                 for pred in answ.values():
@@ -423,6 +423,19 @@ class Individual(object):
             except KeyError: return None
             else: return x
     
+    def test_ctg(self, pred):
+        """Checks if it's child of a category and returns true if it's 
+        equal to the comparison, false if it's not, and none if it
+        doesn't exist.
+        """
+        for ctg in self.categ:
+            if ctg.parent == pred.parent:
+                categ = ctg
+                break
+        if 'categ' not in locals(): return None
+        if pred == categ: return True
+        else: return False
+    
     def add_rel(self, func):
         try:
             rel = self.relations[func.func]
@@ -541,6 +554,20 @@ class Category(object):
         if not hasattr(self,'parents'): self.parents = [fact]
         else: self.parents.append(fact)
     
+    def test_parent(self, pred):
+        """Checks if it's child of a category and returns true if it's 
+        equal to the comparison, false if it's not, and none if it
+        doesn't exist.
+        """
+        if not hasattr(self,'parents'): return None
+        for ctg in self.parents:
+            if ctg.parent == pred.parent:
+                categ = ctg
+                break
+        if 'categ' not in locals(): return None
+        if pred == categ: return True
+        else: return False
+    
 class Relation(Category):
     
     @property
@@ -587,7 +614,7 @@ class Inference(object):
         self.nodes = {}
         self.infer_facts(*args)
 
-    def infer_facts(self, comp):
+    def infer_facts(self, sent):
         """Inference function from first-order logic sentences.
 
         Gets a query from an ASK, encapsulates the query subtitutions, 
@@ -606,26 +633,26 @@ class Inference(object):
                     else:
                         res = self.subkb.classes[var].test_rel(pred)
                 except KeyError: res = None
-            else:
+            elif issubclass(pclass, LogPredicate):
                 try:
                     if isind is True:
-                        ctgs = self.subkb.individuals[var].get_cat()
+                        res = self.subkb.individuals[var].test_ctg(pred)
                     else:
-                        ctgs = self.subkb.classes[var].get_parents()
+                        res = self.subkb.classes[var].test_parent(pred)
                 except KeyError: res = None
-                else:
-                    if pred[0] in ctgs:
-                        val = ctgs[pred[0]]
-                        qval = float(pred[1][2:])
-                        if pred[1][1] == '=' and val == qval: res = True
-                        elif pred[1][1] == '<' and val < qval: res = True
-                        elif pred[1][1] == '>' and val > qval: res = True
-                        else: res = False
-                    else: res = None
             self.results[var][q] = res
         
         # Parse the query
-        self.get_query(comp)
+        if type(sent) is str:
+            comp = parse_sent(sent)[1]
+            self.get_query(comp)
+        elif issubclass(sent.__class__, LogFunction):
+            self.ctgs = [sent.func]
+            self.query = {}
+            for e in sent.get_args(): self.query[e] = sent
+        elif issubclass(sent.__class__, LogPredicate):
+            self.ctgs = [sent.parent]
+            self.query = {sent.term: sent}
         # Get relevant rules to infer the query
         self.rules, self.done = set(), [None]
         while hasattr(self, 'ctgs'):
@@ -644,7 +671,7 @@ class Inference(object):
                 for pred in preds:
                     pclass = pred.__class__
                     if issubclass(pclass, LogFunction): q = pred.func
-                    else: q = pred[0]
+                    elif issubclass(pclass, LogPredicate): q = pred.parent
                     for var,v in self.obj_dic.items():
                         if q in v:
                             if var not in self.results:         
@@ -657,8 +684,8 @@ class Inference(object):
                     self.rule_tracker()
                     if issubclass(pclass, LogFunction): 
                         self.actv_q, q = (var, pred.func), pred.func
-                    else: 
-                        self.actv_q, q = (var, pred[0]), pred[0]        
+                    elif issubclass(pclass, LogPredicate):
+                        self.actv_q, q = (var, pred.parent), pred.parent        
                     k, result, self.updated = True, None, list()               
                     #print('query: {0}'.format(self.actv_q))
                     while result is not True  and k is True:
@@ -816,34 +843,32 @@ class Inference(object):
                 for node in query:
                     self.queue[node] = {'neg': set(), 'pos': set()}
         else:
-            for node in self.query:
+            for node in self.queue:
                 self.queue[node] = {'neg': set(), 'pos': set()}
 
     def get_query(self, comp):
 
         def break_pred():
             pr = rgx_ob.findall(p)[0].split('[')
-            # It's a function
-            if '<' in p[0]:                
-                t = pr[1].split(';')
+            t = pr[1].split(';')
+            if '<' in p[0]:
+                # It's a function
                 for x, obj in enumerate(t):
                     t[x] = obj.split(',')[0]
                 func = make_function(p, 'relation')
                 return (t, func)                
-            # It's a predicate
-            if ';' in pr[1]:
-                t = pr[1].split(';')
-                if len(t) != 3:
-                    t.append(None)
-                pr[0], pr[1] = t[1], (pr[0], tuple(t[0].split(',')), t[2])
-            else:
-                t = pr[1].split(',')
-                pr = t[0], (pr[0], t[1])
-            return pr
+            else:  
+                # It's a predicate
+                t = pr[1].split(',')[0]
+                fact = make_fact(p, 'free_term')
+                return (t, fact)
         
         preds = []
         for i, pa in enumerate(iter(comp)):
             pa = pa.replace(' ','').strip()            
+            if any(s in pa for s in GL_PCONDS+[':or:']):
+                raise ValueError("Cannot user other operators than '&&' " \
+                "in ASK expressions.")
             if ':vars:' in pa:
                 form = pa.split(':')
                 for i, a in enumerate(form):
@@ -866,12 +891,13 @@ class Inference(object):
                         terms[obj] = [func]
                     else:
                         terms[obj].append(func)
-            elif names not in terms.keys():
-                terms[names] = [p[1]]
-                ctgs.append(p[1][0])
-            else:
-                terms[names].append(tuple(p[1]))
-                ctgs.append(p[1][0])
+            elif issubclass(pclass, LogPredicate):
+                if names not in terms.keys():
+                    terms[names] = [p[1]]
+                    ctgs.append(p[1].parent)
+                else:
+                    terms[names].append(p[1])
+                    ctgs.append(p[1].parent)
         self.query, self.ctgs = terms, ctgs
 
 class SubstRepr(Representation):
