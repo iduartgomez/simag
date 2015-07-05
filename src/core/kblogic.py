@@ -622,8 +622,7 @@ class Inference(object):
         var substitution) and returns the answer to the query. If new 
         knowledge is produced then it's passed to an other procedure for
         addition to the KB.
-        """
-        
+        """        
         def chk_result():
             isind = True if var[0] == '$' else False
             if issubclass(pclass, LogFunction):

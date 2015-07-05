@@ -4,6 +4,7 @@
 
 import re
 import copy
+import datetime
 
 __all__ = ['GlobalLogicParser', 'LogFunction', 'LogPredicate',
            'LogSentence',]
@@ -37,7 +38,7 @@ def GlobalLogicParser(sent):
     par_form = comp[ori]
     if not ':vars:' in par_form:
         if '[' in par_form and len(comp) == 1:
-            # It's a predicate
+            # It's an atom predicate
             pred = par_form.replace(' ','')
             sets = rgx_ob.findall(pred)
             sets = sets[0].split('[')
@@ -636,18 +637,52 @@ def make_logic_sent(ori, comp, hier):
 class LogPredicate(object):
     """Base class to represent a ground predicate."""
     types = ['grounded_term', 'free_term']
-    
+    tb =['year','month','day','hour','minute','second','microsecond']
     def __init__(self, pred):
         if type(pred) is str:
             pred = pred.replace(' ','')
             pred = rgx_ob.findall(pred)
             pred = pred[0].split('[')
-        u = pred[1].split(',u')
-        op, u[1] = u[1][0], float(u[1][1:])
-        if (u[1] > 1 or u[1] < 0):
-            m = "Illegal value: {0}, must be > 0, or < 1.".format(u[1])
+        val = pred[1].split(',')
+        op, val[1] = val[1][1], float(val[1][2:])
+        if (val[1] > 1 or val[1] < 0):
+            m = "Illegal value: {0}, must be > 0, or < 1.".format(val[1])
             raise AssertionError(m)
-        return pred, u, op
+        dates = None
+        if len(val) >= 3:
+            for arg in val[2:]:
+                if '*t' in arg[0:] and 'NOW' not in arg:
+                    if dates is None: dates = []
+                    date = self._set_date(val[2][3:].split('.'))
+                    dates.append(date)
+                elif '*t' in arg[0:] and 'NOW' in arg:
+                    if dates is None: dates = []
+                    dates.append(datetime.datetime.utcnow())
+            print(dates)
+        return pred[0], val, op, dates
+    
+    def _set_date(self, date):
+        dobj = {}
+        for i,p in enumerate(date):
+            if 'tzinfo' not in p:
+               dobj[LogPredicate.tb[i]] = int(p)
+        if 'year' not in dobj: raise ValueError('year not specified')
+        if 'month' not in dobj: raise ValueError('month not specified')
+        if 'day' not in dobj: raise ValueError('day not specified')
+        if 'hour' not in dobj: dobj['hour'] = 0
+        if 'minute' not in dobj: dobj['minute'] = 0
+        if 'second' not in dobj: dobj['second'] = 0
+        if 'microsecond' not in dobj: dobj['microsecond'] = 0
+        if 'tzinfo' not in dobj: dobj['tzinfo'] = None
+        date = datetime.datetime(year=dobj['year'],
+                                  month=dobj['month'],
+                                  day=dobj['day'],
+                                  hour=dobj['hour'],
+                                  minute=dobj['minute'],
+                                  second=dobj['second'],
+                                  microsecond=dobj['microsecond'],
+                                  tzinfo=dobj['tzinfo'])
+        return date
     
     def change_params(self, new=None, revert=False):
         if revert is not True:
@@ -661,20 +696,24 @@ def make_fact(pred, f_type=None, *args):
     
     class GroundedTerm(LogPredicate):        
         def __init__(self, pred):
-            pred, val, _ = super(GroundedTerm, self).__init__(pred)
-            assert ('=' in pred[1]), \
+            parent, val, op, dates = super(GroundedTerm, self).__init__(pred)
+            assert (op == '='), \
             "It's a grounded predicate, must assign truth value."
-            self.parent = pred[0]
+            self.parent = parent
             self.term = val[0]
             self.value = val[1]
+            if dates is not None:
+                self.dates = dates
     
     class FreeTerm(LogPredicate):
         def __init__(self, pred):
-            pred, val, op = super(FreeTerm, self).__init__(pred)
-            self.parent = pred[0]
+            parent, val, op, dates = super(FreeTerm, self).__init__(pred)
+            self.parent = parent
             self.term = val[0]
             self.value = val[1]
             self.op = op
+            if dates is not None:
+                self.dates = dates
         
         def __eq__(self, other):
             if not issubclass(other.__class__, LogPredicate):
