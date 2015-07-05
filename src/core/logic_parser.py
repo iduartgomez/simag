@@ -633,11 +633,10 @@ def make_logic_sent(ori, comp, hier):
 #   LOGIC CLASSES AND SUBCLASSES
 # ===================================================================#
 
-
+        
 class LogPredicate(object):
     """Base class to represent a ground predicate."""
-    types = ['grounded_term', 'free_term']
-    tb =['year','month','day','hour','minute','second','microsecond']
+    types = ['grounded_term', 'free_term']    
     def __init__(self, pred):
         if type(pred) is str:
             pred = pred.replace(' ','')
@@ -650,39 +649,15 @@ class LogPredicate(object):
             raise AssertionError(m)
         dates = None
         if len(val) >= 3:
-            for arg in val[2:]:
-                if '*t' in arg[0:] and 'NOW' not in arg:
-                    if dates is None: dates = []
-                    date = self._set_date(val[2][3:].split('.'))
-                    dates.append(date)
-                elif '*t' in arg[0:] and 'NOW' in arg:
+            for arg in val[2:]:                
+                if '*t' in arg[0:] and 'NOW' in arg:
                     if dates is None: dates = []
                     dates.append(datetime.datetime.utcnow())
-            print(dates)
+                elif '*t' in arg[0:]:
+                    if dates is None: dates = []
+                    date = _set_date(arg[3:].split('.'))
+                    dates.append(date)
         return pred[0], val, op, dates
-    
-    def _set_date(self, date):
-        dobj = {}
-        for i,p in enumerate(date):
-            if 'tzinfo' not in p:
-               dobj[LogPredicate.tb[i]] = int(p)
-        if 'year' not in dobj: raise ValueError('year not specified')
-        if 'month' not in dobj: raise ValueError('month not specified')
-        if 'day' not in dobj: raise ValueError('day not specified')
-        if 'hour' not in dobj: dobj['hour'] = 0
-        if 'minute' not in dobj: dobj['minute'] = 0
-        if 'second' not in dobj: dobj['second'] = 0
-        if 'microsecond' not in dobj: dobj['microsecond'] = 0
-        if 'tzinfo' not in dobj: dobj['tzinfo'] = None
-        date = datetime.datetime(year=dobj['year'],
-                                  month=dobj['month'],
-                                  day=dobj['day'],
-                                  hour=dobj['hour'],
-                                  minute=dobj['minute'],
-                                  second=dobj['second'],
-                                  microsecond=dobj['microsecond'],
-                                  tzinfo=dobj['tzinfo'])
-        return date
     
     def change_params(self, new=None, revert=False):
         if revert is not True:
@@ -747,7 +722,8 @@ class LogFunction(object):
     def __init__(self, sent):
         func = rgx_ob.findall(sent)[0].split('[')
         self.func, vrs = func[0], func[1]
-        args, hls = vrs.split(';'), list()
+        args, hls, mk_args = vrs.split(';'), list(), list()
+        dates = None
         for x, arg in enumerate(args):
             if ',u' in arg:
                 narg = arg.split(',u')
@@ -755,13 +731,23 @@ class LogFunction(object):
                 if narg[1] > 1 or narg[1] < 0:
                     raise ValueError(narg[1])
                 hls.append(narg[0])
-                args[x] = narg
+                mk_args.append(narg)   
+            elif '*t' in arg[0:] and 'NOW' in arg:
+                if dates is None: dates = []
+                dates.append(datetime.datetime.utcnow())
+            elif '*t' in arg:
+                if dates is None: dates = []
+                date = _set_date(arg[3:].split('.'))
+                dates.append(date)
             else:
+                mk_args.append(arg)
                 hls.append(arg)
         self.args_ID = hash(tuple(hls))
         self._id = self.args_ID
-        self.args = args
+        self.args = mk_args
         self.arity = len(self.args)
+        if dates is not None:
+            self.dates = dates
         
     def get_args(self):
         ls = []
@@ -876,3 +862,29 @@ def make_function(sent, f_type=None, *args):
     else:
         return LogFunction(sent)
 
+#   HELPER FUNCTIONS
+
+def _set_date(date):
+    tb =['year','month','day','hour','minute','second','microsecond']
+    dobj = {}
+    for i,p in enumerate(date):
+        if 'tzinfo' not in p:
+           dobj[tb[i]] = int(p)
+    if 'year' not in dobj: raise ValueError('year not specified')
+    if 'month' not in dobj: raise ValueError('month not specified')
+    if 'day' not in dobj: raise ValueError('day not specified')
+    if 'hour' not in dobj: dobj['hour'] = 0
+    if 'minute' not in dobj: dobj['minute'] = 0
+    if 'second' not in dobj: dobj['second'] = 0
+    if 'microsecond' not in dobj: dobj['microsecond'] = 0
+    if 'tzinfo' not in dobj: dobj['tzinfo'] = None
+    date = datetime.datetime(year=dobj['year'],
+                              month=dobj['month'],
+                              day=dobj['day'],
+                              hour=dobj['hour'],
+                              minute=dobj['minute'],
+                              second=dobj['second'],
+                              microsecond=dobj['microsecond'],
+                              tzinfo=dobj['tzinfo'])
+    return date
+    
