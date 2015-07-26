@@ -24,11 +24,11 @@
 	:vars:x: (<owns[x,u=1;$Nono]> && missile[x,u=1] => <sells[x,u=1;$West;$Nono]>)
 	:vars:x: (missile[x,u=1] => weapon[x,u=1])
 	:vars:x: (<enemy[x,u=1;$America]> => hostile[x,u=1])
+     #:vars:x,y: (professor[x,u=1] && dean[y,u=1] => <friend[y,u=1;x]> || <knows[y,u=0;x]>)
 }
-#:vars:x,y: (professor[x,u=1] && dean[y,u=1] => <friend[y,u=1;x]> || <knows[y,u=0;x]>)
 # Test 3/03 -> classes
 {	
-	animal[cow,u=1]
+    animal[cow,u=1]
     female[cow,u=1]
     animal[cow,u=1] && female[cow,u=1] => <produce[milk,u=1;cow]>
 }

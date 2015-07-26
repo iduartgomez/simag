@@ -33,7 +33,7 @@ def GlobalLogicParser(sent):
     object.
     
     This is a global parsing function for logic functions.
-    """    
+    """
     ori, comp, hier = parse_sent(sent)
     par_form = comp[ori]
     if not ':vars:' in par_form:
@@ -181,6 +181,10 @@ class LogSentence(object):
                     return
                 var_name = self.var_order[n]
                 # Assign an entity to a variable by order.
+                if hasattr(self, 'var_types') and var_name in self.var_types:
+                    type_ = self.var_types[var_name]
+                    assert isinstance(const, type_), \
+                    "{0} is not a {1} object".format(const, type_)
                 self.assigned[var_name] = const
             ag.bmsWrapper.register(self)
             self.start.solve(self, ag, key=[0])
@@ -497,7 +501,7 @@ def make_logic_sent(ori, comp, hier):
                         result = ag.classes[args[0]].test_rel(test)
                     if result is True:
                         ag.bmsWrapper.prev_blf('PLACEHOLDER')
-                else:
+                elif issubclass(self.pred.__class__, LogPredicate):
                     # Check membership to a set of an entity.
                     sbj = isvar(self.pred.term)
                     if '$' not in sbj[0]: categs = ag.classes[sbj].get_parents()
@@ -512,6 +516,8 @@ def make_logic_sent(ori, comp, hier):
                         else: result = False
                     if result is True:
                         ag.bmsWrapper.prev_blf('PLACEHOLDER')
+                elif isinstance(self.pred, make_function.TimeFunc):
+                    pass
                 return result
             else:
                 # marked for declaration
@@ -575,16 +581,27 @@ def make_logic_sent(ori, comp, hier):
                 if a == 'vars':
                     vars_ = form[i+1].split(',')
                     for var in vars_:
+                        if '->' in var: 
+                            var = var.split('->')
+                            if not hasattr(sent, 'var_types'):
+                                sent.var_types = dict()
+                            sent.var_types[var[0]] = _get_type_class(var[1])
+                            var = var[0]
                         if var not in sent.var_order:
                             sent.var_order.append(var)
                     p = Particle(cond, depth, part_id, parent, syb, form)
                     sent.particles.append(p)
         elif '[' in form:
             cond = ':predicate:'
-            if '<' in form:
+            result = _check_reserved_words(form)
+            if result == 'time_calc':
+                if hasattr(sent, 'dates') is False: sent.dates = {}
+                form = make_function(form, 'time_calc')
+            elif ('<' and '>') in form:
                 form = make_function(form, 'relation')
             else:
                 form = make_fact(form, 'free_term')
+                        
             p = LogicAtom(cond, depth, part_id, parent, syb, form)
             sent.particles.append(p)
         else:
@@ -593,19 +610,11 @@ def make_logic_sent(ori, comp, hier):
             sent.particles.append(p)
     
     def connect_parts():
-        particles = []
         icond = False
-        lvl = sent.depth
-        while lvl > -1:
-            p = [part for part in sent.particles if part.depth == lvl]
-            for part in p:
-                particles.append(part)
-                if part.cond == ':icond:':
-                    icond = part
-            lvl -= 1
-        sent.particles = particles
-        for p in sent.particles:
-            p.connect(sent.particles)
+        for part in sent.particles:
+            if part.cond == ':icond:':
+                icond = part
+            part.connect(sent.particles)
         # Check for illegal connectives for implicative cond sentences
         sent.validity = None
         if icond is not False:
@@ -649,7 +658,7 @@ class LogPredicate(object):
             raise AssertionError(m)
         dates = None
         if len(val) >= 3:
-            for arg in val[2:]:                
+            for arg in val[2:]:
                 if '*t' in arg[0:] and 'NOW' in arg:
                     if dates is None: dates = []
                     dates.append(datetime.datetime.utcnow())
@@ -717,7 +726,7 @@ def make_fact(pred, f_type=None, *args):
 
 class LogFunction(object):
     """Base class to represent a logic function."""    
-    types = ['relation']
+    types = ['relation','time_calc']
     
     def __init__(self, sent):
         func = rgx_ob.findall(sent)[0].split('[')
@@ -855,15 +864,51 @@ def make_function(sent, f_type=None, *args):
                         return ('args', other.args[x], arg)
             return True
     
+    class TimeFunc(LogFunction):
+        
+        def __init__(self, sent):
+            func = rgx_ob.findall(sent)[0].split('[')[1]
+            op = [c for c in func if c in ['>','<']]
+            if len(op) > 1 or len(op) == 0:
+                raise ValueError('provide one operator')
+            else:
+                self.operator = op[0]
+                self.vrs = func.split(self.operator)
+        
+        def __bool__(self):
+            subst = []
+            for var in self.vrs:
+                subst.append(self.args[var])
+            if self.operator == '<' and subst[0] < subst[1]:
+                return True
+            elif self.operator == '>' and subst[0] > subst[1]:
+                return True
+            elif self.operator == '=' and subst[0] == subst[1]:
+                return True
+            else: 
+                return False
+                        
     assert (f_type in LogFunction.types or f_type is None), \
             'Function {0} does not exist.'.format(f_type)
     if f_type == 'relation':
+        if sent is None: return RelationFunc
         return RelationFunc(sent)
+    if f_type == 'time_calc':
+        if sent is None: return TimeFunc
+        return TimeFunc(sent)
     else:
+        if sent is None: return LogFunction
         return LogFunction(sent)
 
+# ===================================================================#
 #   HELPER FUNCTIONS
+# ===================================================================#
 
+def _check_reserved_words(sent):
+    pred = sent.split('[')[0]
+    if 'timeCalc' in pred: return 'time_calc'
+    return False
+    
 def _set_date(date):
     tb =['year','month','day','hour','minute','second','microsecond']
     dobj = {}
@@ -888,3 +933,7 @@ def _set_date(date):
                               tzinfo=dobj['tzinfo'])
     return date
     
+def _get_type_class(var):
+    if var == 'time': 
+        return make_function(None, f_type='time_calc')
+        

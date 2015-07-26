@@ -271,10 +271,11 @@ class Representation(object):
         for pred in preds:
             pclass = pred.__class__
             if issubclass(pclass, LogFunction):
-                for arg in pred.args:
-                    if isinstance(arg, tuple): sbj = arg[0]
-                    else: sbj = arg
-                    chk_args(pred.func)
+                if hasattr(pred, 'args'):
+                    for arg in pred.args:
+                        if isinstance(arg, tuple): sbj = arg[0]
+                        else: sbj = arg
+                        chk_args(pred.func)
             else:
                 sbj, p = pred.term, pred.parent
                 chk_args(p)
@@ -978,43 +979,12 @@ class SubstRepr(Representation):
         
 
 if __name__ == '__main__':
-    import os
-    
-    def load_sentences(test, path):
-        logic_test = os.path.join(path, 'knowledge_base', test)
-        ls, sup_ls = [], []
-        with open(logic_test, 'r') as f:
-            for line in f:
-                if line.strip()[0] == '#': pass
-                elif line.strip() == '{':
-                    sup_ls, ls = ls, list()
-                elif line.strip() == '}':
-                    sup_ls.append(ls)
-                    ls = sup_ls
-                else: ls.append(line.strip())
-        return ls    
-    
-    def test_ask(path, test, ask):        
-        sents = load_sentences(test, path)        
-        for s in sents[1]:
-            r.tell(s)        
-        results = []
-        for q in ask:
-            results.append(r.ask(q, single=False))
-        print('\n==== RESULTS ====')
-        for res in results:
-            print(res)
-    
     r = Representation()
-    path = '~/dev/workspace/simag/tests'
-    test = 'ask_func.txt'
-    ask = ['<friend[$Lucy,u=0;$John]>']
-    #test_ask(path, test, ask)
-    fol = ['animal[cow,u=1]',
-           'animal[chicken,u=1]']
+    fol = [':vars:x,y,t1->time,t2->time: (dog[x,u=1] && meat[y,u=1] && ' +
+    '<eat[y,u=1;x]> && <timeCalc[t1<t2]> => fat[x,u=1])',
+    'dog[$Pancho,u=1]', 'meat[$M1,u=1]',
+    ]
     for s in fol:
         r.tell(s)
-    res = r.ask(':vars:x: (animal[x,u=1])')
-    print(res)
     
     
