@@ -5,19 +5,14 @@
 import re
 import copy
 import datetime
+import itertools
 
 __all__ = ['GlobalLogicParser', 'LogFunction', 'LogPredicate',
-           'LogSentence',]
+           'LogSentence', 'GL_PCONDS', 'SYMB_ORD']
 
-GL_PCONDS = [':icond:', ':implies:', ':equiv:']
-SYMBS = dict([
-               ('|>',':icond:'),
-               ('<=>',':equiv:'), 
-               (' =>',':implies:'),
-               ('||',':or:'),
-               ('&&',':and:')
-             ])
-SYMB_ORD = ['|>', '<=>', ' =>', '||', '&&']
+GL_PCONDS = ['|>', ' =>', '<=>']
+SYMB_ORD = ('|>', '<=>', ' =>', '||', '&&')
+VAR_DECL = (':vars:', ':exists:')
 
 ##### Regex
 rgx_par = re.compile(r'\{(.*?)\}')
@@ -28,18 +23,32 @@ rgx_br = re.compile(r'\}(.*?)\{')
 #   LOGIC SENTENCE PARSER
 # ===================================================================#
 
-def GlobalLogicParser(sent):
+def GlobalLogicParser(sent, block=False):
     """Takes a string, discovers type and returns the corresponding
-    object.
+    object. It can parse several statements at the same time, separated
+    by newlines.
     
     This is a global parsing function for logic functions.
     """
-    ori, comp, hier = parse_sent(sent)
+    if block is True:
+        nl_sents = sent.splitlines()
+        results = []
+        for s in nl_sents:
+            if s.strip(): results.append( GlobalLogicParser(s) )
+        results = itertools.chain.from_iterable(results)
+        return results
+    lines = sent.splitlines()
+    if len(lines) == 1: sent = lines[0]
+    elif len(lines) == 0: pass
+    else:
+        raise AssertionError("Please indicate the string passed is a code " \
+        + "block by setting the 'block' parameter to True.")
+    ori, comp, hier = _parse_sent(sent)
     par_form = comp[ori]
     if not ':vars:' in par_form:
         if '[' in par_form and len(comp) == 1:
             # It's an atom predicate
-            pred = par_form.replace(' ','')
+            pred = par_form
             sets = rgx_ob.findall(pred)
             sets = sets[0].split('[')
             if ';' in sets[1]:
@@ -77,8 +86,9 @@ def GlobalLogicParser(sent):
         sent = make_logic_sent(ori, comp, hier)
         return sent
 
-def parse_sent(sent):
-    """Parser for logic sentences."""
+def _parse_sent(sent):
+    """First pass parser for logic sentences. Decomposition of the sentence
+    in a tree connecting the different particles hierarchicaly."""
 
     def decomp_par(s, symb, f=0):
         initpar = []
@@ -119,7 +129,7 @@ def parse_sent(sent):
                 last = memb.pop()                        
                 memb[-1] =  memb[-1] + symb + last
         x, y = len(comp), len(comp)+1            
-        comp[idx] = '{'+str(x)+'}'+SYMBS[symb]+'{'+str(y)+'}'
+        comp[idx] = '{'+str(x)+'}'+symb+'{'+str(y)+'}'
         comp.append(memb[0])
         comp.append(memb[1])
         return True
@@ -139,17 +149,20 @@ def parse_sent(sent):
                 for c in childs:
                     hier[c]['parent'] = n
     
-    comp = []
-    hier = {}
-    decomp_par(sent.rstrip('\n'), symb=('(', ')'))
+    comp, hier = [], {}
+    decomp_par(sent, symb=('(', ')'))
     ori = len(comp) - 1
-    for idx, form in enumerate(comp):            
-        if any(symb in form for symb in SYMBS.keys()):
+    for idx, form in enumerate(comp):
+        if any(symb in form for symb in SYMB_ORD):
             decomp_symbs()
     ls = len(comp)
     iter_childs()
+    if not any(symb in comp[ori] for symb in SYMB_ORD + VAR_DECL) \
+    and type(hier[ori]['childs']) == list and len(hier[ori]['childs']) == 1:
+        new_ori = hier[ori]['childs'][0]
+        hier[new_ori]['parent'], ori = -1, new_ori
+        if len(comp) == 2: comp = [comp.pop(ori)]
     return ori, comp, hier
-
 
 class LogSentence(object):
     """Object to store a first-order logic complex sentence.
@@ -193,15 +206,15 @@ class LogSentence(object):
             self.start.solve(self, ag, key=[0])
         else: return
 
-    def get_ops(self, p, chk_op=[':or:', ':implies:', ':equiv:']):
+    def get_ops(self, p, chk_op=['||', '=>', '<=>:']):
         ops = []
         for p in self:
             if any(x in p.cond for x in chk_op):
                 ops.append(p)
         for p in ops:
             x = p
-            while x.cond != ':icond:' or x.parent == -1:
-                if x.parent.cond == ':icond:' and x.parent.next[1] == x:
+            while x.cond != '|>' or x.parent == -1:
+                if x.parent.cond == '|>' and x.parent.next[1] == x:
                     return False
                 else:
                     x = x.parent
@@ -261,6 +274,13 @@ def make_logic_sent(ori, comp, hier):
             else:
                 s = '<predicate ' + ' (depth:' + str(self.depth) + '): ' \
                 + str(self.pred) + '>'
+            return s
+        
+        def __repr__(self, *args, **kwargs):
+            if self.cond != ':predicate:':
+                s = '<operator ' + str(self.cond) + '">'
+            else:
+                s = '<predicate ' + str(self.pred) + '>'
             return s
         
         def connect(self, part_list):
@@ -557,24 +577,23 @@ def make_logic_sent(ori, comp, hier):
                 new_atom(form, depth, parent, child, syb=[-1])
     
     def new_atom(form, depth, parent, part_id, syb):
-        form = form.replace(' ','').strip()
         cond = rgx_br.findall(form)
         if depth > sent.depth:
             sent.depth = depth
         if len(cond) > 0:
             type_ = cond[0]
-            if type_ == ':icond:':                
+            if type_ == '|>':                
                 l = LogicIndCond(type_, depth, part_id, parent, syb)
-            elif type_ == ':equiv:':
+            elif type_ == '<=>':
                 l = LogicEquivalence(type_, depth, part_id, parent, syb)
-            elif type_ == ':implies:':
+            elif type_ == ' =>':
                 l = LogicImplication(type_, depth, part_id, parent, syb)
-            elif type_ == ':and:':
+            elif type_ == '&&':
                 l = LogicConjunction(type_, depth, part_id, parent, syb)
-            elif type_ == ':or:':
+            elif type_ == '||':
                 l = LogicDisjunction(type_, depth, part_id, parent, syb)            
             sent.particles.append(l)
-        elif any(x in form for x in [':vars:', ':exists:']):
+        elif any(x in form for x in VAR_DECL):
             form = form.split(':')
             cond = ':stub:'
             for i, a in enumerate(form):
@@ -597,11 +616,10 @@ def make_logic_sent(ori, comp, hier):
             if result == 'time_calc':
                 if hasattr(sent, 'dates') is False: sent.dates = {}
                 form = make_function(form, 'time_calc')
-            elif ('<' and '>') in form:
+            elif ('<' and '>') in form and '<=>' not in form:
                 form = make_function(form, 'relation')
             else:
                 form = make_fact(form, 'free_term')
-                        
             p = LogicAtom(cond, depth, part_id, parent, syb, form)
             sent.particles.append(p)
         else:
@@ -612,7 +630,7 @@ def make_logic_sent(ori, comp, hier):
     def connect_parts():
         icond = False
         for part in sent.particles:
-            if part.cond == ':icond:':
+            if part.cond == '|>':
                 icond = part
             part.connect(sent.particles)
         # Check for illegal connectives for implicative cond sentences
@@ -648,7 +666,6 @@ class LogPredicate(object):
     types = ['grounded_term', 'free_term']    
     def __init__(self, pred):
         if type(pred) is str:
-            pred = pred.replace(' ','')
             pred = rgx_ob.findall(pred)
             pred = pred[0].split('[')
         val = pred[1].split(',')
@@ -674,11 +691,14 @@ class LogPredicate(object):
         else:
             self.term = self.oldTerm
             del self.oldTerm
+    
+    def __repr__(self):
+        return str(self.__class__.__name__)
 
 def make_fact(pred, f_type=None, *args):
     """Parses a grounded predicate and returns a 'fact'."""
     
-    class GroundedTerm(LogPredicate):        
+    class GroundedTerm(LogPredicate):
         def __init__(self, pred):
             parent, val, op, dates = super(GroundedTerm, self).__init__(pred)
             assert (op == '='), \
@@ -733,7 +753,7 @@ class LogFunction(object):
         self.func, vrs = func[0], func[1]
         args, hls, mk_args = vrs.split(';'), list(), list()
         dates = None
-        for x, arg in enumerate(args):
+        for arg in args:
             if ',u' in arg:
                 narg = arg.split(',u')
                 narg = narg[0], float(narg[1][1:]), narg[1][0]
@@ -914,7 +934,7 @@ def _set_date(date):
     dobj = {}
     for i,p in enumerate(date):
         if 'tzinfo' not in p:
-           dobj[tb[i]] = int(p)
+            dobj[tb[i]] = int(p)
     if 'year' not in dobj: raise ValueError('year not specified')
     if 'month' not in dobj: raise ValueError('month not specified')
     if 'day' not in dobj: raise ValueError('day not specified')
@@ -923,17 +943,27 @@ def _set_date(date):
     if 'second' not in dobj: dobj['second'] = 0
     if 'microsecond' not in dobj: dobj['microsecond'] = 0
     if 'tzinfo' not in dobj: dobj['tzinfo'] = None
-    date = datetime.datetime(year=dobj['year'],
-                              month=dobj['month'],
-                              day=dobj['day'],
-                              hour=dobj['hour'],
-                              minute=dobj['minute'],
-                              second=dobj['second'],
-                              microsecond=dobj['microsecond'],
-                              tzinfo=dobj['tzinfo'])
-    return date
+    return datetime.datetime(
+        year=dobj['year'],
+        month=dobj['month'],
+        day=dobj['day'],
+        hour=dobj['hour'],
+        minute=dobj['minute'],
+        second=dobj['second'],
+        microsecond=dobj['microsecond'],
+        tzinfo=dobj['tzinfo']
+    )
     
 def _get_type_class(var):
     if var == 'time': 
         return make_function(None, f_type='time_calc')
         
+if __name__ == '__main__':
+    sent = """
+    professor[$Lucy,u=1]
+    (dean[$John,u=1])
+    (:vars:x: (dean[x,u=1] |> professor[x,u=1]))
+    :vars:x: (professor[x,u=1] |> person[x,u=1])
+    """
+    GlobalLogicParser(sent, block=True)
+    

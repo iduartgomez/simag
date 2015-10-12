@@ -46,8 +46,8 @@ def context_manager():
 class ProblemMeta(type):
     """Manages the creation of 'ProblemDomain' subclasses.
     
-    When a subclass of ProblemDomain is created, it's checked if the data 
-    input interface is compatible with the context.
+    When a subclass of ProblemDomain is created, checks if the data input
+    interface is compatible with the context.
     
     It also checks if the output is compatible with the existing available 
     actions/choices to the agent, and the instructions are in a compatible 
@@ -90,11 +90,11 @@ class ProblemDomain(metaclass=ProblemMeta):
                  requiriments=None,
                  goals=None,
                  init=None):
-        cls = self.__class__        
+        cls = self.__class__      
         args = ['actions','knowledge','relations','goals','init']
         other_req = {}
         if requiriments is not None:
-            for k,val in requiriments.items():
+            for k, val in requiriments.items():
                 if k == 'actions': actions = val
                 if k == 'knowledge': knowledge = val
                 if k == 'relations': relations = val
@@ -113,7 +113,7 @@ class ProblemDomain(metaclass=ProblemMeta):
                     raise AttributeError(m)
         self.lookup_vars()
     
-    def lookup_vars(self):        
+    def lookup_vars(self):
         def mk_part(sent):
             parsed = GlobalLogicParser(sent)
             pclass = parsed.__class__

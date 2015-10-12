@@ -35,8 +35,8 @@ solving the query (including query parsing, data fetching and unification).
 
 # TODO:
 #
-# * On ASK, fix it so it can deal with queries that ask about relations
-# of the same type with several objects.
+# * On ASK, add fucntionality so it so it can deal with queries that ask about
+# relations of the same type with several objects.
 # * Add 'belief maintenance system' functionality.
 
 # ===================================================================#
@@ -49,16 +49,8 @@ import re
 
 import core.bms
 from core.logic_parser import *
-from core.logic_parser import make_function, make_fact, parse_sent
+from core.logic_parser import make_function, make_fact, _parse_sent
 
-GL_PCONDS = [':icond:', ':implies:', ':equiv:']
-SYMBS = dict([
-               ('|>',':icond:'),
-               ('<=>',':equiv:'), 
-               (' =>',':implies:'),
-               ('||',':or:'),
-               ('&&',':and:')
-             ])
 rgx_ob = re.compile(r'\b(.*?)\]')
 
 # ===================================================================#
@@ -84,10 +76,10 @@ class Representation(object):
         self.bmsWrapper = core.bms.BmsWrapper(self)
 
     def tell(self, sent):
-        """Parses a sentence into an usable formula and stores it into
-        the internal representation along with the corresponding classes.
-        In case the sentence is a predicate, the objects get declared
-        as members of their classes.
+        """Parses a sentence (or several of them) into an usable formula
+        and stores it into the internal representation along with the
+        corresponding classes. In case the sentence is a predicate,
+        the objects get declared as members of their classes.
         
         Accepts first-order logic sentences sentences, both atomic 
         sentences ('Lucy is a professor') and complex sentences compossed 
@@ -113,7 +105,7 @@ class Representation(object):
                 self.up_memb(processed)
         
         result = GlobalLogicParser(sent)
-        if type(result) is list:
+        if type(result) is (list or itertools.chain):
             for processed in result:
                 process()
         else:
@@ -609,6 +601,11 @@ class Inference(object):
     class NoSolutionError(Exception):
         """Cannot infer a solution error."""
     
+    def __new__(mklass, *args, **kwargs):
+        obj = super(Inference, mklass).__new__(mklass)
+        obj.parser = _parse_sent
+        return obj
+    
     def __init__(self, kb, *args):
         self.kb = kb
         self.vrs = set()
@@ -644,7 +641,7 @@ class Inference(object):
         
         # Parse the query
         if type(sent) is str:
-            comp = parse_sent(sent)[1]
+            comp = self.parser(sent)[1]
             self.get_query(comp)
         elif issubclass(sent.__class__, LogFunction):
             self.ctgs = [sent.func]
@@ -864,9 +861,8 @@ class Inference(object):
                 return (t, fact)
         
         preds = []
-        for i, pa in enumerate(iter(comp)):
-            pa = pa.replace(' ','').strip()            
-            if any(s in pa for s in GL_PCONDS+[':or:']):
+        for i, pa in enumerate(iter(comp)):     
+            if any(s in pa for s in GL_PCONDS + ['||']):
                 raise ValueError("Cannot user other operators than '&&' " \
                 "in ASK expressions.")
             if ':vars:' in pa:
@@ -876,7 +872,7 @@ class Inference(object):
                         vars_ = form[i+1].split(',')
                         for var in vars_: self.vrs.add(var)
                         comp.pop(i)
-            elif not any(s in pa for s in SYMBS.values()):
+            elif not any(s in pa for s in SYMB_ORD):
                 preds.append(pa)
         for i, p in enumerate(preds):
             preds[i] = break_pred()
@@ -980,11 +976,11 @@ class SubstRepr(Representation):
 
 if __name__ == '__main__':
     r = Representation()
-    fol = [':vars:x,y,t1->time,t2->time: (dog[x,u=1] && meat[y,u=1] && ' +
-    '<eat[y,u=1;x]> && <timeCalc[t1<t2]> => fat[x,u=1])',
-    'dog[$Pancho,u=1]', 'meat[$M1,u=1]',
+    fol = [
+        ':vars:x,y,t1->time,t2->time: (dog[x,u=1] && meat[y,u=1] && ' +
+        '<eat[y,u=1;x]> && <timeCalc[t1<t2]> => fat[x,u=1])',
+        'dog[$Pancho,u=1]', 'meat[$M1,u=1]',
     ]
     for s in fol:
         r.tell(s)
-    
     

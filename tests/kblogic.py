@@ -2,7 +2,7 @@ import unittest
 import os
 
 from core.kblogic import *
-from core.logic_parser import make_logic_sent
+from core.logic_parser import make_logic_sent, _parse_sent
 
 #====================#
 #    UNIT TESTING    #
@@ -75,7 +75,7 @@ class EvaluationOfFOLSentences(unittest.TestCase):
             with self.subTest(sent='subtest {0}: {1}'.format(x,test[0])):
                 for s in test[1:]:
                     self.rep.tell(s)
-                ori, comp, hier = parse_sent(test[0])
+                ori, comp, hier = _parse_sent(test[0])
                 proof = make_logic_sent(ori, comp, hier)     
                 if results[x] is None:
                     self.assertIs(hasattr(proof,'result'),False)
@@ -155,7 +155,7 @@ class LogicSentenceParsing(unittest.TestCase):
                 ('enemy','hostile')]
         for x, sent in enumerate(sents):
             with self.subTest(sent='subtest {0}: {1}'.format(x,sent)):
-                ori, comp, hier = parse_sent(sent)
+                ori, comp, hier = _parse_sent(sent)
                 lg_sent = make_logic_sent(ori, comp, hier)
                 preds = lg_sent.get_pred(conds=GL_PCONDS)
                 preds.extend(lg_sent.get_pred(branch='r',conds=GL_PCONDS))
@@ -168,7 +168,7 @@ class LogicSentenceParsing(unittest.TestCase):
                     self.assertIn(obj, chk1)
 
 #====================#
-#    HELP FUNCTIONS  #
+#    HELPER FUNCTIONS  #
 #====================#
 
 def load_sentences(test):
@@ -187,7 +187,7 @@ def load_sentences(test):
     return ls
 
 def iter_test(self, sents, ask, eval, single=False):
-    for i, test in enumerate(sents):        
+    for i, test in enumerate(sents):
         with self.subTest(test='subtest {0}: {1}'.format(i,ask[i])):
             #print('\n===== SUBTEST =====')
             #print('subtest',x,'|',test,'\n')
