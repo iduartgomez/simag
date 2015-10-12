@@ -75,11 +75,12 @@ class Representation(object):
         self.classes = {}
         self.bmsWrapper = core.bms.BmsWrapper(self)
 
-    def tell(self, sent):
-        """Parses a sentence (or several of them) into an usable formula
-        and stores it into the internal representation along with the
-        corresponding classes. In case the sentence is a predicate,
-        the objects get declared as members of their classes.
+    def tell(self, sent, block=False):
+        """Parses a sentence (or several of them, as a code block string 
+        delimited by newlines) into an usable formula and stores it into 
+        the internal representation along with the corresponding classes. 
+        In case the sentence is a predicate, the objects get declared as 
+        members of their classes.
         
         Accepts first-order logic sentences sentences, both atomic 
         sentences ('Lucy is a professor') and complex sentences compossed 
@@ -104,8 +105,10 @@ class Representation(object):
             elif issubclass(processed.__class__, LogPredicate): 
                 self.up_memb(processed)
         
-        result = GlobalLogicParser(sent)
-        if type(result) is (list or itertools.chain):
+        # Sign that the string passed is a code block
+        if block is True: result = GlobalLogicParser(sent, block=True)
+        else: result = GlobalLogicParser(sent)
+        if type(result) is list:
             for processed in result:
                 process()
         else:
@@ -225,6 +228,12 @@ class Representation(object):
                     self.classes[relation] = rel
 
     def add_cog(self, sent):
+        """
+        {
+            :vars: x, y, t1 -> time, t2 -> time:
+            (dog[x,u=1] && meat[y,u=1] && <eat[y,u=1;x;*t=t1]> && <timeCalc[t1<t2]> => fat[x,u=1,*t=t2])
+        }
+        """
         
         def chk_args(p):
             if sbj not in sent.var_order:
@@ -263,7 +272,7 @@ class Representation(object):
         for pred in preds:
             pclass = pred.__class__
             if issubclass(pclass, LogFunction):
-                if hasattr(pred, 'args'):
+                if hasattr(pred, 'args'):                    
                     for arg in pred.args:
                         if isinstance(arg, tuple): sbj = arg[0]
                         else: sbj = arg
@@ -271,7 +280,7 @@ class Representation(object):
             else:
                 sbj, p = pred.term, pred.parent
                 chk_args(p)
-
+        
     def save_rule(self, proof):
         preds = proof.get_pred()
         preds.extend(proof.get_pred(branch='r'))
@@ -975,12 +984,18 @@ class SubstRepr(Representation):
         
 
 if __name__ == '__main__':
+    import pprint
     r = Representation()
-    fol = [
-        ':vars:x,y,t1->time,t2->time: (dog[x,u=1] && meat[y,u=1] && ' +
-        '<eat[y,u=1;x]> && <timeCalc[t1<t2]> => fat[x,u=1])',
-        'dog[$Pancho,u=1]', 'meat[$M1,u=1]',
-    ]
-    for s in fol:
-        r.tell(s)
-    
+    fol = """
+        {
+            :vars: x, y, t1 -> time, t2 -> time:
+            (dog[x,u=1] && meat[y,u=1] && <eat[y,u=1;x;*t=t1]> && <timeCalc[t1<t2]> => fat[x,u=1,*t=t2])
+        }
+        dog[$Pancho,u=1]
+        meat[$M1,u=1]
+    """
+    r.tell(fol, block=True)
+    pprint.pprint(r.classes)
+    pprint.pprint(r.individuals)
+    #r.ask('fat[$Pancho,u=1;*t=NOW]')
+    # <eat[$M1,u=1;$Pancho;*t=2015.07.05.11.28]>

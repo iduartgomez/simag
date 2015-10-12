@@ -26,23 +26,39 @@ rgx_br = re.compile(r'\}(.*?)\{')
 def GlobalLogicParser(sent, block=False):
     """Takes a string, discovers type and returns the corresponding
     object. It can parse several statements at the same time, separated
-    by newlines.
-    
-    This is a global parsing function for logic functions.
+    by newlines and/or curly braces. This is a global parsing function 
+    for logic functions.
     """
     if block is True:
-        nl_sents = sent.splitlines()
         results = []
+        b1, b2 = 0, 0
+        while b2 != -1:
+            b1 = sent.find('{')
+            b2 = sent.find('}')
+            if (b1 == -1 and b2 != -1) or (b2 == -1 and b1 != -1):
+                raise AssertionError('Odd number of curly braces.')
+            if b1 == -1: break
+            block = sent[b1+1:b2-1]
+            ml = block.splitlines()
+            if len(ml) == 1: block = ml[0]
+            elif len(ml) != 0: block = ''.join(block.splitlines())
+            results.append( GlobalLogicParser(block) )
+            sent = ''.join([sent[:b1], sent[b2+1:]])
+        nl_sents = sent.splitlines()
         for s in nl_sents:
             if s.strip(): results.append( GlobalLogicParser(s) )
-        results = itertools.chain.from_iterable(results)
-        return results
+        res2 = []
+        for e in results: 
+            if type(e) == list: res2.extend(e)
+            else: res2.append(e)
+        return res2
+    
     lines = sent.splitlines()
     if len(lines) == 1: sent = lines[0]
-    elif len(lines) == 0: pass
-    else:
+    elif len(lines) != 0:
         raise AssertionError("Please indicate the string passed is a code " \
         + "block by setting the 'block' parameter to True.")
+    
     ori, comp, hier = _parse_sent(sent)
     par_form = comp[ori]
     if not ':vars:' in par_form:
@@ -595,6 +611,7 @@ def make_logic_sent(ori, comp, hier):
             sent.particles.append(l)
         elif any(x in form for x in VAR_DECL):
             form = form.split(':')
+            form = [s.replace(' ','') for s in form if s.strip()]
             cond = ':stub:'
             for i, a in enumerate(form):
                 if a == 'vars':
@@ -610,6 +627,7 @@ def make_logic_sent(ori, comp, hier):
                             sent.var_order.append(var)
                     p = Particle(cond, depth, part_id, parent, syb, form)
                     sent.particles.append(p)
+                    break
         elif '[' in form:
             cond = ':predicate:'
             result = _check_reserved_words(form)
@@ -660,7 +678,7 @@ def make_logic_sent(ori, comp, hier):
 #   LOGIC CLASSES AND SUBCLASSES
 # ===================================================================#
 
-        
+
 class LogPredicate(object):
     """Base class to represent a ground predicate."""
     types = ['grounded_term', 'free_term']    
@@ -680,9 +698,13 @@ class LogPredicate(object):
                     if dates is None: dates = []
                     dates.append(datetime.datetime.utcnow())
                 elif '*t' in arg[0:]:
-                    if dates is None: dates = []
-                    date = _set_date(arg[3:].split('.'))
-                    dates.append(date)
+                    s = arg[3:].split('.')
+                    if len(s) == 1:
+                        self.date_var = s[0]
+                    else:
+                        if dates is None: dates = []
+                        date = _set_date(s)
+                        dates.append(date)
         return pred[0], val, op, dates
     
     def change_params(self, new=None, revert=False):
@@ -693,7 +715,7 @@ class LogPredicate(object):
             del self.oldTerm
     
     def __repr__(self):
-        return str(self.__class__.__name__)
+        return '<' + str(self.__class__.__name__) + ' ' + self.term + '>'
 
 def make_fact(pred, f_type=None, *args):
     """Parses a grounded predicate and returns a 'fact'."""
@@ -764,10 +786,14 @@ class LogFunction(object):
             elif '*t' in arg[0:] and 'NOW' in arg:
                 if dates is None: dates = []
                 dates.append(datetime.datetime.utcnow())
-            elif '*t' in arg:
-                if dates is None: dates = []
-                date = _set_date(arg[3:].split('.'))
-                dates.append(date)
+            elif '*t' in arg:        
+                s = arg[3:].split('.')
+                if len(s) == 1:
+                    self.date_var = s[0]
+                else:
+                    if dates is None: dates = []
+                    date = _set_date(s)
+                    dates.append(date)
             else:
                 mk_args.append(arg)
                 hls.append(arg)
@@ -775,8 +801,7 @@ class LogFunction(object):
         self._id = self.args_ID
         self.args = mk_args
         self.arity = len(self.args)
-        if dates is not None:
-            self.dates = dates
+        if dates is not None: self.dates = dates
         
     def get_args(self):
         ls = []
@@ -907,7 +932,10 @@ def make_function(sent, f_type=None, *args):
                 return True
             else: 
                 return False
-                        
+        
+        def __str__(self):
+            return "<TimeCalc Function>"
+    
     assert (f_type in LogFunction.types or f_type is None), \
             'Function {0} does not exist.'.format(f_type)
     if f_type == 'relation':
@@ -930,7 +958,7 @@ def _check_reserved_words(sent):
     return False
     
 def _set_date(date):
-    tb =['year','month','day','hour','minute','second','microsecond']
+    tb = ['year','month','day','hour','minute','second','microsecond']
     dobj = {}
     for i,p in enumerate(date):
         if 'tzinfo' not in p:
@@ -957,13 +985,4 @@ def _set_date(date):
 def _get_type_class(var):
     if var == 'time': 
         return make_function(None, f_type='time_calc')
-        
-if __name__ == '__main__':
-    sent = """
-    professor[$Lucy,u=1]
-    (dean[$John,u=1])
-    (:vars:x: (dean[x,u=1] |> professor[x,u=1]))
-    :vars:x: (professor[x,u=1] |> person[x,u=1])
-    """
-    GlobalLogicParser(sent, block=True)
-    
+

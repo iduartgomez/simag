@@ -214,6 +214,10 @@ def iter_test(self, sents, ask, eval, single=False):
                     answ = self.rep.ask(q)
                     for k in eval[i].keys():
                         self.assertEqual(eval[i][k], answ[k])
+            import pprint
+            pprint.pprint(self.rep.classes)
+            pprint.pprint(self.rep.individuals)
+            print()
 
 
 if __name__ == "__main__":

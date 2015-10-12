@@ -1,4 +1,4 @@
-<criticize[$John,u=1;$Lucy;*t=NOW]>
+(<criticize[$John,u=1;$Lucy;*t=NOW]>)
 <takes[$analysis,u>0;$Bill]>
 <sister[$Bill,u<1;$Lucy]>
 <loves[cow,u=1;bull]>
