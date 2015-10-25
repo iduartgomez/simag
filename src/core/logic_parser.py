@@ -201,15 +201,14 @@ class LogSentence(object):
             args = args[0]
         # Clean up previous results.
         self.assigned = {}
-        if hasattr(self, 'pre_assigned'):
-            # for vars with types assign values
-            for key, val in self.pre_assigned.items():
-                self.assigned[key] = val
         if hasattr(self, 'var_types'):
             preds = [p for p in self.particles if p.cond == ':predicate:']
             self.assigned.update(
                 { p.pred.date_var: p for p in preds if hasattr(p.pred, 'date_var') }
             )
+        if hasattr(self, 'pre_assigned'):
+            for key, val in self.pre_assigned.items():
+                self.assigned[key] = val        
         self.cln_res()
         if len(self.var_order) == len(args):
             # Check the properties/classes an obj belongs to
@@ -218,12 +217,13 @@ class LogSentence(object):
                     return
                 var_name = self.var_order[n]
                 # Assign an entity to a variable by order.
-                if hasattr(self, 'var_types') and var_name in self.var_types:
+                if hasattr(self, 'var_types') and var_name in self.var_types \
+                and var_name not in self.assigned.keys():
                     type_ = self.var_types[var_name]
                     assert isinstance(const, type_), \
                     "{0} is not a {1} object".format(const, type_)
                 self.assigned[var_name] = const
-            ag.bmsWrapper.register(self)
+            ag.bmsWrapper.register(self)  
             self.start.solve(self, ag, key=[0])
         elif len(self.var_order) == 0:
             ag.bmsWrapper.register(self)
@@ -546,32 +546,30 @@ def make_logic_sent(ori, comp, hier):
                 elif issubclass(self.pred.__class__, LogPredicate):
                     # Check membership to a set of an entity.
                     sbj = isvar(self.pred.term)
-                    if '$' not in sbj[0]:
-                        categs = ag.classes[sbj].get_parents()
-                    else:
-                        categs = ag.individuals[sbj].get_ctg()
-                    # If is True, then the object belongs to the set.
-                    # Else, must be False, and the object doesn't belong.
-                    if self.pred.parent in categs:
-                        val = categs[self.pred.parent]
-                        test = self.pred.substitute(sbj, val)
-                        if self.pred == test: result = True                        
-                        else: result = False
+                    test = self.pred.substitute(sbj)
+                    if '$' not in sbj[0]: 
+                        result = ag.classes[sbj].test_ctg(test)
+                    else: 
+                        result = ag.individuals[sbj].test_ctg(test)
                     if result is True:
                         ag.bmsWrapper.prev_blf('PLACEHOLDER')
                 else:
-                    time_func = make_function(None, f_type='time_calc')
-                    if self.pred.klass == time_func.klass:
+                    TimeFunc = make_function(None, f_type='time_calc')
+                    if self.pred.klass == TimeFunc.klass:
                         dates = {}
                         for arg, p in proof.assigned.items():
-                            if arg in self.pred.args:
-                                dates[arg] = p.get_date(proof, ag)                      
+                            if arg in self.pred.args and type(p) is not str:
+                                dates[arg] = p.get_date(proof, ag)
+                            elif arg in self.pred.args:
+                                dates[arg] = p
                         if None not in dates.values():
                             test = self.pred.substitute(dates)
-                            if bool(test) is True: result = True
+                            if test: result = True
                             else: result = False
                 return result
             else:
+                # TODO: when a rel/pred is updated update the dates list
+                
                 # marked for declaration
                 # subtitute var(s) for constants
                 # and pass to agent for updating
@@ -720,7 +718,48 @@ def make_logic_sent(ori, comp, hier):
 # ===================================================================#
 
 
-class LogPredicate(object):
+class MetaForAtoms(type):
+    
+    def __new__(cls, name, bases, attrs, **kwargs):
+        attrs['_eval_time_truth'] = MetaForAtoms.__eval_time_truth        
+        # Add methods from LogFunction to TimeFunc
+        if name == 'TimeFunc':
+            # if it's already prepared return class
+            if hasattr(MetaForAtoms, 'TimeFunc'):
+                return MetaForAtoms.TimeFunc
+            # else prepare the class
+            from types import FunctionType
+            for m in globals()['LogFunction'].__dict__.values():
+                if type(m) == FunctionType \
+                and m.__name__ not in attrs.keys():                    
+                    attrs[m.__name__] = m
+            MetaForAtoms.TimeFunc = super().__new__(cls, name, bases, attrs)
+        # return the new class
+        return super().__new__(cls, name, bases, attrs)
+    
+    def __eval_time_truth(self, other):
+        now = datetime.datetime.now()
+        isTrueOther, isTrueSelf = True, True
+        if hasattr(self, 'dates'):
+            if (len(self.dates) % 2 or len(self.dates) == 1) \
+            and self.dates[-1] < now: 
+                isTrueSelf = True
+            else: 
+                isTrueSelf = False
+        if hasattr(other, 'dates'):
+            if (len(other.dates) % 2 or len(other.dates) == 1) \
+            and other.dates[-1] < now: 
+                isTrueOther = True
+            else:
+                isTrueOther = False
+        # Compare truthiness of both
+        if (isTrueOther and isTrueSelf) is True \
+        or (isTrueOther and isTrueSelf) is False:
+            return True
+        else:
+            return False
+
+class LogPredicate(metaclass=MetaForAtoms):
     """Base class to represent a ground predicate."""
     types = ['grounded_term', 'free_term']
     
@@ -736,17 +775,12 @@ class LogPredicate(object):
         dates = None
         if len(val) >= 3:
             for arg in val[2:]:
-                if '*t' in arg[0:] and 'NOW' in arg:
-                    if dates is None: dates = []
-                    dates.append(datetime.datetime.utcnow())
-                elif '*t' in arg[0:]:
-                    s = arg[3:].split('.')
-                    if len(s) == 1:
-                        self.date_var = s[0]
-                    else:
+                if '*t' in arg:     
+                    date = _set_date(arg)
+                    if type(date) is datetime.datetime:
                         if dates is None: dates = []
-                        date = _set_date(s)
                         dates.append(date)
+                    else: self.date_var = date
         return pred[0], val, op, dates
     
     def change_params(self, new=None, revert=False):
@@ -754,8 +788,8 @@ class LogPredicate(object):
             self.oldTerm, self.term = self.term, new
         else:
             self.term = self.oldTerm
-            del self.oldTerm        
-    
+            del self.oldTerm
+                
     def __repr__(self):
         return '<{0} | {1}: {2}>'.format(
             self.__class__.__name__, self.parent, self.term)
@@ -764,6 +798,7 @@ def make_fact(pred, f_type=None, *args):
     """Parses a grounded predicate and returns a 'fact'."""
     
     class GroundedTerm(LogPredicate):
+        
         def __init__(self, pred):
             parent, val, op, dates = super(GroundedTerm, self).__init__(pred)
             assert (op == '='), \
@@ -775,8 +810,10 @@ def make_fact(pred, f_type=None, *args):
                 self.dates = dates
         
         def __eq__(self, other):
-            if hasattr(self, 'dates') and len(self.dates) % 2 == 0:
-                return False
+            # Test if the statements are ture at this moment in time
+            time_truth = self._eval_time_truth(other)
+            if time_truth is False: return False
+            # test against other            
             if other.parent == self.parent \
             and other.term == self.term \
             and other.value == self.value:
@@ -784,6 +821,7 @@ def make_fact(pred, f_type=None, *args):
             else: return False
     
     class FreeTerm(LogPredicate):
+        
         def __init__(self, pred):
             parent, val, op, dates = super(FreeTerm, self).__init__(pred)
             self.parent = parent
@@ -794,11 +832,10 @@ def make_fact(pred, f_type=None, *args):
                 self.dates = dates
         
         def __eq__(self, other):
-            # the dates list indicates the intervals when a fact is true
-            # an entry in the list means the fact is true from that moment
-            # a second entry means the fact is false until a new term appears
-            if hasattr(self, 'dates') and len(self.dates) % 2 == 0:
-                return False
+            # Test if the statements are ture at this moment in time
+            time_truth = self._eval_time_truth(other)
+            if time_truth is False: return False
+            # test against other
             if not issubclass(other.__class__, LogPredicate):
                 m = "{0} and {1} are not comparable.".format(other, LogPredicate)
                 raise TypeError(m)
@@ -823,15 +860,9 @@ def make_fact(pred, f_type=None, *args):
     else: return LogPredicate(pred)
 
 
-class LogFunction(object):
-    """Base class to represent a logic function."""    
+class LogFunction(metaclass=MetaForAtoms):
+    """Base class to represent a logic function."""
     types = ['relation','time_calc']
-    klass = 'logfunction'
-    
-    def __new__(cls, *args, **kwargs):
-        obj = super().__new__(cls)
-        obj.klass = cls.klass 
-        return obj
     
     def __init__(self, sent):
         func = rgx_ob.findall(sent)[0].split('[')
@@ -845,18 +876,13 @@ class LogFunction(object):
                 if narg[1] > 1 or narg[1] < 0:
                     raise ValueError(narg[1])
                 hls.append(narg[0])
-                mk_args.append(narg)   
-            elif '*t' in arg[0:] and 'NOW' in arg:
-                if dates is None: dates = []
-                dates.append(datetime.datetime.utcnow())
+                mk_args.append(narg)
             elif '*t' in arg:        
-                s = arg[3:].split('.')
-                if len(s) == 1:
-                    self.date_var = s[0]
-                else:
+                date = _set_date(arg)
+                if type(date) is datetime.datetime:
                     if dates is None: dates = []
-                    date = _set_date(s)
                     dates.append(date)
+                else: self.date_var = date
             else:
                 mk_args.append(arg)
                 hls.append(arg)
@@ -886,7 +912,7 @@ class LogFunction(object):
                     subs.args[x] = tuple(subs.args[x])
                 elif arg in args:
                     subs.args[x] = args[arg]
-        else:
+        elif type(args) is list:
             for x, arg in enumerate(subs.args):
                 if isinstance(arg, tuple):
                     subs.args[x] = list(arg)
@@ -936,37 +962,47 @@ def make_function(sent, f_type=None, *args):
             self.err, self.arg1, self.arg2 = args  
     
     class RelationFunc(LogFunction):
-        klass = 'relat_func'
-          
+        
         def __eq__(self, other):
             comparable = self.chk_args_eq(other)
             if comparable is not True:
                 raise NotCompFuncError(comparable)
+            # Check if both are equal
             for x, arg in enumerate(self.args):
                 if isinstance(arg, tuple):
                     oarg = other.args[x]
                     if arg[2] == '=' and arg[1] != oarg[1]:  
-                        return False                      
+                        result = False                      
                     elif arg[2] == '>'and arg[1] > oarg[1]:
-                        return False     
+                        result = False     
                     elif arg[2] == '<'and arg[1] < oarg[1]:  
-                        return False
-            return True
+                        result = False
+                    else:
+                        result = True
+            # Test if the statements are ture at this moment in time
+            time_truth = self._eval_time_truth(other)
+            if time_truth is True and result is True: return True
+            else: return False
         
         def __ne__(self, other):
             comparable = self.chk_args_eq(other)
             if comparable is not True:
-                raise NotCompFuncError(comparable)
+                raise NotCompFuncError(comparable)            
+            # Check if both are not equal
             for x, arg in enumerate(self.args):
                 if isinstance(arg, tuple):
                     oarg = other.arg[x]
                     if arg[2] == '=' and arg[1] != oarg[1]:
-                        return True                      
+                        result = True                      
                     elif arg[2] == '>'and arg[1] < oarg[1]:
-                        return True     
+                        result = True     
                     elif arg[2] == '<'and arg[1] > oarg[1]: 
-                        return True
-            return False
+                        result = True
+                    else:
+                        result = True
+            # Test if the statements are true at this moment in time
+            time_truth = self._eval_time_truth(other)
+            if time_truth is False and result is False: return True
     
         def chk_args_eq(self, other):
             if other.arity != self.arity:
@@ -982,20 +1018,14 @@ def make_function(sent, f_type=None, *args):
                         return ('args', other.args[x], arg)
             return True
     
-    class TimeFunc(object):
+    class TimeFunc(metaclass=MetaForAtoms):
         """A special case for time calculus, not considered a relation.        
         It's not a subclass of LogFunction.
         """
-        klass = 'time_func'
+        klass = 'TimeFunc'
         
         def __init__(self, sent):
             sent = sent.replace(' ','')
-            # Add methods from LogFunction
-            from types import FunctionType, MethodType
-            for m in LogFunction.__dict__.values():
-                if type(m) == FunctionType \
-                and m.__name__ not in self.__dict__.keys():
-                    setattr(self, m.__name__, MethodType(m, self))
             func = rgx_ob.findall(sent)[0].split('[')[1]
             op = [c for c in func if c in ['>','<','==']]
             if len(op) > 1 or len(op) == 0:
@@ -1013,7 +1043,13 @@ def make_function(sent, f_type=None, *args):
                 return True
             else: 
                 return False
-
+        
+        def substitute(self, *args):
+            subs = LogFunction.substitute(self, *args)
+            for x, arg in enumerate(subs.args):
+                if type(arg) is str: subs.args[x] = _set_date(arg)
+            return subs
+        
         def __str__(self):
             return "<TimeCalculus>"
 
@@ -1039,11 +1075,17 @@ def _check_reserved_words(sent):
     return False
     
 def _set_date(date):
+    # check if it's a variable name or special wildcard 'NOW'
+    date = date.replace('*t=','').split('.')
+    if len(date) == 1:
+        if date[0] == 'NOW': return datetime.datetime.now()
+        else: return date[0]
+    # else make a new datetime object
     tb = ['year','month','day','hour','minute','second','microsecond']
     dobj = {}
     for i,p in enumerate(date):
         if 'tzinfo' not in p:
-            dobj[tb[i]] = int(p)
+            dobj[ tb[i] ] = int(p)
     if 'year' not in dobj: raise ValueError('year not specified')
     if 'month' not in dobj: raise ValueError('month not specified')
     if 'day' not in dobj: raise ValueError('day not specified')
@@ -1064,10 +1106,12 @@ def _set_date(date):
     )
     
 def _get_type_class(var):
-    var = var.split('=')
-    if var[0] == 'time':
-        type_ = make_function(None, f_type='time_calc')
+    # split the string to take the variable
+    var = [c.replace(']','').strip() for c in var.split('[')]
     if len(var) > 1: val = var[1]
     else: val = None
+    # check type of the var    
+    if var[0] == 'time':
+        type_ = make_function(None, f_type='time_calc')
     return type_, val
 

@@ -33,11 +33,9 @@ solving the query (including query parsing, data fetching and unification).
 @author: Ignacio Duart Gómez
 """
 
-# TODO:
-#
-# * On ASK, add fucntionality so it so it can deal with queries that ask about
-# relations of the same type with several objects.
-# * Add 'belief maintenance system' functionality.
+# TODO: On ASK, add functionality so it so it can deal with queries that
+# ask about relations of the same type with several objects.
+# TODO: Add 'belief maintenance system' functionality.
 
 # ===================================================================#
 #   Imports and globals
@@ -552,6 +550,19 @@ class Category(object):
                 else: return False
         return None
     
+    def test_ctg(self, pred):
+        """Checks if it's child of a category and returns true if it's 
+        equal to the comparison, false if it's not, and none if it
+        doesn't exist.
+        """
+        for ctg in self.parents:
+            if ctg.parent == pred.parent:
+                categ = ctg
+                break
+        if 'categ' not in locals(): return None
+        if pred == categ: return True
+        else: return False
+    
     def check_parents(self, n):
         """Returns a list that is the intersection of the input iterable
         and the parents of the object.
@@ -796,6 +807,20 @@ class Inference(object):
                 self.queue[node] = {'neg': set(), 'pos': set()}
     
     def get_rules(self):
+        def mk_node(pos):
+            # makes inference nodes for the evaluation
+            atms = sent.get_pred(branch=pos, conds=GL_PCONDS)
+            for cons in atms:
+                if issubclass(cons.__class__, LogFunction):
+                    pred = cons.func
+                else:
+                    pred = cons.parent
+                node = self.InferNode(nc, preds, pred, sent)
+                if node.cons in self.nodes:
+                    self.nodes[node.cons].append(node)
+                else:
+                    self.nodes[node.cons] = [node]
+                
         if len(self.ctgs) > 0: c = self.ctgs.pop()
         else: c = None
         if c is not None:
@@ -811,10 +836,9 @@ class Inference(object):
                 for y in preds:
                     if issubclass(y.__class__, LogPredicate):
                         nc.append(y.parent)
-                    elif issubclass(y.__class__, LogFunction) \
-                    and y.klass != 'time_func':
+                    elif issubclass(y.__class__, LogFunction):
                         nc.append(y.func)
-                self.mk_node(nc, preds, sent, 'right')
+                mk_node('right')
                 nc2 = [e for e in nc if e not in self.done and e not in self.ctgs]
                 self.ctgs.extend(nc2)
                 if c in nc:
@@ -823,10 +847,9 @@ class Inference(object):
                     for y in preds:
                         if issubclass(y.__class__,LogPredicate): 
                             nc.append(y.parent)
-                        elif issubclass(y.__class__, LogFunction) \
-                        and y.klass != 'time_func':
+                        elif issubclass(y.__class__, LogFunction):
                             nc.append(y.func)
-                    self.mk_node(nc, preds, sent, 'left')
+                    mk_node('left')
                     nc2 = [e for e in nc if e not in self.done \
                            and e not in self.ctgs]
                     self.ctgs.extend(nc2)
@@ -837,21 +860,7 @@ class Inference(object):
             self.chk_cats = set(self.done)
             del self.done
             del self.rules
-            del self.ctgs
-
-    def mk_node(self, nc, ants, rule, pos):
-        # makes inference nodes for the evaluation
-        preds = rule.get_pred(branch=pos, conds=GL_PCONDS)
-        for cons in preds:
-            if issubclass(cons.__class__, LogFunction):
-                pred = cons.func
-            else:
-                pred = cons.parent
-            node = self.InferNode(nc, ants, pred, rule)
-            if node.cons in self.nodes:
-                self.nodes[node.cons].append(node)
-            else:
-                self.nodes[node.cons] = [node]
+            del self.ctgs    
 
     def unify(self, p, chk, done):
         # for each node in the subtitution tree unifify variables
@@ -1013,15 +1022,15 @@ class SubstRepr(Representation):
 
 
 if __name__ == '__main__':
-    for x in range(100):
+    for x in range(1):
         r = Representation()
         fol = """
             {
-                :vars: x, y, t1 -> time, t2 -> time:
+                :vars: x, y, t1 -> time, t2 -> time[NOW]:
                 (dog[x,u=1] && meat[y,u=1] && <eat[y,u=1;x;*t=t1]> && <timeCalc[t1<t2]> |> fat[x,u=1,*t=t2])
             }
             dog[$Pancho,u=1]
-            meat[$M1,u=1,*t=2015.07.05.10.25]
+            meat[$M1,u=1]
             <eat[$M1,u=1;$Pancho;*t=2015.07.05.10.25]>
         """
         r.tell(fol)
