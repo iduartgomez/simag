@@ -92,8 +92,8 @@ class LogicSentenceParsing(unittest.TestCase):
             name, ctg, val = e[0], e[1], e[2]
             if cls is False:
                 obj = rep.individuals[name]
-                chk_ctg = obj.check_cat([ctg])            
-                self.assertEqual(val, obj.get_cat(ctg=ctg))
+                chk_ctg = obj.check_ctg([ctg])            
+                self.assertEqual(val, obj.get_ctg(ctg=ctg))
             else:
                 obj = rep.classes[name]
                 chk_ctg = obj.check_parents([ctg])
@@ -190,7 +190,7 @@ def iter_test(self, sents, ask, eval, single=False):
     for i, test in enumerate(sents):
         with self.subTest(test='subtest {0}: {1}'.format(i,ask[i])):
             #print('\n===== SUBTEST =====')
-            #print('subtest',x,'|',test,'\n')
+            #print('subtest',i,'|',test,'\n')
             if isinstance(test, list):
                 for s in test:
                     self.rep.tell(s)
@@ -214,10 +214,10 @@ def iter_test(self, sents, ask, eval, single=False):
                     answ = self.rep.ask(q)
                     for k in eval[i].keys():
                         self.assertEqual(eval[i][k], answ[k])
-            import pprint
-            pprint.pprint(self.rep.classes)
-            pprint.pprint(self.rep.individuals)
-            print()
+            #import pprint
+            #pprint.pprint(self.rep.classes)
+            #pprint.pprint(self.rep.individuals)
+            #print()
 
 
 if __name__ == "__main__":

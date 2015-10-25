@@ -50,6 +50,7 @@ import re
 import core.bms
 from core.logic_parser import *
 from core.logic_parser import make_function, make_fact, _parse_sent
+from _datetime import datetime
 
 rgx_ob = re.compile(r'\b(.*?)\]')
 
@@ -75,7 +76,7 @@ class Representation(object):
         self.classes = {}
         self.bmsWrapper = core.bms.BmsWrapper(self)
 
-    def tell(self, sent, block=False):
+    def tell(self, sent, block=True):
         """Parses a sentence (or several of them, as a code block string 
         delimited by newlines) into an usable formula and stores it into 
         the internal representation along with the corresponding classes. 
@@ -125,7 +126,7 @@ class Representation(object):
                 for pred in answ.values():
                     if pred is False: return False
                     if pred is None: return None
-            return True        
+            return True
         return inf_proc.results
 
     def declare(self, sent, save=False):
@@ -228,13 +229,7 @@ class Representation(object):
                     self.classes[relation] = rel
 
     def add_cog(self, sent):
-        """
-        {
-            :vars: x, y, t1 -> time, t2 -> time:
-            (dog[x,u=1] && meat[y,u=1] && <eat[y,u=1;x;*t=t1]> && <timeCalc[t1<t2]> => fat[x,u=1,*t=t2])
-        }
-        """
-        
+                
         def chk_args(p):
             if sbj not in sent.var_order:
                 if '$' in sbj and sbj in self.individuals:
@@ -277,7 +272,7 @@ class Representation(object):
                         if isinstance(arg, tuple): sbj = arg[0]
                         else: sbj = arg
                         chk_args(pred.func)
-            else:
+            elif issubclass(pclass, LogPredicate):
                 sbj, p = pred.term, pred.parent
                 chk_args(p)
         
@@ -299,8 +294,8 @@ class Representation(object):
                 nc.add_cog(proof)
                 self.classes[name] = nc
         # Run the new formula with individuals/classes that matches.
-        obj_dic = self.inds_by_cat(set(n))
-        cls_dic = self.cls_by_cat(set(n))
+        obj_dic = self.inds_by_ctg(set(n))
+        cls_dic = self.cls_by_ctg(set(n))
         obj_dic.update(cls_dic)
         subrpr = SubstRepr(self, obj_dic)
         for ind in subrpr.individuals.keys():
@@ -308,17 +303,17 @@ class Representation(object):
             if hasattr(proof,'result'): del proof.result
         self.push(subrpr)
 
-    def inds_by_cat(self, ctgs):
+    def inds_by_ctg(self, ctgs):
         ctg_dic = {}
         for ind in self.individuals.values():
-            s = ind.check_cat(ctgs)
+            s = ind.check_ctg(ctgs)
             t = set(ind.get_rel())
             t = t.intersection(ctgs)
             t = t.union(s)
             ctg_dic[ind.name] = t
         return ctg_dic
     
-    def cls_by_cat(self, ctgs):
+    def cls_by_ctg(self, ctgs):
         ctg_dic = {}
         for cls in self.classes.values():
             s = cls.check_parents(ctgs)
@@ -395,21 +390,20 @@ class Individual(object):
         
     def add_ctg(self, fact):
         if issubclass(fact.__class__, LogPredicate):
-            ctg_rec = [fact.parent for fact in self.categ]
-            if fact.parent not in ctg_rec:
-                self.categ.append(fact)
-            else:
-                idx = ctg_rec.index(fact.parent)
-                self.categ[idx] = fact
+            ctg_rec = [f.parent for f in self.categ]
+            try: idx = ctg_rec.index(fact.parent)
+            except ValueError: self.categ.append(fact)            
+            else: self.categ[idx] = fact
+        else: raise TypeError('The object is not a LogPredicate subclass.')
     
-    def check_cat(self, n):
+    def check_ctg(self, n):
         """Returns a list that is the intersection of the input iterable
         and the categories of the object.
         """
         s = [c.parent for c in self.categ if c.parent in n]
         return s
 
-    def get_cat(self, ctg=None):
+    def get_ctg(self, ctg=None):
         """Returns a dictionary of the categories of the object and
         their truth values.
         
@@ -417,7 +411,7 @@ class Individual(object):
         then the value for that category is returned. If it doesn't
         exist, None is returned.
         """
-        cat = {ctg.parent:ctg.value for ctg in self.categ}
+        cat = {c.parent:c.value for c in self.categ}
         if ctg is None:
             return cat
         else:
@@ -467,7 +461,35 @@ class Individual(object):
                 if func == f: return True
                 else: return False
         return None
-
+    
+    def get_date(self, pred):
+        """Take a predicate or a function and return the times at which
+        those where true or false. If it doesn't exist returns 'None'.
+        If it does not have a datetime object attached then the current
+        datetime object is returned.
+        """
+        if issubclass(pred.__class__, LogFunction):
+            func = pred
+            try: funcs = self.relations[func.func]
+            except KeyError: return None
+            for f in funcs:
+                if func.args_ID == f.args_ID:
+                    if func == f:
+                        if hasattr(f, 'dates'): return f.dates[-1]
+                        else: return datetime.now()
+                    else: return False
+        elif issubclass(pred.__class__, LogPredicate):
+            fact = pred
+            ctg_rec = [f.parent for f in self.categ]
+            try: idx = ctg_rec.index(fact.parent)
+            except ValueError: return None   
+            else:
+                if fact == self.categ[idx]:
+                    if hasattr(self.categ[idx], 'dates'): 
+                        return self.categ[idx].dates[-1]
+                    else: return datetime.now()
+                else: return False
+    
     def __str__(self):
         s = "<individual '" + self.name + "' w/ id: " + self.id + ">"
         return s
@@ -554,7 +576,11 @@ class Category(object):
     
     def add_parent(self, fact):
         if not hasattr(self,'parents'): self.parents = [fact]
-        else: self.parents.append(fact)
+        else:        
+            ctg_rec = [f.parent for f in self.parents]
+            try: idx = ctg_rec.index(fact.parent)
+            except ValueError: self.parents.append(fact)            
+            else: self.parents[idx] = fact
     
     def test_parent(self, pred):
         """Checks if it's child of a category and returns true if it's 
@@ -603,15 +629,15 @@ class Inference(object):
                     args = ant.get_args()
                     for v in args:
                         if v in self.subs: self.subs[v].add(ant.func)
-                else:
+                elif issubclass(ant.__class__, LogPredicate):
                     if ant.term in self.subs:
                         self.subs[ant.term].add(ant.parent)
     
     class NoSolutionError(Exception):
         """Cannot infer a solution error."""
     
-    def __new__(mklass, *args, **kwargs):
-        obj = super(Inference, mklass).__new__(mklass)
+    def __new__(cls, *args, **kwargs):
+        obj = super(Inference, cls).__new__(cls)
         obj.parser = _parse_sent
         return obj
     
@@ -665,8 +691,8 @@ class Inference(object):
             try: self.get_rules()
             except Inference.NoSolutionError: pass
         # Get the caterogies for each individual/class
-        self.obj_dic = self.kb.inds_by_cat(self.chk_cats)
-        cls_dic = self.kb.cls_by_cat(self.chk_cats)
+        self.obj_dic = self.kb.inds_by_ctg(self.chk_cats)
+        cls_dic = self.kb.cls_by_ctg(self.chk_cats)
         self.obj_dic.update(cls_dic)
         # Create a new, filtered and temporal, work KB
         self.subkb = SubstRepr(self.kb, self.obj_dic)
@@ -680,7 +706,7 @@ class Inference(object):
                     elif issubclass(pclass, LogPredicate): q = pred.parent
                     for var,v in self.obj_dic.items():
                         if q in v:
-                            if var not in self.results:         
+                            if var not in self.results:
                                 self.results[var] = {}
                             chk_result()
             else:
@@ -688,11 +714,11 @@ class Inference(object):
                 for pred in preds:
                     pclass = pred.__class__
                     self.rule_tracker()
-                    if issubclass(pclass, LogFunction): 
+                    if issubclass(pclass, LogFunction):
                         self.actv_q, q = (var, pred.func), pred.func
                     elif issubclass(pclass, LogPredicate):
-                        self.actv_q, q = (var, pred.parent), pred.parent        
-                    k, result, self.updated = True, None, list()               
+                        self.actv_q, q = (var, pred.parent), pred.parent
+                    k, result, self.updated = True, None, list()
                     #print('query: {0}'.format(self.actv_q))
                     while result is not True  and k is True:
                         # Run the query, if there is no result and there is
@@ -705,155 +731,8 @@ class Inference(object):
                         self.updated = list()
                     # Update the result from the subtitution repr
                     chk_result()
-
-    def unify(self, p, chk, done):
-        # for each node in the subtitution tree unifify variables
-        # and try every possible substitution
-        if p in self.nodes:
-            for node in self.nodes[p]:     
-                self.recursive_sub(node)
-                if p not in done:
-                    chk = list(node.ants) + chk
-        if self.actv_q[0] in self.obj_dic and \
-        self.actv_q[1] in self.obj_dic[self.actv_q[0]]:
-            return True
-        elif len(chk) > 0:
-            done.append(p)
-            p = chk.pop(0)
-            self.unify(p, chk, done)
-
-    def recursive_sub(self, node):
-        def add_ctg():
-            # added category/function to the object dictionary
-            for r in node.rule.result:
-                if issubclass(r.__class__, LogFunction):
-                    args = r.get_args()
-                    for sbs in args:
-                        try:
-                            self.obj_dic[sbs].add(r.func)
-                        except KeyError:
-                            self.obj_dic[sbs] = set([r.func])
-                else:
-                    cat, obj = r.parent, r.term
-                    try :
-                        self.obj_dic[obj].add(cat)
-                    except KeyError:
-                        self.obj_dic[obj] = set([cat])
-            self.queue[node]['pos'].add(key)
-        
-        # check what are the possible var substitutions
-        mapped = self.map_vars(node)
-        # permute and find every argument combination
-        mapped = list(itertools.product(*mapped))
-        # run proof until a solution is found or there aren't more
-        # combinations
-        res = hasattr(node.rule, 'result')
-        while res is False and (len(mapped) > 0):
-            args = mapped.pop()
-            key = hash(args)
-            if key in self.queue[node]['neg'] and self.updated is True:
-                node.rule(self.subkb, args)
-                res = hasattr(node.rule, 'result')
-                if res is True and node.rule.result is not False:
-                    self.updated.append(True)
-                    add_ctg()
-                    del node.rule.result
-                elif res is True:
-                    self.queue[node]['neg'].add(key)
-                    del node.rule.result
-            elif (key not in self.queue[node]['pos']) \
-            and (key not in self.queue[node]['neg']):
-                node.rule(self.subkb, args)
-                res = hasattr(node.rule, 'result')
-                if res is True and node.rule.result is not False:
-                    self.updated.append(True)
-                    add_ctg()
-                    del node.rule.result
-                elif res is True:
-                    self.queue[node]['neg'].add(key)
-                    del node.rule.result
-
-    def map_vars(self, node):
-        # map values to variables for subtitution
-        subs_num = len(node.subs)
-        subactv = [set()] * subs_num
-        for i, t in enumerate(node.subs.values()):
-            y = len(t)               
-            for obj, s in self.obj_dic.items():
-                x = len(s)            
-                if x >= y:
-                    r = s.intersection(t)
-                    if len(r) == y:
-                        subactv[i].add(obj)
-        return subactv
-
-    def get_rules(self):
-        if len(self.ctgs) > 0: c = self.ctgs.pop()
-        else: c = None
-        if c is not None:
-            self.done.append(c)            
-            try:
-                chk_rules = set(self.kb.classes[c].cog)
-                chk_rules = chk_rules.difference(self.rules)
-            except:
-                raise Inference.NoSolutionError(c)
-            for sent in chk_rules:
-                preds = sent.get_pred(conds=GL_PCONDS)
-                nc = []
-                for y in preds:
-                    if issubclass(y.__class__, LogPredicate): 
-                        nc.append(y.parent)
-                    else: nc.append(y.func)
-                self.mk_nodes(nc, preds, sent, 'right')
-                nc2 = [e for e in nc if e not in self.done and e not in self.ctgs]
-                self.ctgs.extend(nc2)
-                if c in nc:
-                    preds = sent.get_pred(branch='right', conds=GL_PCONDS)
-                    nc = []
-                    for y in preds:
-                        if issubclass(y.__class__,LogPredicate): 
-                            nc.append(y.parent)
-                        else: nc.append(y.func)
-                    self.mk_nodes(nc, preds, sent, 'left')
-                    nc2 = [e for e in nc if e not in self.done \
-                           and e not in self.ctgs]
-                    self.ctgs.extend(nc2)
-            self.rules = self.rules.union(chk_rules)
-            self.get_rules()
-        else:
-            self.done.pop(0)
-            self.chk_cats = set(self.done)
-            del self.done
-            del self.rules
-            del self.ctgs
-
-    def mk_nodes(self, nc, ants, rule, pos):
-        # makes inference nodes for the evaluation
-        preds = rule.get_pred(branch=pos, conds=GL_PCONDS)
-        for cons in preds:
-            if issubclass(cons.__class__, LogFunction):
-                pred = cons.func
-            else:
-                pred = cons.parent
-            node = self.InferNode(nc, ants, pred, rule)
-            if node.cons in self.nodes:
-                self.nodes[node.cons].append(node)
-            else:
-                self.nodes[node.cons] = [node]
-
-    def rule_tracker(self):
-        # create a dictionary for tracking what proofs have been run or not
-        if hasattr(self, 'queue') is False:
-            self.queue = dict()
-            for query in self.nodes.values():
-                for node in query:
-                    self.queue[node] = {'neg': set(), 'pos': set()}
-        else:
-            for node in self.queue:
-                self.queue[node] = {'neg': set(), 'pos': set()}
-
+    
     def get_query(self, comp):
-
         def break_pred():
             pr = rgx_ob.findall(p)[0].split('[')
             t = pr[1].split(';')
@@ -904,6 +783,156 @@ class Inference(object):
                     terms[names].append(p[1])
                     ctgs.append(p[1].parent)
         self.query, self.ctgs = terms, ctgs
+
+    def rule_tracker(self):
+        # create a dictionary for tracking what proofs have been run or not
+        if hasattr(self, 'queue') is False:
+            self.queue = dict()
+            for query in self.nodes.values():
+                for node in query:
+                    self.queue[node] = {'neg': set(), 'pos': set()}
+        else:
+            for node in self.queue:
+                self.queue[node] = {'neg': set(), 'pos': set()}
+    
+    def get_rules(self):
+        if len(self.ctgs) > 0: c = self.ctgs.pop()
+        else: c = None
+        if c is not None:
+            self.done.append(c)            
+            try:
+                chk_rules = set(self.kb.classes[c].cog)
+                chk_rules = chk_rules.difference(self.rules)
+            except:
+                raise Inference.NoSolutionError(c)
+            for sent in chk_rules:
+                preds = sent.get_pred(conds=GL_PCONDS)
+                nc = []
+                for y in preds:
+                    if issubclass(y.__class__, LogPredicate):
+                        nc.append(y.parent)
+                    elif issubclass(y.__class__, LogFunction) \
+                    and y.klass != 'time_func':
+                        nc.append(y.func)
+                self.mk_node(nc, preds, sent, 'right')
+                nc2 = [e for e in nc if e not in self.done and e not in self.ctgs]
+                self.ctgs.extend(nc2)
+                if c in nc:
+                    preds = sent.get_pred(branch='right', conds=GL_PCONDS)
+                    nc = []
+                    for y in preds:
+                        if issubclass(y.__class__,LogPredicate): 
+                            nc.append(y.parent)
+                        elif issubclass(y.__class__, LogFunction) \
+                        and y.klass != 'time_func':
+                            nc.append(y.func)
+                    self.mk_node(nc, preds, sent, 'left')
+                    nc2 = [e for e in nc if e not in self.done \
+                           and e not in self.ctgs]
+                    self.ctgs.extend(nc2)
+            self.rules = self.rules.union(chk_rules)
+            self.get_rules()
+        else:
+            self.done.pop(0)
+            self.chk_cats = set(self.done)
+            del self.done
+            del self.rules
+            del self.ctgs
+
+    def mk_node(self, nc, ants, rule, pos):
+        # makes inference nodes for the evaluation
+        preds = rule.get_pred(branch=pos, conds=GL_PCONDS)
+        for cons in preds:
+            if issubclass(cons.__class__, LogFunction):
+                pred = cons.func
+            else:
+                pred = cons.parent
+            node = self.InferNode(nc, ants, pred, rule)
+            if node.cons in self.nodes:
+                self.nodes[node.cons].append(node)
+            else:
+                self.nodes[node.cons] = [node]
+
+    def unify(self, p, chk, done):
+        # for each node in the subtitution tree unifify variables
+        # and try every possible substitution
+        if p in self.nodes:
+            for node in self.nodes[p]:
+                self.recursive_sub(node)
+                if p not in done:
+                    chk = list(node.ants) + chk
+        if self.actv_q[0] in self.obj_dic and \
+        self.actv_q[1] in self.obj_dic[self.actv_q[0]]:
+            return True
+        elif len(chk) > 0:
+            done.append(p)
+            p = chk.pop(0)
+            self.unify(p, chk, done)
+
+    def recursive_sub(self, node):
+        def add_ctg():
+            # added category/function to the object dictionary
+            for r in node.rule.result:
+                if issubclass(r.__class__, LogFunction):
+                    args = r.get_args()
+                    for sbs in args:
+                        try:
+                            self.obj_dic[sbs].add(r.func)
+                        except KeyError:
+                            self.obj_dic[sbs] = set([r.func])
+                else:
+                    cat, obj = r.parent, r.term
+                    try :
+                        self.obj_dic[obj].add(cat)
+                    except KeyError:
+                        self.obj_dic[obj] = set([cat])
+            self.queue[node]['pos'].add(key)
+
+        # check what are the possible var substitutions
+        mapped = self.map_vars(node)
+        # permute and find every argument combination
+        mapped = list(itertools.product(*mapped))
+        # run proof until a solution is found or there aren't more
+        # combinations left to be tested
+        res = hasattr(node.rule, 'result')
+        while res is False and (len(mapped) > 0):
+            args = mapped.pop()
+            key = hash(args)
+            if key in self.queue[node]['neg'] and self.updated is True:
+                node.rule(self.subkb, args)
+                res = hasattr(node.rule, 'result')
+                if res is True and node.rule.result is not False:
+                    self.updated.append(True)
+                    add_ctg()
+                    del node.rule.result
+                elif res is True:
+                    self.queue[node]['neg'].add(key)
+                    del node.rule.result
+            elif (key not in self.queue[node]['pos']) \
+            and (key not in self.queue[node]['neg']):
+                node.rule(self.subkb, args)
+                res = hasattr(node.rule, 'result')
+                if res is True and node.rule.result is not False:
+                    self.updated.append(True)
+                    add_ctg()
+                    del node.rule.result
+                elif res is True:
+                    self.queue[node]['neg'].add(key)
+                    del node.rule.result
+
+    def map_vars(self, node):
+        # map values to variables for subtitution
+        subs_num = len(node.subs)
+        subactv = [set()] * subs_num
+        for i, t in enumerate(node.subs.values()):
+            y = len(t)               
+            for obj, s in self.obj_dic.items():
+                x = len(s)            
+                if x >= y:
+                    r = s.intersection(t)
+                    if len(r) == y:
+                        subactv[i].add(obj)
+        return subactv
 
 class SubstRepr(Representation):
     """During an inference the original KB is isolated and only
@@ -981,21 +1010,20 @@ class SubstRepr(Representation):
                     n_cls.relations = rels
                 n_cls.parents = categ
                 self.classes[n_cls.name] = n_cls
-        
+
 
 if __name__ == '__main__':
-    import pprint
-    r = Representation()
-    fol = """
-        {
-            :vars: x, y, t1 -> time, t2 -> time:
-            (dog[x,u=1] && meat[y,u=1] && <eat[y,u=1;x;*t=t1]> && <timeCalc[t1<t2]> => fat[x,u=1,*t=t2])
-        }
-        dog[$Pancho,u=1]
-        meat[$M1,u=1]
-    """
-    r.tell(fol, block=True)
-    pprint.pprint(r.classes)
-    pprint.pprint(r.individuals)
-    #r.ask('fat[$Pancho,u=1;*t=NOW]')
-    # <eat[$M1,u=1;$Pancho;*t=2015.07.05.11.28]>
+    for x in range(100):
+        r = Representation()
+        fol = """
+            {
+                :vars: x, y, t1 -> time, t2 -> time:
+                (dog[x,u=1] && meat[y,u=1] && <eat[y,u=1;x;*t=t1]> && <timeCalc[t1<t2]> |> fat[x,u=1,*t=t2])
+            }
+            dog[$Pancho,u=1]
+            meat[$M1,u=1,*t=2015.07.05.10.25]
+            <eat[$M1,u=1;$Pancho;*t=2015.07.05.10.25]>
+        """
+        r.tell(fol)
+        print( r.ask('fat[$Pancho,u=1,*t=NOW]') )
+        print()

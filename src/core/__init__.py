@@ -27,4 +27,3 @@ if __name__ == '__main__':
     ag.perceive(eval_funcs)
     
     d2 = datetime.datetime.now()
-    print(d2-d1)

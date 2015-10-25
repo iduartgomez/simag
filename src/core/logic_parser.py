@@ -5,7 +5,7 @@
 import re
 import copy
 import datetime
-import itertools
+from builtins import issubclass
 
 __all__ = ['GlobalLogicParser', 'LogFunction', 'LogPredicate',
            'LogSentence', 'GL_PCONDS', 'SYMB_ORD']
@@ -58,13 +58,12 @@ def GlobalLogicParser(sent, block=False):
     elif len(lines) != 0:
         raise AssertionError("Please indicate the string passed is a code " \
         + "block by setting the 'block' parameter to True.")
-    
     ori, comp, hier = _parse_sent(sent)
     par_form = comp[ori]
     if not ':vars:' in par_form:
         if '[' in par_form and len(comp) == 1:
             # It's an atom predicate
-            pred = par_form
+            pred = par_form.lstrip()
             sets = rgx_ob.findall(pred)
             sets = sets[0].split('[')
             if ';' in sets[1]:
@@ -202,6 +201,15 @@ class LogSentence(object):
             args = args[0]
         # Clean up previous results.
         self.assigned = {}
+        if hasattr(self, 'pre_assigned'):
+            # for vars with types assign values
+            for key, val in self.pre_assigned.items():
+                self.assigned[key] = val
+        if hasattr(self, 'var_types'):
+            preds = [p for p in self.particles if p.cond == ':predicate:']
+            self.assigned.update(
+                { p.pred.date_var: p for p in preds if hasattr(p.pred, 'date_var') }
+            )
         self.cln_res()
         if len(self.var_order) == len(args):
             # Check the properties/classes an obj belongs to
@@ -221,7 +229,7 @@ class LogSentence(object):
             ag.bmsWrapper.register(self)
             self.start.solve(self, ag, key=[0])
         else: return
-
+    
     def get_ops(self, p, chk_op=['||', '=>', '<=>:']):
         ops = []
         for p in self:
@@ -235,7 +243,12 @@ class LogSentence(object):
                 else:
                     x = x.parent
         return True
-
+    
+    def get_all_preds(self):
+        r = self.get_pred()
+        r.extend(self.get_pred(branch='r'))
+        return r
+    
     def get_pred(self, branch='l', conds=GL_PCONDS):
         preds = []
         for p in self:
@@ -255,7 +268,7 @@ class LogSentence(object):
     def cln_res(self):
         for p in self.particles:
             p.results = []
-
+    
     def __iter__(self):
         return iter(self.particles)
 
@@ -312,8 +325,7 @@ def make_logic_sent(ori, comp, hier):
     
     class LogicIndCond(Particle):
     
-        def solve(self, proof, ag, key, *args):            
-            #print(self, '// Key:'+str(key), '// Args:', args)
+        def solve(self, proof, ag, key, *args):
             if key[-1] == 103 and self.parent == -1: return
             current, next_ = len(self.results), None 
             if current == 0:
@@ -339,8 +351,7 @@ def make_logic_sent(ori, comp, hier):
     
     class LogicEquivalence(Particle):
     
-        def solve(self, proof, ag, key, *args):            
-            #print(self, '// Key:'+str(key), '// Args:', args)
+        def solve(self, proof, ag, key, *args):
             if key[-1] == 103 and self.parent == -1: return
             current, next_ = len(self.results), None 
             if current == 0:
@@ -377,8 +388,7 @@ def make_logic_sent(ori, comp, hier):
     
     class LogicImplication(Particle):
     
-        def solve(self, proof, ag, key, *args):            
-            #print(self, '// Key:'+str(key), '// Args:', args)
+        def solve(self, proof, ag, key, *args):
             if key[-1] == 103 and self.parent == -1: return
             current, next_ = len(self.results), None
             if current == 0:
@@ -414,7 +424,6 @@ def make_logic_sent(ori, comp, hier):
     class LogicConjunction(Particle):
     
         def solve(self, proof, ag, key, *args):
-            #print(self, '// Key:'+str(key), '// Args:', args)
             if key[-1] == 103 and self.parent == -1: return
             current = len(self.results)
             if key[-1] == 103 and len(self.next) >= 2:
@@ -460,7 +469,6 @@ def make_logic_sent(ori, comp, hier):
     class LogicDisjunction(Particle):
     
         def solve(self, proof, ag, key, *args):
-            #print(self, '// Key:'+str(key), '// Args:', args)
             if key[-1] == 103 and self.parent == -1: return
             current = len(self.results)
             if key[-1] == 103 and len(self.next) >= 2:
@@ -508,7 +516,6 @@ def make_logic_sent(ori, comp, hier):
     class LogicAtom(Particle):
     
         def solve(self, proof, ag, key, *args):
-            #print(self, '// Key:'+str(key), '// Args:', args)
             if key[-1] == 103 and self.parent == -1: return   
             result = self.test(proof, ag, key)
             x = key.pop()
@@ -516,16 +523,15 @@ def make_logic_sent(ori, comp, hier):
                 self.parent.returning_value(proof, ag, key, result)
         
         def test(self, proof, ag, key):
-            
             def isvar(s):
                 try: s = proof.assigned[s]
                 except KeyError: pass
                 return s
             
             if key[-1] == 101:
+                result = None
                 if issubclass(self.pred.__class__, LogFunction):
                     # Check funct between a set/entity and other set/entity.
-                    result = None
                     args = self.pred.get_args()
                     for x, arg in enumerate(args):
                         if arg in proof.assigned:
@@ -540,11 +546,12 @@ def make_logic_sent(ori, comp, hier):
                 elif issubclass(self.pred.__class__, LogPredicate):
                     # Check membership to a set of an entity.
                     sbj = isvar(self.pred.term)
-                    if '$' not in sbj[0]: categs = ag.classes[sbj].get_parents()
-                    else: categs = ag.individuals[sbj].get_cat()
+                    if '$' not in sbj[0]:
+                        categs = ag.classes[sbj].get_parents()
+                    else:
+                        categs = ag.individuals[sbj].get_ctg()
                     # If is True, then the object belongs to the set.
                     # Else, must be False, and the object doesn't belong.
-                    result = None
                     if self.pred.parent in categs:
                         val = categs[self.pred.parent]
                         test = self.pred.substitute(sbj, val)
@@ -552,8 +559,17 @@ def make_logic_sent(ori, comp, hier):
                         else: result = False
                     if result is True:
                         ag.bmsWrapper.prev_blf('PLACEHOLDER')
-                elif isinstance(self.pred, make_function.TimeFunc):
-                    pass
+                else:
+                    time_func = make_function(None, f_type='time_calc')
+                    if self.pred.klass == time_func.klass:
+                        dates = {}
+                        for arg, p in proof.assigned.items():
+                            if arg in self.pred.args:
+                                dates[arg] = p.get_date(proof, ag)                      
+                        if None not in dates.values():
+                            test = self.pred.substitute(dates)
+                            if bool(test) is True: result = True
+                            else: result = False
                 return result
             else:
                 # marked for declaration
@@ -567,15 +583,39 @@ def make_logic_sent(ori, comp, hier):
                     pred = self.pred.substitute(args)
                     ag.bmsWrapper.check('PLACEHOLDER')
                     ag.up_rel(pred)
-                else:
+                elif issubclass(self.pred.__class__, LogPredicate):
                     sbj = isvar(self.pred.term)
                     pred = self.pred.substitute(sbj, val=None)
                     ag.bmsWrapper.check('PLACEHOLDER')
-                    ag.up_memb(pred)  
+                    ag.up_memb(pred)
                 if key[-1] == 100 and hasattr(proof, 'result'):
                     proof.result.append(pred)
                 elif key[-1] == 100:
                     proof.result = [pred]
+        
+        def get_date(self, proof, ag):
+            date = None
+            if issubclass(self.pred.__class__, LogFunction):
+                args = self.pred.get_args()
+                for x, arg in enumerate(args):
+                    if arg in proof.assigned:
+                        args[x] = proof.assigned[arg]
+                test = self.pred.substitute(args)
+                if '$' in args[0][0]:
+                    date = ag.individuals[args[0]].get_date(test)
+                else:
+                    date = ag.classes[args[0]].get_date(test)
+            elif issubclass(self.pred.__class__, LogPredicate):
+                try:
+                    sbj = proof.assigned[self.pred.term]
+                    test = self.pred.substitute(sbj)
+                except KeyError:
+                    test = self.pred
+                if '$' in test.term[0]:
+                    date = ag.individuals[test.term].get_date(test)
+                else:
+                    date = ag.classes[test.term].get_date(test)
+            return date
     
     def make_parts(ori, comp, hier, depth=0):
         form = comp[ori]
@@ -614,25 +654,26 @@ def make_logic_sent(ori, comp, hier):
             form = [s.replace(' ','') for s in form if s.strip()]
             cond = ':stub:'
             for i, a in enumerate(form):
-                if a == 'vars':
-                    vars_ = form[i+1].split(',')
-                    for var in vars_:
-                        if '->' in var: 
-                            var = var.split('->')
-                            if not hasattr(sent, 'var_types'):
-                                sent.var_types = dict()
-                            sent.var_types[var[0]] = _get_type_class(var[1])
-                            var = var[0]
-                        if var not in sent.var_order:
-                            sent.var_order.append(var)
-                    p = Particle(cond, depth, part_id, parent, syb, form)
-                    sent.particles.append(p)
-                    break
+                if a == 'vars': break
+            vars_ = form[i+1].split(',')
+            for var in vars_:
+                if '->' in var:
+                    var = var.split('->')
+                    if not hasattr(sent, 'var_types'):
+                        sent.var_types = dict()
+                    sent.var_types[var[0]], val = _get_type_class(var[1])
+                    if val is not None:
+                        if not hasattr(sent, 'pre_assigned'):
+                            sent.pre_assigned = {}
+                        sent.pre_assigned[var[0]] = val
+                elif var not in sent.var_order:
+                    sent.var_order.append(var)
+            p = Particle(cond, depth, part_id, parent, syb, form)
+            sent.particles.append(p)
         elif '[' in form:
             cond = ':predicate:'
             result = _check_reserved_words(form)
             if result == 'time_calc':
-                if hasattr(sent, 'dates') is False: sent.dates = {}
                 form = make_function(form, 'time_calc')
             elif ('<' and '>') in form and '<=>' not in form:
                 form = make_function(form, 'relation')
@@ -681,7 +722,8 @@ def make_logic_sent(ori, comp, hier):
 
 class LogPredicate(object):
     """Base class to represent a ground predicate."""
-    types = ['grounded_term', 'free_term']    
+    types = ['grounded_term', 'free_term']
+    
     def __init__(self, pred):
         if type(pred) is str:
             pred = rgx_ob.findall(pred)
@@ -712,10 +754,11 @@ class LogPredicate(object):
             self.oldTerm, self.term = self.term, new
         else:
             self.term = self.oldTerm
-            del self.oldTerm
+            del self.oldTerm        
     
     def __repr__(self):
-        return '<' + str(self.__class__.__name__) + ' ' + self.term + '>'
+        return '<{0} | {1}: {2}>'.format(
+            self.__class__.__name__, self.parent, self.term)
 
 def make_fact(pred, f_type=None, *args):
     """Parses a grounded predicate and returns a 'fact'."""
@@ -730,6 +773,15 @@ def make_fact(pred, f_type=None, *args):
             self.value = val[1]
             if dates is not None:
                 self.dates = dates
+        
+        def __eq__(self, other):
+            if hasattr(self, 'dates') and len(self.dates) % 2 == 0:
+                return False
+            if other.parent == self.parent \
+            and other.term == self.term \
+            and other.value == self.value:
+                return True
+            else: return False
     
     class FreeTerm(LogPredicate):
         def __init__(self, pred):
@@ -742,6 +794,11 @@ def make_fact(pred, f_type=None, *args):
                 self.dates = dates
         
         def __eq__(self, other):
+            # the dates list indicates the intervals when a fact is true
+            # an entry in the list means the fact is true from that moment
+            # a second entry means the fact is false until a new term appears
+            if hasattr(self, 'dates') and len(self.dates) % 2 == 0:
+                return False
             if not issubclass(other.__class__, LogPredicate):
                 m = "{0} and {1} are not comparable.".format(other, LogPredicate)
                 raise TypeError(m)
@@ -769,6 +826,12 @@ def make_fact(pred, f_type=None, *args):
 class LogFunction(object):
     """Base class to represent a logic function."""    
     types = ['relation','time_calc']
+    klass = 'logfunction'
+    
+    def __new__(cls, *args, **kwargs):
+        obj = super().__new__(cls)
+        obj.klass = cls.klass 
+        return obj
     
     def __init__(self, sent):
         func = rgx_ob.findall(sent)[0].split('[')
@@ -802,7 +865,7 @@ class LogFunction(object):
         self.args = mk_args
         self.arity = len(self.args)
         if dates is not None: self.dates = dates
-        
+    
     def get_args(self):
         ls = []
         for arg in self.args:
@@ -814,14 +877,23 @@ class LogFunction(object):
     
     def substitute(self, args):
         subs = copy.deepcopy(self)
-        subs.args_ID = hash(tuple(args))
-        for x, arg in enumerate(subs.args):
-            if isinstance(arg, tuple):
-                subs.args[x] = list(arg)
-                subs.args[x][0] = args[x]
-                subs.args[x] = tuple(subs.args[x])
-            else:
-                subs.args[x] = args[x]
+        subs.args_ID = hash(tuple(args))        
+        if type(args) is dict:
+            for x, arg in enumerate(subs.args):
+                if isinstance(arg, tuple) and arg in args:
+                    subs.args[x] = list(arg)
+                    subs.args[x][0] = args[arg]
+                    subs.args[x] = tuple(subs.args[x])
+                elif arg in args:
+                    subs.args[x] = args[arg]
+        else:
+            for x, arg in enumerate(subs.args):
+                if isinstance(arg, tuple):
+                    subs.args[x] = list(arg)
+                    subs.args[x][0] = args[x]
+                    subs.args[x] = tuple(subs.args[x])
+                else:
+                    subs.args[x] = args[x]        
         return subs
     
     def change_params(self, new=None, revert=False):
@@ -864,7 +936,8 @@ def make_function(sent, f_type=None, *args):
             self.err, self.arg1, self.arg2 = args  
     
     class RelationFunc(LogFunction):
-    
+        klass = 'relat_func'
+          
         def __eq__(self, other):
             comparable = self.chk_args_eq(other)
             if comparable is not True:
@@ -909,33 +982,41 @@ def make_function(sent, f_type=None, *args):
                         return ('args', other.args[x], arg)
             return True
     
-    class TimeFunc(LogFunction):
+    class TimeFunc(object):
+        """A special case for time calculus, not considered a relation.        
+        It's not a subclass of LogFunction.
+        """
+        klass = 'time_func'
         
         def __init__(self, sent):
+            sent = sent.replace(' ','')
+            # Add methods from LogFunction
+            from types import FunctionType, MethodType
+            for m in LogFunction.__dict__.values():
+                if type(m) == FunctionType \
+                and m.__name__ not in self.__dict__.keys():
+                    setattr(self, m.__name__, MethodType(m, self))
             func = rgx_ob.findall(sent)[0].split('[')[1]
-            op = [c for c in func if c in ['>','<']]
+            op = [c for c in func if c in ['>','<','==']]
             if len(op) > 1 or len(op) == 0:
                 raise ValueError('provide one operator')
             else:
                 self.operator = op[0]
-                self.vrs = func.split(self.operator)
+                self.args = func.split(self.operator)
         
         def __bool__(self):
-            subst = []
-            for var in self.vrs:
-                subst.append(self.args[var])
-            if self.operator == '<' and subst[0] < subst[1]:
+            if self.operator == '<' and self.args[0] < self.args[1]:
                 return True
-            elif self.operator == '>' and subst[0] > subst[1]:
+            elif self.operator == '>' and self.args[0] > self.args[1]:
                 return True
-            elif self.operator == '=' and subst[0] == subst[1]:
+            elif self.operator == '=' and self.args[0] == self.args[1]:
                 return True
             else: 
                 return False
-        
+
         def __str__(self):
-            return "<TimeCalc Function>"
-    
+            return "<TimeCalculus>"
+
     assert (f_type in LogFunction.types or f_type is None), \
             'Function {0} does not exist.'.format(f_type)
     if f_type == 'relation':
@@ -983,6 +1064,10 @@ def _set_date(date):
     )
     
 def _get_type_class(var):
-    if var == 'time': 
-        return make_function(None, f_type='time_calc')
+    var = var.split('=')
+    if var[0] == 'time':
+        type_ = make_function(None, f_type='time_calc')
+    if len(var) > 1: val = var[1]
+    else: val = None
+    return type_, val
 

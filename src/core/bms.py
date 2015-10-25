@@ -68,7 +68,7 @@ class BmsWrapper(object):
                 cat, val, sbj = pred[0], float(pred[1][1]), pred[1][0]
                 op = '='
             try:
-                categs = self.ag.individuals[sbj].get_cat()
+                categs = self.ag.individuals[sbj].get_ctg()
             except:
                 return False
             if cat in categs and val != categs[cat]:
