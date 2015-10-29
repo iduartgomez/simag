@@ -29,13 +29,11 @@ called directly.
 :class: Inference. Encapsulates the whole inference process, from making
 a temporal substitution representation where the inference is operated to
 solving the query (including query parsing, data fetching and unification).
-
-@author: Ignacio Duart Gómez
 """
 
 # TODO: On ASK, add functionality so it so it can deal with queries that
 # ask about relations of the same type with several objects.
-# TODO: Add 'belief maintenance system' functionality.
+# TODO: Support skolemization in forms and existential variables
 
 # ===================================================================#
 #   Imports and globals
@@ -44,11 +42,12 @@ solving the query (including query parsing, data fetching and unification).
 import uuid
 import itertools
 import re
+from datetime import datetime
 
 import core.bms
 from core.logic_parser import *
 from core.logic_parser import make_function, make_fact, _parse_sent
-from _datetime import datetime
+
 
 rgx_ob = re.compile(r'\b(.*?)\]')
 
@@ -101,8 +100,10 @@ class Representation(object):
                 else: self.add_cog(processed)
             elif issubclass(processed.__class__, LogFunction): 
                 self.up_rel(processed)
+                self.bmsWrapper.add(processed)
             elif issubclass(processed.__class__, LogPredicate): 
                 self.up_memb(processed)
+                self.bmsWrapper.add(processed)
         
         # Sign that the string passed is a code block
         if block is True: result = GlobalLogicParser(sent, block=True)
@@ -150,29 +151,28 @@ class Representation(object):
         sent = sent.replace(' ','')
         sets = rgx_ob.findall(sent)
         sets = sets[0].split('[')
-        if ';' in sets[1]:
-            sets[1] = sets[1].split(';')
         if '<' in sent[0]:
             # Is a function declaration -> implies a relation
             # between different objects or classes.           
             func = make_function(sent, 'relation')            
             self.up_rel(func)
+            self.bmsWrapper.add(func)
         else:
+            if ';' in sets[1]: sets[1] = sets[1].split(';')
             # Is a membership declaration -> the object(s) belong(s) 
             # to a set of objects.
             if isinstance(sets[1], list):
                 for e in sets[1]:
                     fact = make_fact([sets[0],e], 'grounded_term')
                     self.up_memb(fact)
+                    self.bmsWrapper.add(fact)
             else:
                 fact = make_fact(sets, 'grounded_term')
                 self.up_memb(fact)
+                self.bmsWrapper.add(fact)
 
     def up_memb(self, pred):
-        # It's a membership declaration.
-        #
-        # Here the change should be recorded in the BMS
-        # self.bmsWrapper.add(pred, True)
+        # It's a membership declaration.        
         subject, categ = pred.term, pred.parent
         if subject not in self.individuals and '$' in subject:
             # An individual which is member of a class
@@ -181,14 +181,14 @@ class Representation(object):
             self.individuals[subject] = ind
         elif '$' in subject:
             # Add/replace an other class membership to an existing individual
-            self.individuals[subject].add_ctg(pred)          
-        elif subject in self.classes:            
-            self.classes[subject].add_parent(pred)
+            self.individuals[subject].add_ctg(pred)
+        elif subject in self.classes:
+            self.classes[subject].add_ctg(pred)
         else:
             # Is a new subclass of an other class
             cls = Category(subject)
             cls.type_ = 'class'
-            cls.add_parent(pred)
+            cls.add_ctg(pred)
             self.classes[subject] = cls
         if categ not in self.classes:
             nc = Category(categ)
@@ -197,9 +197,6 @@ class Representation(object):
 
     def up_rel(self, func):
         # It's a function declaration.
-        #
-        # Here the change should be recorded in the BMS 
-        # self.bmsWrapper.add(func, True)
         relation = func.func
         for subject in func.get_args():
             if '$' in subject:
@@ -226,8 +223,7 @@ class Representation(object):
                     rel = Relation(relation)
                     self.classes[relation] = rel
 
-    def add_cog(self, sent):
-                
+    def add_cog(self, sent):                
         def chk_args(p):
             if sbj not in sent.var_order:
                 if '$' in sbj and sbj in self.individuals:
@@ -291,7 +287,7 @@ class Representation(object):
                 nc.type_ = c
                 nc.add_cog(proof)
                 self.classes[name] = nc
-        # Run the new formula with individuals/classes that matches.
+        # Run the new formula with individuals/classes that match.
         obj_dic = self.inds_by_ctg(set(n))
         cls_dic = self.cls_by_ctg(set(n))
         obj_dic.update(cls_dic)
@@ -314,7 +310,7 @@ class Representation(object):
     def cls_by_ctg(self, ctgs):
         ctg_dic = {}
         for cls in self.classes.values():
-            s = cls.check_parents(ctgs)
+            s = cls.check_ctg(ctgs)
             t = set(cls.get_rel())
             t = t.intersection(ctgs)
             t = t.union(s)
@@ -330,6 +326,9 @@ class Representation(object):
         if hasattr(subs,'classes'):
             self.classes.update(subs.classes)
 
+# TODO: individuals/classes should be linked through a tree-like structure
+# for more effitient retrieval. This should be done in 'function' and 
+# 'predicate' objects.
 class Individual(object):
     """An individual is the unique member of it's own class.
     Represents an object which can pertain to multiple classes or sets.
@@ -363,7 +362,6 @@ class Individual(object):
         self.id = str(uuid.uuid4())
         self.name = name
         self.categ = []
-        self.attr = {}
         self.relations = {}
         self.cog = {}
 
@@ -373,6 +371,8 @@ class Individual(object):
         
         Takes a dictionary as input.
         """
+        if not hasattr(self, 'attr'):
+            self.attr = {}
         for k, v in kwargs.items():
             self.attr[k] = v
 
@@ -390,8 +390,10 @@ class Individual(object):
         if issubclass(fact.__class__, LogPredicate):
             ctg_rec = [f.parent for f in self.categ]
             try: idx = ctg_rec.index(fact.parent)
-            except ValueError: self.categ.append(fact)            
-            else: self.categ[idx] = fact
+            except ValueError: self.categ.append(fact)
+            else:
+                fact.belief_record = self.categ[idx].belief_record
+                self.categ[idx] = fact
         else: raise TypeError('The object is not a LogPredicate subclass.')
     
     def check_ctg(self, n):
@@ -401,14 +403,23 @@ class Individual(object):
         s = [c.parent for c in self.categ if c.parent in n]
         return s
 
-    def get_ctg(self, ctg=None):
+    def get_ctg(self, ctg=None, obj=False):
         """Returns a dictionary of the categories of the object and
         their truth values.
         
         If a single category is provided in the 'ctg' keyword argument,
         then the value for that category is returned. If it doesn't
         exist, None is returned.
+        
+        If the obj keyword parameter is True then the object is returned.
         """
+        if obj is True:
+            assert issubclass(ctg.__class__, LogPredicate), \
+            "'ctg' is not subclass of LogPredicate"
+            for c in self.categ:
+                if ctg == c: return c
+            return None
+        
         cat = {c.parent:c.value for c in self.categ}
         if ctg is None:
             return cat
@@ -436,19 +447,36 @@ class Individual(object):
         except KeyError:
             self.relations[func.func] = [func]
         else:
+            pop_old = False
+            for i, r in enumerate(rel):
+                if r == func: 
+                    pop_old = True
+                    break         
+            if pop_old:
+                func.belief_system = rel[i].belief_record
+                rel.pop(i)
             rel.append(func)
     
-    def get_rel(self):
-        """Returns a list of the relations the object is involved
-        either as subject, object or indirect object.
+    def get_rel(self, func=None):
+        """Returns a list of the relations the object is involved either
+        as subject, object or indirect object.
+        
+        If a function is provided for comparison then the original function
+        is returned.
         """
+        if func:
+            try:
+                funcs = self.relations[func.func]
+            except KeyError:
+                return None      
+            for f in funcs:
+                if f.args_ID == func.args_ID: return f            
         rel = [k for k in self.relations]
         return rel
     
-    def test_rel(self, func):
-        """Checks if a relation exists; and returns true if it's 
-        equal to the comparison, false if it's not, and None if it
-        doesn't exist.
+    def test_rel(self, func, obj=False):
+        """Checks if a relation exists; and returns true if it's equal
+        to the comparison, false if it's not, and None if it doesn't exist.
         """
         try:
             funcs = self.relations[func.func]
@@ -525,12 +553,33 @@ class Category(object):
         else:
             try: rel = self.relations[func.func]
             except KeyError: self.relations[func.func] = [func]
-            else: rel.append(func)
+            else:
+                pop_old = False
+                for i, r in enumerate(rel):
+                    if r == func: 
+                        pop_old = True
+                        break         
+                if pop_old:
+                    func.belief_system = rel[i].belief_record
+                    rel.pop(i)
+                rel.append(func)
     
-    def get_rel(self):
-        """Returns a list of the relations the object is involved
-        either as subject, object or indirect object.
+    def get_rel(self, func=None):
+        """Returns a list of the relations the object is involved either
+        as subject, object or indirect object.
+        
+        If a function is provided for comparison then the original function
+        is returned.
         """
+        if func:
+            try:
+                if hasattr(self, 'relations'):
+                    funcs = self.relations[func.func]
+                else: return None
+            except KeyError:
+                return None      
+            for f in funcs:
+                if f.args_ID == func.args_ID: return f            
         if hasattr(self, 'relations'): rel = [k for k in self.relations]
         else: rel = []
         return rel
@@ -550,54 +599,46 @@ class Category(object):
                 else: return False
         return None
     
-    def test_ctg(self, pred):
-        """Checks if it's child of a category and returns true if it's 
-        equal to the comparison, false if it's not, and none if it
-        doesn't exist.
-        """
-        for ctg in self.parents:
-            if ctg.parent == pred.parent:
-                categ = ctg
-                break
-        if 'categ' not in locals(): return None
-        if pred == categ: return True
-        else: return False
-    
-    def check_parents(self, n):
-        """Returns a list that is the intersection of the input iterable
-        and the parents of the object.
-        """
-        if not hasattr(self,'parents'): return list()
-        return [c.parent for c in self.parents if c.parent in n]
-    
-    def get_parents(self, ctg=None):
-        """Returns a dictionary of the parents of this class and
-        their truth values.
-        
-        If a single category is provided in the 'ctg' keyword argument,
-        then the value for that category is returned. If it doesn't
-        exist, None is returned.
-        """
-        cat = {ctg.parent:ctg.value for ctg in self.parents}
-        if ctg is None: return cat
-        else:
-            try: x = cat[ctg]
-            except KeyError: return None
-            else: return x
-    
-    def add_parent(self, fact):
+    def add_ctg(self, fact):
         if not hasattr(self,'parents'): self.parents = [fact]
         else:        
             ctg_rec = [f.parent for f in self.parents]
             try: idx = ctg_rec.index(fact.parent)
             except ValueError: self.parents.append(fact)            
-            else: self.parents[idx] = fact
+            else:
+                fact.belief_record = self.categ[idx].belief_record
+                self.categ[idx] = fact
     
-    def test_parent(self, pred):
+    def get_ctg(self, ctg=None, obj=False):
+        """Returns a dictionary of the categories of the object and
+        their truth values.
+        
+        If a single category is provided in the 'ctg' keyword argument,
+        then the value for that category is returned. If it doesn't
+        exist, None is returned.
+        
+        If the obj keyword parameter is True then the object is returned.
+        """
+        if obj is True:
+            assert issubclass(ctg.__class__, LogPredicate), \
+            "'ctg' is not subclass of LogPredicate"
+            for c in self.parents:
+                if ctg == c: return c
+            return None
+        
+        cat = {c.parent:c.value for c in self.parents}
+        if ctg is None:
+            return cat
+        else:
+            try: x = cat[ctg]
+            except KeyError: return None
+            else: return x
+    
+    def test_ctg(self, pred):
         """Checks if it's child of a category and returns true if it's 
         equal to the comparison, false if it's not, and none if it
         doesn't exist.
-        """
+        """        
         if not hasattr(self,'parents'): return None
         for ctg in self.parents:
             if ctg.parent == pred.parent:
@@ -606,6 +647,14 @@ class Category(object):
         if 'categ' not in locals(): return None
         if pred == categ: return True
         else: return False
+        
+        
+    def check_ctg(self, n):
+        """Returns a list that is the intersection of the input iterable
+        and the parents of the object.
+        """
+        if not hasattr(self,'parents'): return list()
+        return [c.parent for c in self.parents if c.parent in n]
     
 class Relation(Category):
     
@@ -644,8 +693,7 @@ class Inference(object):
                     if ant.term in self.subs:
                         self.subs[ant.term].add(ant.parent)
     
-    class NoSolutionError(Exception):
-        """Cannot infer a solution error."""
+    class NoSolutionError(Exception): pass
     
     def __new__(cls, *args, **kwargs):
         obj = super(Inference, cls).__new__(cls)
@@ -657,6 +705,7 @@ class Inference(object):
         self.vrs = set()
         self.nodes = {}
         self.infer_facts(*args)
+        self.kb.push(self.subkb)
 
     def infer_facts(self, sent):
         """Inference function from first-order logic sentences.
@@ -681,7 +730,7 @@ class Inference(object):
                     if isind is True:
                         res = self.subkb.individuals[var].test_ctg(pred)
                     else:
-                        res = self.subkb.classes[var].test_parent(pred)
+                        res = self.subkb.classes[var].test_ctg(pred)
                 except KeyError: res = None
             self.results[var][q] = res
         
@@ -760,7 +809,7 @@ class Inference(object):
                 return (t, fact)
         
         preds = []
-        for i, pa in enumerate(iter(comp)):     
+        for i, pa in enumerate(iter(comp)):
             if any(s in pa for s in GL_PCONDS + ['||']):
                 raise ValueError("Cannot user other operators than '&&' " \
                 "in ASK expressions.")
@@ -896,10 +945,13 @@ class Inference(object):
                     except KeyError:
                         self.obj_dic[obj] = set([cat])
             self.queue[node]['pos'].add(key)
-
+                
+        # TODO: check out what combinations can be roled out before 
+        # attempting to solve it
+        
         # check what are the possible var substitutions
         mapped = self.map_vars(node)
-        # permute and find every argument combination
+        # permute and find every argument combination       
         mapped = list(itertools.product(*mapped))
         # run proof until a solution is found or there aren't more
         # combinations left to be tested
@@ -951,32 +1003,16 @@ class SubstRepr(Representation):
     Once the inference is done, results are cleaned up, saved
     in the KB and the BMS routine is ran.
     """
-    
-    class FakeBms(object):
-        
-        def __init__(self):
-            self.chgs_dict = dict()
-        
-        def register(self, form):
-            self.chgs_dict[form] = (list(), list())
-            self.chk_ls = self.chgs_dict[form][0]
-            self.prod = self.chgs_dict[form][1]
-        
-        def prev_blf(self, arg):
-            self.prod.append(arg)
-        
-        def check(self, arg):
-            self.chk_ls.append(arg)
 
-    def __init__(self, *args):
+    def __init__(self, kb, *args):
         self.individuals = {}
         self.classes = {}
-        self.bmsWrapper = self.FakeBms()
-        self.make(*args)
+        self.bmsWrapper = kb.bmsWrapper
+        self.make(kb, *args)
     
-    def register(self, form):
-        self.bmsWrapped.register(form)
-    
+    # TODO: instead of copying each obj, weak reference original
+    # objs and when evaluating, if a change is done push it to the
+    # original object.
     def make(self, kb, obj_dic):
         for s in obj_dic:
             if '$' in s[0]:
@@ -986,6 +1022,7 @@ class SubstRepr(Representation):
                 for attr, val in o_ind.__dict__.items():
                     if attr != 'relations' or attr != 'categ':
                         n_ind.__dict__[attr] = val
+                print(n_ind)
                 nrm_ctg = obj_dic[s]
                 categ = []
                 for c in o_ind.categ:
@@ -1022,17 +1059,12 @@ class SubstRepr(Representation):
 
 
 if __name__ == '__main__':
-    for x in range(1):
-        r = Representation()
-        fol = """
-            {
-                :vars: x, y, t1 -> time, t2 -> time[NOW]:
-                (dog[x,u=1] && meat[y,u=1] && <eat[y,u=1;x;*t=t1]> && <timeCalc[t1<t2]> |> fat[x,u=1,*t=t2])
-            }
-            dog[$Pancho,u=1]
-            meat[$M1,u=1]
-            <eat[$M1,u=1;$Pancho;*t=2015.07.05.10.25]>
-        """
-        r.tell(fol)
-        print( r.ask('fat[$Pancho,u=1,*t=NOW]') )
-        print()
+    r = Representation()
+    fol = """
+        animal[cow,u=1]
+        female[cow,u=1]
+        animal[cow,u=1] && female[cow,u=1] => <produce[milk,u=1;cow]>
+    """
+    r.tell(fol)
+    print(r.ask('<produce[milk,u=1;cow]>'))
+

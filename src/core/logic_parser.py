@@ -5,10 +5,16 @@
 import re
 import copy
 import datetime
-from builtins import issubclass
 
-__all__ = ['GlobalLogicParser', 'LogFunction', 'LogPredicate',
-           'LogSentence', 'GL_PCONDS', 'SYMB_ORD']
+__all__ = (
+'GlobalLogicParser', 
+'GL_PCONDS', 
+'SYMB_ORD',
+# Types:
+'LogFunction', 
+'LogPredicate',
+'LogSentence',
+)
 
 GL_PCONDS = ['|>', ' =>', '<=>']
 SYMB_ORD = ('|>', '<=>', ' =>', '||', '&&')
@@ -18,6 +24,7 @@ VAR_DECL = (':vars:', ':exists:')
 rgx_par = re.compile(r'\{(.*?)\}')
 rgx_ob = re.compile(r'\b(.*?)\]')
 rgx_br = re.compile(r'\}(.*?)\{')
+
 
 # ===================================================================#
 #   LOGIC SENTENCE PARSER
@@ -38,7 +45,7 @@ def GlobalLogicParser(sent, block=False):
             if (b1 == -1 and b2 != -1) or (b2 == -1 and b1 != -1):
                 raise AssertionError('Odd number of curly braces.')
             if b1 == -1: break
-            block = sent[b1+1:b2-1]
+            block = sent[b1+1:b2]
             ml = block.splitlines()
             if len(ml) == 1: block = ml[0]
             elif len(ml) != 0: block = ''.join(block.splitlines())
@@ -163,7 +170,6 @@ def _parse_sent(sent):
             if childs != -1:
                 for c in childs:
                     hier[c]['parent'] = n
-    
     comp, hier = [], {}
     decomp_par(sent, symb=('(', ')'))
     ori = len(comp) - 1
@@ -223,10 +229,8 @@ class LogSentence(object):
                     assert isinstance(const, type_), \
                     "{0} is not a {1} object".format(const, type_)
                 self.assigned[var_name] = const
-            ag.bmsWrapper.register(self)  
             self.start.solve(self, ag, key=[0])
         elif len(self.var_order) == 0:
-            ag.bmsWrapper.register(self)
             self.start.solve(self, ag, key=[0])
         else: return
     
@@ -541,8 +545,6 @@ def make_logic_sent(ori, comp, hier):
                         result = ag.individuals[args[0]].test_rel(test)
                     else:
                         result = ag.classes[args[0]].test_rel(test)
-                    if result is True:
-                        ag.bmsWrapper.prev_blf('PLACEHOLDER')
                 elif issubclass(self.pred.__class__, LogPredicate):
                     # Check membership to a set of an entity.
                     sbj = isvar(self.pred.term)
@@ -551,11 +553,8 @@ def make_logic_sent(ori, comp, hier):
                         result = ag.classes[sbj].test_ctg(test)
                     else: 
                         result = ag.individuals[sbj].test_ctg(test)
-                    if result is True:
-                        ag.bmsWrapper.prev_blf('PLACEHOLDER')
                 else:
-                    TimeFunc = make_function(None, f_type='time_calc')
-                    if self.pred.klass == TimeFunc.klass:
+                    if type(self.pred) == TimeFunc:
                         dates = {}
                         for arg, p in proof.assigned.items():
                             if arg in self.pred.args and type(p) is not str:
@@ -568,23 +567,21 @@ def make_logic_sent(ori, comp, hier):
                             else: result = False
                 return result
             else:
-                # TODO: when a rel/pred is updated update the dates list
-                
                 # marked for declaration
                 # subtitute var(s) for constants
                 # and pass to agent for updating
-                if issubclass(self.pred.__class__, LogFunction):                
+                if issubclass(self.pred.__class__, LogFunction):
                     args = self.pred.get_args()
                     for x, arg in enumerate(args):
                         if arg in proof.assigned:
                             args[x] = proof.assigned[arg]
                     pred = self.pred.substitute(args)
-                    ag.bmsWrapper.check('PLACEHOLDER')
+                    ag.bmsWrapper.add(pred, proof)
                     ag.up_rel(pred)
                 elif issubclass(self.pred.__class__, LogPredicate):
                     sbj = isvar(self.pred.term)
-                    pred = self.pred.substitute(sbj, val=None)
-                    ag.bmsWrapper.check('PLACEHOLDER')
+                    pred = self.pred.substitute(sbj, val=None, ground=True)
+                    ag.bmsWrapper.add(pred, proof)
                     ag.up_memb(pred)
                 if key[-1] == 100 and hasattr(proof, 'result'):
                     proof.result.append(pred)
@@ -722,18 +719,21 @@ class MetaForAtoms(type):
     
     def __new__(cls, name, bases, attrs, **kwargs):
         attrs['_eval_time_truth'] = MetaForAtoms.__eval_time_truth        
-        # Add methods from LogFunction to TimeFunc
+        # Add methods from LogFunction to TimeFunc and store it at one location
         if name == 'TimeFunc':
-            # if it's already prepared return class
-            if hasattr(MetaForAtoms, 'TimeFunc'):
-                return MetaForAtoms.TimeFunc
-            # else prepare the class
-            from types import FunctionType
-            for m in globals()['LogFunction'].__dict__.values():
-                if type(m) == FunctionType \
-                and m.__name__ not in attrs.keys():                    
-                    attrs[m.__name__] = m
-            MetaForAtoms.TimeFunc = super().__new__(cls, name, bases, attrs)
+            if not hasattr(MetaForAtoms, 'TimeFunc'):
+                from types import FunctionType
+                for m in globals()['LogFunction'].__dict__.values():
+                    if type(m) == FunctionType \
+                    and m.__name__ not in attrs.keys():                    
+                        attrs[m.__name__] = m
+                MetaForAtoms.TimeFunc = super().__new__(cls, name, bases, attrs)
+            return MetaForAtoms.TimeFunc
+        # Store FreeTerm and return from same memory address
+        elif name == 'FreeTerm':
+            if not hasattr(MetaForAtoms, 'FreeTerm'):
+                MetaForAtoms.FreeTerm = super().__new__(cls, name, bases, attrs)
+            return MetaForAtoms.FreeTerm
         # return the new class
         return super().__new__(cls, name, bases, attrs)
     
@@ -794,20 +794,28 @@ class LogPredicate(metaclass=MetaForAtoms):
         return '<{0} | {1}: {2}>'.format(
             self.__class__.__name__, self.parent, self.term)
 
-def make_fact(pred, f_type=None, *args):
+def make_fact(pred, f_type=None, **kwargs):
     """Parses a grounded predicate and returns a 'fact'."""
     
     class GroundedTerm(LogPredicate):
         
-        def __init__(self, pred):
-            parent, val, op, dates = super(GroundedTerm, self).__init__(pred)
-            assert (op == '='), \
-            "It's a grounded predicate, must assign truth value."
-            self.parent = parent
-            self.term = val[0]
-            self.value = val[1]
-            if dates is not None:
-                self.dates = dates
+        def __init__(self, pred, fromfree=False, **kwargs):
+            if fromfree is True:
+                assert type(pred) == make_fact(None, 'free_term'), \
+                    'The object is not of <FreeTerm> type'
+                for name, value in pred.__dict__.items():
+                    setattr(self, name, value)
+                self.term = kwargs['sbj']
+                if hasattr(self, 'date_var'): del self.date_var
+            else:
+                parent, val, op, dates = super(GroundedTerm, self).__init__(pred)
+                assert (op == '='), \
+                "It's a grounded predicate, must assign truth value."
+                self.parent = parent
+                self.term = val[0]
+                self.value = val[1]
+                if dates is not None:
+                    self.dates = dates
         
         def __eq__(self, other):
             # Test if the statements are ture at this moment in time
@@ -847,17 +855,29 @@ def make_fact(pred, f_type=None, *args):
                 return True
             else: return False
         
-        def substitute(self, sbj=None, val=None):
-            subs = copy.deepcopy(self)
-            if sbj is not None: subs.term = sbj
-            if val is not None: subs.value = val
-            return subs
+        def substitute(self, sbj=None, val=None, ground=False):
+            if ground is True:
+                return make_fact(
+                    self, 
+                    f_type='grounded_term', 
+                    **{'fromfree': True, 'sbj':sbj})
+            else:
+                subs = copy.deepcopy(self)
+                if sbj is not None: subs.term = sbj
+                if val is not None: subs.value = val            
+                return subs
     
     assert (f_type in LogPredicate.types or f_type is None), \
             'Function {0} does not exist.'.format(f_type)
-    if f_type == 'grounded_term': return GroundedTerm(pred)
-    elif f_type == 'free_term': return FreeTerm(pred)
-    else: return LogPredicate(pred)
+    if f_type == 'grounded_term': 
+        if pred is None: return GroundedTerm
+        return GroundedTerm(pred, **kwargs)
+    elif f_type == 'free_term': 
+        if pred is None: return FreeTerm
+        return FreeTerm(pred)
+    else:
+        if pred is None: return LogPredicate 
+        return LogPredicate(pred)
 
 
 class LogFunction(metaclass=MetaForAtoms):
@@ -869,15 +889,18 @@ class LogFunction(metaclass=MetaForAtoms):
         self.func, vrs = func[0], func[1]
         args, hls, mk_args = vrs.split(';'), list(), list()
         dates = None
-        for arg in args:
+        self.value = []
+        for x, arg in enumerate(args):
+            self.value.append(None)
             if ',u' in arg:
                 narg = arg.split(',u')
                 narg = narg[0], float(narg[1][1:]), narg[1][0]
+                self.value[x] = narg[1]
                 if narg[1] > 1 or narg[1] < 0:
                     raise ValueError(narg[1])
                 hls.append(narg[0])
                 mk_args.append(narg)
-            elif '*t' in arg:        
+            elif '*t' in arg:
                 date = _set_date(arg)
                 if type(date) is datetime.datetime:
                     if dates is None: dates = []
@@ -887,7 +910,6 @@ class LogFunction(metaclass=MetaForAtoms):
                 mk_args.append(arg)
                 hls.append(arg)
         self.args_ID = hash(tuple(hls))
-        self._id = self.args_ID
         self.args = mk_args
         self.arity = len(self.args)
         if dates is not None: self.dates = dates
@@ -901,9 +923,9 @@ class LogFunction(metaclass=MetaForAtoms):
                 ls.append(arg)
         return ls
     
-    def substitute(self, args):
+    def substitute(self, args):        
         subs = copy.deepcopy(self)
-        subs.args_ID = hash(tuple(args))        
+        subs.args_ID = hash(tuple(args))     
         if type(args) is dict:
             for x, arg in enumerate(subs.args):
                 if isinstance(arg, tuple) and arg in args:
@@ -919,7 +941,7 @@ class LogFunction(metaclass=MetaForAtoms):
                     subs.args[x][0] = args[x]
                     subs.args[x] = tuple(subs.args[x])
                 else:
-                    subs.args[x] = args[x]        
+                    subs.args[x] = args[x]
         return subs
     
     def change_params(self, new=None, revert=False):
@@ -937,7 +959,7 @@ class LogFunction(metaclass=MetaForAtoms):
             del self.oldTerm 
     
     def __str__(self):
-        return "<LogFunction '{0}' -> args: {1}>".format(self.func,self.args)
+        return "<LogFunction | {0}: {1}>".format(self.func,self.args)
 
 def make_function(sent, f_type=None, *args):
     """Parses and makes a function of n-arity.
@@ -1022,7 +1044,6 @@ def make_function(sent, f_type=None, *args):
         """A special case for time calculus, not considered a relation.        
         It's not a subclass of LogFunction.
         """
-        klass = 'TimeFunc'
         
         def __init__(self, sent):
             sent = sent.replace(' ','')
@@ -1064,6 +1085,10 @@ def make_function(sent, f_type=None, *args):
     else:
         if sent is None: return LogFunction
         return LogFunction(sent)
+
+TimeFunc = make_function(None, 'time_calc')
+GroundedTerm = make_fact(None, 'grounded_term')
+FreeTerm = make_fact(None, 'free_term')
 
 # ===================================================================#
 #   HELPER FUNCTIONS

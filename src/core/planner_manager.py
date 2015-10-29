@@ -4,8 +4,6 @@
 
 This module manages the different planning implementations, the context 
 for planning and the selection of the different algorithms based on context.
-
-
 """
 
 # ===================================================================#
@@ -14,7 +12,12 @@ for planning and the selection of the different algorithms based on context.
 
 from types import MethodType, FunctionType
 
-from core.logic_parser import *
+from core.logic_parser import (
+    GlobalLogicParser,
+    LogFunction,
+    LogPredicate,
+    LogSentence
+)
 
 # ===================================================================#
 #   CONTEXT MANAGER

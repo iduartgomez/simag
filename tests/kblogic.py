@@ -18,17 +18,20 @@ class AskReprGetAnswer(unittest.TestCase):
         ask = [['professor[$Lucy,u=1] && person[$Lucy,u=1]'],
                ['professor[$Lucy,u=1]', 'person[$John,u=1]'],
                ['professor[$Lucy,u>0] && person[$Lucy,u<1]'],
-               ['criminal[$West,u=1]'],]
-        eval = [None, [True,True], False, True]
+               ['criminal[$West,u=1]'],
+               ['fat[$Pancho,u=1,*t=NOW]'],]
+        eval = [None, [True,True], False, True, True]
         iter_test(self, sents, ask, eval, single=True)
     
     def test_ask_func(self):
+        
         sents = load_sentences('ask_func.txt')
         ask = [['<criticize[$John,u=1;$Lucy]>'],
                ['<friend[$Lucy,u=0;$John]>'],
                ['<sells[$M1,u=1;$West;$Nono]>'],
-               ['<produce[milk,u=1;cow]>']]
-        eval = [True,True,True,True]
+               ['<produce[milk,u=1;cow]>'],
+               ['<eat[$M1,u=1;$Pancho]>'],]
+        eval = [True, True, True, True, True]
         iter_test(self, sents, ask, eval, single=True)
 
 class EvaluationOfFOLSentences(unittest.TestCase):
@@ -96,8 +99,8 @@ class LogicSentenceParsing(unittest.TestCase):
                 self.assertEqual(val, obj.get_ctg(ctg=ctg))
             else:
                 obj = rep.classes[name]
-                chk_ctg = obj.check_parents([ctg])
-                self.assertEqual(val, obj.get_parents(ctg=ctg))
+                chk_ctg = obj.check_ctg([ctg])
+                self.assertEqual(val, obj.get_ctg(ctg=ctg))
             self.assertIn(ctg, chk_ctg, "Category not declared.")
         
         rep = Representation()
@@ -177,20 +180,28 @@ def load_sentences(test):
     ls, sup_ls = [], []
     with open(logic_test, 'r') as f:
         for line in f:
-            if line.strip()[0] == '#': pass
-            elif line.strip() == '{':
-                sup_ls, ls = ls, list()
-            elif line.strip() == '}':
-                sup_ls.append(ls)
-                ls = sup_ls
-            else: ls.append(line.strip())
+            line = line.strip()
+            if 'cb' in locals() and line[0] != '}':
+                cb = cb + line
+            else:
+                if line[0] == '#': pass
+                elif line == 'BLOCK':
+                    sup_ls, ls = ls, list()
+                elif line == '/BLOCK':
+                    sup_ls.append(ls)
+                    ls = sup_ls
+                elif line[0] == '{':
+                    cb = line
+                elif line[0] == '}':
+                    cb = cb + line
+                    ls.append(cb)
+                    del cb
+                else: ls.append(line)
     return ls
 
 def iter_test(self, sents, ask, eval, single=False):
     for i, test in enumerate(sents):
         with self.subTest(test='subtest {0}: {1}'.format(i,ask[i])):
-            #print('\n===== SUBTEST =====')
-            #print('subtest',i,'|',test,'\n')
             if isinstance(test, list):
                 for s in test:
                     self.rep.tell(s)
@@ -214,10 +225,6 @@ def iter_test(self, sents, ask, eval, single=False):
                     answ = self.rep.ask(q)
                     for k in eval[i].keys():
                         self.assertEqual(eval[i][k], answ[k])
-            #import pprint
-            #pprint.pprint(self.rep.classes)
-            #pprint.pprint(self.rep.individuals)
-            #print()
 
 
 if __name__ == "__main__":

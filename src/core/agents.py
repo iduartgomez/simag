@@ -9,6 +9,7 @@ Actions
 (which includes other agents).
 2) Elements for the previous decission making about what actions to commit.
 """
+
 # ===================================================================#
 #   Imports and globals
 # ===================================================================#

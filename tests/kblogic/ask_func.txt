@@ -1,11 +1,11 @@
 # Test 1.1/00:
-{
+BLOCK
 	professor[$Lucy,u=1]
 	dean[$John,u=1]
 	<criticize[$John,u=1;$Lucy]>	
-}
+/BLOCK
 # Test 1.2/01:
-{
+BLOCK
 	professor[$Lucy,u=1]
 	dean[$John,u=1]
 	<criticize[$John,u=1;$Lucy]>
@@ -13,9 +13,9 @@
 	:vars:x: (professor[x,u=1] |> person[x,u=1])
 	#:vars:x,y: (person[x,u=1] && person[y,u=1] && <criticize[y,u=1;x]> |> <friend[x,u=0;y]>)
     :vars:x,y: (person[x,u=1] && person[y,u=1] && dean[y,u=1] && <criticize[y,u=1;x]> |> <friend[x,u=0;y]>)
-}
+/BLOCK
 # Test 2/02
-{
+BLOCK
 	<owns[$M1,u=1;$Nono]>
 	missile[$M1,u=1]
 	american[$West,u=1]
@@ -25,10 +25,20 @@
 	:vars:x: (missile[x,u=1] => weapon[x,u=1])
 	:vars:x: (<enemy[x,u=1;$America]> => hostile[x,u=1])
      #:vars:x,y: (professor[x,u=1] && dean[y,u=1] => <friend[y,u=1;x]> || <knows[y,u=0;x]>)
-}
+/BLOCK
 # Test 3/03 -> classes
-{	
+BLOCK
     animal[cow,u=1]
     female[cow,u=1]
     animal[cow,u=1] && female[cow,u=1] => <produce[milk,u=1;cow]>
-}
+/BLOCK
+# Test 4/04
+BLOCK
+	{
+    	:vars: x, y, t1 -> time[2015.01.01], t2 -> time[2015.02.01]:
+    	(dog[x,u=1] && meat[y,u=1] && fat[x,u=1,*t=t2] && <timeCalc[t1<t2]> => <eat[y,u=1;x;*t=t1]>)
+    }
+    dog[$Pancho,u=1]    
+    meat[$M1,u=1]
+    fat[$Pancho,u=1]
+/BLOCK
