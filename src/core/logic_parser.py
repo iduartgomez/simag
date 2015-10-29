@@ -229,9 +229,16 @@ class LogSentence(object):
                     assert isinstance(const, type_), \
                     "{0} is not a {1} object".format(const, type_)
                 self.assigned[var_name] = const
+            # acquire lock
+            preds = self.get_pred(branch='r')
+            ag.thread_manager(preds)
             self.start.solve(self, ag, key=[0])
+            ag.thread_manager(preds, unlock=True)
         elif len(self.var_order) == 0:
+            preds = self.get_pred(branch='r')
+            ag.thread_manager(self.get_pred(branch='r'))
             self.start.solve(self, ag, key=[0])
+            ag.thread_manager(preds, unlock=True)
         else: return
     
     def get_ops(self, p, chk_op=['||', '=>', '<=>:']):
@@ -923,7 +930,7 @@ class LogFunction(metaclass=MetaForAtoms):
                 ls.append(arg)
         return ls
     
-    def substitute(self, args):        
+    def substitute(self, args):   
         subs = copy.deepcopy(self)
         subs.args_ID = hash(tuple(args))     
         if type(args) is dict:

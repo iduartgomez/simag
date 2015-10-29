@@ -14,7 +14,6 @@ This module adds methods and classes for:
 from datetime import datetime
 
 
-
 # ===================================================================#
 #   Recording subsystem
 # ===================================================================#
@@ -36,7 +35,7 @@ class BmsWrapper(object):
         """
         def add_or_create():
             if postpone is True:
-                BeliefRecord(pred, proof)
+                BeliefRecord(self, pred, proof)
             else:
                 prev_rec.add_entry(pred, proof)
         
@@ -59,6 +58,20 @@ class BmsWrapper(object):
                     prev_rec = prev_rec.belief_record
             add_or_create()
     
+    def _check_prev_recs(self, belief):
+        """After a change look for all the changes that were produced
+        due to this belief previous value and call a rollback if it applies.
+        """
+        produced = None
+        #print(belief)
+        if produced:
+            self.__rollback()
+    
+    def __rollback(self):
+        """Rollback previous beliefs if they no longer apply after a change.
+        """
+        pass
+    
 class BeliefRecord(object):
     """Representation of how a belief became to existence.
     
@@ -68,7 +81,8 @@ class BeliefRecord(object):
     from collections import namedtuple
     BmsRecord = namedtuple('BmsRecord', ['date', 'form', 'change'])
     
-    def __init__(self, pred, form=None):
+    def __init__(self, bmswrapper, pred, form=None):
+        self.bms = bmswrapper
         self.entries = []
         pred.belief_record = self
         entry = self.new_entry(form, pred.value)
@@ -77,7 +91,11 @@ class BeliefRecord(object):
     def add_entry(self, pred, form=None):
         entry = self.new_entry(form, pred.value)
         self.entries.append(entry)
-    
+        # TODO: retrieve all the changes that were produced by consequence
+        # of this element and re-run the test to see if it applied yet
+        # else roll-back as it no longer applies
+        self.bms._check_prev_recs(self)
+                   
     @classmethod
     def new_entry(cls, form, val):
         return cls.BmsRecord(

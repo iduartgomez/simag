@@ -43,6 +43,7 @@ import uuid
 import itertools
 import re
 from datetime import datetime
+from threading import Lock
 
 import core.bms
 from core.logic_parser import *
@@ -68,7 +69,9 @@ class Representation(object):
         | Entities are denoted with a $ symbol followed by a name.
         classes -> Sets of objects that share a common property.
     """
+    
     def __init__(self):
+        self._locked = {}
         self.individuals = {}
         self.classes = {}
         self.bmsWrapper = core.bms.BmsWrapper(self)
@@ -236,10 +239,9 @@ class Representation(object):
                     self.classes[sbj].add_cog(sent)
                 else:
                     if not issubclass(pclass, LogFunction): 
-                        c = 'class'
-                    else: c = 'relation'
-                    nc = Category(sbj)
-                    nc.type_ = c
+                        nc = Category(sbj)
+                    else: 
+                        nc = Relation(sbj)
                     nc.add_cog(sent)
                     self.classes[sbj] = nc
             else:
@@ -247,10 +249,9 @@ class Representation(object):
                     self.classes[p].add_cog(sent)
                 else:
                     if not issubclass(pclass, LogFunction): 
-                        c = 'class'
-                    else: c = 'relation'
-                    nc = Category(p)
-                    nc.type_ = c
+                        nc = Category(sbj)
+                    else: 
+                        nc = Relation(sbj)
                     nc.add_cog(sent)
                     self.classes[p] = nc
         
@@ -271,62 +272,88 @@ class Representation(object):
                 chk_args(p)
         
     def save_rule(self, proof):
-        preds = proof.get_pred()
-        preds.extend(proof.get_pred(branch='r'))
+        preds = proof.get_all_preds()
         n = []
         for p in preds:
             if issubclass(p.__class__, LogFunction): name = p.func
             else: name = p.parent
             n.append(name)
-            if name in self.classes and \
-            proof not in self.classes[name].cog:
+            if name in self.classes \
+            and proof not in self.classes[name].cog:
                 self.classes[name].add_cog(proof)
             else:
-                c = 'class' if len(name) == 2 else 'relation'
-                nc = Category(name)
-                nc.type_ = c
+                if not issubclass(p.__class__, LogFunction): 
+                    nc = Category(name)
+                else: 
+                    nc = Relation(name)
                 nc.add_cog(proof)
                 self.classes[name] = nc
         # Run the new formula with individuals/classes that match.
-        obj_dic = self.inds_by_ctg(set(n))
-        cls_dic = self.cls_by_ctg(set(n))
+        n = set(n)
+        obj_dic = self.objs_by_ctg(n, 'individuals')
+        cls_dic = self.objs_by_ctg(n, 'classes')
         obj_dic.update(cls_dic)
-        subrpr = SubstRepr(self, obj_dic)
-        for ind in subrpr.individuals.keys():
-            proof(subrpr, ind)
+        for obj in obj_dic.keys():
+            proof(self, obj)
             if hasattr(proof,'result'): del proof.result
-        self.push(subrpr)
 
-    def inds_by_ctg(self, ctgs):
+    def objs_by_ctg(self, ctgs, type_):
+        if type_== 'individuals':
+            collect = self.individuals.values()
+        elif type_ == 'classes':
+            collect = self.classes.values()
+        else: 
+            raise ValueError("'type_' parameter must have one of the \
+            following values: individuals, classes")
         ctg_dic = {}
-        for ind in self.individuals.values():
+        for ind in collect:
             s = ind.check_ctg(ctgs)
             t = set(ind.get_rel())
             t = t.intersection(ctgs)
             t = t.union(s)
-            ctg_dic[ind.name] = t
-        return ctg_dic
-    
-    def cls_by_ctg(self, ctgs):
-        ctg_dic = {}
-        for cls in self.classes.values():
-            s = cls.check_ctg(ctgs)
-            t = set(cls.get_rel())
-            t = t.intersection(ctgs)
-            t = t.union(s)
-            ctg_dic[cls.name] = t
+            if len(t) != 0: ctg_dic[ind.name] = t
         return ctg_dic
     
     def push(self, subs):
         """Takes a SubstRepr object and pushes changes to self.
         It calls the BMS to record any changes and inconsistencies.
         """
+        raise AttributeError("'push' method not implemented")
         if hasattr(subs,'individuals'):
             self.individuals.update(subs.individuals)
         if hasattr(subs,'classes'):
             self.classes.update(subs.classes)
+    
+    def thread_manager(self, to_lock, unlock=False):
+        """This method is called to manage locks on working objects.
+        
+        When a substitution is done all the relevant objects are locked until
+        it finishes to prevent race conditions.
+        
+        After it finishes the locks are freed so an other subtitution can pick
+        up the request.
+        """
+        if unlock is True:
+            for p in to_lock:
+                if issubclass(p.__class__, LogFunction): o = p.func
+                else: o = p.parent
+                lock = self._locked[o]
+                lock.release()
+                del self._locked[o]
+            return
+        
+        for p in to_lock:
+            if issubclass(p.__class__, LogFunction): o = p.func
+            else: o = p.parent
+            if o in self._locked:
+                self._locked[o].acquire(timeout=5)
+            else:
+                lock = Lock()
+                self._locked[o] = lock
+                lock.acquire(timeout=5)
 
-# TODO: individuals/classes should be linked through a tree-like structure
+
+# TODO: individuals/classes should be linked in a tree structure
 # for more effitient retrieval. This should be done in 'function' and 
 # 'predicate' objects.
 class Individual(object):
@@ -453,7 +480,7 @@ class Individual(object):
                     pop_old = True
                     break         
             if pop_old:
-                func.belief_system = rel[i].belief_record
+                func.belief_record = rel[i].belief_record
                 rel.pop(i)
             rel.append(func)
     
@@ -560,7 +587,7 @@ class Category(object):
                         pop_old = True
                         break         
                 if pop_old:
-                    func.belief_system = rel[i].belief_record
+                    func.belief_record = rel[i].belief_record
                     rel.pop(i)
                 rel.append(func)
     
@@ -705,7 +732,6 @@ class Inference(object):
         self.vrs = set()
         self.nodes = {}
         self.infer_facts(*args)
-        self.kb.push(self.subkb)
 
     def infer_facts(self, sent):
         """Inference function from first-order logic sentences.
@@ -721,18 +747,29 @@ class Inference(object):
             if issubclass(pclass, LogFunction):
                 try:
                     if isind is True: 
-                        res = self.subkb.individuals[var].test_rel(pred)
+                        res = self.kb.individuals[var].test_rel(pred)
                     else:
-                        res = self.subkb.classes[var].test_rel(pred)
+                        res = self.kb.classes[var].test_rel(pred)
                 except KeyError: res = None
             elif issubclass(pclass, LogPredicate):
                 try:
                     if isind is True:
-                        res = self.subkb.individuals[var].test_ctg(pred)
+                        res = self.kb.individuals[var].test_ctg(pred)
                     else:
-                        res = self.subkb.classes[var].test_ctg(pred)
+                        res = self.kb.classes[var].test_ctg(pred)
                 except KeyError: res = None
             self.results[var][q] = res
+        
+        def rule_tracker():
+            # create a dictionary for tracking what proofs have been run or not
+            if hasattr(self, 'queue') is False:
+                self.queue = dict()
+                for query in self.nodes.values():
+                    for node in query:
+                        self.queue[node] = {'neg': set(), 'pos': set()}
+            else:
+                for node in self.queue:
+                    self.queue[node] = {'neg': set(), 'pos': set()}
         
         # Parse the query
         if type(sent) is str:
@@ -751,11 +788,9 @@ class Inference(object):
             try: self.get_rules()
             except Inference.NoSolutionError: pass
         # Get the caterogies for each individual/class
-        self.obj_dic = self.kb.inds_by_ctg(self.chk_cats)
-        cls_dic = self.kb.cls_by_ctg(self.chk_cats)
+        self.obj_dic = self.kb.objs_by_ctg(self.chk_cats, 'individuals')
+        cls_dic = self.kb.objs_by_ctg(self.chk_cats, 'classes')
         self.obj_dic.update(cls_dic)
-        # Create a new, filtered and temporal, work KB
-        self.subkb = SubstRepr(self.kb, self.obj_dic)
         # Start inference process
         self.results = dict()
         for var, preds in self.query.items():
@@ -773,7 +808,7 @@ class Inference(object):
                 self.results[var] = {}
                 for pred in preds:
                     pclass = pred.__class__
-                    self.rule_tracker()
+                    rule_tracker()
                     if issubclass(pclass, LogFunction):
                         self.actv_q, q = (var, pred.func), pred.func
                     elif issubclass(pclass, LogPredicate):
@@ -843,17 +878,6 @@ class Inference(object):
                     terms[names].append(p[1])
                     ctgs.append(p[1].parent)
         self.query, self.ctgs = terms, ctgs
-
-    def rule_tracker(self):
-        # create a dictionary for tracking what proofs have been run or not
-        if hasattr(self, 'queue') is False:
-            self.queue = dict()
-            for query in self.nodes.values():
-                for node in query:
-                    self.queue[node] = {'neg': set(), 'pos': set()}
-        else:
-            for node in self.queue:
-                self.queue[node] = {'neg': set(), 'pos': set()}
     
     def get_rules(self):
         def mk_node(pos):
@@ -960,7 +984,7 @@ class Inference(object):
             args = mapped.pop()
             key = hash(args)
             if key in self.queue[node]['neg'] and self.updated is True:
-                node.rule(self.subkb, args)
+                node.rule(self.kb, args)
                 res = hasattr(node.rule, 'result')
                 if res is True and node.rule.result is not False:
                     self.updated.append(True)
@@ -971,7 +995,7 @@ class Inference(object):
                     del node.rule.result
             elif (key not in self.queue[node]['pos']) \
             and (key not in self.queue[node]['neg']):
-                node.rule(self.subkb, args)
+                node.rule(self.kb, args)
                 res = hasattr(node.rule, 'result')
                 if res is True and node.rule.result is not False:
                     self.updated.append(True)
@@ -994,68 +1018,6 @@ class Inference(object):
                     if len(r) == y:
                         subactv[i].add(obj)
         return subactv
-
-class SubstRepr(Representation):
-    """During an inference the original KB is isolated and only
-    the relevant classes and entities are copied into a temporal
-    working KB.
-    
-    Once the inference is done, results are cleaned up, saved
-    in the KB and the BMS routine is ran.
-    """
-
-    def __init__(self, kb, *args):
-        self.individuals = {}
-        self.classes = {}
-        self.bmsWrapper = kb.bmsWrapper
-        self.make(kb, *args)
-    
-    # TODO: instead of copying each obj, weak reference original
-    # objs and when evaluating, if a change is done push it to the
-    # original object.
-    def make(self, kb, obj_dic):
-        for s in obj_dic:
-            if '$' in s[0]:
-                # It's an individual
-                o_ind = kb.individuals[s]
-                n_ind = Individual(s)
-                for attr, val in o_ind.__dict__.items():
-                    if attr != 'relations' or attr != 'categ':
-                        n_ind.__dict__[attr] = val
-                print(n_ind)
-                nrm_ctg = obj_dic[s]
-                categ = []
-                for c in o_ind.categ:
-                    if c.parent in nrm_ctg:
-                        categ.append(c)
-                rels = {}
-                for rel in o_ind.relations:
-                    if rel in nrm_ctg:
-                        rels[rel] = o_ind.relations[rel]
-                n_ind.relations, n_ind.categ = rels, categ
-                self.individuals[n_ind.name] = n_ind
-            else:
-                # It's a class
-                o_cls = kb.classes[s]
-                n_cls = Category(s)
-                for attr, val in o_cls.__dict__.items():
-                    if attr != 'relations' or attr != 'parents':
-                        n_cls.__dict__[attr] = val
-                nrm_ctg = obj_dic[s]
-                categ = []
-                if hasattr(o_cls, 'parents'):
-                    for c in o_cls.parents:
-                        if c.parent in nrm_ctg:
-                            categ.append(c)
-                    o_cls.parents = categ
-                if hasattr(o_cls, 'relations'):
-                    rels = {}
-                    for rel in o_cls.relations:
-                        if rel in nrm_ctg:
-                            rels[rel] = o_cls.relations[rel]
-                    n_cls.relations = rels
-                n_cls.parents = categ
-                self.classes[n_cls.name] = n_cls
 
 
 if __name__ == '__main__':
