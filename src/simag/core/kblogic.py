@@ -946,23 +946,14 @@ class Inference(object):
 
 if __name__ == '__main__':
     rep = Representation()
-    string = """
-    (<owns[$M1,u=1;$Nono]>)
-    (missile[$M1,u=1])
-    (american[$West,u=1])
-    (<enemy[$Nono,u=1;$America]>)
-    
-    ((let x, y, z) 
-     ((american[x,u=1] && weapon[y,u=1] && <sells[y,u=1;x;z]> && hostile[z,u=1] )
-      |> criminal[x,u=1]))
-    
-    ((let x)
-     (( <owns[x,u=1;$Nono]> && missile[x,u=1]) |> <sells[x,u=1;$West;$Nono]>))
-    
-    (( let x ) (missile[x,u=1] |> weapon[x,u=1]))
-    (( let x ) (<enemy[x,u=1;$America]> |> hostile[x,u=1]))
+    string1 = """
+    (( let x, y, t1:time, t2:time="*now" )
+     (( dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x] && fn::time_calc(t1<t2) )
+      |> fat(time=t2)[x,u=1] ))
+    ( dog[$Pancho,u=1] )
+    ( meat[$M1,u=1] )
+    ( fn::eat(time="2015.07.05.10.25")[$M1,u=1;$Pancho] )
     """
-    rep.tell(string)
-    res = rep.ask('(criminal[$West,u=1])')
-    print(res)
+    rep.tell(string1)
+    rep.ask('(fat(time="*now")[$Pancho,u=1])')
     

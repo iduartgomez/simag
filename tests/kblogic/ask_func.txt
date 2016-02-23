@@ -43,7 +43,7 @@ BLOCK
     ( (animal[cow,u=1] && female[cow,u=1]) |> <produce[milk,u=1;cow]> )
 /BLOCK
 # Test 4/04 
-/*BLOCK
+BLOCK
 {
 	(( let x, y, t1: time=2015.01.01, t2: time=2015.02.01 )
      ( ( dog[x,u=1] && meat[y,u=1] && fat[x,u=1,*t=t2] && <timeCalc[t1<t2]> )
@@ -54,4 +54,4 @@ BLOCK
     ( dog[$Pancho,u=1] )
     ( meat[$M1,u=1] )
     ( fat[$Pancho,u=1] )
-/BLOCK */
+/BLOCK

@@ -17,23 +17,23 @@ class BMSTesting(unittest.TestCase):
     
     def test_rollback(self):
         fol="""
-            ( (let x, y)
-              ( ( dog[x,u=1] && meat[y,u=1] && <eat[y,u=1;x]> ) 
+            ( ( let x, y )
+              ( ( dog[x,u=1] && meat[y,u=1] && fn::eat[y,u=1;x] ) 
                 |> fat[x,u=1] ) )
             ( dog[$Pancho,u=1] )
             ( meat[$M1,u=1] )
-            ( <eat[$M1,u=1;$Pancho]> )
+            ( fn::eat[$M1,u=1;$Pancho] )
         """       
         self.rep.tell(fol)
         self.assertTrue( self.rep.ask("(fat[$Pancho,u=1])", single=True) )
         #obj = self.rep.individuals['$Pancho'].get_ctg('fat', obj=True)
         
         fol = """
-            (<run[$Pancho,u=1]>)
-            ((let x,y) ((dog[x,u=1] && <run[x,u=1]>) |> fat[x,u=0]))
+            ( fn::run[$Pancho,u=1] )
+            (( let x, y ) (( dog[x,u=1] && fn::run[x,u=1] ) |> fat[x,u=0] ))
         """        
         self.rep.tell(fol)
-        self.assertTrue( self.rep.ask("(fat[$Pancho,u=0])", single=True) )
+        self.assertTrue( self.rep.ask("( fat[$Pancho,u=0] )", single=True) )
         obj = self.rep.individuals['$Pancho'].get_ctg('fat', obj=True)
 
         #import pprint
@@ -42,24 +42,26 @@ class BMSTesting(unittest.TestCase):
     @unittest.skip
     def test_incompatible(self):
         fol="""
-            ((lets x,y) ((dog[x,u=1] && meat[y,u=1] && <eat[y,u=1;x]>) |> fat[x,u=1]))
-            (dog[$Pancho,u=1])
-            (meat[$M1,u=1])
-            (<eat[$M1,u=1;$Pancho]>)
+            ( ( let x, y )
+              ( ( dog[x,u=1] && meat[y,u=1] && fn::eat[y,u=1;x] ) 
+                |> fat[x,u=1] ) )
+            ( dog[$Pancho,u=1] )
+            ( meat[$M1,u=1] )
+            ( fn::eat[$M1,u=1;$Pancho] )
         """
         self.rep.tell(fol)
-        self.assertTrue( self.rep.ask("fat[$Pancho,u=1]", single=True) )
+        self.assertTrue( self.rep.ask("( fat[$Pancho,u=1] )", single=True) )
         
         fol = """
-            (<run[$Pancho,u=1]>)
-            ((lets x,y) ((dog[x,u=1] && <run[x,u=1]>) |> fat[x,u=0]))
+            ( fn::run[$Pancho,u=1] )
+            (( let x,y ) (( dog[x,u=1] && fn::run[x,u=1] ) |> fat[x,u=0] ))
         """        
         self.rep.tell(fol)
-        self.assertTrue( self.rep.ask("(fat[$Pancho,u=0])", single=True) )
+        self.assertTrue( self.rep.ask("( fat[$Pancho,u=0] )", single=True) )
         
-        fol = "(<eat[$M1,u=1;$Pancho]>)"
+        fol = "(fn::eat[$M1,u=1;$Pancho] )"
         self.rep.tell(fol)
-        self.assertTrue( self.rep.ask("(fat[$Pancho,u=1])", single=True) )
+        self.assertTrue( self.rep.ask("( fat[$Pancho,u=1] )", single=True) )
 
 class AskReprGetAnswer(unittest.TestCase):    
     
@@ -70,23 +72,24 @@ class AskReprGetAnswer(unittest.TestCase):
                    ['(professor[$Lucy,u=1])', '(person[$John,u=1])'],
                    ['(professor[$Lucy,u>0] && person[$Lucy,u<1])'],
                    ['(criminal[$West,u=1])'],
-                   #['(fat[$Pancho,u=1,*t=NOW])'], => True
+                   ['(fat(t="now")[$Pancho,u=1])'],
         ]
-        eval = [None, [True,True], False, True, ]
+        eval = [None, [True,True], False, True, True]
         iter_test(self, sents, ask, eval, single=True)
     
+    @unittest.skip
     def test_ask_func(self):
         sents = load_sentences('ask_func.txt')
         ask = [
-                   ['(<criticize[$John,u=1;$Lucy]>)'],
-                   ['(<friend[$Lucy,u=0;$John]>)'],
-                   ['(<sells[$M1,u=1;$West;$Nono]>)'],
-                   ['(<produce[milk,u=1;cow]>)'],
-                   #['(<eat[$M1,u=1;$Pancho]>)'], => True
+                   ['(fn::criticize[$John,u=1;$Lucy])'],
+                   ['(fn::friend[$Lucy,u=0;$John])'],
+                   ['(fn::sells[$M1,u=1;$West;$Nono])'],
+                   ['(fn::produce[milk,u=1;cow])'],
+                   ['(fn::eat[$M1,u=1;$Pancho])'],
         ]
-        eval = [True, True, True, True, ]
+        eval = [True, True, True, True, True]
         iter_test(self, sents, ask, eval, single=True)
-        
+
 class EvaluationOfFOLSentences(unittest.TestCase):
     
     def setUp(self):
@@ -153,10 +156,9 @@ class LogicSentenceParsing(unittest.TestCase):
         sents = load_sentences('parse_predicate.txt')
         objs = [('$Lucy','professor', 1),
                 ('$John','dean', 0),
-                (('$Bill','student', 1),('$John','student',1)),
                 ('cow','animal',1)]
-        isactg = [3]
-        failures = [4, 5, 6, 7]
+        isactg = [2]
+        failures = [4, 5, 6, 3]
         for x, sent in enumerate(sents):
             with self.subTest(sent='subtest {0}: {1}'.format(x,sent)):
                 if x in isactg: cls = True
@@ -170,10 +172,10 @@ class LogicSentenceParsing(unittest.TestCase):
                         e = objs[x]
                         assert_res(cls=cls)
                 else:
-                    self.assertRaises(AssertionError, rep.tell, sent)
+                    self.assertRaises(Exception, rep.tell, sent)
     
-    @unittest.skip
-    def test_parse_function(self):        
+    def test_parse_function(self):
+        rep = Representation()
         sents = load_sentences('parse_function.txt')
         eval = [( [('$John', 1, '='), '$Lucy'], 'criticize') ,
                 ( [('$analysis', 0, '>'), '$Bill'], 'takes'),
@@ -183,13 +185,12 @@ class LogicSentenceParsing(unittest.TestCase):
         for x, sent in enumerate(sents):
             with self.subTest(sent='subtest {0}: {1}'.format(x,sent)):
                 if x not in failures:
-                    func = make_function(sent)
+                    func = logic_parser(sent).assert_rel[0]
                     self.assertEqual(func.func, eval[x][1])
                     self.assertListEqual(func.args, eval[x][0])
                 else:
-                    self.assertRaises(ValueError, make_function, sent)
+                    self.assertRaises(ValueError, rep.tell, sent)
     
-    @unittest.skip
     def test_parse_sentence_with_vars(self):        
         sents = load_sentences('parse_sentence_with_vars.txt')
         eval = [('dean','professor'),
@@ -202,17 +203,15 @@ class LogicSentenceParsing(unittest.TestCase):
                 ('enemy','hostile')]
         for x, sent in enumerate(sents):
             with self.subTest(sent='subtest {0}: {1}'.format(x,sent)):
-                ori, comp, hier = _parse_sent(sent)
-                lg_sent = make_logic_sent(ori, comp, hier)
-                preds = lg_sent.get_preds(conds=GL_PCONDS)
-                preds.extend(lg_sent.get_preds(branch='r',conds=GL_PCONDS))
-                chk1 = [p.func for p in preds if \
-                       issubclass(p.__class__, LogFunction)]
-                chk2 = [p.parent for p in preds if \
-                       issubclass(p.__class__, LogPredicate)]
-                chk1.extend(chk2)
+                lg_sent = logic_parser(sent).assert_cogs[0]
+                preds = lg_sent.get_all_preds()
+                chk = [p.func for p in preds \
+                       if issubclass(p.__class__, LogFunction)]
+                chk2 = [p.parent for p in preds \
+                        if issubclass(p.__class__, LogPredicate)]
+                chk.extend(chk2)
                 for obj in eval[x]:
-                    self.assertIn(obj, chk1)
+                    self.assertIn(obj, chk)
                 self.assertGreater(len(lg_sent.var_order), 0)
 
 #========================#

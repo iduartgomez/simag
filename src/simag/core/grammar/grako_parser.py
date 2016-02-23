@@ -17,7 +17,7 @@ from grako.parsing import graken, Parser
 from grako.util import re, RE_FLAGS  # noqa
 
 
-__version__ = (2016, 2, 22, 10, 4, 47, 0)
+__version__ = (2016, 2, 23, 20, 11, 53, 1)
 
 __all__ = [
     'SIMAGParser',
@@ -86,38 +86,6 @@ class SIMAGParser(Parser):
         )
 
     @graken()
-    def _comp_type_(self):
-        self._token('(')
-
-        def block0():
-            with self._group():
-                with self._choice():
-                    with self._option():
-                        self._var_decl_()
-                        self.ast['vars'] = self.last_node
-                    with self._option():
-                        self._skol_decl_()
-                        self.ast['skol'] = self.last_node
-                    self._error('no available options')
-        self._positive_closure(block0)
-
-        with self._group():
-            with self._choice():
-                with self._option():
-                    self._multi_assert_()
-                    self.ast['assertion'] = self.last_node
-                with self._option():
-                    self._comp_expr_()
-                    self.ast['expr'] = self.last_node
-                self._error('no available options')
-        self._token(')')
-
-        self.ast._define(
-            ['vars', 'skol', 'assertion', 'expr'],
-            []
-        )
-
-    @graken()
     def _icond_type_(self):
         self._token('(')
 
@@ -131,8 +99,7 @@ class SIMAGParser(Parser):
                         self._skol_decl_()
                         self.ast['skol'] = self.last_node
                     self._error('no available options')
-        self._positive_closure(block0)
-
+        self._closure(block0)
         self._icond_expr_()
         self.ast['expr'] = self.last_node
         self._token(')')
@@ -159,11 +126,45 @@ class SIMAGParser(Parser):
         )
 
     @graken()
+    def _icond_node_(self):
+        with self._group():
+            with self._choice():
+                with self._option():
+                    self._terminal_node_()
+                with self._option():
+                    self._icond_expr_()
+                self._error('no available options')
+
+    @graken()
+    def _comp_type_(self):
+        self._token('(')
+
+        def block0():
+            self._skol_decl_()
+            self.ast['skol'] = self.last_node
+        self._closure(block0)
+        with self._group():
+            with self._choice():
+                with self._option():
+                    self._multi_assert_()
+                    self.ast['assertion'] = self.last_node
+                with self._option():
+                    self._comp_expr_()
+                    self.ast['expr'] = self.last_node
+                self._error('no available options')
+        self._token(')')
+
+        self.ast._define(
+            ['skol', 'assertion', 'expr'],
+            []
+        )
+
+    @graken()
     def _comp_expr_(self):
         self._token('(')
         self._expr_node_()
         self.ast['lhs'] = self.last_node
-        self._comp_op_()
+        self._logic_op_()
         self.ast['op'] = self.last_node
         self._expr_node_()
         self.ast['rhs'] = self.last_node
@@ -185,41 +186,47 @@ class SIMAGParser(Parser):
                 self._error('no available options')
 
     @graken()
-    def _icond_node_(self):
-        with self._group():
-            with self._choice():
-                with self._option():
-                    self._terminal_node_()
-                with self._option():
-                    self._icond_expr_()
-                self._error('no available options')
-
-    @graken()
     def _var_decl_(self):
         self._token('(')
         self._token('let')
-
-        def block0():
-            with self._optional():
-                self._token(',')
+        with self._group():
             self._term_()
-            self.ast.setlist('@', self.last_node)
-        self._positive_closure(block0)
+            with self._optional():
+                self._token(':')
+                self._op_arg_()
+        self.ast.setlist('@', self.last_node)
 
+        def block1():
+            self._token(',')
+            with self._group():
+                self._term_()
+                with self._optional():
+                    self._token(':')
+                    self._op_arg_()
+            self.ast.setlist('@', self.last_node)
+        self._closure(block1)
         self._token(')')
 
     @graken()
     def _skol_decl_(self):
         self._token('(')
         self._token('exists')
-
-        def block0():
-            with self._optional():
-                self._token(',')
+        with self._group():
             self._term_()
-            self.ast.setlist('@', self.last_node)
-        self._positive_closure(block0)
+            with self._optional():
+                self._token(':')
+                self._op_arg_()
+        self.ast.setlist('@', self.last_node)
 
+        def block1():
+            self._token(',')
+            with self._group():
+                self._term_()
+                with self._optional():
+                    self._token(':')
+                    self._op_arg_()
+            self.ast.setlist('@', self.last_node)
+        self._closure(block1)
         self._token(')')
 
     @graken()
@@ -244,20 +251,9 @@ class SIMAGParser(Parser):
 
     @graken()
     def _multi_assert_(self):
-        self._token('(')
-        with self._group():
-            with self._choice():
-                with self._option():
-                    self._class_decl_()
-                    self.ast.setlist('@', self.last_node)
-                with self._option():
-                    self._func_decl_()
-                    self.ast.setlist('@', self.last_node)
-                self._error('no available options')
-        with self._optional():
-
-            def block3():
-                self._and_op_()
+        with self._choice():
+            with self._option():
+                self._token('(')
                 with self._group():
                     with self._choice():
                         with self._option():
@@ -267,32 +263,91 @@ class SIMAGParser(Parser):
                             self._func_decl_()
                             self.ast.setlist('@', self.last_node)
                         self._error('no available options')
-            self._closure(block3)
-        self._token(')')
+
+                def block3():
+                    self._and_op_()
+                    with self._group():
+                        with self._choice():
+                            with self._option():
+                                self._class_decl_()
+                                self.ast.setlist('@', self.last_node)
+                            with self._option():
+                                self._func_decl_()
+                                self.ast.setlist('@', self.last_node)
+                            self._error('no available options')
+                self._closure(block3)
+                self._token(')')
+            with self._option():
+                self._token('(')
+                self._token('decl')
+                with self._group():
+                    with self._choice():
+                        with self._option():
+                            self._class_decl_()
+                            self.ast.setlist('@', self.last_node)
+                        with self._option():
+                            self._func_decl_()
+                            self.ast.setlist('@', self.last_node)
+                        self._error('no available options')
+
+                def block10():
+                    self._token(';')
+                    with self._group():
+                        with self._choice():
+                            with self._option():
+                                self._class_decl_()
+                                self.ast.setlist('@', self.last_node)
+                            with self._option():
+                                self._func_decl_()
+                                self.ast.setlist('@', self.last_node)
+                            self._error('no available options')
+                self._closure(block10)
+                self._token(')')
+            self._error('no available options')
 
     @graken()
     def _class_decl_(self):
         self._term_()
         self.ast['klass'] = self.last_node
+        with self._optional():
+            self._token('(')
+            self._op_args_()
+            self.ast['op_args'] = self.last_node
+            self._token(')')
         self._args_()
         self.ast['args'] = self.last_node
 
         self.ast._define(
-            ['klass', 'args'],
+            ['klass', 'op_args', 'args'],
             []
         )
 
     @graken()
     def _func_decl_(self):
-        self._token('<')
-        self._term_()
-        self.ast['func'] = self.last_node
-        self._args_()
-        self.ast['args'] = self.last_node
-        self._token('>')
+        with self._choice():
+            with self._option():
+                self._token('fn::')
+                self._term_()
+                self.ast['func'] = self.last_node
+                with self._optional():
+                    self._token('(')
+                    self._op_args_()
+                    self.ast['op_args'] = self.last_node
+                    self._token(')')
+                self._args_()
+                self.ast['args'] = self.last_node
+            with self._option():
+                self._token('fn::')
+                self._term_()
+                self.ast['func'] = self.last_node
+                self._token('(')
+                self._op_args_()
+                self.ast['op_args'] = self.last_node
+                self._token(')')
+            self._error('no available options')
 
         self.ast._define(
-            ['func', 'args'],
+            ['func', 'op_args', 'args'],
             []
         )
 
@@ -325,26 +380,49 @@ class SIMAGParser(Parser):
 
     @graken()
     def _uval_(self):
-        with self._choice():
-            with self._option():
-                self._token('u')
-                self._token('=')
-                self.ast.setlist('@', self.last_node)
-                self._float_()
-                self.ast.setlist('@', self.last_node)
-            with self._option():
-                self._token('u')
-                self._token('<')
-                self.ast.setlist('@', self.last_node)
-                self._float_()
-                self.ast.setlist('@', self.last_node)
-            with self._option():
-                self._token('u')
-                self._token('>')
-                self.ast.setlist('@', self.last_node)
-                self._float_()
-                self.ast.setlist('@', self.last_node)
-            self._error('no available options')
+        self._token('u')
+        self._comp_op_()
+        self.ast.setlist('@', self.last_node)
+        self._number_()
+        self.ast.setlist('@', self.last_node)
+
+    @graken()
+    def _op_args_(self):
+        self._op_arg_()
+        self.ast.setlist('@', self.last_node)
+
+        def block1():
+            self._token(',')
+            self._op_arg_()
+            self.ast.setlist('@', self.last_node)
+        self._closure(block1)
+
+    @graken()
+    def _op_arg_(self):
+        with self._group():
+            with self._choice():
+                with self._option():
+                    self._string_()
+                with self._option():
+                    self._term_()
+                self._error('no available options')
+        self.ast['first_term'] = self.last_node
+        with self._optional():
+            self._comp_op_()
+            self.ast['op'] = self.last_node
+            with self._group():
+                with self._choice():
+                    with self._option():
+                        self._string_()
+                    with self._option():
+                        self._term_()
+                    self._error('no available options')
+            self.ast['second_term'] = self.last_node
+
+        self.ast._define(
+            ['first_term', 'op', 'second_term'],
+            []
+        )
 
     @graken()
     def _icond_op_(self):
@@ -355,7 +433,7 @@ class SIMAGParser(Parser):
         self._token('&&')
 
     @graken()
-    def _comp_op_(self):
+    def _logic_op_(self):
         with self._choice():
             with self._option():
                 self._token('<=>')
@@ -368,16 +446,32 @@ class SIMAGParser(Parser):
             self._error('expecting one of: && <=> => ||')
 
     @graken()
-    def _float_(self):
-        self._pattern(r'[0-9\.]+')
+    def _comp_op_(self):
+        with self._group():
+            with self._choice():
+                with self._option():
+                    self._token('=')
+                with self._option():
+                    self._token('<')
+                with self._option():
+                    self._token('>')
+                self._error('expecting one of: < = >')
 
     @graken()
     def _term_(self):
-        self._pattern(r'\$?[a-zA-Z0-9]+')
+        self._pattern(r'\$?[a-zA-Z0-9_]+')
+
+    @graken()
+    def _number_(self):
+        self._pattern(r'-?[0-9\.]+')
 
     @graken()
     def _letters_(self):
         self._pattern(r'[a-zA-Z]+')
+
+    @graken()
+    def _string_(self):
+        self._pattern(r'".*?"|\'.*?\'')
 
 
 class SIMAGSemantics(object):
@@ -387,22 +481,22 @@ class SIMAGSemantics(object):
     def stmt(self, ast):
         return ast
 
-    def comp_type(self, ast):
-        return ast
-
     def icond_type(self, ast):
         return ast
 
     def icond_expr(self, ast):
         return ast
 
+    def icond_node(self, ast):
+        return ast
+
+    def comp_type(self, ast):
+        return ast
+
     def comp_expr(self, ast):
         return ast
 
     def expr_node(self, ast):
-        return ast
-
-    def icond_node(self, ast):
         return ast
 
     def var_decl(self, ast):
@@ -432,22 +526,34 @@ class SIMAGSemantics(object):
     def uval(self, ast):
         return ast
 
+    def op_args(self, ast):
+        return ast
+
+    def op_arg(self, ast):
+        return ast
+
     def icond_op(self, ast):
         return ast
 
     def and_op(self, ast):
         return ast
 
-    def comp_op(self, ast):
+    def logic_op(self, ast):
         return ast
 
-    def float(self, ast):
+    def comp_op(self, ast):
         return ast
 
     def term(self, ast):
         return ast
 
+    def number(self, ast):
+        return ast
+
     def letters(self, ast):
+        return ast
+
+    def string(self, ast):
         return ast
 
 

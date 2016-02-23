@@ -8,7 +8,8 @@ import copy
 import datetime
 import re
 
-from simag.core.grammar.grako_parser import SIMAGParser, SIMAGSemantics
+from simag.core.grammar.grako_parser import SIMAGParser
+from pexpect.ANSI import term
 
 __all__ = (
 'logic_parser',
@@ -22,10 +23,52 @@ __all__ = (
 #   LOGIC SENTENCE PARSER
 # ===================================================================#
 
-class Semantics(SIMAGSemantics):
-    __reserved_words = ['var', 'exists', 'timeCalc']
-
 parser = SIMAGParser()
+
+class Semantics(object):
+    __reserved_words = ['let', 'exists', 'fn']
+    __reserved_fn_names = ['time_calc']
+    
+    def __init__(self):
+        self.__all_reserved = \
+            self.__reserved_fn_names + \
+            self.__reserved_fn_names
+    
+    class ReservedWord(Exception):        
+        def __init__(self, word):
+            self.word = word
+        
+        def __str__(self):
+            return "'{0}' is a reserved word".format(self.word)
+    
+    def arg(self, ast):
+        if ast.term in self.__all_reserved:
+            raise Semantics.ReservedWord(ast.term)
+        return ast
+    
+    def var_decl(self, ast):
+        error = [x for x in ast if x in self.__all_reserved]
+        if len(error) > 0:
+            raise Semantics.ReservedWord(error[0])
+        return ast
+    
+    def skol_decl(self, ast):
+        error = [x for x in ast if x in self.__all_reserved]
+        if len(error) > 0:
+            raise Semantics.ReservedWord(error[0])
+        return ast
+        
+    def class_decl(self, ast):
+        if ast.klass in self.__all_reserved:
+            raise Semantics.ReservedWord(ast.klass)
+        return ast
+        
+    def func_decl(self, ast):
+        if ast.func in self.__reserved_words:
+            raise Semantics.ReservedWord(ast.klass)
+        return ast
+
+semantic_actions = Semantics()
 
 class ParserState(object):
     __instance = None
@@ -51,9 +94,6 @@ class ParseResults(object):
         self.assert_rel = []
         self.assert_rules = []
         self.assert_cogs = []
-
-class EmptyString(Exception):
-    "Empty stream is not allowed"
     
 def logic_parser(string, tell=True):
     """Takes a string and returns the corresponding structured representing
@@ -66,13 +106,13 @@ def logic_parser(string, tell=True):
     `https://pypi.python.org/pypi/grako/`
     """    
     if string is "" or string is None:
-        raise EmptyString
+        raise SyntaxError("empty strings are not allowed")
     if tell is False: parser_eval.state = 'ask'
     else: parser_eval.state = 'tell'
-    ast = parser.parse(string, rule_name='block')
+    ast = parser.parse(string, rule_name='block', semantics=semantic_actions)
     results = ParseResults()
     #import json
-    #print(json.dumps(ast, indent=2))    
+    #print(json.dumps(ast, indent=2))
     for stmt in ast:
         if stmt.stmt is not None:
             sent = make_logic_sent(stmt.stmt)            
@@ -216,22 +256,16 @@ def make_logic_sent(ast):
     """
     
     class Particle(object):
-        """This is the base class to create logic particles
-        which pertain to a given sentence.
-        
-        Keys for solving proofs:
-        100: Substitute a child's predicates.
-        101: Check the truthiness of a child atom.
-        103: Return to parent atom.
-        """
+        """Base class for logic particles which pertain 
+        to a given sentence."""
         def __init__(self, cond, depth, parent, *args):
             self.depth = depth
             self.cond = cond
-            self.parent = parent
-            self._results = []
+            self.parent = parent            
             if cond == ':predicate:':
                 self.pred = args[0]
             else:
+                self._results = []
                 self.next = []
     
         def __str__(self):
@@ -478,48 +512,21 @@ def make_logic_sent(ast):
         
         def __repr__(self):
             return repr(self.pred)
-        
-    def new_atom(form, depth, parent, part_id, syb):
-        VAR_DECLARATION = ('var', 'exists')
-        if any(x in form for x in VAR_DECLARATION):
-            cond = ':stub:'
-            for s in VAR_DECLARATION:
-                pos = form.find(s)
-                if pos != -1: break
-            cl = form.find(';')
-            vars_ = form[pos+len(s):cl].replace(' ','').split(',')            
-            for var in vars_:
-                if ':' in var:
-                    var = var.split(':')
-                    if not hasattr(sent, 'var_types'):
-                        sent.var_types = dict()
-                    sent.var_types[var[0]], val = _get_type_class(var[1])
-                    if val is not None:
-                        if not hasattr(sent, 'pre_assigned'):
-                            sent.pre_assigned = {}
-                        sent.pre_assigned[var[0]] = val
-                elif var not in sent.var_order:
-                    sent.var_order.append(var)
-            p = Particle(cond, depth, part_id, parent, syb, form)
-            sent.particles.append(p)
-        elif '[' in form:
-            cond = ':predicate:'
-            result = _check_reserved_words(form)
-            if result == 'time_calc':
-                form = make_function(form, 'time_calc')
-            elif ('<' and '>') in form and '<=>' not in form:
-                form = make_function(form, 'relation')
-            else:
-                form = make_fact(form, 'free_term')
-            p = LogicAtom(cond, depth, part_id, parent, syb, form)
-            sent.particles.append(p)
     
     def traverse_ast(remain, parent, depth):        
-        def get_type(stmt, cmpd=False):            
+        def get_type(stmt, cmpd=False):    
             if stmt.func is not None:
                 if cmpd is True:
-                    return make_function(stmt, 'relation')
-                return make_function(stmt.func, 'relation')
+                    is_builtin = _check_reserved_words(stmt.func)
+                    if is_builtin:
+                        return make_function(stmt, is_builtin)
+                    else:
+                        return make_function(stmt, 'relation')
+                is_builtin = _check_reserved_words(stmt.func.func)
+                if is_builtin:
+                    return make_function(stmt.func, is_builtin)
+                else:
+                    return make_function(stmt.func, 'relation')
             elif stmt.klass is not None:
                 if cmpd is True:
                     return make_fact(stmt, 'free_term')
@@ -568,12 +575,34 @@ def make_logic_sent(ast):
         if remain.lhs is not None:
             traverse_ast(remain.rhs, particle, depth+1)
         if sent.depth < depth: sent.depth = depth
+        
+    def disambiguate_vars(vars_):
+        sent.var_order = []
+        for v in vars_:
+            if type(v) is str and v not in sent.var_order:
+                if v in sent.var_order:
+                    m = "duplicate variable name declared: {0}".format(v)
+                    raise ValueError(m)
+                sent.var_order.append(v)
+            else:
+                var, type_, value = v[0], v[2].first_term, v[2].second_term
+                if var in sent.var_order:
+                    m = "duplicate variable name declared: {0}".format(var)
+                    raise ValueError(m)
+                sent.var_order.append(var)
+                if not hasattr(sent, 'var_types'):
+                    sent.var_types = {}
+                sent.var_types[var] = _get_type_class(type_)
+                if value:
+                    if not hasattr(sent, 'pre_assigned'):
+                        sent.pre_assigned = {}
+                    sent.pre_assigned[var] = value
     
-    sent = LogSentence() 
+    sent = LogSentence()
     if ast.vars is not None:
-        sent.var_order = ast.vars
+        disambiguate_vars(ast.vars)
     if ast.skol is not None:
-        sent.skol_vars.extend(ast.skol)
+        disambiguate_vars(ast.skol)
     depth, parent = 0, None
     if ast.expr:
         traverse_ast(ast.expr, parent, depth)
@@ -635,25 +664,20 @@ class LogPredicate(metaclass=MetaForAtoms):
     types = ['grounded_term', 'free_term']
     
     def __init__(self, pred):
-        #print(pred)
         arg = pred.args[0]
         val, op = float(arg.uval[1]), arg.uval[0]
         if (val > 1 or val < 0):
-            m = "Illegal value: {0}, must be > 0, or < 1.".format(val[1])
-            raise AssertionError(m)
+            m = "illegal truth value: {0}, must be > 0, or < 1.".format(val)
+            raise ValueError(m)
         dates = None
-        # optional arguments
-        """
-        dates = None
-        if len(val) >= 3:
-            for arg in val[2:]:
-                if '*t' in arg:     
-                    date = _set_date(arg)
+        if pred.op_args:
+            for op_arg in pred.op_args:
+                if op_arg.first_term == 'time':
+                    date = _set_date(op_arg.second_term)
                     if type(date) is datetime.datetime:
                         if dates is None: dates = []
                         dates.append(date)
                     else: self.date_var = date
-        """
         return pred.klass, arg.term, val, op, dates
 
     def change_params(self, new=None, revert=False):
@@ -760,30 +784,28 @@ class LogFunction(metaclass=MetaForAtoms):
     """Base class to represent a logic function."""
     types = ['relation','time_calc']
     
-    def __init__(self, sent):        
+    def __init__(self, sent):
         self.func = sent.func
         dates, args_id, mk_args = None, list(), list()                 
         for a in sent.args:
             if a.uval is not None:
                 val = float(a.uval[1])
                 if (val > 1 or val < 0):
-                    m = "Illegal value: {0}, must be > 0, or < 1." .format(val)
-                    raise AssertionError(m)
+                    m = "illegal value: {0}, must be > 0, or < 1." .format(val)
+                    raise ValueError(m)
                 op = a.uval[0]           
                 mk_args.append((a.term, val, op))
             else:
                 mk_args.append(a.term)
             args_id.append(a.term)
-        # optional arguments
-        """    
-        for param in arg:
-            if '*t' in param:
-                date = _set_date(param)
-                if type(date) is datetime.datetime:
-                    if dates is None: dates = []
-                    dates.append(date)
-                else: self.date_var = date
-        """
+        if sent.op_args:
+            for op_arg in sent.op_args:
+                if op_arg.first_term == 'time':
+                    date = _set_date(op_arg.second_term)
+                    if type(date) is datetime.datetime:
+                        if dates is None: dates = []
+                        dates.append(date)
+                    else: self.date_var = date
         args_id = hash(tuple(args_id))
         arity = len(mk_args)
         return mk_args, args_id, arity, dates
@@ -937,15 +959,12 @@ def make_function(sent, f_type=None, *args):
         """
         
         def __init__(self, sent):
-            sent = sent.replace(' ','')
-            rgx_ob = re.compile(r'\b(.*?)\]')
-            func = rgx_ob.findall(sent)[0].split('[')[1]
-            op = [c for c in func if c in ['>','<','==']]
-            if len(op) > 1 or len(op) == 0:
-                raise ValueError('provide one operator')
-            else:
-                self.operator = op[0]
-                self.args = func.split(self.operator)
+            if not sent.op_args[0].op:
+                raise SyntaxError(
+                    "provide an operator in the 'time_func' arguments" )
+            self.args = [
+                sent.op_args[0].first_term, sent.op_args[0].second_term ]
+            self.operator = sent.op_args[0].op
         
         def __bool__(self):
             if self.operator == '<' and self.args[0] < self.args[1]:
@@ -964,7 +983,12 @@ def make_function(sent, f_type=None, *args):
             return subs
         
         def __str__(self):
-            return "TimeFunc({0})".format(self.args)
+            return "TimeFunc({} {} {})".format(
+                self.args[0], self.operator, self.args[1])
+        
+        def __repr__(self):
+            return "TimeFunc({} {} {})".format(
+                self.args[0], self.operator, self.args[1])
 
     assert (f_type in LogFunction.types or f_type is None), \
             'Function {0} does not exist.'.format(f_type)
@@ -986,21 +1010,22 @@ FreeTerm = make_fact(None, 'free_term')
 #   HELPER FUNCTIONS
 # ===================================================================#
 
-def _check_reserved_words(sent):
-    pred = sent.split('[')[0]
-    if 'timeCalc' in pred: return 'time_calc'
+def _check_reserved_words(word):
+    if word == "time_calc": return word
     return False
-    
+
+re_str = re.compile(r"(\"|\')(?P<string>.*?)(\"|\')")
 def _set_date(date):
-    # check if it's a variable name or special wildcard 'NOW'
-    date = date.replace('*t=','').split('.')
-    if len(date) == 1:
-        if date[0] == 'NOW': return datetime.datetime.now()
-        else: return date[0]
-    # else make a new datetime object
+    match = re.search(re_str, date)
+    if not match:
+        return date
+    elif match.group('string') == "*now":
+        return datetime.datetime.now()
+    else:
+        date = match.group('string').split('.')
     tb = ['year','month','day','hour','minute','second','microsecond']
     dobj = {}
-    for i,p in enumerate(date):
+    for i, p in enumerate(date):
         if 'tzinfo' not in p:
             dobj[ tb[i] ] = int(p)
     if 'year' not in dobj: raise ValueError('year not specified')
@@ -1022,12 +1047,10 @@ def _set_date(date):
         tzinfo=dobj['tzinfo']
     )
     
-def _get_type_class(var):
-    # split the string to take the variable
-    var = [c for c in var.split('=')]
-    if len(var) > 1: val = var[1]
-    else: val = None
-    # check type of the var    
-    if var[0] == 'time':
+def _get_type_class(type_): 
+    if type_ == 'time':
         type_ = make_function(None, f_type='time_calc')
-    return type_, val
+    else:
+        raise TypeError(
+            "function of the '{0}' type doesn't exist".format(type_))
+    return type_
