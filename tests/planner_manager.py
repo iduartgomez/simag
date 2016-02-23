@@ -1,12 +1,13 @@
 import unittest
 import os
 
-from core.planner_manager import *
+from simag.core.planner_manager import *
 
 #====================#
 #    UNIT TESTING    #
 #====================#
 
+@unittest.skip
 class test_solve_problem(unittest.TestCase):
     
     def test_move_box_to_table(self):

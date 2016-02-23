@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-
 """Main knowledge-base logic module, in this module exist the different 
 classes that transform and store the data for the individual agents and 
 serve as representations of the different objects and the relationships 
@@ -7,18 +6,18 @@ between them.
 
 Main
 ----
-:class: Representation. Main class, stores all the representations and
+`Representation`: Main class, stores all the representations and
 relationships for a given agent in a concrete time.
 
-:class: Individual. Represents a singular entity, which is the unique
+`Individual`: Represents a singular entity, which is the unique
 member of it's own set.
 
-:class: Categories. The sets in which the agent can classify objects.
+`Categories`: The sets in which the agent can classify objects.
 Also stores the types of relations an object can have.
 
 Support classes (and methods) and functions
 -------------------------------------------
-:class: LogSentence. Stores a serie of logical atoms (be them predicates or
+`LogSentence`: Stores a serie of logical atoms (be them predicates or
 connectives), that form a well-formed logic formula. These are rulesets 
 for reasoning, cataloging objects into sets/classes, and the relationships 
 between these objects. 
@@ -26,7 +25,7 @@ between these objects.
 LogSentences are owned by the funtion 'make_logic_sentence', and cannot be
 called directly.
 
-:class: Inference. Encapsulates the whole inference process, from making
+`Inference`: Encapsulates the whole inference process, from making
 a temporal substitution representation where the inference is operated to
 solving the query (including query parsing, data fetching and unification).
 """
@@ -41,16 +40,16 @@ solving the query (including query parsing, data fetching and unification).
 
 import uuid
 import itertools
-import re
 from datetime import datetime
 from threading import Lock
+from collections import OrderedDict
 
-import core.bms
-from core.logic_parser import *
-from core.logic_parser import make_function, make_fact, _parse_sent
-
-
-rgx_ob = re.compile(r'\b(.*?)\]')
+from simag.core import bms
+from simag.core.parser import (
+    logic_parser,
+    LogFunction,
+    LogPredicate,
+)
 
 # ===================================================================#
 #   REPRESENTATION OBJECTS CLASSES AND SUBCLASSES
@@ -71,17 +70,23 @@ class Representation(object):
     """
     
     def __init__(self):
+        """IMPORTANT! 
+        A representation shouldn't be initialized directly, instead it must
+        be initialized and owned by an agent. Agents are initialized from 
+        Rust where the main event loop is controlled from to manage 
+        concurrent operations and communication.
+        """
+        self.bmsWrapper = bms.BmsWrapper(self)
         self._locked = {}
         self.individuals = {}
         self.classes = {}
-        self.bmsWrapper = core.bms.BmsWrapper(self)
+        #rust.start_event_loop(self)
 
-    def tell(self, sent, block=True):
-        """Parses a sentence (or several of them, as a code block string 
-        delimited by newlines) into an usable formula and stores it into 
-        the internal representation along with the corresponding classes. 
-        In case the sentence is a predicate, the objects get declared as 
-        members of their classes.
+    def tell(self, string):
+        """Parses a sentence (or several of them) into an usable formula 
+        and stores it into the internal representation along with the 
+        corresponding classes. In case the sentence is a predicate, 
+        the objects get declared as members of their classes.
         
         Accepts first-order logic sentences sentences, both atomic 
         sentences ('Lucy is a professor') and complex sentences compossed 
@@ -96,33 +101,24 @@ class Representation(object):
         class for future use.
         
         For more examples check the LogSentence class docs.
-        """            
-        def process():
-            if isinstance(processed, LogSentence):
-                if len(processed.var_order) == 0: self.save_rule(processed)
-                else: self.add_cog(processed)
-            elif issubclass(processed.__class__, LogFunction): 
-                self.up_rel(processed)
-                self.bmsWrapper.add(processed)
-            elif issubclass(processed.__class__, LogPredicate): 
-                self.up_memb(processed)
-                self.bmsWrapper.add(processed)
-        
-        # Sign that the string passed is a code block
-        if block is True: result = GlobalLogicParser(sent, block=True)
-        else: result = GlobalLogicParser(sent)
-        if type(result) is list:
-            for processed in result:
-                process()
-        else:
-            processed = result
-            process()
+        """
+        results = logic_parser(string)
+        for a in results.assert_memb:
+            self.up_memb(a)
+            self.bmsWrapper.add(a)
+        for a in results.assert_rel:
+            self.up_rel(a)
+            self.bmsWrapper.add(a)
+        for a in results.assert_rules:
+            self.save_rule(a)
+        for a in results.assert_cogs:
+            self.add_cog(a)
     
     def ask(self, sent, single=False):
         """Asks the KB if some fact is true and returns the result of
         that ask.
         """
-        inf_proc = Inference(self, sent)
+        inf_proc = Inference(self, sent)            
         if single is True:
             for answ in inf_proc.results.values():
                 for pred in answ.values():
@@ -130,49 +126,6 @@ class Representation(object):
                     if pred is None: return None
             return True
         return inf_proc.results
-
-    def declare(self, sent, save=False):
-        """Declares an object as a member of a class or the relationship
-        between two objects. Declarations parse well-formed statements.
-        
-        Input: a string with one of the two following forms:
-        1) "silly[$Lucy,u=0.2]" -> Declares the entity '$Lucy' as a member 
-        of the 'silly' class. u = 0.2 is the fuzzy modifier, which can go 
-        from 0 to 1.
-        
-        Declarations of membership can only happen to entities, objects
-        which are the only member of their class. To denote an entity we use
-        the $ symbol before the entity name.
-        
-        2) "<friend[$Lucy,u=0.2; $John]>" -> Declares a mapping of the 
-        'friend' type between the entities '$Lucy' and '$John'. 
-        $John: friend -> $Lucy, 0.2
-        
-        Declarations of mapping can happen between entities, classes, 
-        or between an entity and a class (ie. <loves[cats,u=1, $Lucy]>).
-        """
-        sent = sent.replace(' ','')
-        sets = rgx_ob.findall(sent)
-        sets = sets[0].split('[')
-        if '<' in sent[0]:
-            # Is a function declaration -> implies a relation
-            # between different objects or classes.           
-            func = make_function(sent, 'relation')            
-            self.up_rel(func)
-            self.bmsWrapper.add(func)
-        else:
-            if ';' in sets[1]: sets[1] = sets[1].split(';')
-            # Is a membership declaration -> the object(s) belong(s) 
-            # to a set of objects.
-            if isinstance(sets[1], list):
-                for e in sets[1]:
-                    fact = make_fact([sets[0],e], 'grounded_term')
-                    self.up_memb(fact)
-                    self.bmsWrapper.add(fact)
-            else:
-                fact = make_fact(sets, 'grounded_term')
-                self.up_memb(fact)
-                self.bmsWrapper.add(fact)
 
     def up_memb(self, pred):
         # It's a membership declaration.        
@@ -228,7 +181,17 @@ class Representation(object):
 
     def add_cog(self, sent):                
         def chk_args(p):
-            if sbj not in sent.var_order:
+            if hasattr(sent, 'var_order') and sbj in sent.var_order:
+                if p in self.classes:
+                    self.classes[p].add_cog(sent)
+                else:
+                    if not issubclass(pclass, LogFunction): 
+                        nc = Category(sbj)
+                    else: 
+                        nc = Relation(sbj)
+                    nc.add_cog(sent)
+                    self.classes[p] = nc
+            else:
                 if '$' in sbj and sbj in self.individuals:
                     self.individuals[sbj].add_cog(p, sent)
                 elif '$' in sbj:
@@ -244,16 +207,7 @@ class Representation(object):
                         nc = Relation(sbj)
                     nc.add_cog(sent)
                     self.classes[sbj] = nc
-            else:
-                if p in self.classes:
-                    self.classes[p].add_cog(sent)
-                else:
-                    if not issubclass(pclass, LogFunction): 
-                        nc = Category(sbj)
-                    else: 
-                        nc = Relation(sbj)
-                    nc.add_cog(sent)
-                    self.classes[p] = nc
+            
         
         preds = []
         for p in sent:
@@ -295,7 +249,6 @@ class Representation(object):
         obj_dic.update(cls_dic)
         for obj in obj_dic.keys():
             proof(self, obj)
-            if hasattr(proof,'result'): del proof.result
 
     def objs_by_ctg(self, ctgs, type_):
         if type_== 'individuals':
@@ -356,6 +309,7 @@ class Representation(object):
 # TODO: individuals/classes should be linked in a tree structure
 # for more effitient retrieval. This should be done in 'function' and 
 # 'predicate' objects.
+
 class Individual(object):
     """An individual is the unique member of it's own class.
     Represents an object which can pertain to multiple classes or sets.
@@ -390,7 +344,7 @@ class Individual(object):
         self.name = name
         self.categ = []
         self.relations = {}
-        self.cog = {}
+        self.cog = OrderedDict()
 
     def set_attr(self, **kwargs):
         """Sets implicit attributes for the class, if an attribute exists
@@ -441,10 +395,14 @@ class Individual(object):
         If the obj keyword parameter is True then the object is returned.
         """
         if obj is True:
-            assert issubclass(ctg.__class__, LogPredicate), \
-            "'ctg' is not subclass of LogPredicate"
-            for c in self.categ:
-                if ctg == c: return c
+            if type(ctg) is str:
+                for c in self.categ:
+                    if c.parent == ctg: return c
+            else:
+                assert issubclass(ctg.__class__, LogPredicate), \
+                "{0} is not subclass of LogPredicate".format(ctg.__class__)
+                for c in self.categ:
+                    if ctg == c: return c
             return None
         
         cat = {c.parent:c.value for c in self.categ}
@@ -618,7 +576,7 @@ class Category(object):
         """
         try:
             funcs = self.relations[func.func]
-        except KeyError:
+        except (KeyError, AttributeError):
             return None      
         for f in funcs:
             if f.args_ID == func.args_ID:
@@ -633,8 +591,8 @@ class Category(object):
             try: idx = ctg_rec.index(fact.parent)
             except ValueError: self.parents.append(fact)            
             else:
-                fact.belief_record = self.categ[idx].belief_record
-                self.categ[idx] = fact
+                fact.belief_record = self.parents[idx].belief_record
+                self.parents[idx] = fact
     
     def get_ctg(self, ctg=None, obj=False):
         """Returns a dictionary of the categories of the object and
@@ -703,14 +661,19 @@ class Part(Category):
 #   LOGIC INFERENCE                                                  #
 # ===================================================================#
 
+from simag.core._helpers import OrderedSet
+
 class Inference(object):
     
     class InferNode(object):
-        def __init__(self, nc, ants, cons, rule):
+        def __init__(self, nc, ants, const, rule):
             self.rule = rule
-            self.cons = cons
+            self.const = const
             self.ants = tuple(nc)
-            self.subs = {v:set() for v in rule.var_order}
+            if hasattr(rule, 'var_order'):
+                self.subs = {v:set() for v in rule.var_order}
+            else:
+                self.subs = {}
             for ant in ants:
                 if issubclass(ant.__class__, LogFunction):
                     args = ant.get_args()
@@ -724,13 +687,13 @@ class Inference(object):
     
     def __new__(cls, *args, **kwargs):
         obj = super(Inference, cls).__new__(cls)
-        obj.parser = _parse_sent
+        obj.parser = logic_parser
         return obj
     
     def __init__(self, kb, *args):
         self.kb = kb
         self.vrs = set()
-        self.nodes = {}
+        self.nodes = OrderedDict()
         self.infer_facts(*args)
 
     def infer_facts(self, sent):
@@ -760,37 +723,25 @@ class Inference(object):
                 except KeyError: res = None
             self.results[var][q] = res
         
-        def rule_tracker():
-            # create a dictionary for tracking what proofs have been run or not
+        def results_lookup_table():
+            # create a lookup table for memoizing results of previous passes
             if hasattr(self, 'queue') is False:
                 self.queue = dict()
                 for query in self.nodes.values():
-                    for node in query:
-                        self.queue[node] = {'neg': set(), 'pos': set()}
+                    for node in query: self.queue[node] = set()
             else:
-                for node in self.queue:
-                    self.queue[node] = {'neg': set(), 'pos': set()}
+                for node in self.queue: self.queue[node] = set()
         
-        # Parse the query
-        if type(sent) is str:
-            comp = self.parser(sent)[1]
-            self.get_query(comp)
-        elif issubclass(sent.__class__, LogFunction):
-            self.ctgs = [sent.func]
-            self.query = {}
-            for e in sent.get_args(): self.query[e] = sent
-        elif issubclass(sent.__class__, LogPredicate):
-            self.ctgs = [sent.parent]
-            self.query = {sent.term: sent}
+        self.get_query(sent)        
         # Get relevant rules to infer the query
-        self.rules, self.done = set(), [None]
+        self.rules, self.done = OrderedSet(), [None]
         while hasattr(self, 'ctgs'):
             try: self.get_rules()
             except Inference.NoSolutionError: pass
         # Get the caterogies for each individual/class
-        self.obj_dic = self.kb.objs_by_ctg(self.chk_cats, 'individuals')
-        cls_dic = self.kb.objs_by_ctg(self.chk_cats, 'classes')
-        self.obj_dic.update(cls_dic)
+        self.obj_dic = self.kb.objs_by_ctg(self.chk_ctgs, 'individuals')
+        klass_dic = self.kb.objs_by_ctg(self.chk_ctgs, 'classes')
+        self.obj_dic.update(klass_dic)
         # Start inference process
         self.results = dict()
         for var, preds in self.query.items():
@@ -808,41 +759,36 @@ class Inference(object):
                 self.results[var] = {}
                 for pred in preds:
                     pclass = pred.__class__
-                    rule_tracker()
+                    results_lookup_table()
                     if issubclass(pclass, LogFunction):
                         self.actv_q, q = (var, pred.func), pred.func
                     elif issubclass(pclass, LogPredicate):
                         self.actv_q, q = (var, pred.parent), pred.parent
-                    k, result, self.updated = True, None, list()
-                    #print('query: {0}'.format(self.actv_q))
-                    while result is not True  and k is True:
+                    k, result, self._updated = True, None, list()
+                    while not result and k is True:
                         # Run the query, if there is no result and there is
                         # an update, then rerun it again, else stop
                         chk, done = list(), list()
                         result = self.unify(q, chk, done)
-                        k = True if True in self.updated else False
-                        #run = 'result: {0}, updated: {1} // rerun: {2}'
-                        #print(run.format(result, self.updated ,k ))
-                        self.updated = list()
+                        k = True if True in self._updated else False
+                        self._updated = list()
                     # Update the result from the subtitution repr
                     chk_result()
     
-    def get_query(self, comp):
-        def break_pred():
-            pr = rgx_ob.findall(p)[0].split('[')
-            t = pr[1].split(';')
-            if '<' in p[0]:
-                # It's a function
-                for x, obj in enumerate(t):
-                    t[x] = obj.split(',')[0]
-                func = make_function(p, 'relation')
-                return (t, func)                
-            else:  
-                # It's a predicate
-                t = pr[1].split(',')[0]
-                fact = make_fact(p, 'free_term')
-                return (t, fact)
-        
+    def get_query(self, sent):
+        if type(sent) is str:
+            query = self.parser(sent, tell=False)
+        elif issubclass(sent.__class__, LogFunction):
+            self.ctgs = [sent.func]
+            self.query = {}
+            for e in sent.get_args(): 
+                self.query[e] = sent
+            return
+        elif issubclass(sent.__class__, LogPredicate):
+            self.ctgs = [sent.parent]
+            self.query = {sent.term: sent}
+            return
+        """
         preds = []
         for i, pa in enumerate(iter(comp)):
             if any(s in pa for s in GL_PCONDS + ['||']):
@@ -855,56 +801,53 @@ class Inference(object):
                         vars_ = form[i+1].split(',')
                         for var in vars_: self.vrs.add(var)
                         comp.pop(i)
-            elif not any(s in pa for s in SYMB_ORD):
+            elif not any(s in pa for s in COMP_SYMBS):
                 preds.append(pa)
-        for i, p in enumerate(preds):
-            preds[i] = break_pred()
+        """
         terms, ctgs = {}, []
-        for p in preds:
-            names, pclass = p[0], p[1].__class__
-            if issubclass(pclass, LogFunction):
-                func = p[1]
-                ctgs.append(func.func)
-                for obj in names:
-                    if obj not in terms.keys():
-                        terms[obj] = [func]
-                    else:
-                        terms[obj].append(func)
-            elif issubclass(pclass, LogPredicate):
-                if names not in terms.keys():
-                    terms[names] = [p[1]]
-                    ctgs.append(p[1].parent)
+        for p in query.assert_rel:
+            ctgs.append(p.func)
+            ids = p.get_args()
+            for obj in ids:
+                if obj not in terms.keys():
+                    terms[obj] = [p]
                 else:
-                    terms[names].append(p[1])
-                    ctgs.append(p[1].parent)
+                    terms[obj].append(p)
+        for p in query.assert_memb:
+            if p.term not in terms.keys():
+                terms[p.term] = [p]
+                ctgs.append(p.parent)
+            else:
+                terms[p.term].append(p)
+                ctgs.append(p.parent)
         self.query, self.ctgs = terms, ctgs
     
     def get_rules(self):
         def mk_node(pos):
             # makes inference nodes for the evaluation
-            atms = sent.get_pred(branch=pos, conds=GL_PCONDS)
-            for cons in atms:
-                if issubclass(cons.__class__, LogFunction):
-                    pred = cons.func
+            atom_pred = sent.get_preds(branch=pos)
+            for const in atom_pred:
+                if issubclass(const.__class__, LogFunction):
+                    pred = const.func
                 else:
-                    pred = cons.parent
+                    pred = const.parent
                 node = self.InferNode(nc, preds, pred, sent)
-                if node.cons in self.nodes:
-                    self.nodes[node.cons].append(node)
+                if node.const in self.nodes:
+                    self.nodes[node.const].append(node)
                 else:
-                    self.nodes[node.cons] = [node]
-                
+                    self.nodes[node.const] = [node]
+        
         if len(self.ctgs) > 0: c = self.ctgs.pop()
         else: c = None
         if c is not None:
             self.done.append(c)            
             try:
-                chk_rules = set(self.kb.classes[c].cog)
-                chk_rules = chk_rules.difference(self.rules)
+                chk_rules = OrderedSet(self.kb.classes[c].cog)
+                chk_rules = chk_rules - self.rules
             except:
                 raise Inference.NoSolutionError(c)
             for sent in chk_rules:
-                preds = sent.get_pred(conds=GL_PCONDS)
+                preds = sent.get_preds()
                 nc = []
                 for y in preds:
                     if issubclass(y.__class__, LogPredicate):
@@ -915,7 +858,7 @@ class Inference(object):
                 nc2 = [e for e in nc if e not in self.done and e not in self.ctgs]
                 self.ctgs.extend(nc2)
                 if c in nc:
-                    preds = sent.get_pred(branch='right', conds=GL_PCONDS)
+                    preds = sent.get_preds(branch='right')
                     nc = []
                     for y in preds:
                         if issubclass(y.__class__,LogPredicate): 
@@ -926,35 +869,19 @@ class Inference(object):
                     nc2 = [e for e in nc if e not in self.done \
                            and e not in self.ctgs]
                     self.ctgs.extend(nc2)
-            self.rules = self.rules.union(chk_rules)
+            self.rules = self.rules | chk_rules
             self.get_rules()
         else:
             self.done.pop(0)
-            self.chk_cats = set(self.done)
+            self.chk_ctgs = set(self.done)
             del self.done
             del self.rules
             del self.ctgs    
 
     def unify(self, p, chk, done):
-        # for each node in the subtitution tree unifify variables
-        # and try every possible substitution
-        if p in self.nodes:
-            for node in self.nodes[p]:
-                self.recursive_sub(node)
-                if p not in done:
-                    chk = list(node.ants) + chk
-        if self.actv_q[0] in self.obj_dic and \
-        self.actv_q[1] in self.obj_dic[self.actv_q[0]]:
-            return True
-        elif len(chk) > 0:
-            done.append(p)
-            p = chk.pop(0)
-            self.unify(p, chk, done)
-
-    def recursive_sub(self, node):
         def add_ctg():
             # added category/function to the object dictionary
-            for r in node.rule.result:
+            for r in proof_result:
                 if issubclass(r.__class__, LogFunction):
                     args = r.get_args()
                     for sbs in args:
@@ -968,44 +895,42 @@ class Inference(object):
                         self.obj_dic[obj].add(cat)
                     except KeyError:
                         self.obj_dic[obj] = set([cat])
-            self.queue[node]['pos'].add(key)
-                
-        # TODO: check out what combinations can be roled out before 
-        # attempting to solve it
-        
-        # check what are the possible var substitutions
-        mapped = self.map_vars(node)
-        # permute and find every argument combination       
-        mapped = list(itertools.product(*mapped))
-        # run proof until a solution is found or there aren't more
-        # combinations left to be tested
-        res = hasattr(node.rule, 'result')
-        while res is False and (len(mapped) > 0):
-            args = mapped.pop()
-            key = hash(args)
-            if key in self.queue[node]['neg'] and self.updated is True:
-                node.rule(self.kb, args)
-                res = hasattr(node.rule, 'result')
-                if res is True and node.rule.result is not False:
-                    self.updated.append(True)
-                    add_ctg()
-                    del node.rule.result
-                elif res is True:
-                    self.queue[node]['neg'].add(key)
-                    del node.rule.result
-            elif (key not in self.queue[node]['pos']) \
-            and (key not in self.queue[node]['neg']):
-                node.rule(self.kb, args)
-                res = hasattr(node.rule, 'result')
-                if res is True and node.rule.result is not False:
-                    self.updated.append(True)
-                    add_ctg()
-                    del node.rule.result
-                elif res is True:
-                    self.queue[node]['neg'].add(key)
-                    del node.rule.result
+        # for each node in the subtitution tree unifify variables
+        # and try every possible substitution
+        if p in self.nodes:
+            for node in self.nodes[p]:
+                # recursively try unifying all possible argument with the 
+                # operating logic sentence
+                # check what are the possible var substitutions
+                mapped = self.map_vars(node)
+                # permute and find every argument combination       
+                mapped = list(itertools.product(*mapped))
+                # run proof until a solution is found or there aren't more
+                # combinations left to be tested
+                proof_result = None
+                while not proof_result and (len(mapped) > 0):
+                    args = mapped.pop()
+                    result_memoization = hash(args)
+                    if result_memoization not in self.queue[node]:
+                        proof_result = node.rule(self.kb, args)
+                        if proof_result is not False and proof_result is not None:
+                            self._updated.append(True)
+                            add_ctg()
+                            self.queue[node].add(result_memoization)
+                if p not in done:
+                    chk = list(node.ants) + chk
+        if self.actv_q[0] in self.obj_dic and \
+        self.actv_q[1] in self.obj_dic[self.actv_q[0]]:
+            return True
+        elif len(chk) > 0:
+            done.append(p)
+            p = chk.pop(0)
+            self.unify(p, chk, done)
 
     def map_vars(self, node):
+        # TODO: check out what combinations can be roled out before 
+        # attempting to solve it for performance gains
+        
         # map values to variables for subtitution
         subs_num = len(node.subs)
         subactv = [set()] * subs_num
@@ -1019,14 +944,25 @@ class Inference(object):
                         subactv[i].add(obj)
         return subactv
 
-
 if __name__ == '__main__':
-    r = Representation()
-    fol = """
-        animal[cow,u=1]
-        female[cow,u=1]
-        animal[cow,u=1] && female[cow,u=1] => <produce[milk,u=1;cow]>
+    rep = Representation()
+    string = """
+    (<owns[$M1,u=1;$Nono]>)
+    (missile[$M1,u=1])
+    (american[$West,u=1])
+    (<enemy[$Nono,u=1;$America]>)
+    
+    ((let x, y, z) 
+     ((american[x,u=1] && weapon[y,u=1] && <sells[y,u=1;x;z]> && hostile[z,u=1] )
+      |> criminal[x,u=1]))
+    
+    ((let x)
+     (( <owns[x,u=1;$Nono]> && missile[x,u=1]) |> <sells[x,u=1;$West;$Nono]>))
+    
+    (( let x ) (missile[x,u=1] |> weapon[x,u=1]))
+    (( let x ) (<enemy[x,u=1;$America]> |> hostile[x,u=1]))
     """
-    r.tell(fol)
-    print(r.ask('<produce[milk,u=1;cow]>'))
-
+    rep.tell(string)
+    res = rep.ask('(criminal[$West,u=1])')
+    print(res)
+    

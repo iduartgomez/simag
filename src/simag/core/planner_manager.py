@@ -12,17 +12,17 @@ for planning and the selection of the different algorithms based on context.
 
 from types import MethodType, FunctionType
 
-from core.logic_parser import (
-    GlobalLogicParser,
+from simag.core.parser import (
+    logic_parser,
     LogFunction,
     LogPredicate,
     LogSentence
 )
 
+
 # ===================================================================#
 #   CONTEXT MANAGER
 # ===================================================================#
-
 class Context:
     """Wrapps the context data and acts as an interface for the
     different problem sets. Decission is delegated then to an
@@ -118,7 +118,7 @@ class ProblemDomain(metaclass=ProblemMeta):
     
     def lookup_vars(self):
         def mk_part(sent):
-            parsed = GlobalLogicParser(sent)
+            parsed = logic_parser(sent)
             pclass = parsed.__class__
             if issubclass(pclass, LogSentence):
                 if len(parsed.var_order) > 0:

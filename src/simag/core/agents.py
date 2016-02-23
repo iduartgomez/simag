@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-
 """Main agent module, implements the different agent objects and all the
 supporting methods and classes.
 
@@ -16,7 +15,7 @@ Actions
 import datetime
 import uuid
 
-from core.kblogic import Representation
+from simag.core.kblogic import Representation
 
 prop_list = ['name', 'born', 'ag_state', 'pos']
 pmodes = []
@@ -26,6 +25,22 @@ actmodes = []
 #   AGENT OBJECTS CLASSES AND SUBCLASSES
 # ===================================================================#
 
+def start_agent(config=None, load=None, **kwargs):
+    """"This function starts up a new agent, this is just an initializing
+    function provided for convenience to execute from Python without 
+    executing any compiled Rust executable and as a wrapper to be used
+    from Python programs, but the management of the agent life is done 
+    from Rust itself.
+    
+    It's IMPORTANT to notice that once the agent is created it will start
+    it's own listening event loop in Rust, and the caller will lose control
+    over the agent directly and relinquish control over to a new thread 
+    managed from Rust completely.
+     
+    To manage the agent it will have to call from the administration 
+    command line interface.
+    """
+    return BasicAgent(config, load, **kwargs)
 
 class BasicAgent(object):
     """Implements the basic Agent object."""
@@ -36,7 +51,7 @@ class BasicAgent(object):
                       'ag_state': 'idle',
                       'percept_modes': ['std'],
                       'eval_modes': ['std']}
-        self.percepts = Representation()
+        self.representation = Representation()
         self.assets = BalanceSheet()
         self.liabilities = BalanceSheet()
         if load is not None:
@@ -46,10 +61,19 @@ class BasicAgent(object):
             self.props['position'] = load['position']
             if 'oID' not in load.keys():
                 self.props['oID'] = str(uuid.uuid4())
+            else:
+                self.props['oID'] = load["oID"]
         for prop, val in kwargs.items():
             self.props[prop] = val
-        self.register()
-
+    
+    def tell(self, sent, block=True):
+        # an interface for internal representation "tell" facility
+        self.representation.tell(sent, block)
+        
+    def ask(self, sent, single=True):
+        # an interface for internal representation "ask" facility
+        self.representation.ask(sent, single)
+    
     def register(self):
         if 'position' not in self.props.keys():
             raise KeyError("No position provided for the agent.")
@@ -71,6 +95,7 @@ class BasicAgent(object):
         based on this 'perception'. Which is then registered for that moment.
         """
         percept = self.perception_routine(eval_funcs, optimal)
+        print(percept)
 
     def action_routine(self, action_funcs):
         """Evaluates current set of beliefs and intentions and produces
@@ -203,3 +228,9 @@ def means():
     Output: Actions to commit to achieve the state.
     """
     pass
+
+
+if __name__ == "__main__":
+    start_agent()
+    
+    

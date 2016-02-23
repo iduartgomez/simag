@@ -10,7 +10,6 @@ and material type objects are registered for interaction.
 import os
 import pickle
 
-import numpy as np
 
 ag_types = ['b_ag']
 
@@ -46,7 +45,7 @@ class Env(object):
     Agents are also tracked in this enviroment.
     """
     def __init__(self):
-        self.world = np.array([[0., 0., 0.]])
+        #self.world = np.array([[0., 0., 0.]])
         self.agents = {}
         self.blocks = {}
         self.total_obj = 0
@@ -55,14 +54,14 @@ class Env(object):
         self.__init__()
 
     def load_data(self, path):
-        self.world = np.load(os.path.join(path, 'world.npy'))
+        #self.world = np.load(os.path.join(path, 'world.npy'))
         data = pickle.load(os.path.join(path, 'cache01.dat'))
         self.total_obj = data[0]
         self.agents = data[1]
         self.blocks = data[2]
 
     def save_data(self, path):
-        np.save(os.path.join(path, 'world.npy'), self.world)
+        #np.save(os.path.join(path, 'world.npy'), self.world)
         data = [self.total_obj, self.agents, self.blocks]
         pickle.dump(data, os.path.join(path, 'cache01.dat'))
 
@@ -71,5 +70,5 @@ class Env(object):
         pos, oID, obj, type_ = item.register()
         if type_ in ag_types:
             self.agents[oID] = (self.total_obj, obj)
-        self.world = np.append(self.world, [pos], axis=0)
+        #self.world = np.append(self.world, [pos], axis=0)
 

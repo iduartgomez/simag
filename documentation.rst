@@ -150,3 +150,23 @@ In the second example, it's stated that any member of the 'king' class has
 a 'steals' relationship with the class 'peasant'. Whereas in the third, this
 relationship is held from the 'king' class to the object 'John' (regardless of
 what classes does the object 'John' belongs to).
+
+# Stuff from an old func definition ...
+Declares an object as a member of a class or the relationship
+between two objects. Declarations parse well-formed statements.
+
+Input: a string with one of the two following forms:
+1) "silly[$Lucy,u=0.2]" -> Declares the entity '$Lucy' as a member 
+of the 'silly' class. u = 0.2 is the fuzzy modifier, which can go 
+from 0 to 1.
+
+Declarations of membership can only happen to entities, objects
+which are the only member of their class. To denote an entity we use
+the $ symbol before the entity name.
+
+2) "<friend[$Lucy,u=0.2; $John]>" -> Declares a mapping of the 
+'friend' type between the entities '$Lucy' and '$John'. 
+$John: friend -> $Lucy, 0.2
+
+Declarations of mapping can happen between entities, classes, 
+or between an entity and a class (ie. <loves[cats,u=1, $Lucy]>).

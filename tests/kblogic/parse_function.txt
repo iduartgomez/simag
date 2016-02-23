@@ -1,6 +1,6 @@
 (<criticize[$John,u=1;$Lucy;*t=NOW]>)
-<takes[$analysis,u>0;$Bill]>
-<sister[$Bill,u<1;$Lucy]>
-<loves[cow,u=1;bull]>
-<owns[$M1,u<-1;$Nono]>
-<enemy[$Nono,u>2;$America]>
+(<takes[$analysis,u>0;$Bill]>)
+(<sister[$Bill,u<1;$Lucy]>)
+(<loves[cow,u=1;bull]>)
+(<owns[$M1,u<-1;$Nono]>)
+(<enemy[$Nono,u>2;$America]>)

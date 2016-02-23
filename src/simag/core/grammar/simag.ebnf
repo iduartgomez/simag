@@ -1,0 +1,58 @@
+(* Grammar for the SIMAG declarative language *)
+
+@@comments			::	?/\*((?:.|\n)*?)\*|#(.*?)\n/?
+@@eol_comments 		::	/#.*?$/
+
+block	            =   {stmt}+ $ ;
+stmt				=   assertion:multi_assert
+					| 	stmt:(comp_type | icond_type)
+					|	rule:(icond_expr | comp_expr)
+					;
+
+icond_type			=	'(' {(vars:var_decl | skol:skol_decl)} expr:icond_expr ')' ;
+icond_expr			=	'(' lhs:expr_node op:icond_op rhs:icond_node ')' ;
+icond_node			=	( terminal_node | icond_expr ) ;
+
+comp_type			=	'(' {skol:skol_decl} (assertion:multi_assert | expr:comp_expr) ')' ;
+comp_expr			=	'(' lhs:expr_node op:comp_op rhs:expr_node ')' ;
+expr_node			=	( terminal_node | comp_expr ) ;
+
+var_decl            =   '(' 'let' {[','] @+:term}+ ')' ;
+skol_decl			=	'(' 'exists' {[','] @+:term}+ ')' ;
+terminal_node		=	( klass:class_decl | func:func_decl | assertion:multi_assert ) ;
+multi_assert		=	'('
+							(@+:class_decl | @+:func_decl)
+							{and_op (@+:class_decl | @+:func_decl)}
+						')'
+					|	'(' 'decl'
+							(@+:class_decl | @+:func_decl)
+							{';' (@+:class_decl | @+:func_decl)}
+						')'
+					;
+class_decl          =   klass:term args:args ;
+func_decl           =   'fn:' func:term ['(' op_args:op_args ')'] args:args ;
+args				=	'[' @+:arg {';' @+:arg} ']';
+op_args				=	@+:(term '=' string) {@+:(',' term '=' string)} ;
+arg					=	term:term [',' uval:uval] ;
+uval                =   'u' @+:'=' @+:float | 'u' @+:'<' @+:float | 'u' @+:'>' @+:float ;
+
+icond_op			=	'|>' ;
+and_op				=	'&&' ;
+comp_op		        =   '<=>'
+		            |   '=>'
+               		|   '||'
+               		|	'&&'
+               		;
+
+term				=	?/\$?[a-zA-Z0-9]+/? ;
+float               =   ?/[0-9\.]+/? ;
+letters				= 	?/[a-zA-Z]+/? ;
+string				=	?/"(.*?)"|'(.*?)'/? ;
+
+(*
+fn:eat(t="now")[x,u=1;y]
+decl {
+	fn:eat(t="stuff")[x,u=1;y] ;
+	fn:eat(t="stuff")[x,u=1;y]
+}
+*)
