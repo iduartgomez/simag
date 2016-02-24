@@ -10,6 +10,7 @@ import re
 
 from simag.core.grammar.grako_parser import SIMAGParser
 from pexpect.ANSI import term
+from types import FunctionType
 
 __all__ = (
 'logic_parser',
@@ -26,7 +27,7 @@ __all__ = (
 parser = SIMAGParser()
 
 class Semantics(object):
-    __reserved_words = ['let', 'exists', 'fn']
+    __reserved_words = ['let', 'exists', 'fn', 'time']
     __reserved_fn_names = ['time_calc']
     
     def __init__(self):
@@ -162,7 +163,11 @@ class LogSentence(object):
             )
         if hasattr(self, 'pre_assigned'):
             for key, val in self.pre_assigned.items():
-                self.assigned[key] = val        
+                if self.var_types[key] is TimeFunc \
+                and (issubclass(val.__class__, LogFunction) \
+                or issubclass(val.__class__, LogFunction)):
+                    self.assigned[key] = self.assign_val_callback(val)
+                else: self.assigned[key] = val
         self.cln_res()
         if not hasattr(self, 'var_order'):
             preds = self.get_preds(branch='r')
@@ -192,6 +197,13 @@ class LogSentence(object):
             result = self.result
             del self.result
             return result
+    
+    def assign_val_callback(self, pred):
+        def callback_pred():
+            if pred.substituted:
+                return pred.substituted.time
+            return None
+        return callback_pred
         
     def get_ops(self, p, chk_op=['||', '=>', '<=>']):
         ops = []
@@ -233,7 +245,11 @@ class LogSentence(object):
         return preds
     
     def cln_res(self):
-        for particle in self.particles: del particle.results
+        for particle in self.particles: 
+            if particle.cond == ':predicate:':
+                try: del particle.pred.substituted
+                except: pass
+            del particle.results
     
     def __iter__(self):
         return iter(self.particles)
@@ -427,32 +443,42 @@ def make_logic_sent(ast):
                         args[x] = proof.assigned[arg]
                 test = self.pred.substitute(args)
                 if '$' in args[0][0]:
-                    result = ag.individuals[args[0]].test_rel(test)
+                    result = ag.individuals[args[0]].test_rel(
+                        test,
+                        copy_date=True)
                 else:
-                    result = ag.classes[args[0]].test_rel(test)
+                    result = ag.classes[args[0]].test_rel(
+                        test,
+                        copy_date=True)
             elif issubclass(self.pred.__class__, LogPredicate):
                 # Check membership to a set of an entity.
                 sbj = self.isvar(self.pred.term, proof)
                 test = self.pred.substitute(sbj)
                 if '$' not in sbj[0]:
                     try: 
-                        result = ag.classes[sbj].test_ctg(test)
+                        result = ag.classes[sbj].test_ctg(
+                            test)
                     except KeyError:
                         result = None
                 else:
                     try:
-                        result = ag.individuals[sbj].test_ctg(test)
+                        result = ag.individuals[sbj].test_ctg(
+                            test)
                     except KeyError:
                         result = None
             else:
                 # special function types
                 if type(self.pred) == TimeFunc:
                     dates = {}
-                    for arg, p in proof.assigned.items():
-                        if arg in self.pred.args and type(p) is not str:
-                            dates[arg] = p.get_date(proof, ag)
+                    for arg, assigned_value in proof.assigned.items():
+                        if arg in self.pred.args \
+                        and type(assigned_value) is FunctionType:
+                            dates[arg] = assigned_value()
+                        elif arg in self.pred.args \
+                        and type(assigned_value) is not str:
+                            dates[arg] = assigned_value.get_date(proof, ag)
                         elif arg in self.pred.args:
-                            dates[arg] = p
+                            dates[arg] = assigned_value
                     if None not in dates.values():
                         test = self.pred.substitute(dates)
                         if test: result = True
@@ -514,19 +540,20 @@ def make_logic_sent(ast):
             return repr(self.pred)
     
     def traverse_ast(remain, parent, depth):        
-        def get_type(stmt, cmpd=False):    
+        def get_type(stmt, cmpd=False):
             if stmt.func is not None:
                 if cmpd is True:
                     is_builtin = _check_reserved_words(stmt.func)
                     if is_builtin:
                         return make_function(stmt, is_builtin)
                     else:
-                        return make_function(stmt, 'relation')
+                        return make_function(
+                            stmt, 'relation', proof=sent,)
                 is_builtin = _check_reserved_words(stmt.func.func)
                 if is_builtin:
                     return make_function(stmt.func, is_builtin)
                 else:
-                    return make_function(stmt.func, 'relation')
+                    return make_function(stmt.func, 'relation', proof=sent,)
             elif stmt.klass is not None:
                 if cmpd is True:
                     return make_fact(stmt, 'free_term')
@@ -589,7 +616,6 @@ def make_logic_sent(ast):
                 if var in sent.var_order:
                     m = "duplicate variable name declared: {0}".format(var)
                     raise ValueError(m)
-                sent.var_order.append(var)
                 if not hasattr(sent, 'var_types'):
                     sent.var_types = {}
                 sent.var_types[var] = _get_type_class(type_)
@@ -698,7 +724,7 @@ def make_fact(pred, f_type=None, **kwargs):
         
         def __init__(self, pred, fromfree=False, **kwargs):
             if fromfree is True:
-                assert type(pred) == make_fact(None, 'free_term'), \
+                assert type(pred) == FreeTerm, \
                     'The object is not of <FreeTerm> type'
                 for name, value in pred.__dict__.items():
                     setattr(self, name, value)
@@ -727,7 +753,19 @@ def make_fact(pred, f_type=None, **kwargs):
             and other.term == self.term:
                 return True
             else: return False
-    
+            
+        @property
+        def time(self):
+            now = datetime.datetime.now()
+            if hasattr(self, 'dates'):
+                if (len(self.dates) % 2 or len(self.dates) == 1) \
+                and self.dates[-1] < now: 
+                    return self.dates[-1]
+                else: 
+                    return False
+            else: 
+                return now
+            
     class FreeTerm(LogPredicate):
         
         def __init__(self, pred):
@@ -757,15 +795,16 @@ def make_fact(pred, f_type=None, **kwargs):
         
         def substitute(self, sbj=None, val=None, ground=False):
             if ground is True:
-                return make_fact(
+                subs = make_fact(
                     self, 
                     f_type='grounded_term', 
                     **{'fromfree': True, 'sbj':sbj})
             else:
                 subs = copy.deepcopy(self)
                 if sbj is not None: subs.term = sbj
-                if val is not None: subs.value = val            
-                return subs
+                if val is not None: subs.value = val
+            self.substituted = subs
+            return subs
     
     assert (f_type in LogPredicate.types or f_type is None), \
             'Function {0} does not exist.'.format(f_type)
@@ -784,10 +823,14 @@ class LogFunction(metaclass=MetaForAtoms):
     """Base class to represent a logic function."""
     types = ['relation','time_calc']
     
-    def __init__(self, sent):
-        self.func = sent.func
-        dates, args_id, mk_args = None, list(), list()                 
-        for a in sent.args:
+    def __init__(self, fn, **extra):
+        if 'proof' in extra:
+            proof = extra['proof']
+        else: proof = None
+        self._grounded = True
+        self.func = fn.func
+        dates, args_id, mk_args = None, list(), list()
+        for a in fn.args:
             if a.uval is not None:
                 val = float(a.uval[1])
                 if (val > 1 or val < 0):
@@ -797,19 +840,45 @@ class LogFunction(metaclass=MetaForAtoms):
                 mk_args.append((a.term, val, op))
             else:
                 mk_args.append(a.term)
+            if proof \
+            and ((hasattr(proof, 'var_order') and a.term in proof.var_order)
+            or   (hasattr(proof, 'var_types') and a.term in proof.var_types)):        
+                self._grounded = False
             args_id.append(a.term)
-        if sent.op_args:
-            for op_arg in sent.op_args:
+        if fn.op_args:
+            for op_arg in fn.op_args:
                 if op_arg.first_term == 'time':
                     date = _set_date(op_arg.second_term)
                     if type(date) is datetime.datetime:
                         if dates is None: dates = []
                         dates.append(date)
                     else: self.date_var = date
+                elif proof is not None \
+                and op_arg.first_term in proof.var_types \
+                and op_arg.second_term == 'time':
+                    if hasattr(proof, 'pre_assigned'):
+                        proof.pre_assigned[op_arg.first_term] = self
+                    else:
+                        proof.pre_assigned = {op_arg.first_term: self}
         args_id = hash(tuple(args_id))
         arity = len(mk_args)
         return mk_args, args_id, arity, dates
-    
+        
+    @property
+    def time(self):
+        if not self._grounded:
+            raise AttributeError(
+                "can't get truth times for non-grounded functions")
+        now = datetime.datetime.now()
+        if hasattr(self, 'dates'):
+            if (len(self.dates) % 2 or len(self.dates) == 1) \
+            and self.dates[-1] < now: 
+                return self.dates[-1]
+            else: 
+                return False
+        else: 
+            return now
+        
     def get_args(self):
         ls = []
         for arg in self.args:
@@ -819,9 +888,10 @@ class LogFunction(metaclass=MetaForAtoms):
                 ls.append(arg)
         return ls
     
-    def substitute(self, args):   
+    def substitute(self, args):
         subs = copy.deepcopy(self)
-        subs.args_ID = hash(tuple(args))     
+        subs.args_ID = hash(tuple(args))
+        subs._grounded = True
         if type(args) is dict:
             for x, arg in enumerate(subs.args):
                 if isinstance(arg, tuple) and arg in args:
@@ -838,6 +908,7 @@ class LogFunction(metaclass=MetaForAtoms):
                     subs.args[x] = tuple(subs.args[x])
                 else:
                     subs.args[x] = args[x]
+        self.substituted = subs
         return subs
     
     def change_params(self, new=None, revert=False):
@@ -862,7 +933,7 @@ class LogFunction(metaclass=MetaForAtoms):
         return '{0}({1}: {2})'.format(
             self.__class__.__name__, self.func, self.args)
 
-def make_function(sent, f_type=None, *args):
+def make_function(sent, f_type=None, **kwargs):
     """Parses and makes a function of n-arity.
     
     Functions describe relations between objects (which can be instantiated
@@ -886,8 +957,8 @@ def make_function(sent, f_type=None, *args):
     
     class RelationFunc(LogFunction):
         
-        def __init__(self, sent):
-            mk_args, args_id, arity, dates = super().__init__(sent)
+        def __init__(self, fn, **kwargs):
+            mk_args, args_id, arity, dates = super().__init__(fn, **kwargs)
             self.args_ID = args_id
             self.args = mk_args
             self.arity = arity
@@ -914,7 +985,7 @@ def make_function(sent, f_type=None, *args):
                         result = False
                     else:
                         result = True
-            # Test if the statements are ture at this moment in time
+            # Test if the statements are true at this moment in time
             time_truth = self._eval_time_truth(other)
             if time_truth is True and result is True: return True
             else: return False
@@ -967,14 +1038,18 @@ def make_function(sent, f_type=None, *args):
             self.operator = sent.op_args[0].op
         
         def __bool__(self):
-            if self.operator == '<' and self.args[0] < self.args[1]:
-                return True
-            elif self.operator == '>' and self.args[0] > self.args[1]:
-                return True
-            elif self.operator == '=' and self.args[0] == self.args[1]:
-                return True
-            else: 
-                return False
+            try:
+                if self.operator == '<' and self.args[0] < self.args[1]:
+                    return True
+                elif self.operator == '>' and self.args[0] > self.args[1]:
+                    return True
+                elif self.operator == '=' and self.args[0] == self.args[1]:
+                    return True
+                else: 
+                    return False
+            except TypeError:
+                raise TypeError(
+                    "both 'time_calc' arguments must be datetime objects")
         
         def substitute(self, *args):
             subs = LogFunction.substitute(self, *args)
@@ -994,7 +1069,7 @@ def make_function(sent, f_type=None, *args):
             'Function {0} does not exist.'.format(f_type)
     if f_type == 'relation':
         if sent is None: return RelationFunc
-        return RelationFunc(sent)
+        return RelationFunc(sent, **kwargs)
     if f_type == 'time_calc':
         if sent is None: return TimeFunc
         return TimeFunc(sent)

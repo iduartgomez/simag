@@ -459,7 +459,7 @@ class Individual(object):
         rel = [k for k in self.relations]
         return rel
     
-    def test_rel(self, func, obj=False):
+    def test_rel(self, func, obj=False, copy_date=False):
         """Checks if a relation exists; and returns true if it's equal
         to the comparison, false if it's not, and None if it doesn't exist.
         """
@@ -469,7 +469,10 @@ class Individual(object):
             return None      
         for f in funcs:
             if f.args_ID == func.args_ID:
-                if func == f: return True
+                if func == f:
+                    if copy_date and hasattr(f, 'dates'):
+                        func.dates = f.dates
+                    return True
                 else: return False
         return None
     
@@ -569,7 +572,7 @@ class Category(object):
         else: rel = []
         return rel
     
-    def test_rel(self, func):
+    def test_rel(self, func, copy_date=False):
         """Checks if a relation exists; and returns true if it's 
         equal to the comparison, false if it's not, and None if it
         doesn't exist.
@@ -580,7 +583,10 @@ class Category(object):
             return None      
         for f in funcs:
             if f.args_ID == func.args_ID:
-                if func == f: return True
+                if func == f:
+                    if copy_date and hasattr(f, 'dates'):
+                        func.dates = f.dates
+                    return True
                 else: return False
         return None
     
@@ -947,13 +953,16 @@ class Inference(object):
 if __name__ == '__main__':
     rep = Representation()
     string1 = """
-    (( let x, y, t1:time, t2:time="*now" )
-     (( dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x] && fn::time_calc(t1<t2) )
-      |> fat(time=t2)[x,u=1] ))
+    (( let x, y, t2:time, t1:time="2015.01.01")
+     ( ( dog[x,u=1] && meat[y,u=1] && fat(time=t2)[x,u=1] && fn::time_calc(t1<t2) )
+       |> fn::eat(time=t1)[y,u=1;x]
+     )
+    )
     ( dog[$Pancho,u=1] )
     ( meat[$M1,u=1] )
-    ( fn::eat(time="2015.07.05.10.25")[$M1,u=1;$Pancho] )
+    ( fat(time="2015.12.01")[$Pancho,u=1] )
     """
     rep.tell(string1)
-    rep.ask('(fat(time="*now")[$Pancho,u=1])')
+    answ = rep.ask('(fn::eat[$M1,u=1;$Pancho])', single=True)
+    print(answ)
     

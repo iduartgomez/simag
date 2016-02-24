@@ -72,12 +72,12 @@ class AskReprGetAnswer(unittest.TestCase):
                    ['(professor[$Lucy,u=1])', '(person[$John,u=1])'],
                    ['(professor[$Lucy,u>0] && person[$Lucy,u<1])'],
                    ['(criminal[$West,u=1])'],
-                   ['(fat(t="now")[$Pancho,u=1])'],
+                   ['(fat(t="*now")[$Pancho,u=1])'],
+                   ['(fat(t="*now")[$Pancho,u=1])'],
         ]
-        eval = [None, [True,True], False, True, True]
+        eval = [None, [True,True], False, True, True, True]
         iter_test(self, sents, ask, eval, single=True)
     
-    @unittest.skip
     def test_ask_func(self):
         sents = load_sentences('ask_func.txt')
         ask = [
@@ -86,8 +86,9 @@ class AskReprGetAnswer(unittest.TestCase):
                    ['(fn::sells[$M1,u=1;$West;$Nono])'],
                    ['(fn::produce[milk,u=1;cow])'],
                    ['(fn::eat[$M1,u=1;$Pancho])'],
+                   ['(fn::eat[$M1,u=1;$Pancho])'],
         ]
-        eval = [True, True, True, True, True]
+        eval = [True, True, True, True, True, True]
         iter_test(self, sents, ask, eval, single=True)
 
 class EvaluationOfFOLSentences(unittest.TestCase):
@@ -102,8 +103,8 @@ class EvaluationOfFOLSentences(unittest.TestCase):
         for x, test in enumerate(tests):
             self.rep = Representation()
             with self.subTest(sent='subtest {0}: {1}'.format(x,test[0])):
-                for y, s in enumerate(test):
-                    if y > 0: self.rep.tell(s)
+                for s in test[1:]:
+                    self.rep.tell(s)
                 self.assertIs(self.rep.ask(test[0],single=True), results[x])
     
     def test_eval_impl(self):
@@ -137,7 +138,6 @@ class EvaluationOfFOLSentences(unittest.TestCase):
                 self.assertIs(res, results[x])
 
 class LogicSentenceParsing(unittest.TestCase):
-    # Legacy tests from old parser, need to rewrite...
     
     def test_parse_predicate(self):            
         def assert_res(cls=False):
@@ -218,6 +218,34 @@ class LogicSentenceParsing(unittest.TestCase):
 #    HELPER FUNCTIONS    #
 #========================#
 
+def iter_test(self, sents, ask, eval, single=False):
+    for i, test in enumerate(sents):
+        self.rep = Representation()
+        with self.subTest(test='subtest {0}: {1}'.format(i,ask[i])):
+            if isinstance(test, list):
+                for s in test:
+                    self.rep.tell(s)
+                for j, q in enumerate(ask[i]):
+                    answ = self.rep.ask(q,single=single)                    
+                    if isinstance(eval[i], list):
+                        if single is not True:
+                            for k in eval[i][j].keys():
+                                self.assertEqual(eval[i][j][k], answ[k])
+                        else:
+                            self.assertEqual(eval[i][j], answ)
+                    else:
+                        if single is not True:
+                            for k in eval[i].keys():
+                                self.assertEqual(eval[i][k], answ[k])
+                        else:
+                            self.assertEqual(eval[i], answ)
+            else:
+                self.rep.tell(s)
+                for q in ask[i]:
+                    answ = self.rep.ask(q)
+                    for k in eval[i].keys():
+                        self.assertEqual(eval[i][k], answ[k])
+
 def load_sentences(test):
     comment = False
     path = os.path.dirname(__file__)
@@ -248,34 +276,6 @@ def load_sentences(test):
                 else:
                     ls.append(line)
     return ls
-
-def iter_test(self, sents, ask, eval, single=False):
-    for i, test in enumerate(sents):
-        self.rep = Representation()
-        with self.subTest(test='subtest {0}: {1}'.format(i,ask[i])):
-            if isinstance(test, list):
-                for s in test:
-                    self.rep.tell(s)
-                for j, q in enumerate(ask[i]):
-                    answ = self.rep.ask(q,single=single)                    
-                    if isinstance(eval[i], list):
-                        if single is not True:
-                            for k in eval[i][j].keys():
-                                self.assertEqual(eval[i][j][k], answ[k])
-                        else:
-                            self.assertEqual(eval[i][j], answ)
-                    else:
-                        if single is not True:
-                            for k in eval[i].keys():
-                                self.assertEqual(eval[i][k], answ[k])
-                        else:
-                            self.assertEqual(eval[i], answ)
-            else:
-                self.rep.tell(s)
-                for q in ask[i]:
-                    answ = self.rep.ask(q)
-                    for k in eval[i].keys():
-                        self.assertEqual(eval[i][k], answ[k])
 
 if __name__ == "__main__":
     unittest.main()

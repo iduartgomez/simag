@@ -38,10 +38,21 @@ BLOCK
 	( ( let x ) ( missile[x,u=1] |> weapon[x,u=1] ) )
 	( ( let x ) ( fn::enemy[x,u=1;$America] |> hostile[x,u=1] ) )
 /BLOCK
-# Test 3/04 
+# Test 3.1/04 
 BLOCK
 {
     (( let x, y, t1:time, t2:time="*now" )
+     (( dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x] && fn::time_calc(t1<t2) )
+      |> fat(time=t2)[x,u=1] ))
+}
+    ( dog[$Pancho,u=1] )
+    ( meat[$M1,u=1] )
+    ( fn::eat(time="2015.07.05.10.25")[$M1,u=1;$Pancho] )
+/BLOCK
+# Test 3.2/05
+BLOCK
+{
+    (( let x, y, t1:time, t2:time="2016.01.01" )
      (( dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x] && fn::time_calc(t1<t2) )
       |> fat(time=t2)[x,u=1] ))
 }
