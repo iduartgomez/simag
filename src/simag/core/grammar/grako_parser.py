@@ -17,7 +17,7 @@ from grako.parsing import graken, Parser
 from grako.util import re, RE_FLAGS  # noqa
 
 
-__version__ = (2016, 2, 23, 20, 11, 53, 1)
+__version__ = (2016, 2, 25, 11, 35, 48, 3)
 
 __all__ = [
     'SIMAGParser',
@@ -100,7 +100,7 @@ class SIMAGParser(Parser):
                         self.ast['skol'] = self.last_node
                     self._error('no available options')
         self._closure(block0)
-        self._icond_expr_()
+        self._icond_root_()
         self.ast['expr'] = self.last_node
         self._token(')')
 
@@ -110,11 +110,33 @@ class SIMAGParser(Parser):
         )
 
     @graken()
-    def _icond_expr_(self):
+    def _icond_root_(self):
         self._token('(')
         self._expr_node_()
         self.ast['lhs'] = self.last_node
         self._icond_op_()
+        self.ast['op'] = self.last_node
+        self._icond_node_()
+        self.ast['rhs'] = self.last_node
+        self._token(')')
+
+        self.ast._define(
+            ['lhs', 'op', 'rhs'],
+            []
+        )
+
+    @graken()
+    def _icond_expr_(self):
+        self._token('(')
+        self._expr_node_()
+        self.ast['lhs'] = self.last_node
+        with self._group():
+            with self._choice():
+                with self._option():
+                    self._icond_op_()
+                with self._option():
+                    self._or_op_()
+                self._error('no available options')
         self.ast['op'] = self.last_node
         self._icond_node_()
         self.ast['rhs'] = self.last_node
@@ -433,6 +455,10 @@ class SIMAGParser(Parser):
         self._token('&&')
 
     @graken()
+    def _or_op_(self):
+        self._token('||')
+
+    @graken()
     def _logic_op_(self):
         with self._choice():
             with self._option():
@@ -440,10 +466,10 @@ class SIMAGParser(Parser):
             with self._option():
                 self._token('=>')
             with self._option():
-                self._token('||')
+                self._or_op_()
             with self._option():
-                self._token('&&')
-            self._error('expecting one of: && <=> => ||')
+                self._and_op_()
+            self._error('expecting one of: <=> =>')
 
     @graken()
     def _comp_op_(self):
@@ -482,6 +508,9 @@ class SIMAGSemantics(object):
         return ast
 
     def icond_type(self, ast):
+        return ast
+
+    def icond_root(self, ast):
         return ast
 
     def icond_expr(self, ast):
@@ -536,6 +565,9 @@ class SIMAGSemantics(object):
         return ast
 
     def and_op(self, ast):
+        return ast
+
+    def or_op(self, ast):
         return ast
 
     def logic_op(self, ast):

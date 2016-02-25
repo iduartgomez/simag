@@ -119,6 +119,7 @@ class ProblemDomain(metaclass=ProblemMeta):
     def lookup_vars(self):
         def mk_part(sent):
             parsed = logic_parser(sent)
+            # TODO: change this
             pclass = parsed.__class__
             if issubclass(pclass, LogSentence):
                 if len(parsed.var_order) > 0:

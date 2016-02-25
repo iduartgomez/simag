@@ -10,26 +10,16 @@ from collections import MutableSet
 
 import xml.etree.ElementTree as xml
 
-
-SLICE_ALL = slice(None)
 class OrderedSet(MutableSet):
     """
-    An OrderedSet is a custom MutableSet that remembers its order, so that
-    every entry has an index that can be looked up.
-    """
-    @staticmethod
-    def is_iterable(obj):
-        """
-        Are we being asked to look up a list of things, instead of a single thing?
-        We check for the `__iter__` attribute so that this can cover types that
-        don't have to be known by this module, such as NumPy arrays.
-        Strings, however, should be considered as atomic values to look up, not
-        iterables.
-        We don't need to check for the Python 2 `unicode` type, because it doesn't
-        have an `__iter__` attribute anyway.
-        """
-        return hasattr(obj, '__iter__') and not isinstance(obj, str)
+    An OrderedSet is a custom MutableSet that remembers its order, so that every
+    entry has an index that can be looked up.
     
+    Based on `https://github.com/LuminosoInsight/ordered-set` and released under 
+    MIT license.
+    """
+    
+    SLICE_ALL = slice(None)
     def __init__(self, iterable=None):
         self.items = []
         self.map = {}
@@ -38,7 +28,7 @@ class OrderedSet(MutableSet):
 
     def __len__(self):
         return len(self.items)
-    
+
     def __getitem__(self, index):
         """
         Get the item at a given index.
@@ -49,7 +39,7 @@ class OrderedSet(MutableSet):
         corresponding to those indices. This is similar to NumPy's
         "fancy indexing".
         """
-        if index == SLICE_ALL:
+        if index == self.SLICE_ALL:
             return self
         elif hasattr(index, '__index__') or isinstance(index, slice):
             result = self.items[index]
@@ -99,6 +89,19 @@ class OrderedSet(MutableSet):
         return self.map[key]
     append = add
 
+    def update(self, sequence):
+        """
+        Update the set with the given iterable sequence, then return the index
+        of the last element inserted.
+        """
+        item_index = None
+        try:
+            for item in sequence:
+                item_index = self.add(item)
+        except TypeError:
+            raise ValueError('Argument needs to be an iterable, got %s' % type(sequence))
+        return item_index
+
     def index(self, key):
         """
         Get the index of a given entry, raising an IndexError if it's not
@@ -109,6 +112,20 @@ class OrderedSet(MutableSet):
         if self.is_iterable(key):
             return [self.index(subkey) for subkey in key]
         return self.map[key]
+
+    def pop(self):
+        """
+        Remove and return the last element from the set.
+        
+        Raises KeyError if the set is empty.
+        """
+        if not self.items:
+            raise KeyError('Set is empty')
+
+        elem = self.items[-1]
+        del self.items[-1]
+        del self.map[elem]
+        return elem
 
     def discard(self, key):
         """
@@ -152,6 +169,25 @@ class OrderedSet(MutableSet):
             return False
         else:
             return set(self) == other_as_set
+    
+    @staticmethod
+    def is_iterable(obj):
+        """
+        Are we being asked to look up a list of things, instead of a single thing?
+        We check for the `__iter__` attribute so that this can cover types that
+        don't have to be known by this module, such as NumPy arrays.
+        Strings, however, should be considered as atomic values to look up, not
+        iterables. The same goes for tuples, since they are immutable and therefore
+        valid entries. 
+        We don't need to check for the Python 2 `unicode` type, because it doesn't
+        have an `__iter__` attribute anyway.
+        """
+        return hasattr(obj, '__iter__') and not isinstance(obj, str) and not isinstance(obj, tuple)
+    
+    @classmethod
+    @property
+    def SLICE_ALL(cls):
+        return cls.SLICE_ALL
 
 #==================#
 #       TOOLS      #

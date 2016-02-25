@@ -30,9 +30,9 @@ a temporal substitution representation where the inference is operated to
 solving the query (including query parsing, data fetching and unification).
 """
 
-# TODO: On ASK, add functionality so it so it can deal with queries that
+# TODO: on ASK, add functionality so it so it can deal with queries that
 # ask about relations of the same type with several objects.
-# TODO: Support skolemization in forms and existential variables
+# TODO: support skolemization in forms and existential variables
 
 # ===================================================================#
 #   Imports and globals
@@ -43,6 +43,7 @@ import itertools
 from datetime import datetime
 from threading import Lock
 from collections import OrderedDict
+from sortedcontainers import SortedListWithKey
 
 from simag.core import bms
 from simag.core.parser import (
@@ -288,28 +289,20 @@ class Representation(object):
         """
         if unlock is True:
             for p in to_lock:
-                if issubclass(p.__class__, LogFunction): o = p.func
-                else: o = p.parent
-                lock = self._locked[o]
+                lock = self._locked[p]
                 lock.release()
-                del self._locked[o]
+                del self._locked[p]
             return
-        
         for p in to_lock:
-            if issubclass(p.__class__, LogFunction): o = p.func
-            else: o = p.parent
-            if o in self._locked:
-                self._locked[o].acquire(timeout=5)
+            if p in self._locked:
+                self._locked[p].acquire(timeout=5)
             else:
                 lock = Lock()
-                self._locked[o] = lock
+                self._locked[p] = lock
                 lock.acquire(timeout=5)
 
-
 # TODO: individuals/classes should be linked in a tree structure
-# for more effitient retrieval. This should be done in 'function' and 
-# 'predicate' objects.
-
+# for more effitient retrieval. 
 class Individual(object):
     """An individual is the unique member of it's own class.
     Represents an object which can pertain to multiple classes or sets.
@@ -794,22 +787,6 @@ class Inference(object):
             self.ctgs = [sent.parent]
             self.query = {sent.term: sent}
             return
-        """
-        preds = []
-        for i, pa in enumerate(iter(comp)):
-            if any(s in pa for s in GL_PCONDS + ['||']):
-                raise ValueError("Cannot user other operators than '&&' " \
-                "in ASK expressions.")
-            if ':vars:' in pa:
-                form = pa.split(':')
-                for i, a in enumerate(form):
-                    if a == 'vars':
-                        vars_ = form[i+1].split(',')
-                        for var in vars_: self.vrs.add(var)
-                        comp.pop(i)
-            elif not any(s in pa for s in COMP_SYMBS):
-                preds.append(pa)
-        """
         terms, ctgs = {}, []
         for p in query.assert_rel:
             ctgs.append(p.func)
@@ -839,9 +816,11 @@ class Inference(object):
                     pred = const.parent
                 node = self.InferNode(nc, preds, pred, sent)
                 if node.const in self.nodes:
-                    self.nodes[node.const].append(node)
+                    self.nodes[node.const].add(node)
                 else:
-                    self.nodes[node.const] = [node]
+                    self.nodes[node.const] = SortedListWithKey(
+                        key=lambda x: x.rule.created)
+                    self.nodes[node.const].add(node)
         
         if len(self.ctgs) > 0: c = self.ctgs.pop()
         else: c = None
@@ -901,9 +880,14 @@ class Inference(object):
                         self.obj_dic[obj].add(cat)
                     except KeyError:
                         self.obj_dic[obj] = set([cat])
+        
         # for each node in the subtitution tree unifify variables
         # and try every possible substitution
         if p in self.nodes:
+            # the node for each rule is stored in an efficient sorted list
+            # by rule creation datetime, from oldest to newest, we iterate 
+            # from newest to oldest as the newest rules take precedence
+            #iter_rules = reversed(self.nodes[p])
             for node in self.nodes[p]:
                 # recursively try unifying all possible argument with the 
                 # operating logic sentence
@@ -949,20 +933,3 @@ class Inference(object):
                     if len(r) == y:
                         subactv[i].add(obj)
         return subactv
-
-if __name__ == '__main__':
-    rep = Representation()
-    string1 = """
-    (( let x, y, t2:time, t1:time="2015.01.01")
-     ( ( dog[x,u=1] && meat[y,u=1] && fat(time=t2)[x,u=1] && fn::time_calc(t1<t2) )
-       |> fn::eat(time=t1)[y,u=1;x]
-     )
-    )
-    ( dog[$Pancho,u=1] )
-    ( meat[$M1,u=1] )
-    ( fat(time="2015.12.01")[$Pancho,u=1] )
-    """
-    rep.tell(string1)
-    answ = rep.ask('(fn::eat[$M1,u=1;$Pancho])', single=True)
-    print(answ)
-    

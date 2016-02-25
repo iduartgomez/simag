@@ -2,13 +2,13 @@
 	"name": "MoveBoxToTable",
 	"variables": ["B1", "T1"],
 	"init": [ 
-		"box[B1,u=1]",
-		"table[T1,u=1]",
-		"red[B1,u=0]"
+		"(box[B1,u=1])",
+		"(table[T1,u=1])",
+		"(red[B1,u=0])"
 	],
 	"goals": [
-		"<on[B1,u=1;T1]>",
-		"red[B1,u=1]"
+		"(fn::on[B1,u=1;T1])",
+		"(red[B1,u=1])"
 	],
 	"requiriments": {
 		"actions": [

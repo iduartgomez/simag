@@ -112,8 +112,6 @@ def logic_parser(string, tell=True):
     else: parser_eval.state = 'tell'
     ast = parser.parse(string, rule_name='block', semantics=semantic_actions)
     results = ParseResults()
-    #import json
-    #print(json.dumps(ast, indent=2))
     for stmt in ast:
         if stmt.stmt is not None:
             sent = make_logic_sent(stmt.stmt)            
@@ -149,6 +147,7 @@ class LogSentence(object):
     def __init__(self):
         self.depth = 0
         self.particles = []
+        self.created = datetime.datetime.now()
     
     def __call__(self, ag, *args):
         self.ag = ag
@@ -170,8 +169,8 @@ class LogSentence(object):
                 else: self.assigned[key] = val
         self.cln_res()
         if not hasattr(self, 'var_order'):
-            preds = self.get_preds(branch='r')
-            ag.thread_manager(self.get_preds(branch='r'))
+            preds = self.get_preds(branch='r', unique=True)
+            ag.thread_manager(preds)
             self.start.solve_proof(self)
             ag.thread_manager(preds, unlock=True)
         elif hasattr(self, 'var_order') \
@@ -188,7 +187,7 @@ class LogSentence(object):
                     "{0} is not a {1} object".format(const, type_)
                 self.assigned[var_name] = const
             # acquire lock
-            preds = self.get_preds(branch='r')
+            preds = self.get_preds(branch='r', unique=True)
             ag.thread_manager(preds)
             self.start.solve_proof(self)
             ag.thread_manager(preds, unlock=True)
@@ -200,7 +199,7 @@ class LogSentence(object):
     
     def assign_val_callback(self, pred):
         def callback_pred():
-            if pred.substituted:
+            if hasattr(pred, 'substituted'):
                 return pred.substituted.time
             return None
         return callback_pred
@@ -219,16 +218,22 @@ class LogSentence(object):
                     x = x.parent
         return True
     
-    def get_all_preds(self):
+    def get_all_preds(self, unique=False):
         preds = []
         for p in self:
             if p.cond == ':predicate:':
-                preds.append(p.pred)
+                if unique:
+                    if issubclass(p.pred.__class__, LogPredicate):
+                        preds.append(p.parent)
+                    else: 
+                        preds.append(p.func)
+                else: preds.append(p.pred)
+        if unique: return set(preds)
         return preds
     
-    def get_preds(self, branch='l', conds=('|>', '=>', '<=>')):
+    def get_preds(self, branch='l', conds=('|>', '=>', '<=>'), unique=False):
         if self.start.cond not in conds:
-            return self.get_all_preds()
+            return self.get_all_preds(unique=unique)
         all_pred = []
         for p in self:
             if p.cond == ':predicate:':
@@ -239,9 +244,18 @@ class LogSentence(object):
             while top.cond not in conds and top.parent:
                 top, bottom = top.parent, top
             if branch == 'l' and top.next[0] is bottom:
-                preds.append(p.pred)
+                if unique:
+                    if issubclass(p.pred.__class__, LogPredicate):
+                        preds.append(p.pred.parent)
+                    else: preds.append(p.pred.func)
+                else: preds.append(p.pred)                
             elif branch != 'l' and top.next[1] is bottom:
-                preds.append(p.pred)
+                if unique:
+                    if issubclass(p.pred.__class__, LogPredicate):
+                        preds.append(p.pred.parent)
+                    else: preds.append(p.pred.func)
+                else: preds.append(p.pred)
+        if unique: return set(preds)
         return preds
     
     def cln_res(self):
@@ -321,9 +335,14 @@ def make_logic_sent(ast):
         def solve_proof(self, proof):
             self.next[0].resolve(proof)
             if self._results[0] is True:
-                self.next[1].substitute(proof)
+                if self.next[1].cond == '||':
+                    self.next[1].next[0].substitute(proof)
+                else:     
+                    self.next[1].substitute(proof)
             elif self._results[0] is False:
-                if not hasattr(proof, 'result'):
+                if self.next[1].cond == '||':
+                    self.next[1].next[1].substitute(proof)
+                else:
                     proof.result = False
         
         def resolve(self, proof, *args):
@@ -333,12 +352,21 @@ def make_logic_sent(ast):
         
         def substitute(self, proof, *args):
             if len(self._results) == 0:
-                self.next[0].resolve(proof, *args)
+                self.next[0].resolve(proof, *args)                
             if self._results[0] is True:
-                self.next[1].substitute(proof, *args)
+                if self.next[1].cond == '||':
+                    self.next[1].next[0].substitute(proof, *args)
+                else:
+                    self.next[1].substitute(proof, *args)
                 self.parent.return_value(True)
+            elif self._results[0] is False:
+                if self.next[1].cond == '||':
+                    self.next[1].next[1].substitute(proof)
+                    self.parent.return_value(True)
+                else:
+                    self.parent.return_value(False)
             else:
-                self.parent.return_value(False)
+                self.parent.return_value(None)
             
     class LogicEquivalence(Particle):
         
@@ -560,7 +588,7 @@ def make_logic_sent(ast):
                 return make_fact(stmt.klass, 'free_term')
         
         def cmpd_stmt(preds, depth, parent):
-            pred = preds.pop(0)
+            pred = preds.pop()
             if len(preds) > 1:
                 form = get_type(pred, cmpd=True)
                 particle = LogicAtom(':predicate:', depth, parent, form)          

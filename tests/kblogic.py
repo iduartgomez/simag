@@ -16,28 +16,7 @@ class BMSTesting(unittest.TestCase):
         self.rep = Representation()
     
     def test_rollback(self):
-        fol="""
-            ( ( let x, y )
-              ( ( dog[x,u=1] && meat[y,u=1] && fn::eat[y,u=1;x] ) 
-                |> fat[x,u=1] ) )
-            ( dog[$Pancho,u=1] )
-            ( meat[$M1,u=1] )
-            ( fn::eat[$M1,u=1;$Pancho] )
-        """       
-        self.rep.tell(fol)
-        self.assertTrue( self.rep.ask("(fat[$Pancho,u=1])", single=True) )
-        #obj = self.rep.individuals['$Pancho'].get_ctg('fat', obj=True)
-        
-        fol = """
-            ( fn::run[$Pancho,u=1] )
-            (( let x, y ) (( dog[x,u=1] && fn::run[x,u=1] ) |> fat[x,u=0] ))
-        """        
-        self.rep.tell(fol)
-        self.assertTrue( self.rep.ask("( fat[$Pancho,u=0] )", single=True) )
-        obj = self.rep.individuals['$Pancho'].get_ctg('fat', obj=True)
-
-        #import pprint
-        #pprint.pprint(obj.belief_record.__dict__)
+        pass
     
     @unittest.skip
     def test_incompatible(self):
@@ -63,7 +42,7 @@ class BMSTesting(unittest.TestCase):
         self.rep.tell(fol)
         self.assertTrue( self.rep.ask("( fat[$Pancho,u=1] )", single=True) )
 
-class AskReprGetAnswer(unittest.TestCase):    
+class AskReprGetAnswer(unittest.TestCase):
     
     def test_ask_pred(self):
         sents = load_sentences('ask_pred.txt')
@@ -76,7 +55,7 @@ class AskReprGetAnswer(unittest.TestCase):
                    ['(fat(t="*now")[$Pancho,u=1])'],
         ]
         eval = [None, [True,True], False, True, True, True]
-        iter_test(self, sents, ask, eval, single=True)
+        self.iter_eval(sents, ask, eval)
     
     def test_ask_func(self):
         sents = load_sentences('ask_func.txt')
@@ -89,8 +68,61 @@ class AskReprGetAnswer(unittest.TestCase):
                    ['(fn::eat[$M1,u=1;$Pancho])'],
         ]
         eval = [True, True, True, True, True, True]
-        iter_test(self, sents, ask, eval, single=True)
-
+        self.iter_eval(sents, ask, eval)
+    
+    def test_event_chain_with_times(self):
+        self.rep = Representation()
+        grounded="""
+            ( dog[$Pancho,u=1] )
+            ( meat[$M1,u=1] )
+            ( fn::eat[$M1,u=1;$Pancho] )
+        """
+        self.rep.tell(grounded)
+        fol = """( ( let x, y )
+              ( ( dog[x,u=1] && meat[y,u=1] && fn::eat[y,u=1;x] ) 
+                |> fat[x,u=1] ) )"""  
+        self.rep.tell(fol)
+        answ = self.rep.ask("( fat[$Pancho,u=1] )", single=True)
+        self.assertTrue(answ)
+        
+        self.rep.tell("( fn::run[$Pancho,u=1] )")
+        fol = """
+            (( let x, y ) (( dog[x,u=1] && fn::run[x,u=1] ) |> fat[x,u=0] ))
+        """        
+        self.rep.tell(fol)
+        answ = self.rep.ask("( fat[$Pancho,u=0] )", single=True)
+        self.assertTrue(answ)
+        
+        fol = """
+            ( (let x, y, t1:time, t2:time) 
+              ( ( ( fn::run(t1=time)[x,u=1] && fn::eat(t2=time)[y,u=1;x] 
+                    && dog[x,u=1] && meat[y,u=1] )
+                && fn::time_calc(t1>t2) )
+              |> (fat[x,u=0] || fat[x,u=1]) ) )
+        """        
+        self.rep.tell(fol)
+        self.rep.tell("( fn::eat(time='2015.01.02')[$M1,u=1;$Pancho] )")
+        self.rep.tell("( fn::run(time='2015.01.01')[$Pancho,u=1] )")
+        answ = self.rep.ask("( fat[$Pancho,u=1] )", single=True)
+        self.assertTrue(answ)
+    
+    def iter_eval(self, sents, ask, eval):
+        for i, test in enumerate(sents):
+            self.rep = Representation()
+            with self.subTest(test='subtest {0}: {1}'.format(i,ask[i])):
+                for s in test:
+                    self.rep.tell(s)
+                for j, q in enumerate(ask[i]):
+                    answ = self.rep.ask(q,single=True)                    
+                    if isinstance(eval[i], list):
+                        self.assertEqual(eval[i][j], answ)
+                    else:
+                        self.assertEqual(eval[i], answ)
+    
+    def tearDown(self):
+        if hasattr(self, 'rep'):
+            del self.rep
+    
 class EvaluationOfFOLSentences(unittest.TestCase):
     
     def setUp(self):
@@ -217,34 +249,6 @@ class LogicSentenceParsing(unittest.TestCase):
 #========================#
 #    HELPER FUNCTIONS    #
 #========================#
-
-def iter_test(self, sents, ask, eval, single=False):
-    for i, test in enumerate(sents):
-        self.rep = Representation()
-        with self.subTest(test='subtest {0}: {1}'.format(i,ask[i])):
-            if isinstance(test, list):
-                for s in test:
-                    self.rep.tell(s)
-                for j, q in enumerate(ask[i]):
-                    answ = self.rep.ask(q,single=single)                    
-                    if isinstance(eval[i], list):
-                        if single is not True:
-                            for k in eval[i][j].keys():
-                                self.assertEqual(eval[i][j][k], answ[k])
-                        else:
-                            self.assertEqual(eval[i][j], answ)
-                    else:
-                        if single is not True:
-                            for k in eval[i].keys():
-                                self.assertEqual(eval[i][k], answ[k])
-                        else:
-                            self.assertEqual(eval[i], answ)
-            else:
-                self.rep.tell(s)
-                for q in ask[i]:
-                    answ = self.rep.ask(q)
-                    for k in eval[i].keys():
-                        self.assertEqual(eval[i][k], answ[k])
 
 def load_sentences(test):
     comment = False
