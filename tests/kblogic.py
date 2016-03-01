@@ -16,7 +16,36 @@ class BMSTesting(unittest.TestCase):
         self.rep = Representation()
     
     def test_rollback(self):
-        pass
+        fol="""
+            (ugly[$Pancho, u=0])
+            (dog[$Pancho,u=1])
+            (meat[$M1,u=1])
+            (fn::eat[$M1,u=1;$Pancho])
+            
+            ((let x, y)
+             ((dog[x,u=1] && meat[y,u=1] && fn::eat[y,u=1;x]) 
+              |> fat[x,u=1]))
+            
+            ((let x)
+             ((fat[x,u=1] && dog[x,u=1]) |> (sad[x,u=1] && ugly[x,u=1])))
+        """
+        self.rep.tell(fol)
+        answ = self.rep.ask("(fat[$Pancho,u=1] && sad[$Pancho,u=1])", single=True)
+        self.assertTrue(answ)
+        
+        fol = """
+        (fn::run[$Pancho,u=1])
+        ((let x, y) 
+         ((fn::run[x,u=1] && dog[x,u=1]) |> fat[x,u=0]))
+        """
+        self.rep.tell(fol)
+        answ = self.rep.ask("(fat[$Pancho,u=1])", single=True)
+        self.assertFalse(answ)
+        
+        sad = self.rep.individuals['$Pancho'].get_ctg('sad')
+        ugly = self.rep.individuals['$Pancho'].get_ctg('ugly')
+        self.assertEqual(ugly, 0)
+        self.assertEqual(sad, None)
     
     @unittest.skip
     def test_incompatible(self):

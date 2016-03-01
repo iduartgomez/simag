@@ -11,6 +11,7 @@ import re
 from simag.core.grammar.grako_parser import SIMAGParser
 from pexpect.ANSI import term
 from types import FunctionType
+from copy import deepcopy
 
 __all__ = (
 'logic_parser',
@@ -147,6 +148,7 @@ class LogSentence(object):
     def __init__(self):
         self.depth = 0
         self.particles = []
+        self._produced = []
         self.created = datetime.datetime.now()
     
     def __call__(self, ag, *args):
@@ -167,7 +169,6 @@ class LogSentence(object):
                 or issubclass(val.__class__, LogFunction)):
                     self.assigned[key] = self.assign_val_callback(val)
                 else: self.assigned[key] = val
-        self.cln_res()
         if not hasattr(self, 'var_order'):
             preds = self.get_preds(branch='r', unique=True)
             ag.thread_manager(preds)
@@ -191,16 +192,20 @@ class LogSentence(object):
             ag.thread_manager(preds)
             self.start.solve_proof(self)
             ag.thread_manager(preds, unlock=True)
-        del self.ag
-        if hasattr(self, 'result'): 
-            result = self.result
-            del self.result
-            return result
+        if hasattr(self, 'result'): result = self.result
+        else: result = None
+        self.cln_res()
+        return result
     
     def assign_val_callback(self, pred):
         def callback_pred():
             if hasattr(pred, 'substituted'):
                 return pred.substituted.time
+            # TODO: there are two reasons why a None is being returned
+            # here, either because the substitution of the precondition
+            # failed or because unexpected behaviour due to a badly-formed
+            # sentence. Ideally we want to test for the unexpected behaviour
+            # at parse time, and raise an error there
             return None
         return callback_pred
         
@@ -259,6 +264,9 @@ class LogSentence(object):
         return preds
     
     def cln_res(self):
+        if hasattr(self, 'result'): del self.result
+        del self.ag
+        del self.produced_from
         for particle in self.particles: 
             if particle.cond == ':predicate:':
                 try: del particle.pred.substituted
@@ -279,7 +287,19 @@ class LogSentence(object):
             return r
         rep = next_lvl_repr(self.start)
         return rep
-        
+    
+    @property
+    def produced_from(self):
+        return self._produced
+    
+    @produced_from.deleter
+    def produced_from(self):
+        self._produced = []
+    
+    @produced_from.setter
+    def produced_from(self, val):
+        self._produced = val
+    
 def make_logic_sent(ast):
     """Takes a parsed FOL sentence and creates an object with
     the embedded methods to resolve it.
@@ -326,9 +346,9 @@ def make_logic_sent(ast):
         def return_value(self, truth, *args):
             self._results.append(truth)
         
-        def substitute(self, proof, *args):
+        def substitute(self, *args):
             raise AssertionError("operators of the type `{0}` can't be on " \
-            + "the left side of the logic sentence".format(self.cond))
+            + "the left side of sentence: `{1}`".format(self.cond, self))
     
     class LogicIndCond(Particle):
         
@@ -336,12 +356,12 @@ def make_logic_sent(ast):
             self.next[0].resolve(proof)
             if self._results[0] is True:
                 if self.next[1].cond == '||':
-                    self.next[1].next[0].substitute(proof)
+                    self.next[1].substitute(proof, 'lhs')
                 else:     
                     self.next[1].substitute(proof)
             elif self._results[0] is False:
                 if self.next[1].cond == '||':
-                    self.next[1].next[1].substitute(proof)
+                    self.next[1].substitute(proof, 'rhs')
                 else:
                     proof.result = False
         
@@ -355,13 +375,13 @@ def make_logic_sent(ast):
                 self.next[0].resolve(proof, *args)                
             if self._results[0] is True:
                 if self.next[1].cond == '||':
-                    self.next[1].next[0].substitute(proof, *args)
+                    self.next[1].substitute(proof, 'lhs', *args)
                 else:
                     self.next[1].substitute(proof, *args)
                 self.parent.return_value(True)
             elif self._results[0] is False:
                 if self.next[1].cond == '||':
-                    self.next[1].next[1].substitute(proof)
+                    self.next[1].substitute(proof, 'rhs')
                     self.parent.return_value(True)
                 else:
                     self.parent.return_value(False)
@@ -458,6 +478,15 @@ def make_logic_sent(ast):
             else:
                 self.parent.return_value(None)
         
+        def substitute(self, proof, *args):
+            if self.parent.cond != '|>':
+                super().substitute()                    
+            side = args[0]
+            if side == 'lhs':
+                self.next[0].substitute(proof)
+            else:
+                self.next[1].substitute(proof)
+                
     class LogicAtom(Particle):
         
         def resolve(self, proof):
@@ -472,12 +501,16 @@ def make_logic_sent(ast):
                 test = self.pred.substitute(args)
                 if '$' in args[0][0]:
                     result = ag.individuals[args[0]].test_rel(
-                        test,
-                        copy_date=True)
+                        test, obj=True, copy_date=True)
+                    if result:
+                        proof.produced_from.append(result)
+                        result = True
                 else:
                     result = ag.classes[args[0]].test_rel(
-                        test,
-                        copy_date=True)
+                        test, obj=True, copy_date=True)
+                    if result:
+                        proof.produced_from.append(result)
+                        result = True
             elif issubclass(self.pred.__class__, LogPredicate):
                 # Check membership to a set of an entity.
                 sbj = self.isvar(self.pred.term, proof)
@@ -485,15 +518,22 @@ def make_logic_sent(ast):
                 if '$' not in sbj[0]:
                     try: 
                         result = ag.classes[sbj].test_ctg(
-                            test)
+                            test, obj=True)
                     except KeyError:
                         result = None
+                    if result:
+                        proof.produced_from.append(result)
+                        result = True
                 else:
                     try:
                         result = ag.individuals[sbj].test_ctg(
-                            test)
-                    except KeyError:
+                            test, obj=True)
+                    except KeyError:                        
                         result = None
+                    else:
+                        if result:
+                            proof.produced_from.append(result)
+                            result = True
             else:
                 # special function types
                 if type(self.pred) == TimeFunc:
@@ -523,13 +563,13 @@ def make_logic_sent(ast):
                     if arg in proof.assigned:
                         args[x] = proof.assigned[arg]
                 pred = self.pred.substitute(args)
+                pred = ag.up_rel(pred, return_val=True)
                 ag.bmsWrapper.add(pred, proof)
-                ag.up_rel(pred)
             elif issubclass(self.pred.__class__, LogPredicate):
                 sbj = self.isvar(self.pred.term, proof)
-                pred = self.pred.substitute(sbj, val=None, ground=True)
+                pred = self.pred.substitute(sbj, val=None, ground=True)                
+                pred = ag.up_memb(pred, return_val=True)
                 ag.bmsWrapper.add(pred, proof)
-                ag.up_memb(pred)
             if hasattr(proof, 'result'):
                 proof.result.append(pred)
             else:
@@ -745,12 +785,15 @@ class LogPredicate(metaclass=MetaForAtoms):
         return '{0}({1}: {2})'.format(
             self.__class__.__name__, self.parent, self.term)
 
+class NotCompAssertError(Exception):
+        "trying to compare different terms"
+        
 def make_fact(pred, f_type=None, **kwargs):
     """Parses a grounded predicate and returns a 'fact'."""
     
     class GroundedTerm(LogPredicate):
         
-        def __init__(self, pred, fromfree=False, **kwargs):
+        def __init__(self, pred, fromfree=False, empty=False, **kwargs):
             if fromfree is True:
                 assert type(pred) == FreeTerm, \
                     'The object is not of <FreeTerm> type'
@@ -758,13 +801,14 @@ def make_fact(pred, f_type=None, **kwargs):
                     setattr(self, name, value)
                 self.term = kwargs['sbj']
                 if hasattr(self, 'date_var'): del self.date_var
+                if hasattr(self, 'op'): del self.op
+            elif empty: pass
             else:
                 parent, term, val, op, dates = super().__init__(pred)
                 self.parent = parent
                 self.term = term                
                 assert (op == '='), \
                 "It's a grounded predicate, must assign truth value."
-                self.op = op
                 if (val > 1 or val < 0):
                     m = "Illegal value: {0}, must be > 0, or < 1." .format(val)
                     raise AssertionError(m)
@@ -778,10 +822,30 @@ def make_fact(pred, f_type=None, **kwargs):
             if time_truth is False: return False
             # test against other            
             if other.parent == self.parent \
-            and other.term == self.term:
+            and other.term == self.term \
+            and other.value == self.value:
                 return True
             else: return False
-            
+        
+        def substitute(self, sbj=None, val=None):
+            empty = make_fact(self, f_type='grounded_term', **{'empty': True})
+            empty.parent = self.parent
+            if sbj: empty.term = sbj
+            else: empty.term = self.term
+            if val: empty.value = val
+            else: empty.value = self.value
+            if hasattr(self, 'dates'):
+                empty.dates = copy.deepcopy(self.dates)
+            return empty
+        
+        def update(self, other):
+            if not issubclass(other.__class__, LogPredicate):
+                raise TypeError(
+                "object provided for updating must be of class GroundedTerm")
+            assert (self.parent == other.parent)
+            assert (self.term == other.term)
+            self.value = other.value
+        
         @property
         def time(self):
             now = datetime.datetime.now()
@@ -806,6 +870,9 @@ def make_fact(pred, f_type=None, **kwargs):
                 self.dates = dates
         
         def __eq__(self, other):
+            if self.parent != other.parent \
+            or self.term != other.term:
+                raise NotCompAssertError
             # Test if the statements are ture at this moment in time
             time_truth = self._eval_time_truth(other)
             if time_truth is False: return False
@@ -961,6 +1028,10 @@ class LogFunction(metaclass=MetaForAtoms):
         return '{0}({1}: {2})'.format(
             self.__class__.__name__, self.func, self.args)
 
+class NotCompFuncError(Exception):
+    def __init__(self, args):
+        self.err, self.arg1, self.arg2 = args
+
 def make_function(sent, f_type=None, **kwargs):
     """Parses and makes a function of n-arity.
     
@@ -976,12 +1047,6 @@ def make_function(sent, f_type=None, **kwargs):
     data structure for the function, but are not meant to be instantiated
     directly.
     """
-        
-    class NotCompFuncError(Exception):
-        """Logic functions are not comparable exception."""
-    
-        def __init__(self, args):
-            self.err, self.arg1, self.arg2 = args  
     
     class RelationFunc(LogFunction):
         
@@ -994,8 +1059,20 @@ def make_function(sent, f_type=None, **kwargs):
             # first argument which represent the object of the relation,
             # the second argument is the subject, and the optional third
             # is the indirect object
-            self.value = mk_args[0][1]
             if dates is not None: self.dates = dates
+               
+        @property
+        def value(self):
+            return self.args[0][1]
+        
+        @value.setter
+        def value(self, val):
+            arg = list(self.args[0])
+            arg[1] = val
+            self.args[0] = tuple(arg)
+        
+        def update(self, other):
+            self.value = other.value
         
         def __eq__(self, other):
             comparable = self.chk_args_eq(other)

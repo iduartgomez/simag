@@ -50,6 +50,8 @@ from simag.core.parser import (
     logic_parser,
     LogFunction,
     LogPredicate,
+    NotCompAssertError,
+    NotCompFuncError
 )
 
 # ===================================================================#
@@ -115,9 +117,9 @@ class Representation(object):
         for a in results.assert_cogs:
             self.add_cog(a)
     
-    def ask(self, sent, single=False):
-        """Asks the KB if some fact is true and returns the result of
-        that ask.
+    def ask(self, sent, single=True):
+        """Asks the KB if some fact is true and returns the answer to 
+        that question.
         """
         inf_proc = Inference(self, sent)            
         if single is True:
@@ -128,31 +130,32 @@ class Representation(object):
             return True
         return inf_proc.results
 
-    def up_memb(self, pred):
+    def up_memb(self, pred, return_val=False):
         # It's a membership declaration.        
         subject, categ = pred.term, pred.parent
         if subject not in self.individuals and '$' in subject:
             # An individual which is member of a class
             ind = Individual(subject)
-            ind.add_ctg(pred)
+            pred = ind.add_ctg(pred, get_obj=True)
             self.individuals[subject] = ind
         elif '$' in subject:
             # Add/replace an other class membership to an existing individual
-            self.individuals[subject].add_ctg(pred)
+            pred = self.individuals[subject].add_ctg(pred, get_obj=True)
         elif subject in self.classes:
-            self.classes[subject].add_ctg(pred)
+            pred = self.classes[subject].add_ctg(pred, get_obj=True)
         else:
             # Is a new subclass of an other class
             cls = Category(subject)
             cls.type_ = 'class'
-            cls.add_ctg(pred)
+            pred = cls.add_ctg(pred, get_obj=True)
             self.classes[subject] = cls
         if categ not in self.classes:
             nc = Category(categ)
             nc.type_ = 'class'
             self.classes[categ] = nc
+        if return_val: return pred
 
-    def up_rel(self, func):
+    def up_rel(self, func, return_val=False):
         # It's a function declaration.
         relation = func.func
         for subject in func.get_args():
@@ -160,11 +163,11 @@ class Representation(object):
                 # It's a rel between an object and other obj/class.
                 if subject not in self.individuals:
                     ind = Individual(subject)
-                    ind.add_rel(func)
+                    rel = ind.add_rel(func, get_obj=True)
                     self.individuals[subject] = ind
                 else:
                     ind = self.individuals[subject]
-                    ind.add_rel(func)
+                    rel = ind.add_rel(func, get_obj=True)
                 if relation not in self.classes:
                     rel = Relation(relation)
                     self.classes[relation] = rel
@@ -172,13 +175,14 @@ class Representation(object):
                 # It's a rel between a class and other class/obj.
                 if subject not in self.classes:
                     categ = Category(subject)
-                    categ.add_rel(func)
+                    rel = categ.add_rel(func, get_obj=True)
                     self.classes[subject] = categ
                 else:
-                    self.classes[subject].add_rel(func)
+                    rel = self.classes[subject].add_rel(func, get_obj=True)
                 if relation not in self.classes:
                     rel = Relation(relation)
                     self.classes[relation] = rel
+        if return_val: return rel
 
     def add_cog(self, sent):                
         def chk_args(p):
@@ -360,14 +364,16 @@ class Individual(object):
         else:
             self.cog[p] = [sent]
         
-    def add_ctg(self, fact):
+    def add_ctg(self, fact, get_obj=False):
         if issubclass(fact.__class__, LogPredicate):
             ctg_rec = [f.parent for f in self.categ]
             try: idx = ctg_rec.index(fact.parent)
-            except ValueError: self.categ.append(fact)
+            except ValueError: 
+                self.categ.append(fact)
+                if get_obj: return fact
             else:
-                fact.belief_record = self.categ[idx].belief_record
-                self.categ[idx] = fact
+                self.categ[idx].update(fact)
+                if get_obj: return self.categ[idx]
         else: raise TypeError('The object is not a LogPredicate subclass.')
     
     def check_ctg(self, n):
@@ -406,7 +412,7 @@ class Individual(object):
             except KeyError: return None
             else: return x
     
-    def test_ctg(self, pred):
+    def test_ctg(self, pred, obj=False):
         """Checks if it's child of a category and returns true if it's 
         equal to the comparison, false if it's not, and none if it
         doesn't exist.
@@ -416,25 +422,23 @@ class Individual(object):
                 categ = ctg
                 break
         if 'categ' not in locals(): return None
-        if pred == categ: return True
+        if pred == categ: 
+            if obj: return categ
+            return True
         else: return False
     
-    def add_rel(self, func):
+    def add_rel(self, func, get_obj=False):
         try:
-            rel = self.relations[func.func]
+            rels = self.relations[func.func]
         except KeyError:
             self.relations[func.func] = [func]
+            if get_obj: return func
         else:
-            pop_old = False
-            for i, r in enumerate(rel):
-                if r == func: 
-                    pop_old = True
-                    break         
-            if pop_old:
-                func.belief_record = rel[i].belief_record
-                rel.pop(i)
-            rel.append(func)
-    
+            for rel in rels:
+                rel.update(func)
+                if get_obj: return rel
+                break
+        
     def get_rel(self, func=None):
         """Returns a list of the relations the object is involved either
         as subject, object or indirect object.
@@ -465,6 +469,8 @@ class Individual(object):
                 if func == f:
                     if copy_date and hasattr(f, 'dates'):
                         func.dates = f.dates
+                    if obj:
+                        return f
                     return True
                 else: return False
         return None
@@ -527,23 +533,21 @@ class Category(object):
     def add_cog(self, sent):
         if sent not in self.cog: self.cog.append(sent)
     
-    def add_rel(self, func):
+    def add_rel(self, func, get_obj=False):
         if not hasattr(self, 'relations'):
             self.relations = dict()
             self.relations[func.func] = [func]
+            if get_obj: return func
         else:
-            try: rel = self.relations[func.func]
-            except KeyError: self.relations[func.func] = [func]
+            try: rels = self.relations[func.func]
+            except KeyError: 
+                self.relations[func.func] = [func]
+                if get_obj: return func          
             else:
-                pop_old = False
-                for i, r in enumerate(rel):
-                    if r == func: 
-                        pop_old = True
-                        break         
-                if pop_old:
-                    func.belief_record = rel[i].belief_record
-                    rel.pop(i)
-                rel.append(func)
+                for rel in rels:
+                    rel.update(func)
+                    if get_obj: return rel
+                    break
     
     def get_rel(self, func=None):
         """Returns a list of the relations the object is involved either
@@ -560,12 +564,13 @@ class Category(object):
             except KeyError:
                 return None      
             for f in funcs:
-                if f.args_ID == func.args_ID: return f            
+                if f.args_ID == func.args_ID: return f
+            return None        
         if hasattr(self, 'relations'): rel = [k for k in self.relations]
         else: rel = []
         return rel
     
-    def test_rel(self, func, copy_date=False):
+    def test_rel(self, func, obj=False, copy_date=False):
         """Checks if a relation exists; and returns true if it's 
         equal to the comparison, false if it's not, and None if it
         doesn't exist.
@@ -579,19 +584,23 @@ class Category(object):
                 if func == f:
                     if copy_date and hasattr(f, 'dates'):
                         func.dates = f.dates
+                    if obj:
+                        return obj
                     return True
                 else: return False
         return None
     
-    def add_ctg(self, fact):
+    def add_ctg(self, fact, get_obj=False):
         if not hasattr(self,'parents'): self.parents = [fact]
         else:        
             ctg_rec = [f.parent for f in self.parents]
             try: idx = ctg_rec.index(fact.parent)
-            except ValueError: self.parents.append(fact)            
+            except ValueError: 
+                self.parents.append(fact)
+                if get_obj: return fact       
             else:
-                fact.belief_record = self.parents[idx].belief_record
-                self.parents[idx] = fact
+                self.parents[idx].update(fact)
+                if get_obj: return self.parents[idx]
     
     def get_ctg(self, ctg=None, obj=False):
         """Returns a dictionary of the categories of the object and
@@ -618,7 +627,7 @@ class Category(object):
             except KeyError: return None
             else: return x
     
-    def test_ctg(self, pred):
+    def test_ctg(self, pred, obj=False):
         """Checks if it's child of a category and returns true if it's 
         equal to the comparison, false if it's not, and none if it
         doesn't exist.
@@ -629,7 +638,9 @@ class Category(object):
                 categ = ctg
                 break
         if 'categ' not in locals(): return None
-        if pred == categ: return True
+        if pred == categ:
+            if obj: return categ 
+            return True
         else: return False
         
         
@@ -703,25 +714,7 @@ class Inference(object):
         var substitution) and returns the answer to the query. If new 
         knowledge is produced then it's passed to an other procedure for
         addition to the KB.
-        """        
-        def chk_result():
-            isind = True if var[0] == '$' else False
-            if issubclass(pclass, LogFunction):
-                try:
-                    if isind is True: 
-                        res = self.kb.individuals[var].test_rel(pred)
-                    else:
-                        res = self.kb.classes[var].test_rel(pred)
-                except KeyError: res = None
-            elif issubclass(pclass, LogPredicate):
-                try:
-                    if isind is True:
-                        res = self.kb.individuals[var].test_ctg(pred)
-                    else:
-                        res = self.kb.classes[var].test_ctg(pred)
-                except KeyError: res = None
-            self.results[var][q] = res
-        
+        """
         def results_lookup_table():
             # create a lookup table for memoizing results of previous passes
             if hasattr(self, 'queue') is False:
@@ -753,16 +746,17 @@ class Inference(object):
                         if q in v:
                             if var not in self.results:
                                 self.results[var] = {}
-                            chk_result()
+                    try: self.results[var][q]
+                    except KeyError: self.results[var][q] = None
             else:
                 self.results[var] = {}
                 for pred in preds:
                     pclass = pred.__class__
                     results_lookup_table()
                     if issubclass(pclass, LogFunction):
-                        self.actv_q, q = (var, pred.func), pred.func
+                        self.actv_q, q = (var, pred.func, pred), pred.func
                     elif issubclass(pclass, LogPredicate):
-                        self.actv_q, q = (var, pred.parent), pred.parent
+                        self.actv_q, q = (var, pred.parent, pred), pred.parent
                     k, result, self._updated = True, None, list()
                     while not result and k is True:
                         # Run the query, if there is no result and there is
@@ -771,8 +765,116 @@ class Inference(object):
                         result = self.unify(q, chk, done)
                         k = True if True in self._updated else False
                         self._updated = list()
-                    # Update the result from the subtitution repr
-                    chk_result()
+                    # if there is some unresolved query, add none to results
+                    try: self.results[var][q]
+                    except KeyError: self.results[var][q] = None
+        
+    def unify(self, p, chk, done):
+        def add_ctg():
+            # add category/function to the object dictionary
+            # and to results dict if is the result for the query
+            for r in proof_result:
+                if issubclass(r.__class__, LogFunction):
+                    args = r.get_args()
+                    for obj in args:
+                        try:
+                            self.obj_dic[obj].add(r.func)
+                        except KeyError:
+                            self.obj_dic[obj] = set([r.func])
+                    if issubclass(pred.__class__, LogFunction):
+                        try:
+                            if pred == r:
+                                self.results[query_obj][query] = True
+                            else:
+                                self.results[query_obj][query] = False
+                        except NotCompFuncError: pass
+                else:
+                    cat, obj = r.parent, r.term
+                    try :
+                        self.obj_dic[obj].add(cat)
+                    except KeyError:
+                        self.obj_dic[obj] = set([cat])
+                    if issubclass(pred.__class__, LogPredicate):
+                        try:
+                            if pred == r:
+                                self.results[query_obj][query] = True
+                            else:
+                                self.results[query_obj][query] = False
+                        except NotCompAssertError: pass
+        
+        query_obj, query = self.actv_q[0], self.actv_q[1]
+        pred = self.actv_q[2]
+        # for each node in the subtitution tree unifify variables
+        # and try every possible substitution
+        if p in self.nodes:
+            # the node for each rule is stored in an efficient sorted list
+            # by rule creation datetime, from oldest to newest, we iterate 
+            # from newest to oldest as the newest rules take precedence
+            #iter_rules = reversed(self.nodes[p])
+            for node in self.nodes[p]:
+                # recursively try unifying all possible argument with the 
+                # operating logic sentence
+                # check what are the possible var substitutions
+                mapped = self.map_vars(node)
+                # permute and find every argument combination       
+                mapped = list(itertools.product(*mapped))
+                # run proof until a solution is found or there aren't more
+                # combinations left to be tested
+                proof_result = None
+                while not proof_result and (len(mapped) > 0):
+                    args = mapped.pop()
+                    result_memoization = hash(args)
+                    if result_memoization not in self.queue[node]:
+                        proof_result = node.rule(self.kb, args)
+                        if proof_result is not False and proof_result is not None:
+                            self._updated.append(True)
+                            add_ctg()
+                            self.queue[node].add(result_memoization)                            
+                if p not in done:
+                    chk = list(node.ants) + chk
+        if query_obj in self.obj_dic and query in self.obj_dic[query_obj]:
+            return True
+        elif len(chk) > 0:
+            done.append(p)
+            p = chk.pop(0)
+            self.unify(p, chk, done)
+
+    def chk_result(self, results):
+        """
+        isind = True if var[0] == '$' else False
+        if issubclass(pclass, LogFunction):
+            try:
+                if isind is True: 
+                    res = self.kb.individuals[var].test_rel(pred)
+                else:
+                    res = self.kb.classes[var].test_rel(pred)
+            except KeyError: res = None
+        elif issubclass(pclass, LogPredicate):
+            try:
+                if isind is True:
+                    res = self.kb.individuals[var].test_ctg(pred)
+                else:
+                    res = self.kb.classes[var].test_ctg(pred)
+            except KeyError: res = None
+        self.results[var][q] = res
+        """
+                
+    def map_vars(self, node):
+        # TODO: check out what combinations can be roled out before 
+        # attempting to solve it for performance gains
+        
+        # map values to variables for subtitution
+        subs_num = len(node.subs)
+        subactv = [set()] * subs_num
+        for i, t in enumerate(node.subs.values()):
+            y = len(t)               
+            for obj, s in self.obj_dic.items():
+                x = len(s)            
+                if x >= y:
+                    r = s.intersection(t)
+                    if len(r) == y:
+                        subactv[i].add(obj)
+        return subactv
     
     def get_query(self, sent):
         if type(sent) is str:
@@ -781,11 +883,11 @@ class Inference(object):
             self.ctgs = [sent.func]
             self.query = {}
             for e in sent.get_args(): 
-                self.query[e] = sent
+                self.query[e] = [sent]
             return
         elif issubclass(sent.__class__, LogPredicate):
             self.ctgs = [sent.parent]
-            self.query = {sent.term: sent}
+            self.query = {sent.term: [sent]}
             return
         terms, ctgs = {}, []
         for p in query.assert_rel:
@@ -862,74 +964,3 @@ class Inference(object):
             del self.done
             del self.rules
             del self.ctgs    
-
-    def unify(self, p, chk, done):
-        def add_ctg():
-            # added category/function to the object dictionary
-            for r in proof_result:
-                if issubclass(r.__class__, LogFunction):
-                    args = r.get_args()
-                    for sbs in args:
-                        try:
-                            self.obj_dic[sbs].add(r.func)
-                        except KeyError:
-                            self.obj_dic[sbs] = set([r.func])
-                else:
-                    cat, obj = r.parent, r.term
-                    try :
-                        self.obj_dic[obj].add(cat)
-                    except KeyError:
-                        self.obj_dic[obj] = set([cat])
-        
-        # for each node in the subtitution tree unifify variables
-        # and try every possible substitution
-        if p in self.nodes:
-            # the node for each rule is stored in an efficient sorted list
-            # by rule creation datetime, from oldest to newest, we iterate 
-            # from newest to oldest as the newest rules take precedence
-            #iter_rules = reversed(self.nodes[p])
-            for node in self.nodes[p]:
-                # recursively try unifying all possible argument with the 
-                # operating logic sentence
-                # check what are the possible var substitutions
-                mapped = self.map_vars(node)
-                # permute and find every argument combination       
-                mapped = list(itertools.product(*mapped))
-                # run proof until a solution is found or there aren't more
-                # combinations left to be tested
-                proof_result = None
-                while not proof_result and (len(mapped) > 0):
-                    args = mapped.pop()
-                    result_memoization = hash(args)
-                    if result_memoization not in self.queue[node]:
-                        proof_result = node.rule(self.kb, args)
-                        if proof_result is not False and proof_result is not None:
-                            self._updated.append(True)
-                            add_ctg()
-                            self.queue[node].add(result_memoization)
-                if p not in done:
-                    chk = list(node.ants) + chk
-        if self.actv_q[0] in self.obj_dic and \
-        self.actv_q[1] in self.obj_dic[self.actv_q[0]]:
-            return True
-        elif len(chk) > 0:
-            done.append(p)
-            p = chk.pop(0)
-            self.unify(p, chk, done)
-
-    def map_vars(self, node):
-        # TODO: check out what combinations can be roled out before 
-        # attempting to solve it for performance gains
-        
-        # map values to variables for subtitution
-        subs_num = len(node.subs)
-        subactv = [set()] * subs_num
-        for i, t in enumerate(node.subs.values()):
-            y = len(t)               
-            for obj, s in self.obj_dic.items():
-                x = len(s)            
-                if x >= y:
-                    r = s.intersection(t)
-                    if len(r) == y:
-                        subactv[i].add(obj)
-        return subactv
