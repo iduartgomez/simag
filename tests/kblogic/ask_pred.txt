@@ -60,3 +60,8 @@ BLOCK
     ( meat[$M1,u=1] )
     ( fn::eat(time="2015.07.05.10.25")[$M1,u=1;$Pancho] )
 /BLOCK
+# Test 1.4/06: query for all 'professor' 
+BLOCK
+	( professor[$Lucy,u=1] )
+	( professor[$John,u=1] )
+/BLOCK

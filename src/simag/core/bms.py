@@ -12,7 +12,7 @@ This module adds methods and classes for:
 # ===================================================================#
 from datetime import datetime
 
-from simag.core.parser import LogPredicate, LogSentence
+from simag.core.parser import LogSentence
 
 
 # ===================================================================#
@@ -52,7 +52,7 @@ class BmsWrapper(object):
         for entry in last.produced:
             if entry is entry.record[-1]:
                 # ask the agent again if the value to be rolled back still holds true
-                answ = ag.ask(entry.pred)
+                answ = ag.ask(entry.pred, ignore_current=True)
                 if not answ:
                     # the result is no longer right, so changes produced by this
                     # value must be rolled back

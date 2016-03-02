@@ -42,16 +42,18 @@ import uuid
 import itertools
 from datetime import datetime
 from threading import Lock
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from sortedcontainers import SortedListWithKey
 
 from simag.core import bms
 from simag.core.parser import (
     logic_parser,
+    make_fact,
     LogFunction,
     LogPredicate,
     NotCompAssertError,
-    NotCompFuncError
+    NotCompFuncError,
+    FreeTerm,
 )
 
 # ===================================================================#
@@ -117,11 +119,11 @@ class Representation(object):
         for a in results.assert_cogs:
             self.add_cog(a)
     
-    def ask(self, sent, single=True):
+    def ask(self, sent, single=True, **kwargs):
         """Asks the KB if some fact is true and returns the answer to 
         that question.
         """
-        inf_proc = Inference(self, sent)            
+        inf_proc = Inference(self, sent, **kwargs)
         if single is True:
             for answ in inf_proc.results.values():
                 for pred in answ.values():
@@ -190,7 +192,7 @@ class Representation(object):
                 if p in self.classes:
                     self.classes[p].add_cog(sent)
                 else:
-                    if not issubclass(pclass, LogFunction): 
+                    if not issubclass(pred.__class__, LogFunction): 
                         nc = Category(sbj)
                     else: 
                         nc = Relation(sbj)
@@ -206,29 +208,29 @@ class Representation(object):
                 elif sbj in self.classes:
                     self.classes[sbj].add_cog(sent)
                 else:
-                    if not issubclass(pclass, LogFunction): 
+                    if not issubclass(pred.__class__, LogFunction): 
                         nc = Category(sbj)
                     else: 
                         nc = Relation(sbj)
                     nc.add_cog(sent)
-                    self.classes[sbj] = nc
-            
-        
+                    self.classes[sbj] = nc        
         preds = []
         for p in sent:
             if p.cond == ':predicate:':
                 preds.append(p.pred)
         for pred in preds:
-            pclass = pred.__class__
-            if issubclass(pclass, LogFunction):
+            if issubclass(pred.__class__, LogFunction):
                 if hasattr(pred, 'args'):                    
                     for arg in pred.args:
                         if isinstance(arg, tuple): sbj = arg[0]
                         else: sbj = arg
                         chk_args(pred.func)
-            elif issubclass(pclass, LogPredicate):
+            elif issubclass(pred.__class__, LogPredicate):
                 sbj, p = pred.term, pred.parent
                 chk_args(p)
+        questions = sent.get_preds('r', return_obj=True)
+        for query in questions:
+            self.ask(query)
         
     def save_rule(self, proof):
         preds = proof.get_all_preds()
@@ -272,15 +274,31 @@ class Representation(object):
             if len(t) != 0: ctg_dic[ind.name] = t
         return ctg_dic
     
-    def push(self, subs):
-        """Takes a SubstRepr object and pushes changes to self.
-        It calls the BMS to record any changes and inconsistencies.
-        """
-        raise AttributeError("'push' method not implemented")
-        if hasattr(subs,'individuals'):
-            self.individuals.update(subs.individuals)
-        if hasattr(subs,'classes'):
-            self.classes.update(subs.classes)
+    def test_pred(self, p, kls=None):
+        if not kls:
+            if issubclass(p.__class__, LogPredicate):
+                kls = 'pred'
+            elif issubclass(p.__class__, LogFunction):
+                kls = 'func'
+        if kls == 'pred':
+            subject = p.term
+            if subject[0] == '$':
+                try: return self.individuals[subject].test_ctg(p)
+                except: return None
+            else:
+                try: return self.individuals[subject].test_ctg(p)
+                except: return None
+        elif kls == 'func':
+            for subject in p.get_args():
+                if subject[0] == '$':
+                    try: return self.individuals[subject].test_rel(p)
+                    except: return None
+                else:
+                    try: return self.classes[subject].test_rel(p)
+                    except: return None
+        else:
+            raise TypeError("the first argument must be of " \
+                + "LogPredicate or LogFunction type")
     
     def thread_manager(self, to_lock, unlock=False):
         """This method is called to manage locks on working objects.
@@ -337,7 +355,7 @@ class Individual(object):
         relations (opt) -> Functions between objects and/or classes.
     """
     def __init__(self, name):
-        self.id = str(uuid.uuid4())
+        self.id = str(uuid.uuid4()).replace('-','')
         self.name = name
         self.categ = []
         self.relations = {}
@@ -435,9 +453,10 @@ class Individual(object):
             if get_obj: return func
         else:
             for rel in rels:
-                rel.update(func)
-                if get_obj: return rel
-                break
+                if rel.chk_args_eq(func) is True:
+                    rel.update(func)
+                    if get_obj: return rel
+                    break
         
     def get_rel(self, func=None):
         """Returns a list of the relations the object is involved either
@@ -542,12 +561,13 @@ class Category(object):
             try: rels = self.relations[func.func]
             except KeyError: 
                 self.relations[func.func] = [func]
-                if get_obj: return func          
+                if get_obj: return func
             else:
                 for rel in rels:
-                    rel.update(func)
-                    if get_obj: return rel
-                    break
+                    if rel.chk_args_eq(func) is True:
+                        rel.update(func)
+                        if get_obj: return rel
+                        break
     
     def get_rel(self, func=None):
         """Returns a list of the relations the object is involved either
@@ -592,7 +612,7 @@ class Category(object):
     
     def add_ctg(self, fact, get_obj=False):
         if not hasattr(self,'parents'): self.parents = [fact]
-        else:        
+        else:
             ctg_rec = [f.parent for f in self.parents]
             try: idx = ctg_rec.index(fact.parent)
             except ValueError: 
@@ -700,10 +720,16 @@ class Inference(object):
         obj.parser = logic_parser
         return obj
     
-    def __init__(self, kb, *args):
+    def __init__(self, kb, *args, **kwargs):
+        self._ignore_current = False
+        if kwargs:
+            for k, v in kwargs.items():
+                if k == 'ignore_current':
+                    self._ignore_current = v
         self.kb = kb
         self.vrs = set()
         self.nodes = OrderedDict()
+        self.results = {}
         self.infer_facts(*args)
 
     def infer_facts(self, sent):
@@ -724,7 +750,7 @@ class Inference(object):
             else:
                 for node in self.queue: self.queue[node] = set()
         
-        self.get_query(sent)        
+        self.get_query(sent)
         # Get relevant rules to infer the query
         self.rules, self.done = OrderedSet(), [None]
         while hasattr(self, 'ctgs'):
@@ -735,40 +761,53 @@ class Inference(object):
         klass_dic = self.kb.objs_by_ctg(self.chk_ctgs, 'classes')
         self.obj_dic.update(klass_dic)
         # Start inference process
-        self.results = dict()
         for var, preds in self.query.items():
             if var in self.vrs:
                 for pred in preds:
-                    pclass = pred.__class__
-                    if issubclass(pclass, LogFunction): q = pred.func
-                    elif issubclass(pclass, LogPredicate): q = pred.parent
-                    for var,v in self.obj_dic.items():
-                        if q in v:
-                            if var not in self.results:
-                                self.results[var] = {}
-                    try: self.results[var][q]
-                    except KeyError: self.results[var][q] = None
-            else:
-                self.results[var] = {}
+                    if issubclass(pred.__class__, LogFunction): 
+                        q, is_func = pred.func, True
+                    elif issubclass(pred.__class__, LogPredicate): 
+                        q, is_func = pred.parent, False   
+                    for obj, ctgs in self.obj_dic.items():
+                        result = None
+                        if is_func:
+                            # need to create a substitution
+                            subst = pred
+                            if q in ctgs:              
+                                result = self.kb.test_pred(subst, kls='func')
+                        else:
+                            subst = make_fact(pred, 'grounded_term',
+                                from_free=True, **{'sbj': obj})
+                            if q in ctgs:
+                                result = self.kb.test_pred(subst, kls='pred')                      
+                        if obj not in self.results: self.results[obj] = {}
+                        if result is not None:
+                            self.results[obj][q] = result
+                        else:
+                            # if no result was found from the kb directly
+                            # make an inference from a grounded fact
+                            inf_proc = Inference(self.kb, subst)
+                            self.results[obj][q] = inf_proc.results[obj][q]
+            else:                
+                prev_res = self.results.setdefault(var,{})
                 for pred in preds:
-                    pclass = pred.__class__
-                    results_lookup_table()
-                    if issubclass(pclass, LogFunction):
+                    if issubclass(pred.__class__, LogFunction):
                         self.actv_q, q = (var, pred.func, pred), pred.func
-                    elif issubclass(pclass, LogPredicate):
+                    elif issubclass(pred.__class__, LogPredicate):
                         self.actv_q, q = (var, pred.parent, pred), pred.parent
-                    k, result, self._updated = True, None, list()
-                    while not result and k is True:
-                        # Run the query, if there is no result and there is
-                        # an update, then rerun it again, else stop
-                        chk, done = list(), list()
-                        result = self.unify(q, chk, done)
-                        k = True if True in self._updated else False
-                        self._updated = list()
-                    # if there is some unresolved query, add none to results
-                    try: self.results[var][q]
-                    except KeyError: self.results[var][q] = None
-        
+                    if q not in prev_res:
+                        results_lookup_table()
+                        k, result, self._updated = True, None, list()
+                        while not result and k is True:
+                            # Run the query, if there is no result and there is
+                            # an update, then rerun it again, else stop
+                            chk, done = deque(), list()
+                            result = self.unify(q, chk, done)
+                            k = True if True in self._updated else False
+                            self._updated = list()
+                        # if there is some unresolved query, add none to results
+                        self.results[var].setdefault(q, None)
+    
     def unify(self, p, chk, done):
         def add_ctg():
             # add category/function to the object dictionary
@@ -777,10 +816,7 @@ class Inference(object):
                 if issubclass(r.__class__, LogFunction):
                     args = r.get_args()
                     for obj in args:
-                        try:
-                            self.obj_dic[obj].add(r.func)
-                        except KeyError:
-                            self.obj_dic[obj] = set([r.func])
+                        self.obj_dic.setdefault(obj, set([r.func]))
                     if issubclass(pred.__class__, LogFunction):
                         try:
                             if pred == r:
@@ -790,10 +826,7 @@ class Inference(object):
                         except NotCompFuncError: pass
                 else:
                     cat, obj = r.parent, r.term
-                    try :
-                        self.obj_dic[obj].add(cat)
-                    except KeyError:
-                        self.obj_dic[obj] = set([cat])
+                    self.obj_dic.setdefault(obj, set([cat]))
                     if issubclass(pred.__class__, LogPredicate):
                         try:
                             if pred == r:
@@ -831,34 +864,14 @@ class Inference(object):
                             add_ctg()
                             self.queue[node].add(result_memoization)                            
                 if p not in done:
-                    chk = list(node.ants) + chk
+                    chk = deque(node.ants) + chk
         if query_obj in self.obj_dic and query in self.obj_dic[query_obj]:
             return True
         elif len(chk) > 0:
             done.append(p)
-            p = chk.pop(0)
+            p = chk.popleft()
             self.unify(p, chk, done)
-
-    def chk_result(self, results):
-        """
-        isind = True if var[0] == '$' else False
-        if issubclass(pclass, LogFunction):
-            try:
-                if isind is True: 
-                    res = self.kb.individuals[var].test_rel(pred)
-                else:
-                    res = self.kb.classes[var].test_rel(pred)
-            except KeyError: res = None
-        elif issubclass(pclass, LogPredicate):
-            try:
-                if isind is True:
-                    res = self.kb.individuals[var].test_ctg(pred)
-                else:
-                    res = self.kb.classes[var].test_ctg(pred)
-            except KeyError: res = None
-        self.results[var][q] = res
-        """
-                
+    
     def map_vars(self, node):
         # TODO: check out what combinations can be roled out before 
         # attempting to solve it for performance gains
@@ -867,7 +880,7 @@ class Inference(object):
         subs_num = len(node.subs)
         subactv = [set()] * subs_num
         for i, t in enumerate(node.subs.values()):
-            y = len(t)               
+            y = len(t)
             for obj, s in self.obj_dic.items():
                 x = len(s)            
                 if x >= y:
@@ -877,35 +890,62 @@ class Inference(object):
         return subactv
     
     def get_query(self, sent):
+        # for each query, first try to retrieve the result from the kb
+        # if it fails, then add to the query list
         if type(sent) is str:
             query = self.parser(sent, tell=False)
         elif issubclass(sent.__class__, LogFunction):
-            self.ctgs = [sent.func]
+            if not self._ignore_current:
+                result = self.kb.test_pred(sent, kls='func')
+            else: result = None
             self.query = {}
-            for e in sent.get_args(): 
-                self.query[e] = [sent]
+            for obj in sent.get_args():
+                if result:
+                    self.results[obj] = {sent.func: True}
+                self.query[obj] = [sent]
+            self.ctgs = [sent.func]
             return
         elif issubclass(sent.__class__, LogPredicate):
-            self.ctgs = [sent.parent]
+            if isinstance(sent, FreeTerm):
+                self.vrs.add(sent.term)
+            elif not self._ignore_current:
+                result = self.kb.test_pred(sent, kls='pred')
+                if result:
+                    self.results[sent.term] = {sent.parent: True}
             self.query = {sent.term: [sent]}
+            self.ctgs = [sent.parent]
             return
+        else:
+            raise NotImplementedError
+        
         terms, ctgs = {}, []
         for p in query.assert_rel:
-            ctgs.append(p.func)
+            result = self.kb.test_pred(p, kls='func')            
             ids = p.get_args()
             for obj in ids:
-                if obj not in terms.keys():
-                    terms[obj] = [p]
+                if result:
+                    D = self.results.setdefault(obj, {})
+                    D[p.func] = True
                 else:
-                    terms[obj].append(p)
+                    if obj not in terms.keys():
+                        terms[obj] = [p]
+                    else:
+                        terms[obj].append(p)
+            if not result: ctgs.append(p.func)
         for p in query.assert_memb:
-            if p.term not in terms.keys():
-                terms[p.term] = [p]
-                ctgs.append(p.parent)
-            else:
-                terms[p.term].append(p)
-                ctgs.append(p.parent)
+            result = self.kb.test_pred(p, kls='pred')
+            if result:
+                D = self.results.setdefault(p.term, {})
+                D[p.parent] = True
+            else:    
+                if p.term not in terms.keys():
+                    terms[p.term] = [p]
+                    ctgs.append(p.parent)
+                else:
+                    terms[p.term].append(p)
+                    ctgs.append(p.parent)
         self.query, self.ctgs = terms, ctgs
+        # TODO: support queries for the same function/predicate for the same obj
     
     def get_rules(self):
         def mk_node(pos):
@@ -963,4 +1003,4 @@ class Inference(object):
             self.chk_ctgs = set(self.done)
             del self.done
             del self.rules
-            del self.ctgs    
+            del self.ctgs

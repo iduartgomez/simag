@@ -33,8 +33,8 @@ class BMSTesting(unittest.TestCase):
         answ = self.rep.ask("(fat[$Pancho,u=1] && sad[$Pancho,u=1])", single=True)
         self.assertTrue(answ)
         
+        self.rep.tell("(fn::run[$Pancho,u=1])")
         fol = """
-        (fn::run[$Pancho,u=1])
         ((let x, y) 
          ((fn::run[x,u=1] && dog[x,u=1]) |> fat[x,u=0]))
         """
@@ -76,28 +76,27 @@ class AskReprGetAnswer(unittest.TestCase):
     def test_ask_pred(self):
         sents = load_sentences('ask_pred.txt')
         ask = [
-                   ['(professor[$Lucy,u=1] && person[$Lucy,u=1])'],
-                   ['(professor[$Lucy,u=1])', '(person[$John,u=1])'],
-                   ['(professor[$Lucy,u>0] && person[$Lucy,u<1])'],
-                   ['(criminal[$West,u=1])'],
-                   ['(fat(t="*now")[$Pancho,u=1])'],
-                   ['(fat(t="*now")[$Pancho,u=1])'],
+            (['(professor[$Lucy,u=1] && person[$Lucy,u=1])'], None),
+            (['(professor[$Lucy,u=1])', '(person[$John,u=1])'], (True, True)),
+            (['(professor[$Lucy,u>0] && person[$Lucy,u<1])'], False),
+            (['(criminal[$West,u=1])'], True),
+            (['(fat(t="*now")[$Pancho,u=1])'], True),
+            (['(fat(t="*now")[$Pancho,u=1])'], True),
+            (['((let x) (professor[x,u=0]))'], True)
         ]
-        eval = [None, [True,True], False, True, True, True]
-        self.iter_eval(sents, ask, eval)
+        self.iter_eval(sents, ask)
     
     def test_ask_func(self):
         sents = load_sentences('ask_func.txt')
         ask = [
-                   ['(fn::criticize[$John,u=1;$Lucy])'],
-                   ['(fn::friend[$Lucy,u=0;$John])'],
-                   ['(fn::sells[$M1,u=1;$West;$Nono])'],
-                   ['(fn::produce[milk,u=1;cow])'],
-                   ['(fn::eat[$M1,u=1;$Pancho])'],
-                   ['(fn::eat[$M1,u=1;$Pancho])'],
+            (['(fn::criticize[$John,u=1;$Lucy])'], True),
+            (['(fn::friend[$Lucy,u=0;$John])'], True),
+            (['(fn::sells[$M1,u=1;$West;$Nono])'], True),
+            (['(fn::produce[milk,u=1;cow])'], True),
+            (['(fn::eat[$M1,u=1;$Pancho])'], True),
+            (['(fn::eat[$M1,u=1;$Pancho])'], True)
         ]
-        eval = [True, True, True, True, True, True]
-        self.iter_eval(sents, ask, eval)
+        self.iter_eval(sents, ask)
     
     def test_event_chain_with_times(self):
         self.rep = Representation()
@@ -135,18 +134,18 @@ class AskReprGetAnswer(unittest.TestCase):
         answ = self.rep.ask("( fat[$Pancho,u=1] )", single=True)
         self.assertTrue(answ)
     
-    def iter_eval(self, sents, ask, eval):
+    def iter_eval(self, sents, ask):
         for i, test in enumerate(sents):
             self.rep = Representation()
             with self.subTest(test='subtest {0}: {1}'.format(i,ask[i])):
                 for s in test:
                     self.rep.tell(s)
-                for j, q in enumerate(ask[i]):
-                    answ = self.rep.ask(q,single=True)                    
-                    if isinstance(eval[i], list):
-                        self.assertEqual(eval[i][j], answ)
+                for j, q in enumerate(ask[i][0]):
+                    answ = self.rep.ask(q,single=True)                  
+                    if isinstance(ask[i][1], tuple):
+                        self.assertEqual(ask[i][1][j], answ)
                     else:
-                        self.assertEqual(eval[i], answ)
+                        self.assertEqual(ask[i][1], answ)
     
     def tearDown(self):
         if hasattr(self, 'rep'):

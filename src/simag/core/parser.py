@@ -9,9 +9,7 @@ import datetime
 import re
 
 from simag.core.grammar.grako_parser import SIMAGParser
-from pexpect.ANSI import term
 from types import FunctionType
-from copy import deepcopy
 
 __all__ = (
 'logic_parser',
@@ -155,7 +153,6 @@ class LogSentence(object):
         self.ag = ag
         if type(args[0]) is tuple or type(args[0] is list):
             args = args[0]
-        # Clean up previous results.
         self.assigned = {}
         if hasattr(self, 'var_types'):
             preds = [p for p in self.particles if p.cond == ':predicate:']
@@ -236,7 +233,8 @@ class LogSentence(object):
         if unique: return set(preds)
         return preds
     
-    def get_preds(self, branch='l', conds=('|>', '=>', '<=>'), unique=False):
+    def get_preds(self, branch='l', conds=('|>', '=>', '<=>'), 
+                  unique=False, return_obj=False):
         if self.start.cond not in conds:
             return self.get_all_preds(unique=unique)
         all_pred = []
@@ -250,12 +248,16 @@ class LogSentence(object):
                 top, bottom = top.parent, top
             if branch == 'l' and top.next[0] is bottom:
                 if unique:
-                    if issubclass(p.pred.__class__, LogPredicate):
+                    if return_obj:
+                        preds.append(p.pred)
+                    elif issubclass(p.pred.__class__, LogPredicate):
                         preds.append(p.pred.parent)
                     else: preds.append(p.pred.func)
                 else: preds.append(p.pred)                
             elif branch != 'l' and top.next[1] is bottom:
                 if unique:
+                    if return_obj:
+                        preds.append(p.pred)
                     if issubclass(p.pred.__class__, LogPredicate):
                         preds.append(p.pred.parent)
                     else: preds.append(p.pred.func)
@@ -716,7 +718,6 @@ class MetaForAtoms(type):
         # Add methods from LogFunction to TimeFunc and store it at one location
         if name == 'TimeFunc':
             if not hasattr(MetaForAtoms, 'TimeFunc'):
-                from types import FunctionType
                 for m in globals()['LogFunction'].__dict__.values():
                     if type(m) == FunctionType \
                     and m.__name__ not in attrs.keys():                    
@@ -793,8 +794,8 @@ def make_fact(pred, f_type=None, **kwargs):
     
     class GroundedTerm(LogPredicate):
         
-        def __init__(self, pred, fromfree=False, empty=False, **kwargs):
-            if fromfree is True:
+        def __init__(self, pred, from_free=False, empty=False, **kwargs):
+            if from_free is True:
                 assert type(pred) == FreeTerm, \
                     'The object is not of <FreeTerm> type'
                 for name, value in pred.__dict__.items():
@@ -821,9 +822,10 @@ def make_fact(pred, f_type=None, **kwargs):
             time_truth = self._eval_time_truth(other)
             if time_truth is False: return False
             # test against other            
-            if other.parent == self.parent \
-            and other.term == self.term \
-            and other.value == self.value:
+            if not other.parent == self.parent \
+            and not other.term == self.term:
+                raise NotCompAssertError
+            if other.value == self.value:
                 return True
             else: return False
         
@@ -893,7 +895,7 @@ def make_fact(pred, f_type=None, **kwargs):
                 subs = make_fact(
                     self, 
                     f_type='grounded_term', 
-                    **{'fromfree': True, 'sbj':sbj})
+                    **{'from_free': True, 'sbj':sbj})
             else:
                 subs = copy.deepcopy(self)
                 if sbj is not None: subs.term = sbj
@@ -1073,6 +1075,8 @@ def make_function(sent, f_type=None, **kwargs):
         
         def update(self, other):
             self.value = other.value
+            if hasattr(other, 'dates'):
+                self.dates = other.dates
         
         def __eq__(self, other):
             comparable = self.chk_args_eq(other)
