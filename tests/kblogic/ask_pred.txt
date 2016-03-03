@@ -63,5 +63,6 @@ BLOCK
 # Test 1.4/06: query for all 'professor' 
 BLOCK
 	( professor[$Lucy,u=1] )
-	( professor[$John,u=1] )
+	( dean[$John,u=1] )
+	((let x) (dean[x,u=1] |> professor[x,u=1]))
 /BLOCK

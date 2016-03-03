@@ -51,9 +51,9 @@ from simag.core.parser import (
     make_fact,
     LogFunction,
     LogPredicate,
+    FreeTerm,
     NotCompAssertError,
     NotCompFuncError,
-    FreeTerm,
 )
 
 # ===================================================================#
@@ -121,7 +121,7 @@ class Representation(object):
     
     def ask(self, sent, single=True, **kwargs):
         """Asks the KB if some fact is true and returns the answer to 
-        that question.
+        the query.
         """
         inf_proc = Inference(self, sent, **kwargs)
         if single is True:
@@ -740,8 +740,8 @@ class Inference(object):
         var substitution) and returns the answer to the query. If new 
         knowledge is produced then it's passed to an other procedure for
         addition to the KB.
-        """
-        def results_lookup_table():
+        """        
+        def query(pred, q):        
             # create a lookup table for memoizing results of previous passes
             if hasattr(self, 'queue') is False:
                 self.queue = dict()
@@ -749,6 +749,14 @@ class Inference(object):
                     for node in query: self.queue[node] = set()
             else:
                 for node in self.queue: self.queue[node] = set()
+            # Run the query, if there is no result and there is
+            # an update, then rerun it again, else stop
+            k, result, self._updated = True, None, list()
+            while not result and k is True:                    
+                chk, done = deque(), list()
+                result = self.unify(q, chk, done)
+                k = True if True in self._updated else False
+                self._updated = list()
         
         self.get_query(sent)
         # Get relevant rules to infer the query
@@ -772,7 +780,8 @@ class Inference(object):
                         result = None
                         if is_func:
                             # need to create a substitution
-                            subst = pred
+                            raise NotImplementedError
+                            subst = None
                             if q in ctgs:              
                                 result = self.kb.test_pred(subst, kls='func')
                         else:
@@ -786,9 +795,9 @@ class Inference(object):
                         else:
                             # if no result was found from the kb directly
                             # make an inference from a grounded fact
-                            inf_proc = Inference(self.kb, subst)
-                            self.results[obj][q] = inf_proc.results[obj][q]
-            else:                
+                            self.actv_q = (subst.term, subst.parent, subst)
+                            query(subst, self.actv_q[1])
+            else:
                 prev_res = self.results.setdefault(var,{})
                 for pred in preds:
                     if issubclass(pred.__class__, LogFunction):
@@ -796,17 +805,9 @@ class Inference(object):
                     elif issubclass(pred.__class__, LogPredicate):
                         self.actv_q, q = (var, pred.parent, pred), pred.parent
                     if q not in prev_res:
-                        results_lookup_table()
-                        k, result, self._updated = True, None, list()
-                        while not result and k is True:
-                            # Run the query, if there is no result and there is
-                            # an update, then rerun it again, else stop
-                            chk, done = deque(), list()
-                            result = self.unify(q, chk, done)
-                            k = True if True in self._updated else False
-                            self._updated = list()
-                        # if there is some unresolved query, add none to results
-                        self.results[var].setdefault(q, None)
+                        query(pred, q)
+                    # if there is some unresolved query, add none to results
+                    self.results[var].setdefault(q, None)
     
     def unify(self, p, chk, done):
         def add_ctg():
@@ -890,10 +891,38 @@ class Inference(object):
         return subactv
     
     def get_query(self, sent):
+        # TODO: support queries for the same function/predicate for the same obj
+        def assert_memb(p):
+            result = self.kb.test_pred(p, kls='pred')
+            if result:
+                D = self.results.setdefault(p.term, {})
+                D[p.parent] = True
+            else:    
+                if p.term not in terms.keys():
+                    terms[p.term] = [p]
+                    ctgs.append(p.parent)
+                else:
+                    terms[p.term].append(p)
+                    ctgs.append(p.parent)
+        
+        def assert_rel(p):
+            result = self.kb.test_pred(p, kls='func')            
+            ids = p.get_args()
+            for obj in ids:
+                if result:
+                    D = self.results.setdefault(obj, {})
+                    D[p.func] = True
+                else:
+                    if obj not in terms.keys():
+                        terms[obj] = [p]
+                    else:
+                        terms[obj].append(p)
+            if not result: ctgs.append(p.func)
+        
         # for each query, first try to retrieve the result from the kb
         # if it fails, then add to the query list
         if type(sent) is str:
-            query = self.parser(sent, tell=False)
+            query = self.parser(sent, tell=False)            
         elif issubclass(sent.__class__, LogFunction):
             if not self._ignore_current:
                 result = self.kb.test_pred(sent, kls='func')
@@ -916,36 +945,16 @@ class Inference(object):
             self.ctgs = [sent.parent]
             return
         else:
-            raise NotImplementedError
+            raise TypeError('argument type is not valid')
         
         terms, ctgs = {}, []
-        for p in query.assert_rel:
-            result = self.kb.test_pred(p, kls='func')            
-            ids = p.get_args()
-            for obj in ids:
-                if result:
-                    D = self.results.setdefault(obj, {})
-                    D[p.func] = True
-                else:
-                    if obj not in terms.keys():
-                        terms[obj] = [p]
-                    else:
-                        terms[obj].append(p)
-            if not result: ctgs.append(p.func)
-        for p in query.assert_memb:
-            result = self.kb.test_pred(p, kls='pred')
-            if result:
-                D = self.results.setdefault(p.term, {})
-                D[p.parent] = True
-            else:    
-                if p.term not in terms.keys():
-                    terms[p.term] = [p]
-                    ctgs.append(p.parent)
-                else:
-                    terms[p.term].append(p)
-                    ctgs.append(p.parent)
+        for p in query.assert_rel: assert_rel(p)
+        for p in query.assert_memb: assert_memb(p)
+        for q in query.queries:
+            self.vrs.update(q.var_order)
+            for p in q.preds: assert_memb(p)
+            for p in q.funcs: assert_rel(p)
         self.query, self.ctgs = terms, ctgs
-        # TODO: support queries for the same function/predicate for the same obj
     
     def get_rules(self):
         def mk_node(pos):

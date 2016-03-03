@@ -78,11 +78,12 @@ class AskReprGetAnswer(unittest.TestCase):
         ask = [
             (['(professor[$Lucy,u=1] && person[$Lucy,u=1])'], None),
             (['(professor[$Lucy,u=1])', '(person[$John,u=1])'], (True, True)),
-            (['(professor[$Lucy,u>0] && person[$Lucy,u<1])'], False),
+            (['(professor[$Lucy,u>0] && person[$Lucy,u<1])'], False), # <--- this one fails sometimes
             (['(criminal[$West,u=1])'], True),
             (['(fat(t="*now")[$Pancho,u=1])'], True),
             (['(fat(t="*now")[$Pancho,u=1])'], True),
-            (['((let x) (professor[x,u=0]))'], True)
+            (['((let x) (professor[x,u=1]))'], 
+             {'$Lucy': {'professor': True}, '$John': {'professor': True}})
         ]
         self.iter_eval(sents, ask)
     
@@ -141,7 +142,12 @@ class AskReprGetAnswer(unittest.TestCase):
                 for s in test:
                     self.rep.tell(s)
                 for j, q in enumerate(ask[i][0]):
-                    answ = self.rep.ask(q,single=True)                  
+                    if type(ask[i][1]) in (bool, tuple) \
+                    or ask[i][1] is None:
+                        single = True
+                    else:
+                        single = False
+                    answ = self.rep.ask(q, single=single)                
                     if isinstance(ask[i][1], tuple):
                         self.assertEqual(ask[i][1][j], answ)
                     else:

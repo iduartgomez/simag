@@ -95,6 +95,12 @@ class ParseResults(object):
         self.assert_rules = []
         self.assert_cogs = []
     
+    @property
+    def queries(self):
+        if not hasattr(self, '_queries'):
+            setattr(self, '_queries', [])
+        return self._queries
+    
 def logic_parser(string, tell=True):
     """Takes a string and returns the corresponding structured representing
     object program for the logic function. It can parse several statements 
@@ -129,6 +135,8 @@ def logic_parser(string, tell=True):
                 else:
                     func = make_function(assertion, 'relation')
                     results.assert_rel.append(func)
+        elif stmt.query is not None:
+            results.queries.append( Query(stmt.query) )
     return results
 
 class LogSentence(object):
@@ -609,44 +617,25 @@ def make_logic_sent(ast):
         def __repr__(self):
             return repr(self.pred)
     
-    def traverse_ast(remain, parent, depth):        
-        def get_type(stmt, cmpd=False):
-            if stmt.func is not None:
-                if cmpd is True:
-                    is_builtin = _check_reserved_words(stmt.func)
-                    if is_builtin:
-                        return make_function(stmt, is_builtin)
-                    else:
-                        return make_function(
-                            stmt, 'relation', proof=sent,)
-                is_builtin = _check_reserved_words(stmt.func.func)
-                if is_builtin:
-                    return make_function(stmt.func, is_builtin)
-                else:
-                    return make_function(stmt.func, 'relation', proof=sent,)
-            elif stmt.klass is not None:
-                if cmpd is True:
-                    return make_fact(stmt, 'free_term')
-                return make_fact(stmt.klass, 'free_term')
-        
+    def traverse_ast(remain, parent, depth):
         def cmpd_stmt(preds, depth, parent):
             pred = preds.pop()
             if len(preds) > 1:
-                form = get_type(pred, cmpd=True)
+                form = _get_atom_type(pred, cmpd=True, sent=sent)
                 particle = LogicAtom(':predicate:', depth, parent, form)          
                 new_node = LogicConjunction('&&', depth, parent)
                 parent.next.extend((new_node, particle))
                 sent.particles.extend((new_node, particle))
                 cmpd_stmt(preds, depth+1, new_node)                
             elif len(preds) == 1:
-                form = get_type(pred, cmpd=True)
+                form = _get_atom_type(pred, cmpd=True, sent=sent)
                 particle1 = LogicAtom(':predicate:', depth, parent, form)
-                form = get_type(preds.pop(0), cmpd=True)
+                form = _get_atom_type(preds.pop(0), cmpd=True, sent=sent)
                 particle2 = LogicAtom(':predicate:', depth, parent, form)
                 parent.next.extend((particle1, particle2))
                 sent.particles.extend((particle1, particle2))
         
-        form = get_type(remain)
+        form = _get_atom_type(remain, sent=sent)
         if form is not None:
             particle = LogicAtom(':predicate:', depth, parent, form)
         elif remain.assertion is not None:
@@ -704,7 +693,53 @@ def make_logic_sent(ast):
         traverse_ast(ast.expr, parent, depth)
     elif ast.rule:
         traverse_ast(ast.rule, parent, depth)
+    elif ast.query:
+        traverse_ast(ast.query, parent, depth)
     return sent
+
+class Query(object):
+    def __init__(self, sent):
+        self.funcs = []
+        self.preds = []
+        self.process_query(sent)
+        
+    def process_query(self, sent):
+        if sent.vars:
+            self.var_order = sent.vars
+        if sent.skol:
+            self.skol_order = sent.skol
+        if sent.query.assertion:
+            for q in sent.query.assertion:
+                pred = _get_atom_type(q, cmpd=True)
+                if issubclass(pred.__class__, LogFunction):
+                    self.funcs.append(pred)
+                elif issubclass(pred.__class__, LogPredicate):
+                    self.preds.append(pred)
+        elif sent.query.func:
+            pred = _get_atom_type(q, cmpd=True)
+            self.funcs.append(pred)
+        elif sent.query.klass:
+            pred = _get_atom_type(q, cmpd=True)
+            self.preds.append(pred)
+    
+def _get_atom_type(stmt, cmpd=False, sent=None):
+    if stmt.func is not None:
+        if cmpd is True:
+            is_builtin = _check_reserved_words(stmt.func)
+            if is_builtin:
+                return make_function(stmt, is_builtin)
+            else:
+                return make_function(
+                    stmt, 'relation', proof=sent)
+        is_builtin = _check_reserved_words(stmt.func.func)
+        if is_builtin:
+            return make_function(stmt.func, is_builtin)
+        else:
+            return make_function(stmt.func, 'relation', proof=sent)
+    elif stmt.klass is not None:
+        if cmpd is True:
+            return make_fact(stmt, 'free_term')
+        return make_fact(stmt.klass, 'free_term')
 
 # ===================================================================#
 #   LOGIC CLASSES AND SUBCLASSES
@@ -921,7 +956,7 @@ class LogFunction(metaclass=MetaForAtoms):
     types = ['relation','time_calc']
     
     def __init__(self, fn, **extra):
-        if 'proof' in extra:
+        if 'proof' in extra and extra['proof'] is not None:
             proof = extra['proof']
         else: proof = None
         self._grounded = True

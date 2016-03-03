@@ -17,7 +17,7 @@ from grako.parsing import graken, Parser
 from grako.util import re, RE_FLAGS  # noqa
 
 
-__version__ = (2016, 2, 25, 11, 35, 48, 3)
+__version__ = (2016, 3, 3, 11, 8, 21, 3)
 
 __all__ = [
     'SIMAGParser',
@@ -78,10 +78,13 @@ class SIMAGParser(Parser):
                             self._comp_expr_()
                         self._error('no available options')
                 self.ast['rule'] = self.last_node
+            with self._option():
+                self._query_()
+                self.ast['query'] = self.last_node
             self._error('no available options')
 
         self.ast._define(
-            ['assertion', 'stmt', 'rule'],
+            ['assertion', 'stmt', 'rule', 'query'],
             []
         )
 
@@ -206,6 +209,31 @@ class SIMAGParser(Parser):
                 with self._option():
                     self._comp_expr_()
                 self._error('no available options')
+
+    @graken()
+    def _query_(self):
+        self._token('(')
+
+        def block0():
+            with self._group():
+                with self._choice():
+                    with self._option():
+                        self._var_decl_()
+                        self.ast['vars'] = self.last_node
+                    with self._option():
+                        self._skol_decl_()
+                        self.ast['skol'] = self.last_node
+                    self._error('no available options')
+        self._positive_closure(block0)
+
+        self._terminal_node_()
+        self.ast['query'] = self.last_node
+        self._token(')')
+
+        self.ast._define(
+            ['vars', 'skol', 'query'],
+            []
+        )
 
     @graken()
     def _var_decl_(self):
@@ -526,6 +554,9 @@ class SIMAGSemantics(object):
         return ast
 
     def expr_node(self, ast):
+        return ast
+
+    def query(self, ast):
         return ast
 
     def var_decl(self, ast):
