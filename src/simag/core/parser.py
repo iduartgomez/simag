@@ -857,8 +857,8 @@ def make_fact(pred, f_type=None, **kwargs):
             time_truth = self._eval_time_truth(other)
             if time_truth is False: return False
             # test against other            
-            if not other.parent == self.parent \
-            and not other.term == self.term:
+            if other.parent != self.parent \
+            or other.term != self.term:
                 raise NotCompAssertError
             if other.value == self.value:
                 return True

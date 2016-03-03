@@ -66,3 +66,8 @@ BLOCK
 	( dean[$John,u=1] )
 	((let x) (dean[x,u=1] |> professor[x,u=1]))
 /BLOCK
+# Test 1.5/07: query for all classes '$Lucy' is member of
+BLOCK
+	( professor[$Lucy,u=1] )
+	((let x) (professor[x,u=1] |> person[x,u=1]))
+/BLOCK

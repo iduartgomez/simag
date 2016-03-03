@@ -135,13 +135,13 @@ class Representation(object):
     def up_memb(self, pred, return_val=False):
         # It's a membership declaration.        
         subject, categ = pred.term, pred.parent
-        if subject not in self.individuals and '$' in subject:
+        if subject not in self.individuals and subject[0] == '$':
             # An individual which is member of a class
             ind = Individual(subject)
             pred = ind.add_ctg(pred, get_obj=True)
             self.individuals[subject] = ind
-        elif '$' in subject:
-            # Add/replace an other class membership to an existing individual
+        elif subject[0] == '$':
+            # Add/update a class membership to an existing individual
             pred = self.individuals[subject].add_ctg(pred, get_obj=True)
         elif subject in self.classes:
             pred = self.classes[subject].add_ctg(pred, get_obj=True)
@@ -161,7 +161,7 @@ class Representation(object):
         # It's a function declaration.
         relation = func.func
         for subject in func.get_args():
-            if '$' in subject:
+            if subject[0] == '$':
                 # It's a rel between an object and other obj/class.
                 if subject not in self.individuals:
                     ind = Individual(subject)
@@ -230,7 +230,7 @@ class Representation(object):
                 chk_args(p)
         questions = sent.get_preds('r', return_obj=True)
         for query in questions:
-            self.ask(query)
+            self.ask(query, ignore_current=True)
         
     def save_rule(self, proof):
         preds = proof.get_all_preds()
@@ -782,12 +782,12 @@ class Inference(object):
                             # need to create a substitution
                             raise NotImplementedError
                             subst = None
-                            if q in ctgs:              
+                            if q in ctgs and not self._ignore_current:              
                                 result = self.kb.test_pred(subst, kls='func')
                         else:
                             subst = make_fact(pred, 'grounded_term',
                                 from_free=True, **{'sbj': obj})
-                            if q in ctgs:
+                            if q in ctgs and not self._ignore_current:
                                 result = self.kb.test_pred(subst, kls='pred')                      
                         if obj not in self.results: self.results[obj] = {}
                         if result is not None:
@@ -802,17 +802,27 @@ class Inference(object):
                 for pred in preds:
                     if issubclass(pred.__class__, LogFunction):
                         self.actv_q, q = (var, pred.func, pred), pred.func
+                        isfunc = True
                     elif issubclass(pred.__class__, LogPredicate):
                         self.actv_q, q = (var, pred.parent, pred), pred.parent
+                        isfunc = False
                     if q not in prev_res:
                         query(pred, q)
                     # if there is some unresolved query, add none to results
-                    self.results[var].setdefault(q, None)
+                    curr = self.results[var].setdefault(q, None)
+                    if curr is None and isfunc:
+                        curr = self.kb.test_pred(pred, kls='func')                        
+                    elif curr is None:
+                        curr = self.kb.test_pred(pred, kls='pred')
+                    self.results[var][q] = curr
     
     def unify(self, p, chk, done):
         def add_ctg():
             # add category/function to the object dictionary
             # and to results dict if is the result for the query
+            if proof_result is False:
+                self.results[query_obj][query] = False
+                return
             for r in proof_result:
                 if issubclass(r.__class__, LogFunction):
                     args = r.get_args()
@@ -860,7 +870,7 @@ class Inference(object):
                     result_memoization = hash(args)
                     if result_memoization not in self.queue[node]:
                         proof_result = node.rule(self.kb, args)
-                        if proof_result is not False and proof_result is not None:
+                        if proof_result is not None:
                             self._updated.append(True)
                             add_ctg()
                             self.queue[node].add(result_memoization)                            
@@ -893,11 +903,14 @@ class Inference(object):
     def get_query(self, sent):
         # TODO: support queries for the same function/predicate for the same obj
         def assert_memb(p):
-            result = self.kb.test_pred(p, kls='pred')
-            if result:
+            if not self._ignore_current:
+                result = self.kb.test_pred(p, kls='pred')
+            else:
+                result = None
+            if result is not None:
                 D = self.results.setdefault(p.term, {})
-                D[p.parent] = True
-            else:    
+                D[p.parent] = result
+            else:
                 if p.term not in terms.keys():
                     terms[p.term] = [p]
                     ctgs.append(p.parent)
@@ -906,18 +919,21 @@ class Inference(object):
                     ctgs.append(p.parent)
         
         def assert_rel(p):
-            result = self.kb.test_pred(p, kls='func')            
+            if not self._ignore_current:
+                result = self.kb.test_pred(p, kls='func')
+            else: result = None
             ids = p.get_args()
             for obj in ids:
-                if result:
+                if result is not None:
                     D = self.results.setdefault(obj, {})
-                    D[p.func] = True
+                    D[p.func] = result
                 else:
                     if obj not in terms.keys():
                         terms[obj] = [p]
                     else:
                         terms[obj].append(p)
-            if not result: ctgs.append(p.func)
+            if not result:
+                ctgs.append(p.func)
         
         # for each query, first try to retrieve the result from the kb
         # if it fails, then add to the query list
@@ -926,7 +942,8 @@ class Inference(object):
         elif issubclass(sent.__class__, LogFunction):
             if not self._ignore_current:
                 result = self.kb.test_pred(sent, kls='func')
-            else: result = None
+            else: 
+                result = None
             self.query = {}
             for obj in sent.get_args():
                 if result:

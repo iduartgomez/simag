@@ -83,7 +83,9 @@ class AskReprGetAnswer(unittest.TestCase):
             (['(fat(t="*now")[$Pancho,u=1])'], True),
             (['(fat(t="*now")[$Pancho,u=1])'], True),
             (['((let x) (professor[x,u=1]))'], 
-             {'$Lucy': {'professor': True}, '$John': {'professor': True}})
+             {'$Lucy': {'professor': True}, '$John': {'professor': True}}),
+            (['((let x) (x[$Lucy,u>0]))'], 
+             {'$Lucy': {'professor': True, 'person': True}}),
         ]
         self.iter_eval(sents, ask)
     
@@ -132,7 +134,7 @@ class AskReprGetAnswer(unittest.TestCase):
         self.rep.tell(fol)
         self.rep.tell("( fn::eat(time='2015.01.02')[$M1,u=1;$Pancho] )")
         self.rep.tell("( fn::run(time='2015.01.01')[$Pancho,u=1] )")
-        answ = self.rep.ask("( fat[$Pancho,u=1] )", single=True)
+        answ = self.rep.ask("(fat[$Pancho,u=1])", single=True)
         self.assertTrue(answ)
     
     def iter_eval(self, sents, ask):
@@ -147,7 +149,7 @@ class AskReprGetAnswer(unittest.TestCase):
                         single = True
                     else:
                         single = False
-                    answ = self.rep.ask(q, single=single)                
+                    answ = self.rep.ask(q, single=single, ignore_current=False)                
                     if isinstance(ask[i][1], tuple):
                         self.assertEqual(ask[i][1][j], answ)
                     else:
