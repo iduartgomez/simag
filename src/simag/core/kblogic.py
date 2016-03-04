@@ -907,12 +907,12 @@ class Inference(object):
                 D = self.results.setdefault(p.term, {})
                 D[p.parent] = result
             else:
-                if p.term not in terms.keys():
-                    terms[p.term] = [p]
-                    ctgs.append(p.parent)
+                if p.term not in self.query.keys():
+                    self.query[p.term] = [p]
+                    self.ctgs.append(p.parent)
                 else:
-                    terms[p.term].append(p)
-                    ctgs.append(p.parent)
+                    self.query[p.term].append(p)
+                    self.ctgs.append(p.parent)
         
         def assert_rel(p):
             if not self._ignore_current:
@@ -924,21 +924,32 @@ class Inference(object):
                     D = self.results.setdefault(obj, {})
                     D[p.func] = result
                 else:
-                    if obj not in terms.keys():
-                        terms[obj] = [p]
+                    if obj not in self.query.keys():
+                        self.query[obj] = [p]
                     else:
-                        terms[obj].append(p)
+                        self.query[obj].append(p)
             if not result:
-                ctgs.append(p.func)
+                self.ctgs.append(p.func)
+        
+        def filter_ctgs():
+            if p.op == '<':
+                return {ctg: True for ctg, val in ctgs.items() 
+                        if val < p.value}
+            elif p.op == '>':
+                return {ctg: True for ctg, val in ctgs.items() 
+                        if val > p.value}
+            else:
+                return {ctg: True for ctg, val in ctgs.items() 
+                        if val == p.value}
         
         # for each query, first try to retrieve the result from the kb
         # if it fails, then add to the query list
         if isinstance(sent, str):
-            query = self.parser(sent, tell=False)            
+            query = self.parser(sent, tell=False)
         elif issubclass(sent.__class__, LogFunction):
             if not self._ignore_current:
                 result = self.kb.test_pred(sent, kls='func')
-            else: 
+            else:
                 result = None
             self.query = {}
             for obj in sent.get_args():
@@ -960,14 +971,31 @@ class Inference(object):
         else:
             raise TypeError('argument type is not valid')
         
-        terms, ctgs = {}, []
+        self.query, self.ctgs = {}, []
         for p in query.assert_rel: assert_rel(p)
         for p in query.assert_memb: assert_memb(p)
         for q in query.queries:
             self.vrs.update(q.var_order)
-            for p in q.preds: assert_memb(p)
-            for p in q.funcs: assert_rel(p)
-        self.query, self.ctgs = terms, ctgs
+            for p in q.preds: 
+                if p.parent in self.vrs:
+                    if p.term in self.vrs:
+                        raise ValueError(
+                            "in this query {}, both term `{}` and class `{}`, " /
+                            + "are variables one must be grounded".format(
+                            p, p.term, p.parent))
+                    if p.term_is_ind():
+                        obj = self.kb.individuals.get(p.term)
+                    else:
+                        obj = self.kb.classes.get(p.term)
+                    if obj:
+                        ctgs = obj.get_ctg()
+                        ctgs = filter_ctgs()
+                    self.results[p.term] = ctgs
+                else: assert_memb(p)
+            for p in q.funcs:
+                if p.func in self.vrs:
+                    raise NotImplementedError
+                else: assert_rel(p)
     
     def get_rules(self):
         def mk_node(pos):
@@ -986,8 +1014,10 @@ class Inference(object):
                         key=lambda x: x.rule.created)
                     self.nodes[node.const].add(node)
         
-        if len(self.ctgs) > 0: c = self.ctgs.pop()
-        else: c = None
+        if len(self.ctgs) > 0:
+            c = self.ctgs.pop()
+        else: 
+            c = None
         if c is not None:
             self.done.append(c)            
             try:

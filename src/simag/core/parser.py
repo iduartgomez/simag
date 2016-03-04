@@ -173,7 +173,7 @@ class LogSentence(object):
                 if self.var_types[key] is TimeFunc \
                 and (issubclass(val.__class__, LogFunction) \
                 or issubclass(val.__class__, LogFunction)):
-                    self.assigned[key] = self.assign_val_callback(val)
+                    self.assigned[key] = self.assign_time_val_cb(val)
                 else: self.assigned[key] = val
         if not hasattr(self, 'var_order'):
             preds = self.get_preds(branch='r', unique=True)
@@ -200,10 +200,10 @@ class LogSentence(object):
             ag.thread_manager(preds, unlock=True)
         if hasattr(self, 'result'): result = self.result
         else: result = None
-        self.cln_res()
+        self._cln_res()
         return result
     
-    def assign_val_callback(self, pred):
+    def assign_time_val_cb(self, pred):
         def callback_pred():
             if hasattr(pred, 'substituted'):
                 return pred.substituted.time
@@ -274,7 +274,7 @@ class LogSentence(object):
         if unique: return set(preds)
         return preds
     
-    def cln_res(self):
+    def _cln_res(self):
         if hasattr(self, 'result'): del self.result
         del self.ag
         del self.produced_from
@@ -821,7 +821,13 @@ class LogPredicate(metaclass=MetaForAtoms):
         else:
             self.term = self.oldTerm
             del self.oldTerm
-                
+    
+    def term_is_ind(self):
+        if self.term[0] == '$':
+            return True
+        else:
+            return False
+    
     def __repr__(self):
         return '{0}({1}: {2})'.format(
             self.__class__.__name__, self.parent, self.term)

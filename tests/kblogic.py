@@ -128,7 +128,7 @@ class AskReprGetAnswer(unittest.TestCase):
             (["(fat(t='*now')[$Pancho,u=1])"], True),
             (['((let x) (professor[x,u=1]))'], 
              {'$Lucy': {'professor': True}, '$John': {'professor': True}}),
-            (['((let x) (x[$Lucy,u>0]))'], 
+            (['((let x) (x[$Lucy,u>0.5]))'], 
              {'$Lucy': {'professor': True, 'person': True}}),
         ]
         self.iter_eval(sents, ask)

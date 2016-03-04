@@ -68,6 +68,7 @@ BLOCK
 /BLOCK
 # Test 1.5/07: query for all classes '$Lucy' is member of
 BLOCK
-	( professor[$Lucy,u=1] )
+	(professor[$Lucy,u=1])
 	((let x) (professor[x,u=1] |> person[x,u=1]))
+	(ugly[$Lucy,u=0.2])
 /BLOCK
