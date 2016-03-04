@@ -80,8 +80,8 @@ class AskReprGetAnswer(unittest.TestCase):
             (['(professor[$Lucy,u=1])', '(person[$John,u=1])'], (True, True)),
             (['(professor[$Lucy,u>0] && person[$Lucy,u<1])'], False), # <--- this one fails sometimes
             (['(criminal[$West,u=1])'], True),
-            (['(fat(t="*now")[$Pancho,u=1])'], True),
-            (['(fat(t="*now")[$Pancho,u=1])'], True),
+            (["(fat(t='*now')[$Pancho,u=1])"], True),
+            (["(fat(t='*now')[$Pancho,u=1])"], True),
             (['((let x) (professor[x,u=1]))'], 
              {'$Lucy': {'professor': True}, '$John': {'professor': True}}),
             (['((let x) (x[$Lucy,u>0]))'], 
@@ -137,10 +137,25 @@ class AskReprGetAnswer(unittest.TestCase):
         answ = self.rep.ask("(fat[$Pancho,u=1])", single=True)
         self.assertTrue(answ)
     
+    def test_single_stmt(self):
+        fol = """
+        (( let x, y, t1:time, t2:time="2016.01.01" )
+         (( (dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x]) && fn::time_calc(t1<t2) )
+          |> fat(time=t2)[x,u=1] ))
+        ( dog[$Pancho,u=1] )
+        ( meat[$M1,u=1] )
+        ( fn::eat(time="2015.07.05.10.25")[$M1,u=1;$Pancho] )
+        """
+        self.rep = Representation()
+        self.rep.tell(fol)
+        answ = self.rep.ask('(fat(t="*now")[$Pancho,u=1])', single=False)
+        self.assertTrue(answ)
+    
     def iter_eval(self, sents, ask):
         for i, test in enumerate(sents):
             self.rep = Representation()
             with self.subTest(test='subtest {0}: {1}'.format(i,ask[i])):
+                print("subtest %s" % i)
                 for s in test:
                     self.rep.tell(s)
                 for j, q in enumerate(ask[i][0]):

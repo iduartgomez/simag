@@ -374,6 +374,8 @@ def make_logic_sent(ast):
                     self.next[1].substitute(proof, 'rhs')
                 else:
                     proof.result = False
+            else:
+                proof.result = None
         
         def resolve(self, proof, *args):
             raise AssertionError("indicative conditional type " \
@@ -509,7 +511,7 @@ def make_logic_sent(ast):
                     if arg in proof.assigned:
                         args[x] = proof.assigned[arg]
                 test = self.pred.substitute(args)
-                if '$' in args[0][0]:
+                if args[0][0] == '$':
                     result = ag.individuals[args[0]].test_rel(
                         test, obj=True, copy_date=True)
                     if result:
@@ -525,7 +527,7 @@ def make_logic_sent(ast):
                 # Check membership to a set of an entity.
                 sbj = self.isvar(self.pred.term, proof)
                 test = self.pred.substitute(sbj)
-                if '$' not in sbj[0]:
+                if sbj[0] != '$':
                     try: 
                         result = ag.classes[sbj].test_ctg(
                             test, obj=True)

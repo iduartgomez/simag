@@ -827,7 +827,8 @@ class Inference(object):
                 if issubclass(r.__class__, LogFunction):
                     args = r.get_args()
                     for obj in args:
-                        self.obj_dic.setdefault(obj, set([r.func]))
+                        curr = self.obj_dic.setdefault(obj, set([r.func]))
+                        curr.add(r.func)
                     if issubclass(pred.__class__, LogFunction):
                         try:
                             if pred == r:
@@ -835,16 +836,16 @@ class Inference(object):
                             else:
                                 self.results[query_obj][query] = False
                         except NotCompFuncError: pass
-                else:
+                elif issubclass(pred.__class__, LogPredicate):
                     cat, obj = r.parent, r.term
-                    self.obj_dic.setdefault(obj, set([cat]))
-                    if issubclass(pred.__class__, LogPredicate):
-                        try:
-                            if pred == r:
-                                self.results[query_obj][query] = True
-                            else:
-                                self.results[query_obj][query] = False
-                        except NotCompAssertError: pass
+                    curr = self.obj_dic.setdefault(obj, set([cat]))
+                    curr.add(cat)
+                    try:
+                        if pred == r:
+                            self.results[query_obj][query] = True
+                        else:
+                            self.results[query_obj][query] = False
+                    except NotCompAssertError: pass
         
         query_obj, query = self.actv_q[0], self.actv_q[1]
         pred = self.actv_q[2]
