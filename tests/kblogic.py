@@ -6,9 +6,53 @@ from simag.core.parser import (
     logic_parser
 )
 
+#========================#
+#    HELPER FUNCTIONS    #
+#========================#
+
+def load_sentences(test):
+    comment = False
+    path = os.path.dirname(__file__)
+    logic_test = os.path.join(path, 'kblogic', test)
+    ls, sup_ls = [], []
+    with open(logic_test, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if 'cb' in locals() and line[0] != '}':
+                cb = cb + line
+            else:
+                if line[0:2] == '/*':
+                    comment = True
+                elif line[-2:] == '*/':                    
+                    comment = False
+                elif line[0] == '#' or comment: 
+                    pass
+                elif line == 'BLOCK':
+                    sup_ls, ls = ls, list()
+                elif line == '/BLOCK':
+                    sup_ls.append(ls)
+                    ls = sup_ls
+                elif line[0] == '{':
+                    cb = line[1:]
+                elif line[0] == '}':
+                    ls.append(cb)
+                    del cb
+                else:
+                    ls.append(line)
+    return ls
+
+def repeat(times):
+    def repeat_helper(f):
+        def call_helper(*args):
+            for i in range(0, times):
+                f(*args)
+        return call_helper
+    return repeat_helper
+
 #====================#
 #    UNIT TESTING    #
 #====================#
+
 
 class BMSTesting(unittest.TestCase):
     
@@ -101,7 +145,8 @@ class AskReprGetAnswer(unittest.TestCase):
         ]
         self.iter_eval(sents, ask)
     
-    def test_event_chain_with_times(self):
+    #@repeat(10)
+    def test_event_chain_with_times(self): # <--- fails some times
         self.rep = Representation()
         grounded="""
             ( dog[$Pancho,u=1] )
@@ -125,27 +170,35 @@ class AskReprGetAnswer(unittest.TestCase):
         self.assertTrue(answ)
         
         fol = """
-            ( (let x, y, t1:time, t2:time) 
-              ( ( ( fn::run(t1=time)[x,u=1] && fn::eat(t2=time)[y,u=1;x] 
-                    && dog[x,u=1] && meat[y,u=1] )
-                && fn::time_calc(t1>t2) )
-              |> (fat[x,u=0] || fat[x,u=1]) ) )
-        """        
+            (fn::eat(time='2015.01.02')[$M1,u=1;$Pancho])
+            (fn::run(time='2015.01.01')[$Pancho,u=1])
+            ((let x, y, t1:time, t2:time)
+             (((fn::run(t2=time)[x,u=1] && fn::eat(t1=time)[y,u=1;x] 
+                    && dog[x,u=1] && meat[y,u=1])
+                && fn::time_calc(t1>t2))
+              |> (fat[x,u=1] || fat[x,u=0]) ))
+        """
         self.rep.tell(fol)
-        self.rep.tell("( fn::eat(time='2015.01.02')[$M1,u=1;$Pancho] )")
-        self.rep.tell("( fn::run(time='2015.01.01')[$Pancho,u=1] )")
         answ = self.rep.ask("(fat[$Pancho,u=1])", single=True)
         self.assertTrue(answ)
+        self.rep.tell("""
+        (fn::eat(time='2015.02.01')[$M1,u=1;$Pancho])
+        (fn::run(time='2015.02.02')[$Pancho,u=1])
+        """)
+        answ = self.rep.ask("(fat[$Pancho,u=1])", single=True)
+        self.assertFalse(answ)
+        fat = self.rep.individuals['$Pancho'].get_ctg('fat')
+        self.assertEqual(fat, 0)
     
     def test_single_stmt(self):
         # for testing single subtests in the other tests
         fol = """
-        (( let x, y, t1:time, t2:time="2016.01.01" )
-         (( (dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x]) && fn::time_calc(t1<t2) )
-          |> fat(time=t2)[x,u=1] ))
-        ( dog[$Pancho,u=1] )
-        ( meat[$M1,u=1] )
-        ( fn::eat(time="2015.07.05.10.25")[$M1,u=1;$Pancho] )
+            ((let x, y, t1:time, t2:time="2016.01.01")
+             (((dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x]) && fn::time_calc(t1<t2))
+              |> fat(time=t2)[x,u=1]))
+            (dog[$Pancho,u=1])
+            (meat[$M1,u=1])
+            (fn::eat(time="2015.07.05.10.25")[$M1,u=1;$Pancho])
         """
         self.rep = Representation()
         self.rep.tell(fol)
@@ -215,8 +268,8 @@ class EvaluationOfFOLSentences(unittest.TestCase):
         # for testing single subtests in the other tests
         self.rep = Representation()
         fol = """
-        ( drugDealer[$West,u=1] |> ( scum[$West,u=1] && good[$West,u=0] ) )
-        ( drugDealer[$West,u=0] )
+            ( drugDealer[$West,u=1] |> ( scum[$West,u=1] && good[$West,u=0] ) )
+            ( drugDealer[$West,u=0] )
         """
         self.rep.tell(fol)
         answ = self.rep.ask("( scum[$West,u=1] && good[$West,u=0] )")
@@ -312,41 +365,6 @@ class LogicSentenceParsing(unittest.TestCase):
                 for obj in eval[x]:
                     self.assertIn(obj, chk)
                 self.assertGreater(len(lg_sent.var_order), 0)
-
-#========================#
-#    HELPER FUNCTIONS    #
-#========================#
-
-def load_sentences(test):
-    comment = False
-    path = os.path.dirname(__file__)
-    logic_test = os.path.join(path, 'kblogic', test)
-    ls, sup_ls = [], []
-    with open(logic_test, 'r') as f:
-        for line in f:
-            line = line.strip()
-            if 'cb' in locals() and line[0] != '}':
-                cb = cb + line
-            else:
-                if line[0:2] == '/*':
-                    comment = True
-                elif line[-2:] == '*/':                    
-                    comment = False
-                elif line[0] == '#' or comment: 
-                    pass
-                elif line == 'BLOCK':
-                    sup_ls, ls = ls, list()
-                elif line == '/BLOCK':
-                    sup_ls.append(ls)
-                    ls = sup_ls
-                elif line[0] == '{':
-                    cb = line[1:]
-                elif line[0] == '}':
-                    ls.append(cb)
-                    del cb
-                else:
-                    ls.append(line)
-    return ls
 
 if __name__ == "__main__":
     unittest.main()

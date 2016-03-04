@@ -75,7 +75,9 @@ class BeliefRecord(object):
     and the reference of the formula which produced the belief.
     """
     from collections import namedtuple
-    BmsRecord = namedtuple('BmsRecord', ['date', 'value', 'produced', 'pred', 'record'])
+    BmsRecord = namedtuple(
+        'BmsRecord', 
+        ['date', 'value', 'produced', 'pred', 'record'])
     
     def __init__(self, wrapper, pred):
         self.entries = []

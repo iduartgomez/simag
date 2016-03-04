@@ -634,7 +634,7 @@ class Category(object):
         """
         if obj is True:
             assert issubclass(ctg.__class__, LogPredicate), \
-            "'ctg' is not subclass of LogPredicate"
+                   "'ctg' is not subclass of LogPredicate"
             for c in self.parents:
                 if ctg == c: return c
             return None
@@ -701,7 +701,7 @@ class Inference(object):
             self.const = const
             self.ants = tuple(nc)
             if hasattr(rule, 'var_order'):
-                self.subs = {v:set() for v in rule.var_order}
+                self.subs = OrderedDict((v, set()) for v in rule.var_order)
             else:
                 self.subs = {}
             for ant in ants:
@@ -721,7 +721,7 @@ class Inference(object):
         return obj
     
     def __init__(self, kb, *args, **kwargs):
-        self._ignore_current = False
+        self._ignore_current = True
         if kwargs:
             for k, v in kwargs.items():
                 if k == 'ignore_current':
@@ -814,7 +814,8 @@ class Inference(object):
                         curr = self.kb.test_pred(pred, kls='func')                        
                     elif curr is None and not self._ignore_current:
                         curr = self.kb.test_pred(pred, kls='pred')
-                    self.results[var][q] = curr
+                    if not self._ignore_current:
+                        self.results[var][q] = curr
     
     def unify(self, p, chk, done):
         def add_ctg():
@@ -849,9 +850,10 @@ class Inference(object):
         
         query_obj, query = self.actv_q[0], self.actv_q[1]
         pred = self.actv_q[2]
-        # for each node in the subtitution tree unifify variables
-        # and try every possible substitution
-        if p in self.nodes:
+        # for each node in the subtitution tree unifify variables 
+        # and try every possible substitution until (if) a solution is found
+        # the proofs are tried is order of addition to the KB
+        if p in reversed(self.nodes):
             # the node for each rule is stored in an efficient sorted list
             # by rule creation datetime, from oldest to newest, we iterate 
             # from newest to oldest as the newest rules take precedence
@@ -872,7 +874,8 @@ class Inference(object):
                         if proof_result:
                             self._updated.append(True)
                             add_ctg()
-                            self.queue[node].add(result_memoization)                            
+                            self.queue[node].add(result_memoization)
+                            break
                 if p not in done:
                     chk = deque(node.ants) + chk
         if query_obj in self.obj_dic and query in self.obj_dic[query_obj]:
@@ -883,23 +886,15 @@ class Inference(object):
             self.unify(p, chk, done)
     
     def map_vars(self, node):
-        # TODO: check out what combinations can be roled out before 
-        # attempting to solve it for performance gains
-        
-        # map values to variables for subtitution
-        subs_num = len(node.subs)
-        subactv = [set()] * subs_num
-        for i, t in enumerate(node.subs.values()):
-            y = len(t)
-            for obj, s in self.obj_dic.items():
-                x = len(s)            
-                if x >= y:
-                    r = s.intersection(t)
-                    if len(r) == y:
-                        subactv[i].add(obj)
-        # permute and find every argument combination    
-        subactv = list(itertools.product(*subactv))
-        return subactv
+        mapped = []
+        for preds in node.subs.values():
+            subst = []
+            for obj, ctgs in self.obj_dic.items():
+                coincident = ctgs.intersection(preds)
+                if len(coincident) == len(preds):
+                    subst.append(obj)
+            mapped.append(subst)
+        return list(itertools.product(*mapped))
     
     def get_query(self, sent):
         # TODO: support queries for the same function/predicate for the same obj
@@ -938,7 +933,7 @@ class Inference(object):
         
         # for each query, first try to retrieve the result from the kb
         # if it fails, then add to the query list
-        if type(sent) is str:
+        if isinstance(sent, str):
             query = self.parser(sent, tell=False)            
         elif issubclass(sent.__class__, LogFunction):
             if not self._ignore_current:

@@ -158,6 +158,7 @@ class LogSentence(object):
         self.created = datetime.datetime.now()
     
     def __call__(self, ag, *args):
+        # TODO: should be rewritten to use context manager        
         self.ag = ag
         if type(args[0]) is tuple or type(args[0] is list):
             args = args[0]
@@ -206,7 +207,7 @@ class LogSentence(object):
         def callback_pred():
             if hasattr(pred, 'substituted'):
                 return pred.substituted.time
-            # TODO: there are two reasons why a None is being returned
+            # TODO: there may be two reasons why a None is being returned
             # here, either because the substitution of the precondition
             # failed or because unexpected behaviour due to a badly-formed
             # sentence. Ideally we want to test for the unexpected behaviour
@@ -357,8 +358,9 @@ def make_logic_sent(ast):
             self._results.append(truth)
         
         def substitute(self, *args):
-            raise AssertionError("operators of the type `{0}` can't be on " \
-            + "the left side of sentence: `{1}`".format(self.cond, self))
+            raise AssertionError(
+                "operators of the type `{0}` can't be on " \
+                + "the left side of sentence: `{1}`".format(self.cond, self))
     
     class LogicIndCond(Particle):
         
@@ -378,9 +380,10 @@ def make_logic_sent(ast):
                 proof.result = None
         
         def resolve(self, proof, *args):
-            raise AssertionError("indicative conditional type " \
-            + "arguments can only contain other indicative conditional " \
-            + "or assertions in their right hand side")
+            raise AssertionError(
+                "indicative conditional type " \
+                + "arguments can only contain other indicative conditional " \
+                + "or assertions in their right hand side")
         
         def substitute(self, proof, *args):
             if len(self._results) == 0:
@@ -555,7 +558,7 @@ def make_logic_sent(ast):
                         and type(assigned_value) is FunctionType:
                             dates[arg] = assigned_value()
                         elif arg in self.pred.args \
-                        and type(assigned_value) is not str:
+                        and not isinstance(assigned_value, str):
                             dates[arg] = assigned_value.get_date(proof, ag)
                         elif arg in self.pred.args:
                             dates[arg] = assigned_value
@@ -667,7 +670,7 @@ def make_logic_sent(ast):
     def disambiguate_vars(vars_):
         sent.var_order = []
         for v in vars_:
-            if type(v) is str and v not in sent.var_order:
+            if isinstance(v, str) and v not in sent.var_order:
                 if v in sent.var_order:
                     m = "duplicate variable name declared: {0}".format(v)
                     raise ValueError(m)
@@ -833,8 +836,8 @@ def make_fact(pred, f_type=None, **kwargs):
         
         def __init__(self, pred, from_free=False, empty=False, **kwargs):
             if from_free is True:
-                assert type(pred) == FreeTerm, \
-                    'The object is not of <FreeTerm> type'
+                assert isinstance(pred, FreeTerm), \
+                       'The object is not of <FreeTerm> type'
                 for name, value in pred.__dict__.items():
                     setattr(self, name, value)
                 self.term = kwargs['sbj']
@@ -846,7 +849,7 @@ def make_fact(pred, f_type=None, **kwargs):
                 self.parent = parent
                 self.term = term                
                 assert (op == '='), \
-                "It's a grounded predicate, must assign truth value."
+                       "It's a grounded predicate, must assign truth value."
                 if (val > 1 or val < 0):
                     m = "Illegal value: {0}, must be > 0, or < 1." .format(val)
                     raise AssertionError(m)
@@ -983,7 +986,7 @@ class LogFunction(metaclass=MetaForAtoms):
             for op_arg in fn.op_args:
                 if op_arg.first_term == 'time':
                     date = _set_date(op_arg.second_term)
-                    if type(date) is datetime.datetime:
+                    if isinstance(date, datetime.datetime):
                         if dates is None: dates = []
                         dates.append(date)
                     else: self.date_var = date
@@ -1026,7 +1029,7 @@ class LogFunction(metaclass=MetaForAtoms):
         subs = copy.deepcopy(self)
         subs.args_ID = hash(tuple(args))
         subs._grounded = True
-        if type(args) is dict:
+        if isinstance(args, dict):
             for x, arg in enumerate(subs.args):
                 if isinstance(arg, tuple) and arg in args:
                     subs.args[x] = list(arg)
@@ -1034,7 +1037,7 @@ class LogFunction(metaclass=MetaForAtoms):
                     subs.args[x] = tuple(subs.args[x])
                 elif arg in args:
                     subs.args[x] = args[arg]
-        elif type(args) is list:
+        elif isinstance(args, list):
             for x, arg in enumerate(subs.args):
                 if isinstance(arg, tuple):
                     subs.args[x] = list(arg)
