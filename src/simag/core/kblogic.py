@@ -810,9 +810,9 @@ class Inference(object):
                         query(pred, q)
                     # if there is some unresolved query, add none to results
                     curr = self.results[var].setdefault(q, None)
-                    if curr is None and isfunc:
+                    if curr is None and isfunc and not self._ignore_current:
                         curr = self.kb.test_pred(pred, kls='func')                        
-                    elif curr is None:
+                    elif curr is None and not self._ignore_current:
                         curr = self.kb.test_pred(pred, kls='pred')
                     self.results[var][q] = curr
     
@@ -861,8 +861,6 @@ class Inference(object):
                 # operating logic sentence
                 # check what are the possible var substitutions
                 mapped = self.map_vars(node)
-                # permute and find every argument combination       
-                mapped = list(itertools.product(*mapped))
                 # run proof until a solution is found or there aren't more
                 # combinations left to be tested
                 proof_result = None
@@ -871,7 +869,7 @@ class Inference(object):
                     result_memoization = hash(args)
                     if result_memoization not in self.queue[node]:
                         proof_result = node.rule(self.kb, args)
-                        if proof_result is not None:
+                        if proof_result:
                             self._updated.append(True)
                             add_ctg()
                             self.queue[node].add(result_memoization)                            
@@ -899,6 +897,8 @@ class Inference(object):
                     r = s.intersection(t)
                     if len(r) == y:
                         subactv[i].add(obj)
+        # permute and find every argument combination    
+        subactv = list(itertools.product(*subactv))
         return subactv
     
     def get_query(self, sent):

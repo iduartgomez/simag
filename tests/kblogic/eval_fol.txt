@@ -72,7 +72,7 @@ BLOCK
 	( scum[$West,u=1] && good[$West,u=0] )
 	( drugDealer[$West,u=1] |> ( scum[$West,u=1] && good[$West,u=0] ) )
 	( drugDealer[$West,u=0] )
-/BLOCK 
+/BLOCK
 /*
 # Test 4 => Evaluate logical disjunction
 # Test 5 => Evaluate logical conjunction

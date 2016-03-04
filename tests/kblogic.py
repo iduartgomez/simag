@@ -138,6 +138,7 @@ class AskReprGetAnswer(unittest.TestCase):
         self.assertTrue(answ)
     
     def test_single_stmt(self):
+        # for testing single subtests in the other tests
         fol = """
         (( let x, y, t1:time, t2:time="2016.01.01" )
          (( (dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x]) && fn::time_calc(t1<t2) )
@@ -155,7 +156,7 @@ class AskReprGetAnswer(unittest.TestCase):
         for i, test in enumerate(sents):
             self.rep = Representation()
             with self.subTest(test='subtest {0}: {1}'.format(i,ask[i])):
-                print("subtest %s" % i)
+                #print("subtest %s" % i)
                 for s in test:
                     self.rep.tell(s)
                 for j, q in enumerate(ask[i][0]):
@@ -210,6 +211,17 @@ class EvaluationOfFOLSentences(unittest.TestCase):
     def test_eval_and(self):
         pass
     
+    def test_single_stmt(self):
+        # for testing single subtests in the other tests
+        self.rep = Representation()
+        fol = """
+        ( drugDealer[$West,u=1] |> ( scum[$West,u=1] && good[$West,u=0] ) )
+        ( drugDealer[$West,u=0] )
+        """
+        self.rep.tell(fol)
+        answ = self.rep.ask("( scum[$West,u=1] && good[$West,u=0] )")
+        self.assertIsNone(answ)
+        
     def iter_eval(self, tests, assert_this, results):
         for x, test in enumerate(tests):
             self.rep = Representation()
@@ -219,7 +231,11 @@ class EvaluationOfFOLSentences(unittest.TestCase):
                 proof = logic_parser(test[0]).assert_rules[0]
                 res = proof(self.rep, assert_this[x])
                 self.assertIs(res, results[x])
-
+                
+    def tearDown(self):
+        if hasattr(self, 'rep'):
+            del self.rep
+    
 class LogicSentenceParsing(unittest.TestCase):
     
     def test_parse_predicate(self):            
