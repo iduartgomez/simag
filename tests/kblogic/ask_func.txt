@@ -68,3 +68,14 @@ BLOCK
     ( meat[$M1,u=1] )
     ( fat(time="2015.12.01")[$Pancho,u=1] )
 /BLOCK
+# Test 1.3/06 -> retrieve all objs which fit to a criteria
+BLOCK
+	(cow[$Lucy,u=1])
+    (goat[$Vicky,u=1])
+    ((let x) ((cow[x,u=1] || goat[x,u=1]) |> (female[x,u=1] && animal[x,u=1])))
+    ((let x) ((female[x,u=1] && animal[x,u=1]) |> fn::produce[milk,u=1;x]))
+/BLOCK
+# Test 1.4/07 -> retrieve all relations between objects
+BLOCK
+	(fn::loves[$Vicky,u=1;$Lucy])
+/BLOCK

@@ -458,7 +458,7 @@ class Individual(object):
                     if get_obj: return rel
                     break
         
-    def get_rel(self, func=None):
+    def get_rel(self, func=None, obj=False):
         """Returns a list of the relations the object is involved either
         as subject, object or indirect object.
         
@@ -471,18 +471,25 @@ class Individual(object):
             except KeyError:
                 return None      
             for f in funcs:
-                if f.args_ID == func.args_ID: return f            
+                if f.args_ID == func.args_ID: return f   
         rel = [k for k in self.relations]
         return rel
     
-    def test_rel(self, func, obj=False, copy_date=False):
+    def test_rel(self, func, obj=False, copy_date=False, cmp_args=False):
         """Checks if a relation exists; and returns true if it's equal
         to the comparison, false if it's not, and None if it doesn't exist.
+        
+        If the cmp_args parameter is True then a list of relations where
+        the arguments are equal to those of the provided comparison function
+        will be returned.
         """
+        if cmp_args:
+            return [f.func for rel_ls in self.relations.values() 
+                    for f in rel_ls if func.comp_args(f)]
         try:
             funcs = self.relations[func.func]
         except KeyError:
-            return None      
+            return None
         for f in funcs:
             if f.args_ID == func.args_ID:
                 if func == f:
@@ -569,20 +576,20 @@ class Category(object):
                         if get_obj: return rel
                         break
     
-    def get_rel(self, func=None):
+    def get_rel(self, func=None, cmp_args=False):
         """Returns a list of the relations the object is involved either
         as subject, object or indirect object.
         
         If a function is provided for comparison then the original function
         is returned.
         """
-        if func:
+        if func:            
             try:
-                if hasattr(self, 'relations'):
+                if hasattr(self, 'relations'):                    
                     funcs = self.relations[func.func]
                 else: return None
             except KeyError:
-                return None      
+                return None
             for f in funcs:
                 if f.args_ID == func.args_ID: return f
             return None        
@@ -590,15 +597,22 @@ class Category(object):
         else: rel = []
         return rel
     
-    def test_rel(self, func, obj=False, copy_date=False):
+    def test_rel(self, func, obj=False, copy_date=False, cmp_args=False):
         """Checks if a relation exists; and returns true if it's 
         equal to the comparison, false if it's not, and None if it
         doesn't exist.
+        
+        If the cmp_args parameter is True then a list of relations where
+        the arguments are equal to those of the provided comparison function
+        will be returned.
         """
+        if cmp_args:
+            return [f.func for rel_ls in self.relations.values() 
+                    for f in rel_ls if func.comp_args(f)]
         try:
             funcs = self.relations[func.func]
         except (KeyError, AttributeError):
-            return None      
+            return None
         for f in funcs:
             if f.args_ID == func.args_ID:
                 if func == f:
@@ -942,6 +956,17 @@ class Inference(object):
                 return {ctg: True for ctg, val in ctgs.items() 
                         if val == p.value}
         
+        def filter_funcs():
+            if p.op == '<':
+                return {ctg: True for ctg, val in ctgs.items() 
+                        if val < p.value}
+            elif p.op == '>':
+                return {ctg: True for ctg, val in ctgs.items() 
+                        if val > p.value}
+            else:
+                return {ctg: True for ctg, val in ctgs.items() 
+                        if val == p.value}
+        
         # for each query, first try to retrieve the result from the kb
         # if it fails, then add to the query list
         if isinstance(sent, str):
@@ -980,8 +1005,8 @@ class Inference(object):
                 if p.parent in self.vrs:
                     if p.term in self.vrs:
                         raise ValueError(
-                            "in this query {}, both term `{}` and class `{}`, " /
-                            + "are variables one must be grounded".format(
+                            "in this query `{}`, both term `{}` and class `{}`, " /
+                            + "are variables, one of them must be grounded".format(
                             p, p.term, p.parent))
                     if p.term_is_ind():
                         obj = self.kb.individuals.get(p.term)
@@ -993,8 +1018,24 @@ class Inference(object):
                     self.results[p.term] = ctgs
                 else: assert_memb(p)
             for p in q.funcs:
+                args = p.get_args()
                 if p.func in self.vrs:
-                    raise NotImplementedError
+                    if any(x for x in args if x in self.vrs):
+                        raise ValueError(
+                            "in this query `{}`, both, at least one of the function " /
+                            + "parameters `{}` and the function `{}`, are variables " /
+                            + "either the parameters or the function must be grounded".format(
+                            p, args, p.func))
+                    arg = args[0]
+                    if p.arg_is_ind(arg):
+                        obj = self.kb.individuals.get(arg)
+                    else:
+                        obj = self.kb.classes.get(arg)
+                    if obj:
+                        rels = obj.test_rel(p, cmp_args=True)
+                        if rels:
+                            for arg in args:
+                                self.results[arg] = {r: True for r in rels}
                 else: assert_rel(p)
     
     def get_rules(self):

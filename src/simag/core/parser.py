@@ -1031,6 +1031,12 @@ class LogFunction(metaclass=MetaForAtoms):
                 ls.append(arg)
         return ls
     
+    def arg_is_ind(self, arg):
+        if arg[0] == '$':
+            return True
+        else:
+            return False
+    
     def substitute(self, args):
         subs = copy.deepcopy(self)
         subs.args_ID = hash(tuple(args))
@@ -1123,6 +1129,25 @@ def make_function(sent, f_type=None, **kwargs):
             self.value = other.value
             if hasattr(other, 'dates'):
                 self.dates = other.dates
+        
+        def comp_args(self, other):
+            for x, arg in enumerate(self.args):
+                try:
+                    if isinstance(arg, tuple):
+                        oarg = other.args[x]
+                        if not isinstance(oarg, tuple):
+                            return False
+                        if arg[2] == '=' and arg[1] != oarg[1]:  
+                            return False                     
+                        elif arg[2] == '>'and arg[1] > oarg[1]:
+                            return False    
+                        elif arg[2] == '<'and arg[1] < oarg[1]:  
+                            return False
+                    elif arg != other.args[x]:
+                        return False
+                except IndexError:
+                    return False
+            return True
         
         def __eq__(self, other):
             comparable = self.chk_args_eq(other)

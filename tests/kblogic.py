@@ -141,7 +141,17 @@ class AskReprGetAnswer(unittest.TestCase):
             (['(fn::sells[$M1,u=1;$West;$Nono])'], True),
             (['(fn::produce[milk,u=1;cow])'], True),
             (['(fn::eat[$M1,u=1;$Pancho])'], True),
-            (['(fn::eat[$M1,u=1;$Pancho])'], True)
+            (['(fn::eat[$M1,u=1;$Pancho])'], True),
+            (['((let x, y) (fn::produce[milk,u=1;x]))'],
+             {'$Lucy': 
+                {'produce': True}, 
+              '$Vicky': 
+                {'produce': True}}),
+            (['((let x) (fn::x[$Vicky,u>0;$Lucy]))'],
+             {'$Lucy': 
+                {'loves': True}, 
+              '$Vicky': 
+                {'loves': True}}),
         ]
         self.iter_eval(sents, ask)
     
