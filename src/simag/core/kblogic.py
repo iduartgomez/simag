@@ -231,7 +231,7 @@ class Representation(object):
             elif issubclass(pred.__class__, LogPredicate):
                 sbj, p = pred.term, pred.parent
                 chk_args(p)
-        questions = sent.get_preds('r', return_obj=True)
+        questions = sent.get_preds('r')
         for query in questions:
             self.ask(query, ignore_current=True)
         
@@ -467,15 +467,22 @@ class Individual(object):
         as subject, object or indirect object.
         
         If a function is provided for comparison then the original function
-        is returned.
+        is returned. If the provided function has variables then a list of
+        functions which fit the criteria is returned.
         """
         if func:
             try:
                 funcs = self.relations[func.func]
             except KeyError:
-                return None      
+                return None
+            ignore_args = False
+            if hasattr(func, '_ignore_args'): ignore_args = True          
+            results = []
             for f in funcs:
-                if f.args_ID == func.args_ID: return f   
+                if ignore_args and func == f:
+                    results.append(f)
+                elif f.args_ID == func.args_ID: return f
+            if ignore_args: return results
         rel = [k for k in self.relations]
         return rel
     
@@ -585,7 +592,8 @@ class Category(object):
         as subject, object or indirect object.
         
         If a function is provided for comparison then the original function
-        is returned.
+        is returned. If the provided function has variables then a list of
+        functions which fit the criteria is returned.
         """
         if func:            
             try:
@@ -594,9 +602,15 @@ class Category(object):
                 else: return None
             except KeyError:
                 return None
+            ignore_args = False
+            if hasattr(func, '_ignore_args'): ignore_args = True
+            results = []
             for f in funcs:
-                if f.args_ID == func.args_ID: return f
-            return None        
+                if ignore_args and func == f:
+                    results.append(f)
+                elif f.args_ID == func.args_ID: return f
+            if ignore_args: return results
+            return None
         if hasattr(self, 'relations'): rel = [k for k in self.relations]
         else: rel = []
         return rel
@@ -795,28 +809,38 @@ class Inference(object):
                     elif issubclass(pred.__class__, LogPredicate): 
                         q, is_func = pred.parent, False   
                     for obj, ctgs in self.obj_dic.items():
-                        result = None
                         if is_func:
-                            # need to create a substitution
-                            for arg in pred.get_args():
+                            test = []
+                            for i, arg in enumerate(pred.get_args()):
+                                result = None
                                 if arg in self.vrs:
-                                    subst = None
-                            if not self._ignore_current and q in ctgs:              
-                                result = self.kb.test_pred(subst, kls='func')
-                            raise NotImplementedError
+                                    subst = pred.replace_var(
+                                        i, obj, copy_=True, vrs=self.vrs)
+                                    test.append(subst)
+                            for subst in test:
+                                if not self._ignore_current and q in ctgs:
+                                    result = self.kb.get_rel(subst)
+                                if result is not None:
+                                    self.results[obj][q] = result
+                                else:
+                                    self.actv_q = (obj, subst.func, subst)
+                                    query(subst, self.actv_q[1])
                         else:
-                            subst = make_fact(pred, 'grounded_term',
-                                from_free=True, **{'sbj': obj})
-                            if q in ctgs and not self._ignore_current:
+                            result = None
+                            subst = make_fact(
+                                pred, 'grounded_term',
+                                from_free=True, **{'sbj': obj}
+                                )
+                            if not self._ignore_current and q in ctgs:
                                 result = self.kb.test_pred(subst, kls='pred')                      
-                        if obj not in self.results: self.results[obj] = {}
-                        if result is not None:
-                            self.results[obj][q] = result
-                        else:
-                            # if no result was found from the kb directly
-                            # make an inference from a grounded fact
-                            self.actv_q = (subst.term, subst.parent, subst)
-                            query(subst, self.actv_q[1])
+                            if obj not in self.results: self.results[obj] = {}
+                            if result is not None:
+                                self.results[obj][q] = result
+                            else:
+                                # if no result was found from the kb directly
+                                # make an inference from a grounded fact
+                                self.actv_q = (subst.term, subst.parent, subst)
+                                query(subst, self.actv_q[1])                
             else:
                 prev_res = self.results.setdefault(var,{})
                 for pred in preds:
@@ -880,9 +904,17 @@ class Inference(object):
             #iter_rules = reversed(self.nodes[p])
             for node in self.nodes[p]:
                 # recursively try unifying all possible argument with the 
-                # operating logic sentence
+                # operating logic sentence:
                 # check what are the possible var substitutions
-                mapped = self.map_vars(node)
+                mapped = []
+                for preds in node.subs.values():
+                    subst = []
+                    for obj, ctgs in self.obj_dic.items():
+                        coincident = ctgs.intersection(preds)
+                        if len(coincident) == len(preds):
+                            subst.append(obj)
+                    mapped.append(subst)
+                mapped = list(itertools.product(*mapped))
                 # run proof until a solution is found or there aren't more
                 # combinations left to be tested
                 proof_result = None
@@ -904,17 +936,6 @@ class Inference(object):
             done.append(p)
             p = chk.popleft()
             self.unify(p, chk, done)
-    
-    def map_vars(self, node):
-        mapped = []
-        for preds in node.subs.values():
-            subst = []
-            for obj, ctgs in self.obj_dic.items():
-                coincident = ctgs.intersection(preds)
-                if len(coincident) == len(preds):
-                    subst.append(obj)
-            mapped.append(subst)
-        return list(itertools.product(*mapped))
     
     def get_query(self, sent):
         # TODO: support queries for the same function/predicate for the same obj
@@ -1058,7 +1079,7 @@ class Inference(object):
                     pred = const.func
                 else:
                     pred = const.parent
-                node = self.InferNode(nc, preds, pred, sent)
+                node = self.InferNode(classes, preds, pred, sent)
                 if node.const in self.nodes:
                     self.nodes[node.const].add(node)
                 else:
@@ -1067,39 +1088,41 @@ class Inference(object):
                     self.nodes[node.const].add(node)
         
         if len(self.ctgs) > 0:
-            c = self.ctgs.pop()
+            cls = self.ctgs.pop()
         else: 
-            c = None
-        if c is not None:
-            self.done.append(c)            
+            cls = None
+        if cls is not None:
+            self.done.append(cls)            
             try:
-                chk_rules = OrderedSet(self.kb.classes[c].cog)
+                chk_rules = OrderedSet(self.kb.classes[cls].cog)
                 chk_rules = chk_rules - self.rules
             except:
-                raise Inference.NoSolutionError(c)
+                raise Inference.NoSolutionError(cls)
             for sent in chk_rules:
                 preds = sent.get_preds()
-                nc = []
+                #print(preds)
+                classes = []
                 for y in preds:
                     if issubclass(y.__class__, LogPredicate):
-                        nc.append(y.parent)
+                        classes.append(y.parent)
                     elif issubclass(y.__class__, LogFunction):
-                        nc.append(y.func)
-                mk_node('right')
-                nc2 = [e for e in nc if e not in self.done and e not in self.ctgs]
-                self.ctgs.extend(nc2)
-                if c in nc:
-                    preds = sent.get_preds(branch='right')
-                    nc = []
+                        classes.append(y.func)
+                mk_node('r')
+                filtered = [e for e in classes 
+                            if e not in self.done and e not in self.ctgs]
+                self.ctgs.extend(filtered)
+                if cls in classes:
+                    preds = sent.get_preds(branch='r')
+                    classes = []
                     for y in preds:
                         if issubclass(y.__class__,LogPredicate): 
-                            nc.append(y.parent)
+                            classes.append(y.parent)
                         elif issubclass(y.__class__, LogFunction):
-                            nc.append(y.func)
-                    mk_node('left')
-                    nc2 = [e for e in nc if e not in self.done \
-                           and e not in self.ctgs]
-                    self.ctgs.extend(nc2)
+                            classes.append(y.func)
+                    mk_node('l')
+                    filtered = [e for e in classes if e not in self.done
+                                and e not in self.ctgs]
+                    self.ctgs.extend(filtered)
             self.rules = self.rules | chk_rules
             self.get_rules()
         else:

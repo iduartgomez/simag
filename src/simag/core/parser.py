@@ -10,6 +10,7 @@ import re
 
 from simag.core.grammar.grako_parser import SIMAGParser
 from types import FunctionType
+import itertools
 
 __all__ = (
 'logic_parser',
@@ -229,50 +230,55 @@ class LogSentence(object):
                     x = x.parent
         return True
     
-    def get_all_preds(self, unique=False):
-        preds = []
-        for p in self:
-            if p.cond == ':predicate:':
-                if unique:
-                    if issubclass(p.pred.__class__, LogPredicate):
-                        preds.append(p.parent)
-                    else: 
-                        preds.append(p.func)
-                else: preds.append(p.pred)
-        if unique: return set(preds)
-        return preds
-    
-    def get_preds(self, branch='l', conds=('|>', '=>', '<=>'), 
-                  unique=False, return_obj=False):
-        if self.start.cond not in conds:
-            return self.get_all_preds(unique=unique)
+    def _cache_preds(self):
+        conds = ('|>', '=>', '<=>')
         all_pred = []
         for p in self:
             if p.cond == ':predicate:':
                 all_pred.append(p)
-        preds = []
+        left_preds, right_preds = [], []
         for p in all_pred:
             top, bottom = p.parent, p
             while top.cond not in conds and top.parent:
                 top, bottom = top.parent, top
-            if branch == 'l' and top.next[0] is bottom:
-                if unique:
-                    if return_obj:
-                        preds.append(p.pred)
-                    elif issubclass(p.pred.__class__, LogPredicate):
-                        preds.append(p.pred.parent)
-                    else: preds.append(p.pred.func)
-                else: preds.append(p.pred)                
-            elif branch != 'l' and top.next[1] is bottom:
-                if unique:
-                    if return_obj:
-                        preds.append(p.pred)
-                    if issubclass(p.pred.__class__, LogPredicate):
-                        preds.append(p.pred.parent)
-                    else: preds.append(p.pred.func)
-                else: preds.append(p.pred)
-        if unique: return set(preds)
-        return preds
+            if top.next[0] is bottom:
+                if not isinstance(p.pred, TimeFunc):
+                    left_preds.append(p)        
+            elif top.next[1] is bottom:
+                if not isinstance(p.pred, TimeFunc):
+                    right_preds.append(p)
+        self._preds = (tuple(left_preds), tuple(right_preds))
+    
+    def get_all_preds(self, unique=False):
+        preds = itertools.chain.from_iterable(self._preds)
+        if unique:
+            preds = [
+                p.pred.parent if issubclass(p.pred.__class__, LogPredicate)
+                else p.pred.func for p in preds
+            ]
+            return set(preds)
+        else: 
+            return [p.pred for p in preds]
+    
+    def get_preds(self, branch='l', unique=False):
+        if branch == 'l':
+            if not unique:
+                return [p.pred for p in self._preds[0]]
+            else:
+                return set([
+                    p.pred.parent 
+                    if issubclass(p.pred.__class__, LogPredicate)
+                    else p.pred.func for p in self._preds[0]
+                ])
+        else:
+            if not unique:
+                return [p.pred for p in self._preds[1]]
+            else:
+                return set([
+                    p.pred.parent 
+                    if issubclass(p.pred.__class__, LogPredicate)
+                    else p.pred.func for p in self._preds[1]
+                ])
     
     def _cln_res(self):
         if hasattr(self, 'result'): del self.result
@@ -700,6 +706,7 @@ def make_logic_sent(ast):
         traverse_ast(ast.rule, parent, depth)
     elif ast.query:
         traverse_ast(ast.query, parent, depth)
+    sent._cache_preds()
     return sent
 
 class Query(object):
@@ -1004,9 +1011,12 @@ class LogFunction(metaclass=MetaForAtoms):
                     else:
                         proof.pre_assigned = {op_arg.first_term: self}
         args_id = hash(tuple(args_id))
-        arity = len(mk_args)
-        return mk_args, args_id, arity, dates
+        return mk_args, args_id, dates
         
+    @property
+    def arity(self):
+        return len(self.args)
+    
     @property
     def time(self):
         if not self._grounded:
@@ -1028,12 +1038,10 @@ class LogFunction(metaclass=MetaForAtoms):
         else:
             return False
     
-    def substitute(self, args, single_arg=False):
+    def substitute(self, args):
         subs = copy.deepcopy(self)
         subs.args_ID = hash(tuple(args))
         subs._grounded = True
-        if single_arg:
-            raise NotImplementedError
         if isinstance(args, dict):
             for x, arg in enumerate(subs.args):
                 if isinstance(arg, tuple) and arg in args:
@@ -1084,16 +1092,15 @@ def make_function(sent, f_type=None, **kwargs):
     class RelationFunc(LogFunction):
         
         def __init__(self, fn, **kwargs):
-            mk_args, args_id, arity, dates = super().__init__(fn, **kwargs)
+            mk_args, args_id, dates = super().__init__(fn, **kwargs)
             self.args_ID = args_id
             self.args = mk_args
-            self.arity = arity
             # relation functions can only have a truth value for the 
             # first argument which represent the object of the relation,
             # the second argument is the subject, and the optional third
             # is the indirect object
             if dates is not None: self.dates = dates
-               
+        
         @property
         def value(self):
             return self.args[0][1]
@@ -1169,18 +1176,19 @@ def make_function(sent, f_type=None, **kwargs):
             time_truth = self._eval_time_truth(other)
             if time_truth is False and result is False: return True
     
-        def chk_args_eq(self, other):
+        def chk_args_eq(self, other):            
             if other.arity != self.arity:
                 return ('arity', other.arity, self.arity)
             if other.func != self.func:
                 return ('function', other.func, self.func)
             for x, arg in enumerate(self.args):
+                if hasattr(other, '_ignore_args') and x in other._ignore_args:
+                    pass
                 if isinstance(arg, tuple):
                     if other.args[x][0] != arg[0]:
                         return ('args', other.args[x][0], arg[0])
-                else:
-                    if other.args[x] != arg:
-                        return ('args', other.args[x], arg)
+                elif other.args[x] != arg:
+                    return ('args', other.args[x], arg)
             return True
         
         def change_params(self, new=None, revert=False):
@@ -1197,12 +1205,16 @@ def make_function(sent, f_type=None, **kwargs):
                 self.term = self.oldTerm
                 del self.oldTerm 
     
-        def replace_var(self, position, replacement):
-            if isinstance(self.args[position], tuple):
-                tmp = list(self.args[position])
-                tmp[0], self.args[position] = replacement, tmp
+        def replace_var(self, position, replacement, copy_=False, vrs=False):
+            if copy_: subs = copy.deepcopy(self)
+            else: subs = self
+            if isinstance(subs.args[position], tuple):
+                tmp = list(subs.args[position])
+                tmp[0], subs.args[position] = replacement, tmp
             else:
-                self.args[position] = replacement
+                subs.args[position] = replacement
+            if vrs: subs._ignore_args = vrs
+            return subs
         
         def get_args(self):
             return [arg if not isinstance(arg, tuple) else arg[0] 

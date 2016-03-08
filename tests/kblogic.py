@@ -142,7 +142,7 @@ class AskReprGetAnswer(unittest.TestCase):
             (['(fn::produce[milk,u=1;cow])'], True),
             (['(fn::eat[$M1,u=1;$Pancho])'], True),
             (['(fn::eat[$M1,u=1;$Pancho])'], True),
-            (['((let x, y) (fn::produce[milk,u=1;x]))'],
+            (['((let x) (fn::produce[milk,u=1;x]))'],
              {'$Lucy': 
                 {'produce': True}, 
               '$Vicky': 
