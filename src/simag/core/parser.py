@@ -1019,17 +1019,8 @@ class LogFunction(metaclass=MetaForAtoms):
                 return self.dates[-1]
             else: 
                 return False
-        else: 
+        else:
             return now
-        
-    def get_args(self):
-        ls = []
-        for arg in self.args:
-            if isinstance(arg, tuple):
-                ls.append(arg[0])
-            else:
-                ls.append(arg)
-        return ls
     
     def arg_is_ind(self, arg):
         if arg[0] == '$':
@@ -1037,10 +1028,12 @@ class LogFunction(metaclass=MetaForAtoms):
         else:
             return False
     
-    def substitute(self, args):
+    def substitute(self, args, single_arg=False):
         subs = copy.deepcopy(self)
         subs.args_ID = hash(tuple(args))
         subs._grounded = True
+        if single_arg:
+            raise NotImplementedError
         if isinstance(args, dict):
             for x, arg in enumerate(subs.args):
                 if isinstance(arg, tuple) and arg in args:
@@ -1059,20 +1052,6 @@ class LogFunction(metaclass=MetaForAtoms):
                     subs.args[x] = args[x]
         self.substituted = subs
         return subs
-    
-    def change_params(self, new=None, revert=False):
-        if revert is False:
-            self.oldTerm = self.args.copy()
-            for x, arg in enumerate(self.args):
-                if isinstance(arg, tuple):
-                    self.args[x] = list(arg)
-                    self.args[x][0] = new[x]
-                    self.args[x] = tuple(self.args[x])
-                else:
-                    self.args[x] = new[x]
-        else:
-            self.term = self.oldTerm
-            del self.oldTerm 
     
     def __str__(self):
         return '{0}({1}: {2})'.format(
@@ -1130,7 +1109,7 @@ def make_function(sent, f_type=None, **kwargs):
             if hasattr(other, 'dates'):
                 self.dates = other.dates
         
-        def comp_args(self, other):
+        def compare_args(self, other):
             for x, arg in enumerate(self.args):
                 try:
                     if isinstance(arg, tuple):
@@ -1203,6 +1182,31 @@ def make_function(sent, f_type=None, **kwargs):
                     if other.args[x] != arg:
                         return ('args', other.args[x], arg)
             return True
+        
+        def change_params(self, new=None, revert=False):
+            if revert is False:
+                self.oldTerm = self.args.copy()
+                for x, arg in enumerate(self.args):
+                    if isinstance(arg, tuple):
+                        self.args[x] = list(arg)
+                        self.args[x][0] = new[x]
+                        self.args[x] = tuple(self.args[x])
+                    else:
+                        self.args[x] = new[x]
+            else:
+                self.term = self.oldTerm
+                del self.oldTerm 
+    
+        def replace_var(self, position, replacement):
+            if isinstance(self.args[position], tuple):
+                tmp = list(self.args[position])
+                tmp[0], self.args[position] = replacement, tmp
+            else:
+                self.args[position] = replacement
+        
+        def get_args(self):
+            return [arg if not isinstance(arg, tuple) else arg[0] 
+                    for arg in self.args]
     
     class TimeFunc(metaclass=MetaForAtoms):
         """A special case for time calculus, not considered a relation.        
@@ -1234,7 +1238,7 @@ def make_function(sent, f_type=None, **kwargs):
         def substitute(self, *args):
             subs = LogFunction.substitute(self, *args)
             for x, arg in enumerate(subs.args):
-                if type(arg) is str: subs.args[x] = _set_date(arg)
+                if isinstance(arg, str): subs.args[x] = _set_date(arg)
             return subs
         
         def __str__(self):

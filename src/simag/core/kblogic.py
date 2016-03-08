@@ -40,6 +40,8 @@ solving the query (including query parsing, data fetching and unification).
 
 import uuid
 import itertools
+import random
+from string import ascii_letters
 from datetime import datetime
 from threading import Lock
 from collections import OrderedDict, deque
@@ -55,6 +57,7 @@ from simag.core.parser import (
     NotCompAssertError,
     NotCompFuncError,
 )
+import random
 
 # ===================================================================#
 #   REPRESENTATION OBJECTS CLASSES AND SUBCLASSES
@@ -325,6 +328,7 @@ class Representation(object):
 
 # TODO: individuals/classes should be linked in a tree structure
 # for more effitient retrieval. 
+
 class Individual(object):
     """An individual is the unique member of it's own class.
     Represents an object which can pertain to multiple classes or sets.
@@ -355,7 +359,7 @@ class Individual(object):
         relations (opt) -> Functions between objects and/or classes.
     """
     def __init__(self, name):
-        self.id = str(uuid.uuid4()).replace('-','')
+        self.id = uuid.uuid4()
         self.name = name
         self.categ = []
         self.relations = {}
@@ -485,7 +489,7 @@ class Individual(object):
         """
         if cmp_args:
             return [f.func for rel_ls in self.relations.values() 
-                    for f in rel_ls if func.comp_args(f)]
+                    for f in rel_ls if func.compare_args(f)]
         try:
             funcs = self.relations[func.func]
         except KeyError:
@@ -608,7 +612,7 @@ class Category(object):
         """
         if cmp_args:
             return [f.func for rel_ls in self.relations.values() 
-                    for f in rel_ls if func.comp_args(f)]
+                    for f in rel_ls if func.compare_args(f)]
         try:
             funcs = self.relations[func.func]
         except (KeyError, AttributeError):
@@ -794,10 +798,12 @@ class Inference(object):
                         result = None
                         if is_func:
                             # need to create a substitution
-                            raise NotImplementedError
-                            subst = None
-                            if q in ctgs and not self._ignore_current:              
+                            for arg in pred.get_args():
+                                if arg in self.vrs:
+                                    subst = None
+                            if not self._ignore_current and q in ctgs:              
                                 result = self.kb.test_pred(subst, kls='func')
+                            raise NotImplementedError
                         else:
                             subst = make_fact(pred, 'grounded_term',
                                 from_free=True, **{'sbj': obj})
@@ -824,9 +830,9 @@ class Inference(object):
                         query(pred, q)
                     # if there is some unresolved query, add none to results
                     curr = self.results[var].setdefault(q, None)
-                    if curr is None and isfunc and not self._ignore_current:
+                    if not self._ignore_current and curr is None and isfunc:
                         curr = self.kb.test_pred(pred, kls='func')                        
-                    elif curr is None and not self._ignore_current:
+                    elif not self._ignore_current and curr is None:
                         curr = self.kb.test_pred(pred, kls='pred')
                     if not self._ignore_current:
                         self.results[var][q] = curr
@@ -956,17 +962,6 @@ class Inference(object):
                 return {ctg: True for ctg, val in ctgs.items() 
                         if val == p.value}
         
-        def filter_funcs():
-            if p.op == '<':
-                return {ctg: True for ctg, val in ctgs.items() 
-                        if val < p.value}
-            elif p.op == '>':
-                return {ctg: True for ctg, val in ctgs.items() 
-                        if val > p.value}
-            else:
-                return {ctg: True for ctg, val in ctgs.items() 
-                        if val == p.value}
-        
         # for each query, first try to retrieve the result from the kb
         # if it fails, then add to the query list
         if isinstance(sent, str):
@@ -1000,14 +995,22 @@ class Inference(object):
         for p in query.assert_rel: assert_rel(p)
         for p in query.assert_memb: assert_memb(p)
         for q in query.queries:
-            self.vrs.update(q.var_order)
+            vrs, replace_table = [], {}
+            for v in q.var_order:
+                mangled = None
+                while mangled in self.vrs or not mangled:
+                    mangled = "".join(random.choice(ascii_letters) for _ in range(5))
+                vrs.append(mangled)
+                replace_table[v] = mangled
+            self.vrs.update(vrs)
             for p in q.preds: 
-                if p.parent in self.vrs:
-                    if p.term in self.vrs:
+                if p.parent in q.var_order:                    
+                    if p.term in q.var_order:
                         raise ValueError(
                             "in this query `{}`, both term `{}` and class `{}`, " /
                             + "are variables, one of them must be grounded".format(
                             p, p.term, p.parent))
+                    p.parent = replace_table[p.parent]
                     if p.term_is_ind():
                         obj = self.kb.individuals.get(p.term)
                     else:
@@ -1016,16 +1019,20 @@ class Inference(object):
                         ctgs = obj.get_ctg()
                         ctgs = filter_ctgs()
                     self.results[p.term] = ctgs
-                else: assert_memb(p)
+                else:
+                    try: p.term = replace_table[p.term]
+                    except KeyError: pass
+                    assert_memb(p)
             for p in q.funcs:
                 args = p.get_args()
-                if p.func in self.vrs:
-                    if any(x for x in args if x in self.vrs):
+                if p.func in q.var_order:
+                    if any(x for x in args if x in q.var_order):
                         raise ValueError(
                             "in this query `{}`, both, at least one of the function " /
                             + "parameters `{}` and the function `{}`, are variables " /
                             + "either the parameters or the function must be grounded".format(
                             p, args, p.func))
+                    p.func = replace_table[p.func]
                     arg = args[0]
                     if p.arg_is_ind(arg):
                         obj = self.kb.individuals.get(arg)
@@ -1036,7 +1043,11 @@ class Inference(object):
                         if rels:
                             for arg in args:
                                 self.results[arg] = {r: True for r in rels}
-                else: assert_rel(p)
+                else:
+                    for i, arg in enumerate(args):
+                        if arg in q.var_order:
+                            p.replace_var(i, replace_table[arg])
+                    assert_rel(p)
     
     def get_rules(self):
         def mk_node(pos):

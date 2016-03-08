@@ -155,7 +155,6 @@ class AskReprGetAnswer(unittest.TestCase):
         ]
         self.iter_eval(sents, ask)
     
-    #@repeat(10)
     def test_event_chain_with_times(self): # <--- fails some times
         self.rep = Representation()
         grounded="""
@@ -200,6 +199,7 @@ class AskReprGetAnswer(unittest.TestCase):
         fat = self.rep.individuals['$Pancho'].get_ctg('fat')
         self.assertEqual(fat, 0)
     
+    @unittest.skip
     def test_single_stmt(self):
         # for testing single subtests in the other tests
         fol = """
@@ -274,6 +274,7 @@ class EvaluationOfFOLSentences(unittest.TestCase):
     def test_eval_and(self):
         pass
     
+    @unittest.skip
     def test_single_stmt(self):
         # for testing single subtests in the other tests
         self.rep = Representation()
