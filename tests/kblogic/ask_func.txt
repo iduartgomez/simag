@@ -73,7 +73,7 @@ BLOCK
 	(cow[$Lucy,u=1])
     (goat[$Vicky,u=1])
     ((let x) ((cow[x,u=1] || goat[x,u=1]) |> (female[x,u=1] && animal[x,u=1])))
-    ((let x) ((female[x,u=1] && animal[x,u=1]) |> fn::produce[milk,u=1;x]))
+    ((let x) ((female[x,u>0] && animal[x,u>0]) |> fn::produce[milk,u=1;x]))
 /BLOCK
 # Test 1.4/07 -> retrieve all relations between objects
 BLOCK

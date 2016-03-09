@@ -199,21 +199,26 @@ class LogSentence(object):
             ag.thread_manager(preds)
             self.start.solve_proof(self)
             ag.thread_manager(preds, unlock=True)
-        if hasattr(self, 'result'): result = self.result
+        if hasattr(self, 'result'): 
+            result = self.result
         else: result = None
+        if hasattr(self, '_recent_date'):
+            recent_date = self._recent_date
+        else: recent_date = None
         self._cln_res()
-        return result
+        return result, recent_date
     
     def assign_time_val_cb(self, pred):
         def callback_pred():
             if hasattr(pred, 'substituted'):
                 return pred.substituted.time
-            # TODO: there may be two reasons why a None is being returned
-            # here, either because the substitution of the precondition
-            # failed or because unexpected behaviour due to a badly-formed
-            # sentence. Ideally we want to test for the unexpected behaviour
-            # at parse time, and raise an error there
-            return None
+            else:
+                # TODO: there may be two reasons why a None is being returned
+                # here, either because the substitution of the precondition
+                # failed or because unexpected behaviour due to a badly-formed
+                # sentence. Ideally we want to test for the unexpected behaviour
+                # at parse time, and raise an error there
+                return None
         return callback_pred
         
     def get_ops(self, p, chk_op=['||', '=>', '<=>']):
@@ -284,8 +289,15 @@ class LogSentence(object):
             else:
                 return [p.pred for p in self._preds[1]]
     
+    def _most_recent_fact(self, date):
+        if not hasattr(self, '_recent_date'):
+            self._recent_date = date
+        elif date > self._recent_date:
+            self._recent_date = date
+    
     def _cln_res(self):
         if hasattr(self, 'result'): del self.result
+        if hasattr(self, '_recent_date'): del self._recent_date
         del self.ag
         del self.produced_from
         for particle in self.particles: 
@@ -529,12 +541,14 @@ def make_logic_sent(ast):
                         test, obj=True, copy_date=True)
                     if result:
                         proof.produced_from.append(result)
+                        proof._most_recent_fact(result.time)
                         result = True
                 else:
                     result = ag.classes[args[0]].test_rel(
                         test, obj=True, copy_date=True)
                     if result:
                         proof.produced_from.append(result)
+                        proof._most_recent_fact(result.time)
                         result = True
             elif issubclass(self.pred.__class__, LogPredicate):
                 # Check membership to a set of an entity.
@@ -548,6 +562,7 @@ def make_logic_sent(ast):
                         result = None
                     if result:
                         proof.produced_from.append(result)
+                        proof._most_recent_fact(result.time)
                         result = True
                 else:
                     try:
@@ -558,6 +573,7 @@ def make_logic_sent(ast):
                     else:
                         if result:
                             proof.produced_from.append(result)
+                            proof._most_recent_fact(result.time)
                             result = True
             else:
                 # special function types
@@ -904,6 +920,14 @@ def make_fact(pred, f_type=None, **kwargs):
             assert (self.parent == other.parent)
             assert (self.term == other.term)
             self.value = other.value
+            if hasattr(other, 'dates'):
+                self.dates = other.dates
+            elif (len(self.dates) % 2 or len(self.dates) == 1):
+                now = datetime.datetime.now()
+                self.dates.extend((now, now))
+            else:
+                now = datetime.datetime.now()
+                self.dates.append(now)
         
         @property
         def time(self):
@@ -915,7 +939,12 @@ def make_fact(pred, f_type=None, **kwargs):
                 else: 
                     return False
             else: 
+                self.dates = [now]
                 return now
+        
+        def set_init_date(self):
+            if not hasattr(self, 'dates'):
+                self.dates = [datetime.datetime.now()]
             
     class FreeTerm(LogPredicate):
         
@@ -1034,7 +1063,12 @@ class LogFunction(metaclass=MetaForAtoms):
             else: 
                 return False
         else:
+            self.dates = [now]
             return now
+    
+    def set_init_date(self):
+        if not hasattr(self, 'dates'):
+            self.dates = [datetime.datetime.now()]
     
     def arg_is_ind(self, arg):
         if arg[0] == '$':
@@ -1111,6 +1145,12 @@ def make_function(sent, f_type=None, **kwargs):
             self.value = other.value
             if hasattr(other, 'dates'):
                 self.dates = other.dates
+            elif (len(self.dates) % 2 or len(self.dates) == 1):
+                now = datetime.datetime.now()
+                self.dates.extend((now, now))
+            else:
+                now = datetime.datetime.now()
+                self.dates.append(now)
         
         def compare_args(self, other):
             for x, arg in enumerate(self.args):

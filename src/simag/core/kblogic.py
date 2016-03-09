@@ -30,8 +30,6 @@ a temporal substitution representation where the inference is operated to
 solving the query (including query parsing, data fetching and unification).
 """
 
-# TODO: on ASK, add functionality so it so it can deal with queries that
-# ask about relations of the same type with several objects.
 # TODO: support skolemization in forms and existential variables
 
 # ===================================================================#
@@ -121,7 +119,7 @@ class Representation(object):
         for a in results.assert_cogs:
             self.add_cog(a)
     
-    def ask(self, sent, single=True, **kwargs):
+    def ask(self, sent, single=True, ignore_dates=False, **kwargs):
         """Asks the KB if some fact is true and returns the answer to 
         the query.
         """
@@ -129,9 +127,20 @@ class Representation(object):
         if single is True:
             for answ in inf_proc.results.values():
                 for pred in answ.values():
-                    if pred is False: return False
-                    if pred is None: return None
+                    if isinstance(pred, tuple) and pred[0] is False:
+                        return False
+                    elif isinstance(pred, tuple) and pred[0] is None: 
+                        return None
+                    elif pred is False:
+                        return False
+                    elif pred is None:
+                        return None
             return True
+        if ignore_dates:
+            for k1, v1 in inf_proc.results.items():
+                for k2, v2 in v1.items():                    
+                    if isinstance(v2, tuple):
+                        inf_proc.results[k1][k2] = v2[0]
         return inf_proc.results
 
     def up_memb(self, pred, return_val=False):
@@ -389,6 +398,7 @@ class Individual(object):
             try: idx = ctg_rec.index(fact.parent)
             except ValueError: 
                 self.categ.append(fact)
+                fact.set_init_date()
                 if get_obj: return fact
             else:
                 self.categ[idx].update(fact)
@@ -451,6 +461,7 @@ class Individual(object):
             rels = self.relations[func.func]
         except KeyError:
             self.relations[func.func] = [func]
+            func.set_init_date()
             if get_obj: return func
         else:
             found_rel = False
@@ -462,6 +473,7 @@ class Individual(object):
                     break
             if not found_rel:
                 rels.append(func)
+                func.set_init_date()
         
     def get_rel(self, func=None, obj=False):
         """Returns a list of the relations the object is involved either
@@ -575,11 +587,13 @@ class Category(object):
         if not hasattr(self, 'relations'):
             self.relations = dict()
             self.relations[func.func] = [func]
+            func.set_init_date()
             if get_obj: return func
         else:
             try: rels = self.relations[func.func]
             except KeyError: 
                 self.relations[func.func] = [func]
+                func.set_init_date()
                 if get_obj: return func
             else:
                 found_rel = False
@@ -591,6 +605,7 @@ class Category(object):
                         break
                 if not found_rel:
                     rels.append(func)
+                    func.set_init_date()
     
     def get_rel(self, func=None, cmp_args=False):
         """Returns a list of the relations the object is involved either
@@ -654,6 +669,7 @@ class Category(object):
             try: idx = ctg_rec.index(fact.parent)
             except ValueError: 
                 self.parents.append(fact)
+                fact.set_init_date()
                 if get_obj: return fact       
             else:
                 self.parents[idx].update(fact)
@@ -797,6 +813,7 @@ class Inference(object):
         self.vrs = set()
         self.nodes = OrderedDict()
         self.results = {}
+        self.rerun = []
         self.infer_facts(*args)
 
     def infer_facts(self, sent):
@@ -897,7 +914,7 @@ class Inference(object):
                         curr = self.kb.test_pred(pred, kls='pred')
                     if not self._ignore_current:
                         self.results[var][q] = curr
-                # if the resutl is empty, remove the key from the results dict
+                # if the result is empty, remove the key from the results dict
                 if not prev_res: del self.results[var]
                 
     def unify(self, p, chk, done):
@@ -911,16 +928,22 @@ class Inference(object):
                 if issubclass(r.__class__, LogFunction):
                     args = r.get_args()
                     for obj in args:
-                        curr = self.obj_dic.setdefault(obj, set([r.func]))
+                        curr = self.obj_dic.setdefault(obj, set())
                         curr.add(r.func)
                     if issubclass(pred.__class__, LogFunction):
                         try:
                             if pred == r:
                                 d = self.results.setdefault(query_obj, {})
-                                d[query] = True
+                                if query in d and date > d[query][1]:
+                                    d[query] = (True, date)
+                                elif query not in d:
+                                    d[query] = (True, date)
                             else:
                                 d = self.results.setdefault(query_obj, {})
-                                d[query] = False
+                                if query in d and date > d[query][1]:
+                                    d[query] = (False, date)
+                                elif query not in d:
+                                    d[query] = (False, date)
                             solution = True
                         except NotCompFuncError: pass
                 elif issubclass(pred.__class__, LogPredicate):
@@ -930,10 +953,16 @@ class Inference(object):
                     try:
                         if pred == r:
                             d = self.results.setdefault(query_obj, {})
-                            d[query] = True
+                            if query in d and date > d[query][1]:
+                                d[query] = (True, date)
+                            elif query not in d:
+                                d[query] = (True, date)
                         else:
                             d = self.results.setdefault(query_obj, {})
-                            d[query] = False
+                            if query in d and date > d[query][1]:
+                                d[query] = (False, date)
+                            elif query not in d:
+                                d[query] = (False, date)
                         solution = True
                     except NotCompAssertError: pass
         
@@ -977,10 +1006,10 @@ class Inference(object):
                 proof_result = None
                 while not proof_result and (len(mapped) > 0):
                     solution = None
-                    args = mapped.pop()
-                    result_memoization = hash(args)
+                    cargs = mapped.pop()
+                    result_memoization = hash(cargs)
                     if result_memoization not in self.queue[node]:
-                        proof_result = node.rule(self.kb, args)
+                        proof_result, date = node.rule(self.kb, cargs)
                         if proof_result:
                             self._updated.append(True)
                             add_ctg()
@@ -997,7 +1026,6 @@ class Inference(object):
             self.unify(p, chk, done)
     
     def get_query(self, sent):
-        # TODO: support queries for the same function/predicate for the same obj
         def assert_memb(p):
             if not self._ignore_current:
                 result = self.kb.test_pred(p, kls='pred')
@@ -1050,6 +1078,7 @@ class Inference(object):
                 mangled = mangled + rnd
             return mangled
         
+        # TODO: support queries for the same function/predicate for the same obj
         # for each query, first try to retrieve the result from the kb
         # if it fails, then add to the query list
         if isinstance(sent, str):
@@ -1072,9 +1101,11 @@ class Inference(object):
                 self.vrs.add(mangled)
             elif not self._ignore_current:
                 result = self.kb.test_pred(sent, kls='pred')
+                mangled = sent.term
                 if result:
-                    self.results[sent.term] = {sent.parent: True}
-            self.query = {sent.term: [sent]}
+                    self.results[mangled] = {sent.parent: True}
+            else: mangled = sent.term
+            self.query = {mangled: [sent]}
             self.ctgs = [sent.parent]
             return
         else:

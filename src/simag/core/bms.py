@@ -49,6 +49,7 @@ class BmsWrapper(object):
         if len(record.entries) < 2: return
         last = record.entries[-2]
         if len(last.produced) == 0: return
+        changed = False
         for entry in last.produced:
             if entry is entry.record[-1]:
                 # ask the agent again if the value to be rolled back still holds true
@@ -65,8 +66,17 @@ class BmsWrapper(object):
                         val = None
                     rb.pred.value = val
                     entry.record.add_entry(ag, rb.pred, rollback=False)
+                    changed = True
                 if len(entry.produced) > 0:
                     BmsWrapper._rollback(ag, entry.record)
+        # prune old irrelevant entries if something changed
+        if len(record.entries) > 1 and changed:
+            first = record.entries[0]
+            last = record.entries[-1]
+            record.entries = [e for e in record.entries[1:-1]
+                              if e.produced != []]
+            record.entries.insert(0, first)
+            record.entries.append(last)
         
 class BeliefRecord(object):
     """Representation of how a belief became to existence.
@@ -86,10 +96,10 @@ class BeliefRecord(object):
     def add_entry(self, ag, pred, form=None, is_new=False, rollback=True):
         if is_new or self.entries[-1].value != pred.value:
             entry = self.new_entry(pred, form)
-            self.entries.append(entry)
+            self.entries.append(entry)            
             if rollback:
                 BmsWrapper._rollback(ag, self)
-        
+            
     def __getitem__(self, key):
         return self.entries[key]
     

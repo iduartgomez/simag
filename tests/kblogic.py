@@ -91,8 +91,7 @@ class BMSTesting(unittest.TestCase):
         self.assertEqual(ugly, 0)
         self.assertEqual(sad, None)
     
-    @unittest.skip
-    def test_incompatible(self):
+    def test_review_after_change(self):
         fol="""
             ( ( let x, y )
               ( ( dog[x,u=1] && meat[y,u=1] && fn::eat[y,u=1;x] ) 
@@ -102,18 +101,23 @@ class BMSTesting(unittest.TestCase):
             ( fn::eat[$M1,u=1;$Pancho] )
         """
         self.rep.tell(fol)
-        self.assertTrue( self.rep.ask("( fat[$Pancho,u=1] )", single=True) )
+        fat = self.rep.individuals['$Pancho'].get_ctg('fat')
+        self.assertEqual(fat, 1)
         
         fol = """
             ( fn::run[$Pancho,u=1] )
             (( let x,y ) (( dog[x,u=1] && fn::run[x,u=1] ) |> fat[x,u=0] ))
         """        
         self.rep.tell(fol)
-        self.assertTrue( self.rep.ask("( fat[$Pancho,u=0] )", single=True) )
+        fat = self.rep.individuals['$Pancho'].get_ctg('fat')
+        self.assertEqual(fat, 0)
         
-        fol = "(fn::eat[$M1,u=1;$Pancho] )"
-        self.rep.tell(fol)
-        self.assertTrue( self.rep.ask("( fat[$Pancho,u=1] )", single=True) )
+        self.rep.tell("(fn::eat[$M1,u=1;$Pancho])")
+        answ = self.rep.ask("(fat[$Pancho,u=1])", single=True)
+        self.assertTrue(answ)
+        
+        #fat = self.rep.individuals['$Pancho'].get_ctg('fat')
+        #self.assertEqual(fat, 1)
 
 class AskReprGetAnswer(unittest.TestCase):
     
@@ -142,16 +146,10 @@ class AskReprGetAnswer(unittest.TestCase):
             (['(fn::produce[milk,u=1;cow])'], True),
             (['(fn::eat[$M1,u=1;$Pancho])'], True),
             (['(fn::eat[$M1,u=1;$Pancho])'], True),
-            (['((let x) (fn::produce[milk,u=1;x]))'],
-             {'$Lucy': 
-                {'produce': True}, 
-              '$Vicky': 
-                {'produce': True}}),
+            (['((let x) (fn::produce[milk,u>0;x]))'],
+             {'$Lucy': {'produce': True}, '$Vicky': {'produce': True}}),
             (['((let x) (fn::x[$Vicky,u>0;$Lucy]))'],
-             {'$Lucy': 
-                {'loves': True}, 
-              '$Vicky': 
-                {'loves': True}}),
+             {'$Lucy': {'loves': True}, '$Vicky': {'loves': True}}),
         ]
         self.iter_eval(sents, ask)
     
@@ -203,16 +201,19 @@ class AskReprGetAnswer(unittest.TestCase):
     def test_single_stmt(self):
         # for testing single subtests in the other tests
         fol = """
-            (cow[$Lucy,u=1])
-            (goat[$Vicky,u=1])
-            ((let x) ((cow[x,u=1] || goat[x,u=1]) |> (female[x,u=1] && animal[x,u=1])))
-            ((let x) ((female[x,u=1] && animal[x,u=1]) |> fn::produce[milk,u=1;x]))
+            ( dog[$Pancho,u=1] )
+            ( meat[$M1,u=1] )
+            ( fat[$Pancho,u=1] )
+            (( let x, y, t1: time="2015.01.01", t2: time="2015.02.01" )
+             ( ( dog[x,u=1] && meat[y,u=1] && fat(time=t2)[x,u=1] && fn::time_calc(t1<t2) )
+               |> fn::eat(time=t1)[y,u=1;x]
+             )
+            )
         """
         self.rep = Representation()
         self.rep.tell(fol)
-        answ = self.rep.ask('((let x) (fn::produce[milk,u=1;x]))', single=False)
-        should_be = {'$Lucy': {'produce': True}, '$Vicky': {'produce': True}}
-        self.assertEqual(answ, should_be)
+        answ = self.rep.ask('(fn::eat[$M1,u=1;$Pancho])', single=True)
+        self.assertEqual(answ, True)
     
     def iter_eval(self, sents, ask):
         for i, test in enumerate(sents):
@@ -227,7 +228,8 @@ class AskReprGetAnswer(unittest.TestCase):
                         single = True
                     else:
                         single = False
-                    answ = self.rep.ask(q, single=single, ignore_current=False)                
+                    answ = self.rep.ask(
+                        q, single=single, ignore_dates=True, ignore_current=False)                
                     if isinstance(ask[i][1], tuple):
                         self.assertEqual(ask[i][1][j], answ)
                     else:
@@ -293,7 +295,7 @@ class EvaluationOfFOLSentences(unittest.TestCase):
                     self.rep.tell(s)
                 proof = logic_parser(test[0]).assert_rules[0]
                 res = proof(self.rep, assert_this[x])
-                self.assertIs(res, results[x])
+                self.assertIs(res[0], results[x])
                 
     def tearDown(self):
         if hasattr(self, 'rep'):
