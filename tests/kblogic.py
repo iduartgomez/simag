@@ -203,17 +203,16 @@ class AskReprGetAnswer(unittest.TestCase):
     def test_single_stmt(self):
         # for testing single subtests in the other tests
         fol = """
-            ((let x, y, t1:time, t2:time="2016.01.01")
-             (((dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x]) && fn::time_calc(t1<t2))
-              |> fat(time=t2)[x,u=1]))
-            (dog[$Pancho,u=1])
-            (meat[$M1,u=1])
-            (fn::eat(time="2015.07.05.10.25")[$M1,u=1;$Pancho])
+            (cow[$Lucy,u=1])
+            (goat[$Vicky,u=1])
+            ((let x) ((cow[x,u=1] || goat[x,u=1]) |> (female[x,u=1] && animal[x,u=1])))
+            ((let x) ((female[x,u=1] && animal[x,u=1]) |> fn::produce[milk,u=1;x]))
         """
         self.rep = Representation()
         self.rep.tell(fol)
-        answ = self.rep.ask('(fat(t="*now")[$Pancho,u=1])', single=False)
-        self.assertTrue(answ)
+        answ = self.rep.ask('((let x) (fn::produce[milk,u=1;x]))', single=False)
+        should_be = {'$Lucy': {'produce': True}, '$Vicky': {'produce': True}}
+        self.assertEqual(answ, should_be)
     
     def iter_eval(self, sents, ask):
         for i, test in enumerate(sents):

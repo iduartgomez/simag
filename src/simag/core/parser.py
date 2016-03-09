@@ -260,25 +260,29 @@ class LogSentence(object):
         else: 
             return [p.pred for p in preds]
     
-    def get_preds(self, branch='l', unique=False):
+    def get_preds(self, branch='l', unique=False, particles=False):
         if branch == 'l':
-            if not unique:
-                return [p.pred for p in self._preds[0]]
-            else:
+            if particles:
+                return self._preds[0]
+            elif unique:
                 return set([
                     p.pred.parent 
                     if issubclass(p.pred.__class__, LogPredicate)
                     else p.pred.func for p in self._preds[0]
                 ])
-        else:
-            if not unique:
-                return [p.pred for p in self._preds[1]]
             else:
+                return [p.pred for p in self._preds[0]]
+        else:
+            if particles:
+                return self._preds[1]
+            elif unique:
                 return set([
                     p.pred.parent 
                     if issubclass(p.pred.__class__, LogPredicate)
                     else p.pred.func for p in self._preds[1]
                 ])
+            else:
+                return [p.pred for p in self._preds[1]]
     
     def _cln_res(self):
         if hasattr(self, 'result'): del self.result
@@ -1060,14 +1064,6 @@ class LogFunction(metaclass=MetaForAtoms):
                     subs.args[x] = args[x]
         self.substituted = subs
         return subs
-    
-    def __str__(self):
-        return '{0}({1}: {2})'.format(
-            self.__class__.__name__, self.func, self.args)
-        
-    def __repr__(self):
-        return '{0}({1}: {2})'.format(
-            self.__class__.__name__, self.func, self.args)
 
 class NotCompFuncError(Exception):
     def __init__(self, args):
@@ -1219,6 +1215,14 @@ def make_function(sent, f_type=None, **kwargs):
         def get_args(self):
             return [arg if not isinstance(arg, tuple) else arg[0] 
                     for arg in self.args]
+        
+        def __str__(self):
+            return '{0}({1}: {2})'.format(
+                self.__class__.__name__, self.func, self.get_args())
+            
+        def __repr__(self):
+            return '{0}({1}: {2})'.format(
+                self.__class__.__name__, self.func, self.get_args())
     
     class TimeFunc(metaclass=MetaForAtoms):
         """A special case for time calculus, not considered a relation.        

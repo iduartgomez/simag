@@ -57,7 +57,6 @@ from simag.core.parser import (
     NotCompAssertError,
     NotCompFuncError,
 )
-import random
 
 # ===================================================================#
 #   REPRESENTATION OBJECTS CLASSES AND SUBCLASSES
@@ -216,11 +215,9 @@ class Representation(object):
                     else: 
                         nc = Relation(sbj)
                     nc.add_cog(sent)
-                    self.classes[sbj] = nc        
-        preds = []
-        for p in sent:
-            if p.cond == ':predicate:':
-                preds.append(p.pred)
+                    self.classes[p] = nc
+        
+        preds = sent.get_all_preds()
         for pred in preds:
             if issubclass(pred.__class__, LogFunction):
                 if hasattr(pred, 'args'):                    
@@ -456,11 +453,15 @@ class Individual(object):
             self.relations[func.func] = [func]
             if get_obj: return func
         else:
-            for rel in rels:
+            found_rel = False
+            for rel in rels:                
                 if rel.chk_args_eq(func) is True:
                     rel.update(func)
                     if get_obj: return rel
+                    found_rel = True
                     break
+            if not found_rel:
+                rels.append(func)
         
     def get_rel(self, func=None, obj=False):
         """Returns a list of the relations the object is involved either
@@ -581,11 +582,15 @@ class Category(object):
                 self.relations[func.func] = [func]
                 if get_obj: return func
             else:
+                found_rel = False
                 for rel in rels:
                     if rel.chk_args_eq(func) is True:
                         rel.update(func)
                         if get_obj: return rel
+                        found_rel = True
                         break
+                if not found_rel:
+                    rels.append(func)
     
     def get_rel(self, func=None, cmp_args=False):
         """Returns a list of the relations the object is involved either
@@ -728,22 +733,52 @@ from simag.core._helpers import OrderedSet
 class Inference(object):
     
     class InferNode(object):
-        def __init__(self, nc, ants, const, rule):
+        def __init__(self, classes, ants, const, rule):
             self.rule = rule
             self.const = const
-            self.ants = tuple(nc)
+            self.ants = tuple(classes)
             if hasattr(rule, 'var_order'):
                 self.subs = OrderedDict((v, set()) for v in rule.var_order)
             else:
                 self.subs = {}
-            for ant in ants:
-                if issubclass(ant.__class__, LogFunction):
-                    args = ant.get_args()
-                    for v in args:
-                        if v in self.subs: self.subs[v].add(ant.func)
-                elif issubclass(ant.__class__, LogPredicate):
-                    if ant.term in self.subs:
-                        self.subs[ant.term].add(ant.parent)
+            disjunct = {}
+            for p in ants:
+                ant = p.pred
+                if p.parent.cond == '||':
+                    prev = disjunct.setdefault(p.parent, [])
+                    prev.append(p)
+                else:
+                    if issubclass(ant.__class__, LogFunction):
+                        args = ant.get_args()
+                        for v in args:
+                            if v in self.subs:
+                                self.subs[v].add(ant.func)
+                    elif issubclass(ant.__class__, LogPredicate):
+                        if ant.term in self.subs:
+                            self.subs[ant.term].add(ant.parent)
+            # flatten nested disjunctions
+            rm = []
+            for parent, childs in disjunct.items():
+                for child in childs:
+                    if child in disjunct:
+                        disjunct[parent].extend(disjunct[child])
+                        rm.append(parent)
+            for k, v in disjunct.items():
+                if k not in rm:
+                    names = tuple([
+                        p.pred.parent 
+                        if issubclass(p.pred.__class__, LogPredicate)
+                        else p.pred.func for p in v])
+                    for p in v:
+                        ant = p.pred
+                        if issubclass(ant.__class__, LogFunction):
+                            args = ant.get_args()
+                            for v in args:
+                                if v in self.subs:
+                                    self.subs[v].add(names)
+                        elif issubclass(ant.__class__, LogPredicate):
+                            if ant.term in self.subs:
+                                self.subs[ant.term].add(names)
     
     class NoSolutionError(Exception): pass
     
@@ -775,7 +810,7 @@ class Inference(object):
         """        
         def query(pred, q):        
             # create a lookup table for memoizing results of previous passes
-            if hasattr(self, 'queue') is False:
+            if not hasattr(self, 'queue'):
                 self.queue = dict()
                 for query in self.nodes.values():
                     for node in query: self.queue[node] = set()
@@ -812,14 +847,14 @@ class Inference(object):
                         if is_func:
                             test = []
                             for i, arg in enumerate(pred.get_args()):
-                                result = None
                                 if arg in self.vrs:
                                     subst = pred.replace_var(
                                         i, obj, copy_=True, vrs=self.vrs)
                                     test.append(subst)
                             for subst in test:
+                                result = None
                                 if not self._ignore_current and q in ctgs:
-                                    result = self.kb.get_rel(subst)
+                                    result = self.kb.test_pred(subst, kls='func')
                                 if result is not None:
                                     self.results[obj][q] = result
                                 else:
@@ -845,6 +880,8 @@ class Inference(object):
                 prev_res = self.results.setdefault(var,{})
                 for pred in preds:
                     if issubclass(pred.__class__, LogFunction):
+                        if any([x for x in pred.get_args() if x in self.vrs]):
+                            continue
                         self.actv_q, q = (var, pred.func, pred), pred.func
                         isfunc = True
                     elif issubclass(pred.__class__, LogPredicate):
@@ -860,7 +897,9 @@ class Inference(object):
                         curr = self.kb.test_pred(pred, kls='pred')
                     if not self._ignore_current:
                         self.results[var][q] = curr
-    
+                # if the resutl is empty, remove the key from the results dict
+                if not prev_res: del self.results[var]
+                
     def unify(self, p, chk, done):
         def add_ctg():
             # add category/function to the object dictionary
@@ -877,9 +916,12 @@ class Inference(object):
                     if issubclass(pred.__class__, LogFunction):
                         try:
                             if pred == r:
-                                self.results[query_obj][query] = True
+                                d = self.results.setdefault(query_obj, {})
+                                d[query] = True
                             else:
-                                self.results[query_obj][query] = False
+                                d = self.results.setdefault(query_obj, {})
+                                d[query] = False
+                            solution = True
                         except NotCompFuncError: pass
                 elif issubclass(pred.__class__, LogPredicate):
                     cat, obj = r.parent, r.term
@@ -887,9 +929,12 @@ class Inference(object):
                     curr.add(cat)
                     try:
                         if pred == r:
-                            self.results[query_obj][query] = True
+                            d = self.results.setdefault(query_obj, {})
+                            d[query] = True
                         else:
-                            self.results[query_obj][query] = False
+                            d = self.results.setdefault(query_obj, {})
+                            d[query] = False
+                        solution = True
                     except NotCompAssertError: pass
         
         query_obj, query = self.actv_q[0], self.actv_q[1]
@@ -910,15 +955,28 @@ class Inference(object):
                 for preds in node.subs.values():
                     subst = []
                     for obj, ctgs in self.obj_dic.items():
-                        coincident = ctgs.intersection(preds)
-                        if len(coincident) == len(preds):
-                            subst.append(obj)
+                        combs = None
+                        for e in preds:
+                            if isinstance(e, tuple):
+                                combs = itertools.product(*preds)
+                                break
+                        if combs:
+                            for c in combs:
+                                comb = set(c)
+                                coincident = ctgs.intersection(c)
+                                if len(coincident) == len(comb):
+                                    subst.append(obj)
+                        else:
+                            coincident = ctgs.intersection(preds)
+                            if len(coincident) == len(preds):
+                                subst.append(obj)
                     mapped.append(subst)
                 mapped = list(itertools.product(*mapped))
                 # run proof until a solution is found or there aren't more
                 # combinations left to be tested
                 proof_result = None
                 while not proof_result and (len(mapped) > 0):
+                    solution = None
                     args = mapped.pop()
                     result_memoization = hash(args)
                     if result_memoization not in self.queue[node]:
@@ -927,7 +985,8 @@ class Inference(object):
                             self._updated.append(True)
                             add_ctg()
                             self.queue[node].add(result_memoization)
-                            break
+                            if solution: break
+                            else: proof_result = None
                 if p not in done:
                     chk = deque(node.ants) + chk
         if query_obj in self.obj_dic and query in self.obj_dic[query_obj]:
@@ -983,6 +1042,14 @@ class Inference(object):
                 return {ctg: True for ctg, val in ctgs.items() 
                         if val == p.value}
         
+        def mangle_var_name(v):
+            mangled = None
+            while mangled in self.vrs or not mangled:
+                mangled = "{}__".format(v)
+                rnd = "".join(random.choice(ascii_letters) for _ in range(5))
+                mangled = mangled + rnd
+            return mangled
+        
         # for each query, first try to retrieve the result from the kb
         # if it fails, then add to the query list
         if isinstance(sent, str):
@@ -1001,7 +1068,8 @@ class Inference(object):
             return
         elif issubclass(sent.__class__, LogPredicate):
             if isinstance(sent, FreeTerm):
-                self.vrs.add(sent.term)
+                mangled = mangle_var_name(sent.term)
+                self.vrs.add(mangled)
             elif not self._ignore_current:
                 result = self.kb.test_pred(sent, kls='pred')
                 if result:
@@ -1018,9 +1086,7 @@ class Inference(object):
         for q in query.queries:
             vrs, replace_table = [], {}
             for v in q.var_order:
-                mangled = None
-                while mangled in self.vrs or not mangled:
-                    mangled = "".join(random.choice(ascii_letters) for _ in range(5))
+                mangled = mangle_var_name(v)
                 vrs.append(mangled)
                 replace_table[v] = mangled
             self.vrs.update(vrs)
@@ -1073,13 +1139,8 @@ class Inference(object):
     def get_rules(self):
         def mk_node(pos):
             # makes inference nodes for the evaluation
-            atom_pred = sent.get_preds(branch=pos)
-            for const in atom_pred:
-                if issubclass(const.__class__, LogFunction):
-                    pred = const.func
-                else:
-                    pred = const.parent
-                node = self.InferNode(classes, preds, pred, sent)
+            for const in sent.get_preds(pos, unique=True):
+                node = self.InferNode(classes, preds, const, sent)
                 if node.const in self.nodes:
                     self.nodes[node.const].add(node)
                 else:
@@ -1099,26 +1160,25 @@ class Inference(object):
             except:
                 raise Inference.NoSolutionError(cls)
             for sent in chk_rules:
-                preds = sent.get_preds()
-                #print(preds)
+                preds = sent.get_preds(particles=True)
                 classes = []
-                for y in preds:
-                    if issubclass(y.__class__, LogPredicate):
-                        classes.append(y.parent)
-                    elif issubclass(y.__class__, LogFunction):
-                        classes.append(y.func)
+                for p in preds:
+                    if issubclass(p.pred.__class__, LogPredicate):
+                        classes.append(p.pred.parent)
+                    elif issubclass(p.pred.__class__, LogFunction):
+                        classes.append(p.pred.func)
                 mk_node('r')
                 filtered = [e for e in classes 
                             if e not in self.done and e not in self.ctgs]
                 self.ctgs.extend(filtered)
                 if cls in classes:
-                    preds = sent.get_preds(branch='r')
+                    preds = sent.get_preds(branch='r', particles=True)
                     classes = []
-                    for y in preds:
-                        if issubclass(y.__class__,LogPredicate): 
-                            classes.append(y.parent)
-                        elif issubclass(y.__class__, LogFunction):
-                            classes.append(y.func)
+                    for p in preds:
+                        if issubclass(p.pred.__class__,LogPredicate): 
+                            classes.append(p.pred.parent)
+                        elif issubclass(p.pred.__class__, LogFunction):
+                            classes.append(p.pred.func)
                     mk_node('l')
                     filtered = [e for e in classes if e not in self.done
                                 and e not in self.ctgs]
