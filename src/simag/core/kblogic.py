@@ -934,13 +934,13 @@ class Inference(object):
                         try:
                             if pred == r:
                                 d = self.results.setdefault(query_obj, {})
-                                if query in d and date > d[query][1]:
+                                if query in d and date >= d[query][1]:
                                     d[query] = (True, date)
                                 elif query not in d:
                                     d[query] = (True, date)
                             else:
                                 d = self.results.setdefault(query_obj, {})
-                                if query in d and date > d[query][1]:
+                                if query in d and date >= d[query][1]:
                                     d[query] = (False, date)
                                 elif query not in d:
                                     d[query] = (False, date)
@@ -953,13 +953,13 @@ class Inference(object):
                     try:
                         if pred == r:
                             d = self.results.setdefault(query_obj, {})
-                            if query in d and date > d[query][1]:
+                            if query in d and date >= d[query][1]:
                                 d[query] = (True, date)
                             elif query not in d:
                                 d[query] = (True, date)
                         else:
                             d = self.results.setdefault(query_obj, {})
-                            if query in d and date > d[query][1]:
+                            if query in d and date >= d[query][1]:
                                 d[query] = (False, date)
                             elif query not in d:
                                 d[query] = (False, date)

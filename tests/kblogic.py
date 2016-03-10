@@ -155,26 +155,25 @@ class AskReprGetAnswer(unittest.TestCase):
     
     def test_event_chain_with_times(self): # <--- fails some times
         self.rep = Representation()
-        grounded="""
-            ( dog[$Pancho,u=1] )
-            ( meat[$M1,u=1] )
-            ( fn::eat[$M1,u=1;$Pancho] )
-        """
-        self.rep.tell(grounded)
-        fol = """( ( let x, y )
-              ( ( dog[x,u=1] && meat[y,u=1] && fn::eat[y,u=1;x] ) 
-                |> fat[x,u=1] ) )"""  
-        self.rep.tell(fol)
-        answ = self.rep.ask("( fat[$Pancho,u=1] )", single=True)
-        self.assertTrue(answ)
-        
-        self.rep.tell("( fn::run[$Pancho,u=1] )")
         fol = """
-            (( let x, y ) (( dog[x,u=1] && fn::run[x,u=1] ) |> fat[x,u=0] ))
+            (dog[$Pancho,u=1])
+            (meat[$M1,u=1])
+            (fn::eat(time='2015.01.01')[$M1,u=1;$Pancho])
+            ((let x, y)
+              ((dog[x,u=1] && meat[y,u=1] && fn::eat[y,u=1;x]) 
+                |> fat[x,u=1]))
+        """  
+        self.rep.tell(fol)
+        fat = self.rep.individuals['$Pancho'].get_ctg('fat')
+        self.assertEqual(fat,1)
+        
+        fol = """
+            (fn::run(time='2015.01.02')[$Pancho,u=1])
+            ((let x, y ) (( dog[x,u=1] && fn::run[x,u=1] ) |> fat[x,u=0]))
         """        
         self.rep.tell(fol)
-        answ = self.rep.ask("( fat[$Pancho,u=0] )", single=True)
-        self.assertTrue(answ)
+        fat = self.rep.individuals['$Pancho'].get_ctg('fat')
+        self.assertEqual(fat,0)
         
         fol = """
             (fn::eat(time='2015.01.02')[$M1,u=1;$Pancho])
@@ -186,17 +185,16 @@ class AskReprGetAnswer(unittest.TestCase):
               |> (fat[x,u=1] || fat[x,u=0]) ))
         """
         self.rep.tell(fol)
-        answ = self.rep.ask("(fat[$Pancho,u=1])", single=True)
-        self.assertTrue(answ)
+        fat = self.rep.individuals['$Pancho'].get_ctg('fat')
+        self.assertEqual(fat,1)
+        
         self.rep.tell("""
         (fn::eat(time='2015.02.01')[$M1,u=1;$Pancho])
         (fn::run(time='2015.02.02')[$Pancho,u=1])
         """)
-        answ = self.rep.ask("(fat[$Pancho,u=1])", single=True)
-        self.assertFalse(answ)
-        fat = self.rep.individuals['$Pancho'].get_ctg('fat')
-        self.assertEqual(fat, 0)
-    
+        answ = self.rep.ask("(fat[$Pancho,u=0])", single=True)
+        self.assertTrue(answ)
+        
     @unittest.skip
     def test_single_stmt(self):
         # for testing single subtests in the other tests
