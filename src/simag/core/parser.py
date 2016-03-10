@@ -159,7 +159,8 @@ class LogSentence(object):
         self.created = datetime.datetime.now()
     
     def __call__(self, ag, *args):
-        # TODO: should be rewritten to use context manager        
+        # TODO: should be rewritten to use context manager 
+        # for the predicates being potentially changed
         self.ag = ag
         if type(args[0]) is tuple or type(args[0] is list):
             args = args[0]
@@ -213,11 +214,6 @@ class LogSentence(object):
             if hasattr(pred, 'substituted'):
                 return pred.substituted.time
             else:
-                # TODO: there may be two reasons why a None is being returned
-                # here, either because the substitution of the precondition
-                # failed or because unexpected behaviour due to a badly-formed
-                # sentence. Ideally we want to test for the unexpected behaviour
-                # at parse time, and raise an error there
                 return None
         return callback_pred
         
@@ -247,12 +243,32 @@ class LogSentence(object):
             while top.cond not in conds and top.parent:
                 top, bottom = top.parent, top
             if top.next[0] is bottom:
-                if not isinstance(p.pred, TimeFunc):
-                    left_preds.append(p)        
+                left_preds.append(p)        
             elif top.next[1] is bottom:
-                if not isinstance(p.pred, TimeFunc):
-                    right_preds.append(p)
-        self._preds = (tuple(left_preds), tuple(right_preds))
+                right_preds.append(p)
+        # check that any special function is placed 
+        # to the rightmost of the leftside
+        depth, prev = float('inf'), None
+        for p in left_preds:
+            if prev and isinstance(p.pred, TimeFunc) \
+            and p.depth > depth and not isinstance(prev.pred, TimeFunc):
+                raise SyntaxError(
+                    "time_func cannot be called before it's antecedents, "
+                    + "write the func to the rightmost of the left hand side "
+                    + "of the sentence: {}".format(self)
+                    )
+            if p.depth < depth: depth, prev = p.depth, p
+        if prev == prev.parent.next[0] and isinstance(prev.pred, TimeFunc):
+            raise SyntaxError(
+                "time_func cannot be called before it's antecedents, "
+                + "write the func to the rightmost of the left hand side "
+                + "of the sentence: {}".format(self)
+                )
+        # remove special funcs from cached list
+        self._preds = (
+            [x for x in left_preds if not isinstance(x.pred, TimeFunc)], 
+            [x for x in right_preds if not isinstance(x.pred, TimeFunc)]
+        )
     
     def get_all_preds(self, unique=False):
         preds = itertools.chain.from_iterable(self._preds)
@@ -332,7 +348,7 @@ class LogSentence(object):
     @produced_from.setter
     def produced_from(self, val):
         self._produced = val
-    
+
 def make_logic_sent(ast):
     """Takes a parsed FOL sentence and creates an object with
     the embedded methods to resolve it.
@@ -683,6 +699,7 @@ def make_logic_sent(ast):
                 particle = LogicConjunction(remain.op, depth, parent)
             elif remain.op == '||':
                 particle = LogicDisjunction(remain.op, depth, parent)
+        
         sent.particles.append(particle)
         if parent: parent.next.append(particle)
         else: sent.start = particle
@@ -713,7 +730,7 @@ def make_logic_sent(ast):
                     if not hasattr(sent, 'pre_assigned'):
                         sent.pre_assigned = {}
                     sent.pre_assigned[var] = value
-    
+        
     sent = LogSentence()
     if ast.vars is not None:
         disambiguate_vars(ast.vars)
@@ -1362,7 +1379,7 @@ def _set_date(date):
         tzinfo=dobj['tzinfo']
     )
     
-def _get_type_class(type_): 
+def _get_type_class(type_):
     if type_ == 'time':
         type_ = make_function(None, f_type='time_calc')
     else:

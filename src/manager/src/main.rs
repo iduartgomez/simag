@@ -1,7 +1,6 @@
 //! SimAg Manager
 //!
 //! Creation and management for for SimAg simulations.
-#![feature(libc)]
 
 use std::io;
 use std::io::{stdin, stdout, Write};

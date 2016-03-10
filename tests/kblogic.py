@@ -197,21 +197,7 @@ class AskReprGetAnswer(unittest.TestCase):
         
     @unittest.skip
     def test_single_stmt(self):
-        # for testing single subtests in the other tests
-        fol = """
-            ( dog[$Pancho,u=1] )
-            ( meat[$M1,u=1] )
-            ( fat[$Pancho,u=1] )
-            (( let x, y, t1: time="2015.01.01", t2: time="2015.02.01" )
-             ( ( dog[x,u=1] && meat[y,u=1] && fat(time=t2)[x,u=1] && fn::time_calc(t1<t2) )
-               |> fn::eat(time=t1)[y,u=1;x]
-             )
-            )
-        """
-        self.rep = Representation()
-        self.rep.tell(fol)
-        answ = self.rep.ask('(fn::eat[$M1,u=1;$Pancho])', single=True)
-        self.assertEqual(answ, True)
+        pass
     
     def iter_eval(self, sents, ask):
         for i, test in enumerate(sents):
@@ -267,23 +253,17 @@ class EvaluationOfFOLSentences(unittest.TestCase):
         tests = [test for x, test in enumerate(self.tests) if x in num]
         self.iter_eval(tests, assert_this, results)
     
+    @unittest.skip
     def test_eval_or(self):
         pass
     
+    @unittest.skip
     def test_eval_and(self):
         pass
     
     @unittest.skip
     def test_single_stmt(self):
-        # for testing single subtests in the other tests
-        self.rep = Representation()
-        fol = """
-            ( drugDealer[$West,u=1] |> ( scum[$West,u=1] && good[$West,u=0] ) )
-            ( drugDealer[$West,u=0] )
-        """
-        self.rep.tell(fol)
-        answ = self.rep.ask("( scum[$West,u=1] && good[$West,u=0] )")
-        self.assertIsNone(answ)
+        pass
         
     def iter_eval(self, tests, assert_this, results):
         for x, test in enumerate(tests):
@@ -375,6 +355,18 @@ class LogicSentenceParsing(unittest.TestCase):
                 for obj in eval[x]:
                     self.assertIn(obj, chk)
                 self.assertGreater(len(lg_sent.var_order), 0)
-
+    
+    def test_raise_exception_malformed_timefunc(self):
+        rep = Representation()
+        fol = """
+            ((let x, y, t1: time, t2: time) 
+             ((fn::time_calc(t1 > t2) && (fn::run(t1=time)[x,u=1] 
+               && fn::eat(t1=time)[x,u=1;y] && dog[y,u=1] && meat[x,u=1]))
+              |> fat[x,u=0]))
+        """
+        # check that time_calc function does not come before it's antecedents
+        with self.assertRaises(SyntaxError) as err:
+            rep.tell(fol)
+        
 if __name__ == "__main__":
     unittest.main()
