@@ -113,11 +113,8 @@ class BMSTesting(unittest.TestCase):
         self.assertEqual(fat, 0)
         
         self.rep.tell("(fn::eat[$M1,u=1;$Pancho])")
-        answ = self.rep.ask("(fat[$Pancho,u=1])", single=True)
-        self.assertTrue(answ)
-        
-        #fat = self.rep.individuals['$Pancho'].get_ctg('fat')
-        #self.assertEqual(fat, 1)
+        fat = self.rep.individuals['$Pancho'].get_ctg('fat')
+        self.assertEqual(fat, 1)
 
 class AskReprGetAnswer(unittest.TestCase):
     
@@ -194,7 +191,7 @@ class AskReprGetAnswer(unittest.TestCase):
         """)
         answ = self.rep.ask("(fat[$Pancho,u=0])", single=True)
         self.assertTrue(answ)
-        
+    
     @unittest.skip
     def test_single_stmt(self):
         pass
@@ -213,7 +210,7 @@ class AskReprGetAnswer(unittest.TestCase):
                     else:
                         single = False
                     answ = self.rep.ask(
-                        q, single=single, ignore_dates=True, ignore_current=False)                
+                        q, single=single, filter_dates=True, ignore_current=False)                
                     if isinstance(ask[i][1], tuple):
                         self.assertEqual(ask[i][1][j], answ)
                     else:

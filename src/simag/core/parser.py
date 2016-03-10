@@ -200,7 +200,7 @@ class LogSentence(object):
             ag.thread_manager(preds)
             self.start.solve_proof(self)
             ag.thread_manager(preds, unlock=True)
-        if hasattr(self, 'result'): 
+        if hasattr(self, 'result'):
             result = self.result
         else: result = None
         if hasattr(self, '_recent_date'):
@@ -312,7 +312,8 @@ class LogSentence(object):
             self._recent_date = date
     
     def _cln_res(self):
-        if hasattr(self, 'result'): del self.result
+        if hasattr(self, 'result'):
+            del self.result
         if hasattr(self, '_recent_date'): del self._recent_date
         del self.ag
         del self.produced_from
@@ -936,7 +937,8 @@ def make_fact(pred, f_type=None, **kwargs):
                 "object provided for updating must be of class GroundedTerm")
             assert (self.parent == other.parent)
             assert (self.term == other.term)
-            self.value = other.value
+            if self.value != other.update:
+                self.value = other.value
             if hasattr(other, 'dates'):
                 self.dates = other.dates
             elif (len(self.dates) % 2 or len(self.dates) == 1):
@@ -945,7 +947,8 @@ def make_fact(pred, f_type=None, **kwargs):
             else:
                 now = datetime.datetime.now()
                 self.dates.append(now)
-        
+            return True
+            
         @property
         def time(self):
             now = datetime.datetime.now()
@@ -1159,7 +1162,8 @@ def make_function(sent, f_type=None, **kwargs):
             self.args[0] = tuple(arg)
         
         def update(self, other):
-            self.value = other.value
+            if self.value != other.update:
+                self.value = other.value
             if hasattr(other, 'dates'):
                 self.dates = other.dates
             elif (len(self.dates) % 2 or len(self.dates) == 1):
@@ -1168,7 +1172,8 @@ def make_function(sent, f_type=None, **kwargs):
             else:
                 now = datetime.datetime.now()
                 self.dates.append(now)
-        
+            return True
+            
         def compare_args(self, other):
             for x, arg in enumerate(self.args):
                 try:

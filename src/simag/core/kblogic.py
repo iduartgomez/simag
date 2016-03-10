@@ -109,17 +109,21 @@ class Representation(object):
         """
         results = logic_parser(string)
         for a in results.assert_memb:
-            self.up_memb(a)
+            pred = self.up_memb(a, return_val=True)
             self.bmsWrapper.add(a)
+            if hasattr(pred, 'call_back'):
+                pred.call_back(self)
         for a in results.assert_rel:
-            self.up_rel(a)
+            pred = self.up_rel(a, return_val=True)
             self.bmsWrapper.add(a)
+            if hasattr(pred, 'call_back'):
+                pred.call_back(self)
         for a in results.assert_rules:
             self.save_rule(a)
         for a in results.assert_cogs:
             self.add_cog(a)
     
-    def ask(self, sent, single=True, ignore_dates=False, **kwargs):
+    def ask(self, sent, single=True, filter_dates=False, **kwargs):
         """Asks the KB if some fact is true and returns the answer to 
         the query.
         """
@@ -136,7 +140,7 @@ class Representation(object):
                     elif pred is None:
                         return None
             return True
-        if ignore_dates:
+        if filter_dates:
             for k1, v1 in inf_proc.results.items():
                 for k2, v2 in v1.items():                    
                     if isinstance(v2, tuple):
@@ -240,7 +244,7 @@ class Representation(object):
         questions = sent.get_preds('r')
         for query in questions:
             self.ask(query, ignore_current=True)
-        
+    
     def save_rule(self, proof):
         preds = proof.get_all_preds()
         n = []
@@ -265,7 +269,7 @@ class Representation(object):
         obj_dic.update(cls_dic)
         for obj in obj_dic.keys():
             proof(self, obj)
-
+    
     def objs_by_ctg(self, ctgs, type_):
         if type_== 'individuals':
             collect = self.individuals.values()
@@ -399,10 +403,14 @@ class Individual(object):
             except ValueError: 
                 self.categ.append(fact)
                 fact.set_init_date()
+                fact.call_back = run_related_proofs(fact.parent)
                 if get_obj: return fact
             else:
-                self.categ[idx].update(fact)
-                if get_obj: return self.categ[idx]
+                ctg = self.categ[idx]
+                updated = ctg.update(fact)
+                if updated:
+                    ctg.call_back = run_related_proofs(fact.parent)
+                if get_obj: return ctg
         else: raise TypeError('The object is not a LogPredicate subclass.')
     
     def check_ctg(self, n):
@@ -462,18 +470,22 @@ class Individual(object):
         except KeyError:
             self.relations[func.func] = [func]
             func.set_init_date()
+            func.call_back = run_related_proofs(func.func)
             if get_obj: return func
         else:
             found_rel = False
             for rel in rels:                
                 if rel.chk_args_eq(func) is True:
-                    rel.update(func)
+                    updated = rel.update(func)
+                    if updated:
+                        rel.call_back = run_related_proofs(func.func)
                     if get_obj: return rel
                     found_rel = True
                     break
             if not found_rel:
                 rels.append(func)
                 func.set_init_date()
+                func.call_back = run_related_proofs(func.func)
         
     def get_rel(self, func=None, obj=False):
         """Returns a list of the relations the object is involved either
@@ -594,18 +606,22 @@ class Category(object):
             except KeyError: 
                 self.relations[func.func] = [func]
                 func.set_init_date()
+                func.call_back = run_related_proofs(func.func)
                 if get_obj: return func
             else:
                 found_rel = False
                 for rel in rels:
                     if rel.chk_args_eq(func) is True:
-                        rel.update(func)
+                        updated = rel.update(func)
+                        if updated:
+                            rel.call_back = run_related_proofs(func.func)
                         if get_obj: return rel
                         found_rel = True
                         break
                 if not found_rel:
                     rels.append(func)
                     func.set_init_date()
+                    func.call_back = run_related_proofs(func.func)
     
     def get_rel(self, func=None, cmp_args=False):
         """Returns a list of the relations the object is involved either
@@ -669,11 +685,15 @@ class Category(object):
             try: idx = ctg_rec.index(fact.parent)
             except ValueError: 
                 self.parents.append(fact)
+                fact.call_back = run_related_proofs(fact.parent)
                 fact.set_init_date()
                 if get_obj: return fact       
             else:
-                self.parents[idx].update(fact)
-                if get_obj: return self.parents[idx]
+                ctg = self.parents[idx]                
+                updated = ctg.update(fact)
+                if updated:
+                    ctg.call_back = run_related_proofs(fact.parent)
+                if get_obj: return ctg
     
     def get_ctg(self, ctg=None, obj=False):
         """Returns a dictionary of the categories of the object and
@@ -746,6 +766,15 @@ class Part(Category):
 
 from simag.core._helpers import OrderedSet
 
+def run_related_proofs(ctg):
+    """Call back fuction for querying a KB after a change to
+    a grounded fact if necessary."""
+    def decorated_func(ag):
+        for cog in ag.classes[ctg].cog:
+            consequents = cog.get_preds('r', particles=True)
+            ag.ask(consequents[0].pred, ignore_current=True)
+    return decorated_func
+
 class Inference(object):
     
     class InferNode(object):
@@ -804,7 +833,7 @@ class Inference(object):
         return obj
     
     def __init__(self, kb, *args, **kwargs):
-        self._ignore_current = True
+        self._ignore_current = False
         if kwargs:
             for k, v in kwargs.items():
                 if k == 'ignore_current':
@@ -936,15 +965,18 @@ class Inference(object):
                                 d = self.results.setdefault(query_obj, {})
                                 if query in d and date >= d[query][1]:
                                     d[query] = (True, date)
+                                    self._valid = (node, cargs)
                                 elif query not in d:
                                     d[query] = (True, date)
+                                    self._valid = (node, cargs)
                             else:
                                 d = self.results.setdefault(query_obj, {})
                                 if query in d and date >= d[query][1]:
                                     d[query] = (False, date)
+                                    self._valid = (node, cargs)
                                 elif query not in d:
                                     d[query] = (False, date)
-                            solution = True
+                                    self._valid = (node, cargs)
                         except NotCompFuncError: pass
                 elif issubclass(pred.__class__, LogPredicate):
                     cat, obj = r.parent, r.term
@@ -955,19 +987,23 @@ class Inference(object):
                             d = self.results.setdefault(query_obj, {})
                             if query in d and date >= d[query][1]:
                                 d[query] = (True, date)
+                                self._valid = (node, cargs)
                             elif query not in d:
                                 d[query] = (True, date)
+                                self._valid = (node, cargs)
                         else:
                             d = self.results.setdefault(query_obj, {})
                             if query in d and date >= d[query][1]:
                                 d[query] = (False, date)
+                                self._valid = (node, cargs)
                             elif query not in d:
                                 d[query] = (False, date)
-                        solution = True
+                                self._valid = (node, cargs)
                     except NotCompAssertError: pass
         
         query_obj, query = self.actv_q[0], self.actv_q[1]
         pred = self.actv_q[2]
+        self._valid = None
         # for each node in the subtitution tree unifify variables 
         # and try every possible substitution until (if) a solution is found
         # the proofs are tried is order of addition to the KB
@@ -1003,9 +1039,8 @@ class Inference(object):
                 mapped = list(itertools.product(*mapped))
                 # run proof until a solution is found or there aren't more
                 # combinations left to be tested
-                proof_result = None
-                while not proof_result and (len(mapped) > 0):
-                    solution = None
+                while len(mapped) > 0:
+                    proof_result = None
                     cargs = mapped.pop()
                     result_memoization = hash(cargs)
                     if result_memoization not in self.queue[node]:
@@ -1014,10 +1049,15 @@ class Inference(object):
                             self._updated.append(True)
                             add_ctg()
                             self.queue[node].add(result_memoization)
-                            if solution: break
-                            else: proof_result = None
                 if p not in done:
                     chk = deque(node.ants) + chk
+            if self._valid and node != self._valid[0]:
+                # the result was replaced in the database by a proof 
+                # which is less current, rerun the valid proof so the current result
+                # is the one stored in the KB
+                rule, args = self._valid[0].rule, self._valid[1]
+                rule(self.kb, args)
+        
         if query_obj in self.obj_dic and query in self.obj_dic[query_obj]:
             return True
         elif len(chk) > 0:

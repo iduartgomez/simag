@@ -96,7 +96,7 @@ class BeliefRecord(object):
     def add_entry(self, ag, pred, form=None, is_new=False, rollback=True):
         if is_new or self.entries[-1].value != pred.value:
             entry = self.new_entry(pred, form)
-            self.entries.append(entry)            
+            self.entries.append(entry)
             if rollback:
                 BmsWrapper._rollback(ag, self)
             
