@@ -91,14 +91,14 @@ class BMSTesting(unittest.TestCase):
         self.assertEqual(ugly, 0)
         self.assertEqual(sad, None)
     
-    def test_review_after_change(self):
-        fol="""
+    def test_review_after_change(self): 
+        fol="""            
+            ( meat[$M1,u=1] )
+            ( dog[$Pancho,u=1] )
+            ( fn::eat[$M1,u=1;$Pancho] )
             ( ( let x, y )
               ( ( dog[x,u=1] && meat[y,u=1] && fn::eat[y,u=1;x] ) 
                 |> fat[x,u=1] ) )
-            ( dog[$Pancho,u=1] )
-            ( meat[$M1,u=1] )
-            ( fn::eat[$M1,u=1;$Pancho] )
         """
         self.rep.tell(fol)
         fat = self.rep.individuals['$Pancho'].get_ctg('fat')
@@ -106,7 +106,7 @@ class BMSTesting(unittest.TestCase):
         
         fol = """
             ( fn::run[$Pancho,u=1] )
-            (( let x,y ) (( dog[x,u=1] && fn::run[x,u=1] ) |> fat[x,u=0] ))
+            (( let x ) (( dog[x,u=1] && fn::run[x,u=1] ) |> fat[x,u=0] ))
         """        
         self.rep.tell(fol)
         fat = self.rep.individuals['$Pancho'].get_ctg('fat')
@@ -114,7 +114,7 @@ class BMSTesting(unittest.TestCase):
         
         self.rep.tell("(fn::eat[$M1,u=1;$Pancho])")
         fat = self.rep.individuals['$Pancho'].get_ctg('fat')
-        self.assertEqual(fat, 1)
+        self.assertEqual(fat, 1)  # <--- FAILS SOMETIMES
 
 class AskReprGetAnswer(unittest.TestCase):
     
@@ -123,7 +123,7 @@ class AskReprGetAnswer(unittest.TestCase):
         ask = [
             (['(professor[$Lucy,u=1] && person[$Lucy,u=1])'], None),
             (['(professor[$Lucy,u=1])', '(person[$John,u=1])'], (True, True)),
-            (['(professor[$Lucy,u>0] && person[$Lucy,u<1])'], False), # <--- this one fails sometimes
+            (['(professor[$Lucy,u>0] && person[$Lucy,u<1])'], False),
             (['(criminal[$West,u=1])'], True),
             (["(fat(t='*now')[$Pancho,u=1])"], True),
             (["(fat(t='*now')[$Pancho,u=1])"], True),
@@ -150,11 +150,11 @@ class AskReprGetAnswer(unittest.TestCase):
         ]
         self.iter_eval(sents, ask)
     
-    def test_event_chain_with_times(self): # <--- fails some times
+    def test_event_chain_with_times(self): 
         self.rep = Representation()
         fol = """
-            (dog[$Pancho,u=1])
             (meat[$M1,u=1])
+            (dog[$Pancho,u=1])
             (fn::eat(time='2015.01.01')[$M1,u=1;$Pancho])
             ((let x, y)
               ((dog[x,u=1] && meat[y,u=1] && fn::eat[y,u=1;x]) 
@@ -162,7 +162,7 @@ class AskReprGetAnswer(unittest.TestCase):
         """  
         self.rep.tell(fol)
         fat = self.rep.individuals['$Pancho'].get_ctg('fat')
-        self.assertEqual(fat,1)
+        self.assertEqual(fat, 1)
         
         fol = """
             (fn::run(time='2015.01.02')[$Pancho,u=1])
@@ -170,7 +170,7 @@ class AskReprGetAnswer(unittest.TestCase):
         """        
         self.rep.tell(fol)
         fat = self.rep.individuals['$Pancho'].get_ctg('fat')
-        self.assertEqual(fat,0)
+        self.assertEqual(fat, 0)
         
         fol = """
             (fn::eat(time='2015.01.02')[$M1,u=1;$Pancho])
@@ -183,7 +183,7 @@ class AskReprGetAnswer(unittest.TestCase):
         """
         self.rep.tell(fol)
         fat = self.rep.individuals['$Pancho'].get_ctg('fat')
-        self.assertEqual(fat,1)
+        self.assertEqual(fat, 1)
         
         self.rep.tell("""
         (fn::eat(time='2015.02.01')[$M1,u=1;$Pancho])

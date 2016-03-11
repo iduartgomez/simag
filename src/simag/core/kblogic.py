@@ -113,11 +113,13 @@ class Representation(object):
             self.bmsWrapper.add(a)
             if hasattr(pred, 'call_back'):
                 pred.call_back(self)
+                del pred.call_back
         for a in results.assert_rel:
             pred = self.up_rel(a, return_val=True)
             self.bmsWrapper.add(a)
             if hasattr(pred, 'call_back'):
                 pred.call_back(self)
+                del pred.call_back
         for a in results.assert_rules:
             self.save_rule(a)
         for a in results.assert_cogs:
@@ -801,7 +803,9 @@ class Inference(object):
                     elif issubclass(ant.__class__, LogPredicate):
                         if ant.term in self.subs:
                             self.subs[ant.term].add(ant.parent)
-            # flatten nested disjunctions
+            # flatten nested disjunctions, 
+            # TODO: this probably should be cached when the sentence
+            # is constructed
             rm = []
             for parent, childs in disjunct.items():
                 for child in childs:
@@ -842,7 +846,7 @@ class Inference(object):
         self.vrs = set()
         self.nodes = OrderedDict()
         self.results = {}
-        self.rerun = []
+        self._repeat = []
         self.infer_facts(*args)
 
     def infer_facts(self, sent):
@@ -913,10 +917,10 @@ class Inference(object):
                                 from_free=True, **{'sbj': obj}
                                 )
                             if not self._ignore_current and q in ctgs:
-                                result = self.kb.test_pred(subst, kls='pred')                      
-                            if obj not in self.results: self.results[obj] = {}
+                                result = self.kb.test_pred(subst, kls='pred')
                             if result is not None:
-                                self.results[obj][q] = result
+                                prev_res = self.results.setdefault(obj,{})
+                                prev_res[q] = result
                             else:
                                 # if no result was found from the kb directly
                                 # make an inference from a grounded fact
@@ -945,7 +949,10 @@ class Inference(object):
                         self.results[var][q] = curr
                 # if the result is empty, remove the key from the results dict
                 if not prev_res: del self.results[var]
-                
+        # repeat all proofs for safety to ensure correcteness of the KB
+        for proof, args in self._repeat:
+            proof(self.kb, args)
+        
     def unify(self, p, chk, done):
         def add_ctg():
             # add category/function to the object dictionary
@@ -1051,13 +1058,13 @@ class Inference(object):
                             self.queue[node].add(result_memoization)
                 if p not in done:
                     chk = deque(node.ants) + chk
-            if self._valid and node != self._valid[0]:
-                # the result was replaced in the database by a proof 
-                # which is less current, rerun the valid proof so the current result
-                # is the one stored in the KB
-                rule, args = self._valid[0].rule, self._valid[1]
-                rule(self.kb, args)
-        
+            if self._valid:
+                # the result may be replaced in the KB by other proof which
+                # is less current, to assure that the valid result stays
+                # in the KB after all proofs are done, repeat the valid one
+                # with proper arguments  
+                self._repeat.append((self._valid[0].rule, self._valid[1]))
+                
         if query_obj in self.obj_dic and query in self.obj_dic[query_obj]:
             return True
         elif len(chk) > 0:
