@@ -827,14 +827,12 @@ class MetaForAtoms(type):
         now = datetime.datetime.now()
         isTrueOther, isTrueSelf = True, True
         if hasattr(self, 'dates'):
-            if (len(self.dates) % 2 or len(self.dates) == 1) \
-            and self.dates[-1] < now: 
+            if (len(self.dates) % 2  == 1) and self.dates[-1] < now: 
                 isTrueSelf = True
             else: 
                 isTrueSelf = False
         if hasattr(other, 'dates'):
-            if (len(other.dates) % 2 or len(other.dates) == 1) \
-            and other.dates[-1] < now: 
+            if (len(other.dates) % 2 == 1) and other.dates[-1] < now: 
                 isTrueOther = True
             else:
                 isTrueOther = False
@@ -927,13 +925,12 @@ def make_fact(pred, f_type=None, **kwargs):
                 else: self.set_init_date()
         
         def __eq__(self, other):
-            # Test if the statements are true at this moment in time
-            time_truth = self._eval_time_truth(other)
-            if time_truth is False: return False
-            # test against other            
             if other.parent != self.parent \
             or other.term != self.term:
                 raise NotCompAssertError
+            # test if the statements are true at this moment in time
+            time_truth = self._eval_time_truth(other)
+            if time_truth is False: return False
             if other.value == self.value:
                 return True
             else: return False
@@ -976,15 +973,10 @@ def make_fact(pred, f_type=None, **kwargs):
         @property
         def time(self):
             now = datetime.datetime.now()
-            if hasattr(self, 'dates'):
-                if (len(self.dates) % 2 or len(self.dates) == 1) \
-                and self.dates[-1] < now: 
-                    return self.dates[-1]
-                else: 
-                    return False
+            if (len(self.dates) % 2 == 1) and self.dates[-1] < now: 
+                return self.dates[-1]
             else: 
-                self.dates = [now]
-                return now
+                return False
         
     class FreeTerm(LogPredicate):
         
@@ -1001,7 +993,7 @@ def make_fact(pred, f_type=None, **kwargs):
             if self.parent != other.parent \
             or self.term != other.term:
                 raise NotCompAssertError
-            # Test if the statements are ture at this moment in time
+            # test if the statements are ture at this moment in time
             time_truth = self._eval_time_truth(other)
             if time_truth is False: return False
             # test against other
@@ -1063,11 +1055,8 @@ class LogFunction(metaclass=MetaForAtoms):
                 mk_args.append((a.term, val, op))
             else:
                 mk_args.append(a.term)
-            if proof \
-            and ((hasattr(proof, 'var_order') and a.term in proof.var_order)
-            or   (hasattr(proof, 'var_types') and a.term in proof.var_types)):        
-                self._grounded = False
             args_id.append(a.term)
+        if proof: self._grounded = False
         if fn.op_args:
             for op_arg in fn.op_args:
                 if op_arg.first_term == 'time':
@@ -1090,22 +1079,6 @@ class LogFunction(metaclass=MetaForAtoms):
     def arity(self):
         return len(self.args)
     
-    @property
-    def time(self):
-        if not self._grounded:
-            raise AttributeError(
-                "can't get truth times for non-grounded functions")
-        now = datetime.datetime.now()
-        if hasattr(self, 'dates'):
-            if (len(self.dates) % 2 or len(self.dates) == 1) \
-            and self.dates[-1] < now: 
-                return self.dates[-1]
-            else: 
-                return False
-        else:
-            self.dates = [now]
-            return now
-    
     def set_init_date(self, date=None):
         if not hasattr(self, 'dates'):
             if date and isinstance(date, datetime.datetime):
@@ -1126,6 +1099,7 @@ class LogFunction(metaclass=MetaForAtoms):
         subs = copy.deepcopy(self)
         subs.args_ID = hash(tuple(args))
         subs._grounded = True
+        subs.set_init_date()
         if isinstance(args, dict):
             for x, arg in enumerate(subs.args):
                 if isinstance(arg, tuple) and arg in args:
@@ -1175,8 +1149,10 @@ def make_function(sent, f_type=None, **kwargs):
             # first argument which represent the object of the relation,
             # the second argument is the subject, and the optional third
             # is the indirect object
-            if dates is not None: self.dates = dates
-            self.set_init_date()
+            if dates is not None: 
+                self.dates = dates
+            if self._grounded:
+                self.set_init_date()
         
         @property
         def value(self):
@@ -1188,11 +1164,22 @@ def make_function(sent, f_type=None, **kwargs):
             arg[1] = val
             self.args[0] = tuple(arg)
         
+        @property
+        def time(self):
+            if not self._grounded:
+                raise AttributeError(
+                    "can't get truth times for non-grounded functions")
+            now = datetime.datetime.now()
+            if (len(self.dates) % 2 == 1) and self.dates[-1] < now: 
+                return self.dates[-1]
+            else: 
+                return False
+        
         def update(self, other):
             self.value = other.value
             if hasattr(other, 'dates'):
                 self.dates = other.dates
-            elif (len(self.dates) % 2 or len(self.dates) == 1):
+            elif (len(self.dates) % 2 == 1):
                 now = datetime.datetime.now()
                 if now - self.dates[-1] < MAINTAIN_TIME_DIFF:
                     if len(self.dates) == 1:
@@ -1204,7 +1191,7 @@ def make_function(sent, f_type=None, **kwargs):
                     self.dates.extend([now, now])
             else:
                 now = datetime.datetime.now()
-                self.dates.append(now)
+                self.dates = [now]
             return True
             
         def compare_args(self, other):
@@ -1230,7 +1217,7 @@ def make_function(sent, f_type=None, **kwargs):
             comparable = self.chk_args_eq(other)
             if comparable is not True:
                 raise NotCompFuncError(comparable)
-            # Check if both are equal
+            # check if both are equal
             for x, arg in enumerate(self.args):
                 if isinstance(arg, tuple):
                     oarg = other.args[x]
@@ -1242,7 +1229,7 @@ def make_function(sent, f_type=None, **kwargs):
                         result = False
                     else:
                         result = True
-            # Test if the statements are true at this moment in time
+            # test if the statements are true at this moment in time
             time_truth = self._eval_time_truth(other)
             if time_truth is True and result is True: return True
             else: return False
@@ -1251,7 +1238,7 @@ def make_function(sent, f_type=None, **kwargs):
             comparable = self.chk_args_eq(other)
             if comparable is not True:
                 raise NotCompFuncError(comparable)            
-            # Check if both are not equal
+            # check if both are not equal
             for x, arg in enumerate(self.args):
                 if isinstance(arg, tuple):
                     oarg = other.arg[x]
@@ -1263,7 +1250,7 @@ def make_function(sent, f_type=None, **kwargs):
                         result = True
                     else:
                         result = True
-            # Test if the statements are true at this moment in time
+            # test if the statements are true at this moment in time
             time_truth = self._eval_time_truth(other)
             if time_truth is False and result is False: return True
     

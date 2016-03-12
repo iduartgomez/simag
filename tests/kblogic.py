@@ -77,21 +77,21 @@ class BMSTesting(unittest.TestCase):
         answ = self.rep.ask("(fat[$Pancho,u=1] && sad[$Pancho,u=1])", single=True)
         self.assertTrue(answ)
         
-        self.rep.tell("(fn::run[$Pancho,u=1])")
         fol = """
-        ((let x, y) 
-         ((fn::run[x,u=1] && dog[x,u=1]) |> fat[x,u=0]))
+            (fn::run[$Pancho,u=1])
+            ((let x, y) 
+             ((fn::run[x,u=1] && dog[x,u=1]) |> fat[x,u=0]))
         """
         self.rep.tell(fol)
-        answ = self.rep.ask("(fat[$Pancho,u=1])", single=True)
-        self.assertFalse(answ)
+        fat = self.rep.individuals['$Pancho'].get_ctg('fat')
+        self.assertEqual(fat, 0)
         
         sad = self.rep.individuals['$Pancho'].get_ctg('sad')
         ugly = self.rep.individuals['$Pancho'].get_ctg('ugly')
         self.assertEqual(ugly, 0)
         self.assertEqual(sad, None)
     
-    def test_review_after_change(self): 
+    def test_review_after_change(self):
         fol="""            
             ( meat[$M1,u=1] )
             ( dog[$Pancho,u=1] )
@@ -200,7 +200,6 @@ class AskReprGetAnswer(unittest.TestCase):
         for i, test in enumerate(sents):
             self.rep = Representation()
             with self.subTest(test='subtest {0}: {1}'.format(i,ask[i])):
-                #print("subtest %s" % i)
                 for s in test:
                     self.rep.tell(s)
                 for j, q in enumerate(ask[i][0]):

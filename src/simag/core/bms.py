@@ -73,11 +73,15 @@ class BeliefRecord(object):
     
     On initialisation it receives which belief came to existence,
     and the reference of the formula which produced the belief.
-    """
-    from collections import namedtuple
-    BmsRecord = namedtuple(
-        'BmsRecord', 
-        ['date', 'value', 'produced', 'pred', 'record'])
+    """    
+    class BmsRecord(object):
+        def __init__(self, date, value, pred, record):
+            self.date = date
+            self.value = value            
+            self.pred = pred
+            self.record = record
+            self.produced = []
+            self.refcnt = 0
     
     def __init__(self, wrapper, pred):
         self.entries = []
@@ -89,16 +93,19 @@ class BeliefRecord(object):
             self.entries.append(entry)
             if rollback:
                 BmsWrapper._rollback(ag, self)
-        
         # TODO: prune old irrelevant entries
         # to do this must keep a ref count on each record so entries referenced
-        # from other entries are not deleted 
-        
-        # if len(self.entries) > 1:
-        #    self.entries = [
-        #        e for x, e in enumerate(self.entries)
-        #        if (e.produced != []) or (x == 0) 
-        #        or (x == len(self.entries) - 1)]
+        # from other entries are not deleted
+        if len(self.entries) > 2:
+            first = [self.entries[0]]
+            if len(self.entries) % 2 == 1:
+                last, pos = self.entries[-2:], -2
+            else:
+                last, pos = [self.entries[-1]], -1
+            filtered = [
+                e for e in self.entries[1:pos] 
+                if e.produced != [] or e.refcnt > 0]
+            self.entries = first + filtered + last
         
     def __getitem__(self, key):
         return self.entries[key]
@@ -108,11 +115,10 @@ class BeliefRecord(object):
     
     def new_entry(self, pred, form):
         entry = BeliefRecord.BmsRecord(
-                date = datetime.now(),
-                value = pred.value,
-                pred = pred,
-                produced = list(),
-                record = self
+                date=datetime.now(),
+                value=pred.value,
+                pred=pred,
+                record=self,
         )
         if not form: return entry
         if not issubclass(form.__class__, LogSentence):
@@ -120,5 +126,6 @@ class BeliefRecord(object):
         for predecessor in form.produced_from:
             rec = predecessor.belief_record.entries[-1]
             rec.produced.append(entry)
+            entry.refcnt += 1
         return entry
     
