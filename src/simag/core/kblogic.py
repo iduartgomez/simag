@@ -339,7 +339,7 @@ class Representation(object):
                 lock.acquire(timeout=5)
 
 # TODO: individuals/classes should be linked in a tree structure
-# for more effitient retrieval. 
+# for more efficient retrieval when necessary
 
 class Individual(object):
     """An individual is the unique member of it's own class.
@@ -404,7 +404,6 @@ class Individual(object):
             try: idx = ctg_rec.index(fact.parent)
             except ValueError: 
                 self.categ.append(fact)
-                fact.set_init_date()
                 fact.call_back = run_related_proofs(fact.parent)
                 if get_obj: return fact
             else:
@@ -471,7 +470,6 @@ class Individual(object):
             rels = self.relations[func.func]
         except KeyError:
             self.relations[func.func] = [func]
-            func.set_init_date()
             func.call_back = run_related_proofs(func.func)
             if get_obj: return func
         else:
@@ -486,7 +484,6 @@ class Individual(object):
                     break
             if not found_rel:
                 rels.append(func)
-                func.set_init_date()
                 func.call_back = run_related_proofs(func.func)
         
     def get_rel(self, func=None, obj=False):
@@ -601,13 +598,11 @@ class Category(object):
         if not hasattr(self, 'relations'):
             self.relations = dict()
             self.relations[func.func] = [func]
-            func.set_init_date()
             if get_obj: return func
         else:
             try: rels = self.relations[func.func]
             except KeyError: 
                 self.relations[func.func] = [func]
-                func.set_init_date()
                 func.call_back = run_related_proofs(func.func)
                 if get_obj: return func
             else:
@@ -622,7 +617,6 @@ class Category(object):
                         break
                 if not found_rel:
                     rels.append(func)
-                    func.set_init_date()
                     func.call_back = run_related_proofs(func.func)
     
     def get_rel(self, func=None, cmp_args=False):
@@ -688,7 +682,6 @@ class Category(object):
             except ValueError: 
                 self.parents.append(fact)
                 fact.call_back = run_related_proofs(fact.parent)
-                fact.set_init_date()
                 if get_obj: return fact       
             else:
                 ctg = self.parents[idx]                

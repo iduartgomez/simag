@@ -159,8 +159,6 @@ class LogSentence(object):
         self.created = datetime.datetime.now()
     
     def __call__(self, ag, *args):
-        # TODO: should be rewritten to use context manager 
-        # for the predicates being potentially changed
         self.ag = ag
         if type(args[0]) is tuple or type(args[0] is list):
             args = args[0]
@@ -177,6 +175,11 @@ class LogSentence(object):
                 or issubclass(val.__class__, LogFunction)):
                     self.assigned[key] = self.assign_time_val_cb(val)
                 else: self.assigned[key] = val
+        
+        # TODO: should be rewritten to use context manager 
+        # for the predicates being potentially changed 
+        # (instead of calling thread_manager directly)
+        
         if not hasattr(self, 'var_order'):
             preds = self.get_preds(branch='r', unique=True)
             ag.thread_manager(preds)
@@ -795,6 +798,9 @@ def _get_atom_type(stmt, cmpd=False, sent=None):
 #   LOGIC CLASSES AND SUBCLASSES
 # ===================================================================#
 
+# This constant is used to clean up the date lists of different predicates
+# to save up memory and doing lists shorter
+MAINTAIN_TIME_DIFF = datetime.timedelta(seconds=5)
 
 class MetaForAtoms(type):
     
@@ -862,16 +868,26 @@ class LogPredicate(metaclass=MetaForAtoms):
 
     def change_params(self, new=None, revert=False):
         if revert is not True:
-            self.oldTerm, self.term = self.term, new
+            self._old_term, self.term = self.term, new
         else:
-            self.term = self.oldTerm
-            del self.oldTerm
+            self.term = self._old_term
+            del self._old_term
     
     def term_is_ind(self):
         if self.term[0] == '$':
             return True
         else:
             return False
+    
+    def set_init_date(self, date=None):
+        if not hasattr(self, 'dates'):
+            if date and isinstance(date, datetime.datetime):
+                self.dates = [date]
+            elif date:
+                raise TypeError(
+                    "only accepts datetime objects as arguments")
+            else:
+                self.dates = [datetime.datetime.now()]
     
     def __repr__(self):
         return '{0}({1}: {2})'.format(
@@ -894,6 +910,7 @@ def make_fact(pred, f_type=None, **kwargs):
                 self.term = kwargs['sbj']
                 if hasattr(self, 'date_var'): del self.date_var
                 if hasattr(self, 'op'): del self.op
+                self.set_init_date()
             elif empty: pass
             else:
                 parent, term, val, op, dates = super().__init__(pred)
@@ -907,6 +924,7 @@ def make_fact(pred, f_type=None, **kwargs):
                 self.value = val
                 if dates is not None:
                     self.dates = dates
+                else: self.set_init_date()
         
         def __eq__(self, other):
             # Test if the statements are true at this moment in time
@@ -937,18 +955,24 @@ def make_fact(pred, f_type=None, **kwargs):
                 "object provided for updating must be of class GroundedTerm")
             assert (self.parent == other.parent)
             assert (self.term == other.term)
-            if self.value != other.update:
-                self.value = other.value
+            self.value = other.value
             if hasattr(other, 'dates'):
                 self.dates = other.dates
             elif (len(self.dates) % 2 or len(self.dates) == 1):
                 now = datetime.datetime.now()
-                self.dates.extend((now, now))
+                if now - self.dates[-1] < MAINTAIN_TIME_DIFF:
+                    if len(self.dates) == 1:
+                        self.dates = [now]
+                    else:
+                        self.dates = self.dates[:-2]
+                        self.dates.extend([now, now])
+                else:
+                    self.dates.extend([now, now])
             else:
                 now = datetime.datetime.now()
                 self.dates.append(now)
             return True
-            
+        
         @property
         def time(self):
             now = datetime.datetime.now()
@@ -962,10 +986,6 @@ def make_fact(pred, f_type=None, **kwargs):
                 self.dates = [now]
                 return now
         
-        def set_init_date(self):
-            if not hasattr(self, 'dates'):
-                self.dates = [datetime.datetime.now()]
-            
     class FreeTerm(LogPredicate):
         
         def __init__(self, pred):
@@ -976,7 +996,7 @@ def make_fact(pred, f_type=None, **kwargs):
             self.op = op
             if dates is not None:
                 self.dates = dates
-        
+            
         def __eq__(self, other):
             if self.parent != other.parent \
             or self.term != other.term:
@@ -1086,9 +1106,15 @@ class LogFunction(metaclass=MetaForAtoms):
             self.dates = [now]
             return now
     
-    def set_init_date(self):
+    def set_init_date(self, date=None):
         if not hasattr(self, 'dates'):
-            self.dates = [datetime.datetime.now()]
+            if date and isinstance(date, datetime.datetime):
+                self.dates = [date]
+            elif date:
+                raise TypeError(
+                    "only accepts datetime objects as arguments")
+            else:
+                self.dates = [datetime.datetime.now()]
     
     def arg_is_ind(self, arg):
         if arg[0] == '$':
@@ -1150,6 +1176,7 @@ def make_function(sent, f_type=None, **kwargs):
             # the second argument is the subject, and the optional third
             # is the indirect object
             if dates is not None: self.dates = dates
+            self.set_init_date()
         
         @property
         def value(self):
@@ -1162,13 +1189,19 @@ def make_function(sent, f_type=None, **kwargs):
             self.args[0] = tuple(arg)
         
         def update(self, other):
-            if self.value != other.update:
-                self.value = other.value
+            self.value = other.value
             if hasattr(other, 'dates'):
                 self.dates = other.dates
             elif (len(self.dates) % 2 or len(self.dates) == 1):
                 now = datetime.datetime.now()
-                self.dates.extend((now, now))
+                if now - self.dates[-1] < MAINTAIN_TIME_DIFF:
+                    if len(self.dates) == 1:
+                        self.dates = [now]
+                    else:
+                        self.dates = self.dates[:-2]
+                        self.dates.extend([now, now])
+                else:
+                    self.dates.extend([now, now])
             else:
                 now = datetime.datetime.now()
                 self.dates.append(now)
@@ -1251,7 +1284,7 @@ def make_function(sent, f_type=None, **kwargs):
         
         def change_params(self, new=None, revert=False):
             if revert is False:
-                self.oldTerm = self.args.copy()
+                self._old_term = self.args.copy()
                 for x, arg in enumerate(self.args):
                     if isinstance(arg, tuple):
                         self.args[x] = list(arg)
@@ -1260,8 +1293,8 @@ def make_function(sent, f_type=None, **kwargs):
                     else:
                         self.args[x] = new[x]
             else:
-                self.term = self.oldTerm
-                del self.oldTerm 
+                self.term = self._old_term
+                del self._old_term 
     
         def replace_var(self, position, replacement, copy_=False, vrs=False):
             if copy_: subs = copy.deepcopy(self)

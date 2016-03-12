@@ -114,7 +114,7 @@ class BMSTesting(unittest.TestCase):
         
         self.rep.tell("(fn::eat[$M1,u=1;$Pancho])")
         fat = self.rep.individuals['$Pancho'].get_ctg('fat')
-        self.assertEqual(fat, 1)  # <--- FAILS SOMETIMES
+        self.assertEqual(fat, 1)
 
 class AskReprGetAnswer(unittest.TestCase):
     

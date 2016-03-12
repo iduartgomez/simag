@@ -11,18 +11,17 @@ for planning and the selection of the different algorithms based on context.
 # ===================================================================#
 
 from types import MethodType, FunctionType
+from collections import Iterable
 
 from simag.core.parser import (
     logic_parser,
-    LogFunction,
-    LogPredicate,
-    LogSentence
 )
 
 
 # ===================================================================#
 #   CONTEXT MANAGER
 # ===================================================================#
+
 class Context:
     """Wrapps the context data and acts as an interface for the
     different problem sets. Decission is delegated then to an
@@ -56,7 +55,7 @@ class ProblemMeta(type):
     actions/choices to the agent, and the instructions are in a compatible 
     data structure.
     """
-    __problems = list()
+    __problems = []
     def __call__(cls, *args, **kwargs):
         new_cls = super().__call__(*args, **kwargs)
         subs, subcls = False, False
@@ -118,20 +117,19 @@ class ProblemDomain(metaclass=ProblemMeta):
     
     def lookup_vars(self):
         def mk_part(sent):
-            parsed = logic_parser(sent)
-            # TODO: change this
-            pclass = parsed.__class__
-            if issubclass(pclass, LogSentence):
+            parse_results = logic_parser(sent)
+            for parsed in parse_results.assert_memb:
+                self.vars.append([parsed, [parsed.term]])
+            for parsed in parse_results.assert_rel:
+                args = parsed.get_args()
+                self.vars.append([parsed, args])
+            sents = parse_results.assert_cogs + parse_results.assert_cogs
+            for parsed in sents:
                 if len(parsed.var_order) > 0:
                     self.vars.append([parsed, parsed.var_order])
                     self.tvl = self.tvl.union(parsed.var_order)
-            elif issubclass(pclass, LogFunction):
-                args = parsed.get_args()
-                self.vars.append([parsed, args])
-            elif issubclass(pclass, LogPredicate):                
-                self.vars.append([parsed, [parsed.term]])
             return parsed
-            
+        
         self.vars = []
         if hasattr(self.__class__,'variables'):
             self.tvl = set(self.__class__.variables)
@@ -208,7 +206,7 @@ class ProblemDomain(metaclass=ProblemMeta):
                         "the required knowledge.".format(self.agent))
                         return err
     
-    def set_algo(self, func=None, subplans=None):
+    def set_algo(self, func=None, subplans=None, **kwargs):
         if func is None: del self.default
         elif type(func) is FunctionType:
             if hasattr(self, func.__name__):
@@ -217,7 +215,11 @@ class ProblemDomain(metaclass=ProblemMeta):
                 self.__add_algo(func)
                 self.default = getattr(self, func.__name__)
         elif type(func) is type:
-            if subplans is not None: self.default = func(subplans=subplans)
+            if subplans is not None:
+                if not isinstance(subplans, Iterable):
+                    raise TypeError(
+                        "the subplans parameter must be an iterable")
+                self.default = func(subplans=subplans, **kwargs)
             else: self.default = func()
         else:
             self.default = func
@@ -242,7 +244,7 @@ class ProblemDomain(metaclass=ProblemMeta):
         self.inspect_domain(init=False)
                 
     def __str__(self):
-        return '<'+str(self.__class__.__name__)+'>'
+        return '<' + str(self.__class__.__name__) + '>'
 
 class SolutionTemplate(object):
     """A helper template class for constructing resolution algorithms.
@@ -260,13 +262,17 @@ class SolutionTemplate(object):
     Those four methods allow for the building of increasingly complex plans
     while retaining the flexibility to return control to the agent.
     """
-    def __init__(self, subplans=None):
-        if subplans is not None: 
-            self.subplans = subplans
+    def __init__(self, subplans=None, **kwargs):
+        if subplans is not None:
+            self._subplans = subplans
+            if kwargs:
+                for plan in self._subplans:
+                    if plan.__name__ in kwargs:
+                        setattr(plan, '_subplans', kwargs[plan.__name__])
     
     def __call__(self, agent, problem, **kwargs):
         self.agent = agent
-        self.masterplan = problem
+        self.master_problem = problem
         self.solve(**kwargs)
         
     def observe(self, *args):
@@ -274,19 +280,20 @@ class SolutionTemplate(object):
         
     def review(self):
         # is the goal reachable in the current conditions?
-        self.masterplan.inspect_domain(req=False)
+        self.master_problem.inspect_domain(req=False)
     
     def call_plan(self, plan, subplans=None, **kwargs):
-        if hasattr(self, 'subplans') and plan in self.subplans:
+        if hasattr(self, '_subplans') and plan in self._subplans:
             plan_instance = plan(subplans)
-            res = plan_instance(self.agent, self.masterplan, **kwargs)
+            res = plan_instance(self.agent, self.master_problem, **kwargs)
             return res
         else: 
-            raise ValueError("Plan not available in self.subplans.")
+            raise ValueError(
+                "Plan not available for {}".format(self.__class__))
     
     def solve(self, *args, **kwargs):
         m = """Need to define the 'solve' function for the algorithm 
-           '{1}' of problem '{0}'.""".format(self.masterplan, self)
+           '{1}' of problem '{0}'.""".format(self.master_problem, self)
         raise TypeError(m)
     
     def __str__(self):
@@ -297,25 +304,30 @@ class SolutionTemplate(object):
 #   HELPER FUNCTIONS AND CLASSES
 # ===================================================================#
 
-def makeProblemDomain(source):
+REQ_FIELD = ('name', 'init', 'goals', 'requiriments')
+REQ_ATTR = ('actions', 'knowledge', 'relations')
+
+def make_problem_domain(source):
     """Parses a JSON object (from a file or a string) or a dictionary 
     and creates a 'problem domain' from it.
     """
     import json
-    if source.strip()[0] != '{': 
-        file = open(source, 'r')
-        data = json.load(file)
-    elif type(source) == dict: data = source
-    else: data = json.loads(source)
-    req_field = ['name','init','goals','requiriments']
-    for field in req_field:
-        if field not in data:
-            raise AssertionError("No '{0}' field in {1} ".format(field,source))
-    req_attr = ['actions','knowledge','relations']
+    if isinstance(source, dict):
+        data = source
+    else:
+        try:
+            file = open(source, 'r')
+        except OSError:
+            data = json.loads(source)
+        else:
+            data = json.load(file)
+    if any(f for f in REQ_FIELD if f not in data):
+        raise AssertionError(
+        "Required field ({}) lacking in:\n {}".format(REQ_FIELD, source))
     for k,v in data['requiriments'].items():
-        if k in req_attr: 
+        if k in REQ_ATTR: 
             data[k] = v
-    for k in req_attr: 
+    for k in REQ_ATTR: 
         try: del data['requiriments'][k]
         except KeyError: pass
     name = data['name']
@@ -324,27 +336,3 @@ def makeProblemDomain(source):
         data['__doc__'] = data['description']
         del data['description']
     return type(name, (ProblemDomain, ), data)
-    
-    
-#=============================================================#
-    
-class SolveProblemWithAlgo1(SolutionTemplate):
-    def solve(self, **kw):
-        m = "attempting solution with algo {0} to problem {1}:\n" \
-        "{2}\n".format(self,self.masterplan,kw['test'])
-        print(m)
-        self.call_plan(SolveProblemWithAlgo2,subplans=[SolveProblemWithAlgo3])
-
-class SolveProblemWithAlgo2(SolutionTemplate):
-    def solve(self, **kw):
-        m = "attempting solution with algo {0} to problem {1}\n" \
-        "".format(self,self.masterplan)
-        print(m)
-        self.call_plan(SolveProblemWithAlgo3, **kw)
-
-class SolveProblemWithAlgo3(SolutionTemplate):
-    def solve(self, **kw):
-        m = "attempting solution with algo {0} to problem {1}\n" \
-        "{2}\n".format(self,self.masterplan,kw['test'])
-        print(m)
-

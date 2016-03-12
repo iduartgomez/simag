@@ -7,19 +7,35 @@ from simag.core.planner_manager import *
 #    UNIT TESTING    #
 #====================#
 
-@unittest.skip
-class test_solve_problem(unittest.TestCase):
+class SolveProblem(unittest.TestCase):
     
-    def test_move_box_to_table(self):
+    def test_loading_problem_and_solver(self):
         actions = ['move_box','drop_box','pick_box', 'paint']
         file = os.path.join(os.path.dirname(__file__),
             'planner_manager','move_box_to_table.json')
         ag = FakeAg(actions)
-        MoveBoxToTable = makeProblemDomain(file)
+        MoveBoxToTable = make_problem_domain(file)
         init_problem = MoveBoxToTable()
+        params = {'B1':'blue_box','T1':'table'}
+        
+        init_problem.set_algo(
+            SolveProblemWithAlgo1, 
+            subplans=[SolveProblemWithAlgo2],
+            SolveProblemWithAlgo2=[SolveProblemWithAlgo3])
+        init_problem(ag, vrs=params, solution='SOLUTION: Algo1')
+        
+        init_problem.set_algo(
+            SolveProblemWithAlgo2, 
+            subplans=[SolveProblemWithAlgo3])
+        init_problem(ag, vrs=params, solution='SOLUTION: Algo2')
+        
         init_problem.set_algo(SolveProblemWithAlgo3)
-        init_problem(ag, vrs={'B1':'blue_box','T1':'table'}, test='TEST')
-
+        init_problem(ag, vrs=params, solution='SOLUTION: Algo3')
+        
+    @unittest.skip 
+    def test_move_box_to_table(self):
+        pass
+    
 #==============================#
 #    HELP FUNCTIONS & CLASSES  #
 #==============================#
@@ -37,7 +53,7 @@ class FakeAg(object):
     
     def has_knowledge(self, *args):
         for cog in args:
-            if rel not in self.knowledge: return False
+            if cog not in self.knowledge: return False
         return True
     
     def ask(self, sent, single=False):
@@ -49,7 +65,26 @@ class FakeAg(object):
     def action(self, act): 
         if act in self.action: return True
 
+class SolveProblemWithAlgo1(SolutionTemplate):
+    def solve(self, **kw):
+        m = "attempting solution with algo {0} to problem {1}:" \
+            .format(self, self.master_problem, kw['solution'])
+        print(m)
+        self.call_plan(
+            SolveProblemWithAlgo2, **kw)
+
+class SolveProblemWithAlgo2(SolutionTemplate):
+    def solve(self, **kw):
+        m = "attempting solution with algo {0} to problem {1}" \
+            .format(self, self.master_problem)
+        print(m)
+        self.call_plan(SolveProblemWithAlgo3, **kw)
+
+class SolveProblemWithAlgo3(SolutionTemplate):
+    def solve(self, **kw):
+        m = "attempting solution with algo {0} to problem {1}\n" \
+        "{2}\n".format(self, self.master_problem, kw['solution'])
+        print(m)
 
 if __name__ == "__main__":
     unittest.main()
-
