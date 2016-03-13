@@ -175,11 +175,9 @@ class LogSentence(object):
                 or issubclass(val.__class__, LogFunction)):
                     self.assigned[key] = self.assign_time_val_cb(val)
                 else: self.assigned[key] = val
-        
         # TODO: should be rewritten to use context manager 
         # for the predicates being potentially changed 
         # (instead of calling thread_manager directly)
-        
         if not hasattr(self, 'var_order'):
             preds = self.get_preds(branch='r', unique=True)
             ag.thread_manager(preds)
@@ -219,7 +217,7 @@ class LogSentence(object):
             else:
                 return None
         return callback_pred
-        
+    
     def get_ops(self, p, chk_op=['||', '=>', '<=>']):
         ops = []
         for p in self:
@@ -349,10 +347,6 @@ class LogSentence(object):
     def produced_from(self):
         self._produced = []
     
-    @produced_from.setter
-    def produced_from(self, val):
-        self._produced = val
-
 def make_logic_sent(ast):
     """Takes a parsed FOL sentence and creates an object with
     the embedded methods to resolve it.
@@ -628,7 +622,7 @@ def make_logic_sent(ast):
                 ag.bmsWrapper.add(pred, proof)
             elif issubclass(self.pred.__class__, LogPredicate):
                 sbj = self.isvar(self.pred.term, proof)
-                pred = self.pred.substitute(sbj, val=None, ground=True)                
+                pred = self.pred.substitute(sbj, val=None, ground=True)
                 pred = ag.up_memb(pred, return_val=True)
                 ag.bmsWrapper.add(pred, proof)
             if hasattr(proof, 'result'):
@@ -888,8 +882,8 @@ class LogPredicate(metaclass=MetaForAtoms):
                 self.dates = [datetime.datetime.now()]
     
     def __repr__(self):
-        return '{0}({1}: {2})'.format(
-            self.__class__.__name__, self.parent, self.term)
+        return '{0}({1}: {2} -> {3})'.format(
+            self.__class__.__name__, self.parent, self.term, self.value)
 
 class NotCompAssertError(Exception):
         "trying to compare different terms"
@@ -1299,12 +1293,14 @@ def make_function(sent, f_type=None, **kwargs):
                     for arg in self.args]
         
         def __str__(self):
-            return '{0}({1}: {2})'.format(
-                self.__class__.__name__, self.func, self.get_args())
+            return '{0}({1}: {2} -> {3})'.format(
+                self.__class__.__name__, self.func, self.get_args(),
+                self.value)
             
         def __repr__(self):
-            return '{0}({1}: {2})'.format(
-                self.__class__.__name__, self.func, self.get_args())
+            return '{0}({1}: {2} -> {3})'.format(
+                self.__class__.__name__, self.func, self.get_args(), 
+                self.value)
     
     class TimeFunc(metaclass=MetaForAtoms):
         """A special case for time calculus, not considered a relation.        

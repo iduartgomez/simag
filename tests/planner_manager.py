@@ -18,19 +18,22 @@ class SolveProblem(unittest.TestCase):
         init_problem = MoveBoxToTable()
         params = {'B1':'blue_box','T1':'table'}
         
-        init_problem.set_algo(
-            SolveProblemWithAlgo1, 
-            subplans=[SolveProblemWithAlgo2],
-            SolveProblemWithAlgo2=[SolveProblemWithAlgo3])
-        init_problem(ag, vrs=params, solution='SOLUTION: Algo1')
+        with self.assertRaisesRegex(AssertionError, 'Algo1'):
+            init_problem.set_algo(
+                SolveProblemWithAlgo1, 
+                subplans=[SolveProblemWithAlgo2],
+                SolveProblemWithAlgo2=[SolveProblemWithAlgo3])
+            init_problem(ag, vrs=params, solution='Algo1')
         
-        init_problem.set_algo(
-            SolveProblemWithAlgo2, 
-            subplans=[SolveProblemWithAlgo3])
-        init_problem(ag, vrs=params, solution='SOLUTION: Algo2')
+        with self.assertRaisesRegex(AssertionError, 'Algo2'):
+            init_problem.set_algo(
+                SolveProblemWithAlgo2, 
+                subplans=[SolveProblemWithAlgo3])
+            init_problem(ag, vrs=params, solution='Algo2')
         
-        init_problem.set_algo(SolveProblemWithAlgo3)
-        init_problem(ag, vrs=params, solution='SOLUTION: Algo3')
+        with self.assertRaisesRegex(AssertionError, 'Algo3'):
+            init_problem.set_algo(SolveProblemWithAlgo3)
+            init_problem(ag, vrs=params, solution='Algo3')
         
     @unittest.skip 
     def test_move_box_to_table(self):
@@ -69,7 +72,6 @@ class SolveProblemWithAlgo1(SolutionTemplate):
     def solve(self, **kw):
         m = "attempting solution with algo {0} to problem {1}:" \
             .format(self, self.master_problem, kw['solution'])
-        print(m)
         self.call_plan(
             SolveProblemWithAlgo2, **kw)
 
@@ -77,14 +79,13 @@ class SolveProblemWithAlgo2(SolutionTemplate):
     def solve(self, **kw):
         m = "attempting solution with algo {0} to problem {1}" \
             .format(self, self.master_problem)
-        print(m)
         self.call_plan(SolveProblemWithAlgo3, **kw)
 
 class SolveProblemWithAlgo3(SolutionTemplate):
     def solve(self, **kw):
         m = "attempting solution with algo {0} to problem {1}\n" \
         "{2}\n".format(self, self.master_problem, kw['solution'])
-        print(m)
+        raise AssertionError(kw['solution'])
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,7 +12,7 @@ This module adds methods and classes for:
 # ===================================================================#
 from datetime import datetime
 
-from simag.core.parser import LogSentence
+from simag.core.parser import LogSentence, LogFunction
 
 
 # ===================================================================#
@@ -48,7 +48,7 @@ class BmsWrapper(object):
         """
         if len(record.entries) < 2: return
         last = record.entries[-2]
-        if len(last.produced) == 0: return
+        if not last.produced: return
         for entry in last.produced:
             if entry is entry.record[-1]:
                 # ask the agent again if the value to be rolled back still holds true
@@ -65,7 +65,7 @@ class BmsWrapper(object):
                         val = None
                     rb.pred.value = val
                     entry.record.add_entry(ag, rb.pred, rollback=False)
-                if len(entry.produced) > 0:
+                if entry.produced:
                     BmsWrapper._rollback(ag, entry.record)
         
 class BeliefRecord(object):
@@ -80,9 +80,15 @@ class BeliefRecord(object):
             self.value = value            
             self.pred = pred
             self.record = record
-            self.produced = []
-            self.refcnt = 0
-    
+            self.produced = None
+        
+        def __repr__(self):
+            if issubclass(self.pred.__class__, LogFunction):
+                t, s = self.pred.func, self.pred.get_args()
+            else:
+                t, s = self.pred.parent, self.pred.term
+            return 'BmsRecord({}: {} -> {})'.format(t, s, self.value)    
+        
     def __init__(self, wrapper, pred):
         self.entries = []
         pred.belief_record = self
@@ -91,27 +97,25 @@ class BeliefRecord(object):
         if is_new or self.entries[-1].value != pred.value:
             entry = self.new_entry(pred, form)
             self.entries.append(entry)
-            if rollback:
-                BmsWrapper._rollback(ag, self)
-        # TODO: prune old irrelevant entries
-        # to do this must keep a ref count on each record so entries referenced
-        # from other entries are not deleted
-        if len(self.entries) > 2:
-            first = [self.entries[0]]
-            if len(self.entries) % 2 == 1:
-                last, pos = self.entries[-2:], -2
-            else:
-                last, pos = [self.entries[-1]], -1
-            filtered = [
-                e for e in self.entries[1:pos] 
-                if e.produced != [] or e.refcnt > 0]
-            self.entries = first + filtered + last
-        
-    def __getitem__(self, key):
-        return self.entries[key]
-    
-    def __len__(self):
-        return len(self.entries)
+        else:
+            entry = self.entries[-1]
+        if form and hasattr(form, 'produced_from'):
+            if not issubclass(form.__class__, LogSentence):
+                raise TypeError("expected a subclass of LogSentence")
+            for predecessor in form.produced_from:
+                rec = predecessor.belief_record.entries[-1]
+                if not isinstance(rec.produced, list):
+                    rec.produced = []
+                if entry not in rec.produced:
+                    rec.produced.append(entry)
+        if rollback:
+            BmsWrapper._rollback(ag, self)
+        # prune old entries
+        if len(self.entries) > 3:
+            last = self.entries[-2:]
+            self.entries = [
+                e for e in self.entries[:-1] if e.produced]
+            self.entries.extend(last)
     
     def new_entry(self, pred, form):
         entry = BeliefRecord.BmsRecord(
@@ -120,12 +124,13 @@ class BeliefRecord(object):
                 pred=pred,
                 record=self,
         )
-        if not form: return entry
-        if not issubclass(form.__class__, LogSentence):
-            raise TypeError("expected a subclass of LogSentence")
-        for predecessor in form.produced_from:
-            rec = predecessor.belief_record.entries[-1]
-            rec.produced.append(entry)
-            entry.refcnt += 1
         return entry
     
+    def __repr__(self):
+        return self.entries.__repr__()
+    
+    def __getitem__(self, key):
+        return self.entries[key]
+    
+    def __len__(self):
+        return len(self.entries)

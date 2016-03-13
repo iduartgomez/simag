@@ -111,15 +111,15 @@ class Representation(object):
         for a in results.assert_memb:
             pred = self.up_memb(a, return_val=True)
             self.bmsWrapper.add(a)
-            if hasattr(pred, 'call_back'):
-                pred.call_back(self)
-                del pred.call_back
+            if hasattr(pred, 'test_related_preds'):
+                pred.test_related_preds(self)
+                del pred.test_related_preds
         for a in results.assert_rel:
             pred = self.up_rel(a, return_val=True)
             self.bmsWrapper.add(a)
-            if hasattr(pred, 'call_back'):
-                pred.call_back(self)
-                del pred.call_back
+            if hasattr(pred, 'test_related_preds'):
+                pred.test_related_preds(self)
+                del pred.test_related_preds
         for a in results.assert_rules:
             self.save_rule(a)
         for a in results.assert_cogs:
@@ -148,7 +148,7 @@ class Representation(object):
                     if isinstance(v2, tuple):
                         inf_proc.results[k1][k2] = v2[0]
         return inf_proc.results
-
+    
     def up_memb(self, pred, return_val=False):
         # It's a membership declaration.        
         subject, categ = pred.term, pred.parent
@@ -404,13 +404,13 @@ class Individual(object):
             try: idx = ctg_rec.index(fact.parent)
             except ValueError: 
                 self.categ.append(fact)
-                fact.call_back = run_related_proofs(fact.parent)
+                fact.test_related_preds = run_related_proofs(fact.parent)
                 if get_obj: return fact
             else:
                 ctg = self.categ[idx]
                 updated = ctg.update(fact)
                 if updated:
-                    ctg.call_back = run_related_proofs(fact.parent)
+                    ctg.test_related_preds = run_related_proofs(fact.parent)
                 if get_obj: return ctg
         else: raise TypeError('The object is not a LogPredicate subclass.')
     
@@ -470,7 +470,7 @@ class Individual(object):
             rels = self.relations[func.func]
         except KeyError:
             self.relations[func.func] = [func]
-            func.call_back = run_related_proofs(func.func)
+            func.test_related_preds = run_related_proofs(func.func)
             if get_obj: return func
         else:
             found_rel = False
@@ -478,13 +478,13 @@ class Individual(object):
                 if rel.chk_args_eq(func) is True:
                     updated = rel.update(func)
                     if updated:
-                        rel.call_back = run_related_proofs(func.func)
+                        rel.test_related_preds = run_related_proofs(func.func)
                     if get_obj: return rel
                     found_rel = True
                     break
             if not found_rel:
                 rels.append(func)
-                func.call_back = run_related_proofs(func.func)
+                func.test_related_preds = run_related_proofs(func.func)
         
     def get_rel(self, func=None, obj=False):
         """Returns a list of the relations the object is involved either
@@ -603,7 +603,7 @@ class Category(object):
             try: rels = self.relations[func.func]
             except KeyError: 
                 self.relations[func.func] = [func]
-                func.call_back = run_related_proofs(func.func)
+                func.test_related_preds = run_related_proofs(func.func)
                 if get_obj: return func
             else:
                 found_rel = False
@@ -611,13 +611,13 @@ class Category(object):
                     if rel.chk_args_eq(func) is True:
                         updated = rel.update(func)
                         if updated:
-                            rel.call_back = run_related_proofs(func.func)
+                            rel.test_related_preds = run_related_proofs(func.func)
                         if get_obj: return rel
                         found_rel = True
                         break
                 if not found_rel:
                     rels.append(func)
-                    func.call_back = run_related_proofs(func.func)
+                    func.test_related_preds = run_related_proofs(func.func)
     
     def get_rel(self, func=None, cmp_args=False):
         """Returns a list of the relations the object is involved either
@@ -681,13 +681,13 @@ class Category(object):
             try: idx = ctg_rec.index(fact.parent)
             except ValueError: 
                 self.parents.append(fact)
-                fact.call_back = run_related_proofs(fact.parent)
+                fact.test_related_preds = run_related_proofs(fact.parent)
                 if get_obj: return fact       
             else:
                 ctg = self.parents[idx]                
                 updated = ctg.update(fact)
                 if updated:
-                    ctg.call_back = run_related_proofs(fact.parent)
+                    ctg.test_related_preds = run_related_proofs(fact.parent)
                 if get_obj: return ctg
     
     def get_ctg(self, ctg=None, obj=False):
@@ -840,6 +840,7 @@ class Inference(object):
         self.nodes = OrderedDict()
         self.results = {}
         self._repeat = []
+        self._test_related_preds = []
         self.infer_facts(*args)
 
     def infer_facts(self, sent):
@@ -959,6 +960,8 @@ class Inference(object):
                     for obj in args:
                         curr = self.obj_dic.setdefault(obj, set())
                         curr.add(r.func)
+                    if hasattr(r, 'test_related_preds'):
+                        del r.test_related_preds
                     if issubclass(pred.__class__, LogFunction):
                         try:
                             if pred == r:
@@ -982,6 +985,8 @@ class Inference(object):
                     cat, obj = r.parent, r.term
                     curr = self.obj_dic.setdefault(obj, set([cat]))
                     curr.add(cat)
+                    if hasattr(r, 'test_related_preds'):
+                        del r.test_related_preds
                     try:
                         if pred == r:
                             d = self.results.setdefault(query_obj, {})

@@ -71,7 +71,7 @@ class BMSTesting(unittest.TestCase):
               |> fat[x,u=1]))
             
             ((let x)
-             ((fat[x,u=1] && dog[x,u=1]) |> (sad[x,u=1] && ugly[x,u=1])))
+             ((fat[x,u=1] && dog[x,u=1]) |> (ugly[x,u=1] && sad[x,u=1])))
         """
         self.rep.tell(fol)
         answ = self.rep.ask("(fat[$Pancho,u=1] && sad[$Pancho,u=1])", single=True)
@@ -79,7 +79,7 @@ class BMSTesting(unittest.TestCase):
         
         fol = """
             (fn::run[$Pancho,u=1])
-            ((let x, y) 
+            ((let x) 
              ((fn::run[x,u=1] && dog[x,u=1]) |> fat[x,u=0]))
         """
         self.rep.tell(fol)
