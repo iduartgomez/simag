@@ -1,6 +1,2 @@
 # README #
-
-### Milestones ###
-
-* Plans with custom algorithms
-* Messaging between agents
+An experimental agent-based AI framework/library. Work in progres.
