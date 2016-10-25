@@ -3,11 +3,11 @@
 @@comments			::	?/\*((?:.|\n)*?)\*|#(.*?)\n/?
 @@eol_comments 		::	/#.*?$/
 
-block	            =   {stmt}+ $ ;
-stmt				=   assertion:multi_assert
-					| 	stmt:(comp_type | icond_type)
-					|	rule:(icond_expr | comp_expr) 
-					|	query:query ;
+block	 = {stmt}+ $ ;
+stmt	= assertion:multi_assert
+			| stmt:(comp_type | icond_type)
+			|	rule:(icond_expr | comp_expr)
+			|	query:query ;
 
 icond_type			=	'(' {(vars:var_decl | skol:skol_decl)} expr:icond_root ')' ;
 icond_root			= 	'(' lhs:expr_node op:icond_op rhs:icond_node ')' ;
@@ -24,14 +24,14 @@ var_decl            =   '(' 'let' @+:(term [':' op_arg]) {',' @+:(term [':' op_a
 skol_decl			=	'(' 'exists' @+:(term [':' op_arg]) {',' @+:(term [':' op_arg])} ')' ;
 terminal_node		=	(klass:class_decl | func:func_decl | assertion:multi_assert) ;
 
-multi_assert		= 	'(' (@+:class_decl | @+:func_decl) 
+multi_assert		= 	'(' (@+:class_decl | @+:func_decl)
 							{and_op (@+:class_decl | @+:func_decl)} ')'
-					|	'(' 'decl' (@+:class_decl | @+:func_decl) 
+					|	'(' 'decl' (@+:class_decl | @+:func_decl)
 							{';' (@+:class_decl | @+:func_decl)} ')';
 
-class_decl          =   klass:term ['(' op_args:op_args ')'] args:args ;
-func_decl           =   'fn::' func:term ['(' op_args:op_args ')'] args:args
-					|	'fn::' func:term '(' op_args:op_args ')' ;
+class_decl = klass:term ['(' op_args:op_args ')'] args:args ;
+func_decl  = 'fn::' func:term ['(' op_args:op_args ')'] args:args
+					 | 'fn::' func:term '(' op_args:op_args ')' ;
 args				=	'[' @+:arg {';' @+:arg} ']';
 arg					=	term:term [',' uval:uval] ;
 uval                =   'u' @+:comp_op @+:number ;
@@ -47,6 +47,5 @@ logic_op	        =   '<=>'
                		|	and_op ;
 comp_op				=	('=' | '<' | '>') ;
 term				=	?/\$?[a-zA-Z0-9_]+/? ;
-number              =   ?/-?[0-9\.]+/? ;
-letters				= 	?/[a-zA-Z]+/? ;
-string				=	?/".*?"|'.*?'/? ;
+number       =   ?/-?[0-9\.]+/? ;
+string			=	?/".*?"|'.*?'/? ;
