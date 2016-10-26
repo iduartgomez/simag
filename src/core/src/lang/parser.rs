@@ -1,8 +1,15 @@
 use std::str;
 use std::str::FromStr;
 
-use nom::{IResult, Err, ErrorKind};
-use nom::{is_digit, is_alphanumeric};
+use nom::{IResult, Err, ErrorKind, Needed};
+use nom::{is_digit, is_alphanumeric, eof};
+
+// ErrorKind::Custom(0) -> Error::NonTerminal
+// ErrorKind::Custom(1) -> Error::NonNumber
+// ErrorKind::Custom(3) -> Error::InputError
+// ErrorKind::Custom(4) -> Error::Unclosed comment delimiter
+
+use super::ParseErr;
 
 const ICOND_OP: &'static [u8] = b"|>";
 const AND_OP: &'static [u8] = b"&&";
@@ -11,12 +18,197 @@ const LOGIC_OP: (&'static [u8], &'static [u8], &'static [u8], &'static [u8]) =
     (b"<=>", b"=>", OR_OP, AND_OP);
 const COMP_OP: &'static [u8] = b"=<>";
 
-enum AST {
+pub struct Parser;
+impl Parser {
+    pub fn parse(input: &[u8]) -> Result<AST, ParseErr> {
+        let mut p2 = Vec::new();
+        LexerData::scan(input, &mut p2);
+        // parse and walk the AST:
+        let ast = AST::Stmt;
+        Ok(ast)
+    }
+}
+
+#[derive(Debug)]
+pub enum AST {
     Stmt,
     Rule,
     Assertion,
     Query,
+    Expr,
 }
+
+#[derive(Debug)]
+struct LexerData<'a>(NextScope<'a>);
+
+impl<'a> LexerData<'a> {
+    /// Checks that the input is valid and removes unnecessary tokens.
+    fn scan(input: &'a [u8], p2: &'a mut Vec<u8>) -> Result<LexerData<'a>, ParseErr> {
+        // TODO: when stable on the std lib, check that bytes can be encoded as correct chars
+        let p1 = match remove_comments(input) {
+            IResult::Done(_, done) => done,
+            IResult::Error(Err::Position(_, _)) => return Err(ParseErr::Comments),
+            _ => return Err(ParseErr::Failure),
+        };
+        for v in p1 {
+            for b in v {
+                p2.push(*b)
+            }
+        }
+        // separate by scopes; everything is either a scope or a var definition
+        let first = scope(&p2[..]).unwrap();
+        Ok(LexerData(first))
+    }
+}
+
+#[derive(Debug)]
+struct Scope<'a> {
+    next: NextScope<'a>,
+    vars: Option<Vec<Var<'a>>>,
+    skol: Option<Vec<Skolem<'a>>>,
+}
+
+fn scope<'a>(input: &'a [u8]) -> Result<NextScope<'a>, ParseErr> {
+    named!(take_vars(&[u8]) -> (Option<Vec<Var>>, Option<Vec<Skolem>>), chain!(
+        take_while!(is_multispace)? ~
+        v1: variable ? ~
+        take_while!(is_multispace)? ~
+        v2: skolem ? ~
+        take_while!(is_multispace)? ,
+        || { (v1, v2) }
+    ));
+    let ot = tuple!(input,
+        opt!(take_while!(is_multispace)),
+        tag!("("),
+        opt!(take_while!(is_multispace))
+    );
+    let input = match ot {
+        IResult::Done(rest, _) => rest,
+        _ => return Err(ParseErr::Failure),
+    };
+    let output = take_vars(input);
+    let (rest, vars, skolem) = match output {
+        IResult::Done(r, (v1, v2)) => (r, v1, v2),
+        _ => return Err(ParseErr::Failure),
+    };
+    println!("@rep: {:?}", unsafe {str::from_utf8_unchecked(&rest[..])});
+    let output = is_end_node(rest);
+    if output.is_done() {
+        let next = match output {
+            IResult::Done(_, n) => n,
+            _ => return Err(ParseErr::Failure),
+        };
+        Ok(NextScope::Scope(Box::new(Scope {
+            next: next,
+            vars: vars,
+            skol: skolem,
+        })))
+    } else {
+        if input.len() == 0 {
+            return Err(ParseErr::EmptyScope);
+        }
+        let next = match scope(rest) {
+            Ok(n) => n,
+            Err(err) => return Err(err),
+        };
+        Ok(NextScope::Scope(Box::new(Scope {
+            next: next,
+            vars: vars,
+            skol: skolem,
+        })))
+    }
+}
+
+#[derive(Debug)]
+enum NextScope<'a> {
+    TerminalNode(EndNode<'a>),
+    Scope(Box<Scope<'a>>),
+}
+
+#[derive(Debug)]
+enum EndNode<'a> {
+    FuncDecl(FuncDecl<'a>),
+    ClassDecl(ClassDecl<'a>),
+}
+
+fn is_end_node(input: &[u8]) -> IResult<&[u8], NextScope> {
+    // trim all whitespaces
+    let f = func_decl(input);
+    if f.is_done() {
+        let (r, fun) = f.unwrap();
+        return IResult::Done(r, NextScope::TerminalNode(EndNode::FuncDecl(fun)));
+    }
+    let c = class_decl(input);
+    if c.is_done() {
+        let (r, cls) = c.unwrap();
+        return IResult::Done(r, NextScope::TerminalNode(EndNode::ClassDecl(cls)));
+    }
+    IResult::Incomplete(Needed::Unknown)
+}
+
+// skol_decl = '(' 'exists' $(term[':'op_arg]),+ ')' ;
+#[derive(Debug)]
+struct Skolem<'a> {
+    name: Terminal<'a>,
+    op_arg: Option<OpArg<'a>>,
+}
+
+named!(skolem(&[u8]) -> Vec<Skolem>, chain!(
+    tag!("(") ~
+    take_while!(is_multispace)? ~
+    tag!("exists ") ~
+    vars: fold_many1!(
+            chain!(
+            take_while!(is_multispace)? ~
+            name: terminal ~
+            oa: chain!(tag!(":") ~ oa: op_arg, ||{oa})? ~
+            take_while!(is_multispace)? ~
+            tag!(","),
+            || { (name, oa) }
+        ), Vec::new(), |mut vec: Vec<_>, (name, oa)| {
+            let v = Skolem {
+                name: Terminal::from_slice(name),
+                op_arg: oa
+            };
+            vec.push(v);
+            vec
+        }
+    ) ~
+    tag!(")") ,
+    || { vars }
+));
+
+// var_decl = '(' 'let' $(term[':'op_arg]),+ ')' ;
+#[derive(Debug)]
+struct Var<'a> {
+    name: Terminal<'a>,
+    op_arg: Option<OpArg<'a>>,
+}
+
+named!(variable(&[u8]) -> Vec<Var>, chain!(
+    tag!("(") ~
+    take_while!(is_multispace)? ~
+    tag!("let ") ~
+    vars: fold_many1!(
+            chain!(
+            take_while!(is_multispace)? ~
+            name: terminal ~
+            oa: chain!(tag!(":") ~ oa: op_arg, ||{oa})? ~
+            take_while!(is_multispace)? ~
+            tag!(","),
+            || { (name, oa) }
+        ), Vec::new(), |mut vec: Vec<_>, (name, oa)| {
+            let v = Var {
+                name: Terminal::from_slice(name),
+                op_arg: oa
+            };
+            vec.push(v);
+            vec
+        }
+    ) ~
+    tag!(")") ,
+    || { vars }
+));
 
 // func_decl = 'fn::' term ['(' op_args ')'] args
 // 			 | 'fn::' term '(' op_args ')' ;
@@ -175,7 +367,6 @@ named!(uval <UVal>, chain!(
 ));
 
 // number = -?[0-9\.]+
-// ErrorKind::Custom(1) -> Error::NonNumber
 #[derive(Debug, PartialEq)]
 enum Number {
     SignedFloat(f32),
@@ -255,7 +446,6 @@ impl<'a> Terminal<'a> {
     }
 }
 
-// ErrorKind::Custom(0) -> Error::NonTerminal
 fn terminal(input: &[u8]) -> IResult<&[u8], &[u8]> {
     let mut idx = 0_usize;
     for (x, c) in input.iter().enumerate() {
@@ -289,6 +479,54 @@ impl CompOperator {
     }
 }
 
+named!(remove_comments(&[u8]) -> Vec<&[u8]>,
+    many1!(
+        chain!(
+            before: comment_tag ~
+            comment: alt!(
+                recognize!(delimited!(char!('#'), is_not!("\n"), alt!(is_a!("\n") | eof ))) |
+                recognize!(delimited!(tag!("/*"), take_until_bytes!(b"*/"), tag!("*/")))
+            ) ? ,
+            || {
+                if before.len() > 0 {
+                    before
+                } else {
+                    &b"\n"[..]
+                }
+            }
+        )
+    )
+);
+
+fn comment_tag(input: &[u8]) -> IResult<&[u8], &[u8]> {
+    let mut comment = false;
+    let mut idx = 0_usize;
+    for (i, c) in input.iter().enumerate() {
+        if *c == b'#' {
+            idx = i;
+            break;
+        } else if *c == b'/' {
+            comment = true;
+        } else if comment {
+            if *c != b'*' {
+                comment = false;
+            } else {
+                idx = i - 1;
+                break;
+            }
+        }
+    }
+    IResult::Done(&input[idx..], &input[0..idx])
+}
+
+fn is_multispace(chr: u8) -> bool {
+    if chr == b' ' || chr == b'\t' || chr == b'\r' || chr == b'\n' {
+        true
+    } else {
+        false
+    }
+}
+
 macro_rules! assert_done_or_err {
     ($i:ident) => {{
         match $i {
@@ -299,6 +537,32 @@ macro_rules! assert_done_or_err {
         }
         assert!(!$i.is_err());
     }}
+}
+
+#[test]
+fn scanner() {
+    let source = b"
+        # one line comment
+        ( # first scope
+            ( # second scope
+                (let x, y)
+                professor[$Lucy,u=1]
+            )
+        )
+        /*
+            multi line
+            comment
+        */
+    ";
+    let parsed = b"{abcdfghi8763}";
+    let mut data = Vec::new();
+    let scanned = LexerData::scan(source, &mut data);
+    // println!("\n@error: {:?}", unsafe{ str::from_utf8_unchecked(&scanned[..]) });
+    //
+    // for (i, chr) in scanned.iter().enumerate() {
+    // let chr = **chr;
+    // assert_eq!(chr, parsed[i]);
+    // }
 }
 
 #[test]
@@ -370,55 +634,4 @@ fn parse_function() {
     let s4_res = func_decl(s4);
     assert_done_or_err!(s4_res);
     assert_eq!(s4_res.unwrap().1.variant, FuncVariants::NonRelational);
-}
-
-struct Scanner;
-impl Scanner {
-    /// Checks that the input is valid and removes unnecessary tokens.
-    fn scan<'b>(input: &'b [u8]) -> Vec<&'b u8> {
-        // TODO: when unstable on the std lib, check that bytes can be encoded as correct chars
-        let mut comment = false;
-        let remember = move |chr: &&u8| {
-            let chr = **chr;
-            if chr == b'\n' && comment {
-                comment = false;
-                false
-            } else if chr == b' ' || chr == b'\t' || chr == b'\r' || chr == b'\n' {
-                false
-            } else if chr == b'#' && !comment {
-                comment = true;
-                false
-            } else if !comment {
-                true
-            } else {
-                false
-            }
-        };
-        input.iter().filter(remember).collect::<Vec<_>>()
-    }
-}
-
-struct Parser;
-impl Parser {
-    fn parse(input: &[u8]) -> AST {
-        Scanner::scan(input);
-        AST::Assertion
-    }
-}
-
-#[test]
-fn scanner() {
-    let source = b"
-        # one line comment
-        abcd
-        fghi
-        8763
-    ";
-    let parsed = b"abcdfghi8763";
-    let scanned: Vec<_> = Scanner::scan(source);
-    // println!("\n@error: {:?}", unsafe{ str::from_utf8_unchecked(&scanned[..]) });
-    for (i, chr) in scanned.iter().enumerate() {
-        let chr = **chr;
-        assert_eq!(chr, parsed[i]);
-    }
 }

@@ -5,6 +5,7 @@ mod log_sentence;
 mod parser;
 
 use self::log_sentence::{Particle, LogSentence};
+use self::parser::{Parser};
 
 struct ParseResult<T, P>
     where T: IsTerm,
@@ -35,9 +36,12 @@ enum ParserState {
     Tell,
 }
 
-enum ParseErr {
-    Fail,
+#[derive(Debug)]
+pub enum ParseErr {
+    Failure,
     None,
+    EmptyScope,
+    Comments
 }
 
 /// Takes a string and returns the corresponding structured representing
@@ -45,8 +49,8 @@ enum ParseErr {
 /// at the same time, separated by newlines and/or curly braces. It includes
 /// a scanner and parser for the synthatical analysis which translate to the
 /// `program` in form of an object.
-fn logic_parser<T, U, P>(source: T, tell: bool) -> Result<ParseResult<U, P>, ParseErr>
-    where T: Into<String>,
+fn logic_parser<T, U, P>(source: &T, tell: bool) -> Result<ParseResult<U, P>, ParseErr>
+    where T: AsBytesSlice, // this should be a T convertible to a &[u8]
           U: IsTerm,
           P: Particle
 {
@@ -54,28 +58,10 @@ fn logic_parser<T, U, P>(source: T, tell: bool) -> Result<ParseResult<U, P>, Par
         false => ParserState::Ask,
         true => ParserState::Tell,
     };
-    let source: String = <T>::into(source);
-    let mut results = ParseResult::new();
-    let ast = AST::parse(&mut results, source);
+    let source: &[u8] = source.as_bytes();
+    let results = ParseResult::new();
+    let ast = Parser::parse(source);
     Ok(results)
-}
-
-enum AST {
-    Expr,
-    Stmt,
-    Rule,
-    Assertion,
-    Query,
-}
-
-impl AST {
-    fn parse<T: IsTerm, P: Particle>(_: &mut ParseResult<T, P>,
-                                     _: String)
-                                     -> Result<AST, ParseErr> {
-        // parse and walk the AST:
-        let ast = AST::Expr;
-        Ok(ast)
-    }
 }
 
 trait IsTerm {}
@@ -93,3 +79,7 @@ impl IsTerm for GroundedTerm {}
 struct FreeTerm {}
 
 impl IsTerm for FreeTerm {}
+
+pub trait AsBytesSlice {
+    fn as_bytes(&self) -> &[u8];
+}

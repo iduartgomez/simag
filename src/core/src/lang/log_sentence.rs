@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 
-use super::AST;
+use lang::parser::AST;
 
 /// Takes a parsed FOL sentence and creates an object with the embedded methods to resolve it.
 fn make_logic_sent<P: Particle>(ast: AST) -> LogSentence<P> {
