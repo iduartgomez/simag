@@ -1,4 +1,4 @@
-(* Grammar for the SIMAG declarative language / GRAKO definitions *)
+(* Grammar for the SIMAG declarative language / GRAKO definitions (outdated) *)
 
 @@comments			::	?/\*((?:.|\n)*?)\*|#(.*?)\n/?
 @@eol_comments 		::	/#.*?$/
@@ -17,13 +17,11 @@ icond_node			=	(terminal_node | icond_expr) ;
 comp_type			=	'(' {skol:skol_decl} (assertion:multi_assert | expr:comp_expr) ')' ;
 comp_expr			=	'(' lhs:expr_node op:logic_op rhs:expr_node ')' ;
 expr_node			=	(terminal_node | comp_expr) ;
-
 query				=	'(' {(vars:var_decl | skol:skol_decl)}+ query:terminal_node ')' ;
 
 var_decl = '(' 'let' @+:(term [':' op_arg]) {',' @+:(term [':' op_arg])} ')' ;
 skol_decl	=	'(' 'exists' @+:(term [':' op_arg]) {',' @+:(term [':' op_arg])} ')' ;
 terminal_node	=	(klass:class_decl | func:func_decl | assertion:multi_assert) ;
-
 multi_assert		= 	'(' (@+:class_decl | @+:func_decl)
 							{and_op (@+:class_decl | @+:func_decl)} ')'
 					|	'(' 'decl' (@+:class_decl | @+:func_decl)

@@ -37,11 +37,17 @@ enum ParserState {
 }
 
 #[derive(Debug)]
-pub enum ParseErr {
+pub enum ParseErr<'a> {
     Failure,
     None,
     EmptyScope,
-    Comments
+    Comments,
+    NotScope(&'a [u8]),
+    UnbalancedDelimiter(&'a [u8]),
+    IllegalChain(&'a [u8]),
+    NonTerminal(&'a [u8]),
+    NonNumber(&'a [u8]),
+    UnclosedComment(&'a [u8])
 }
 
 /// Takes a string and returns the corresponding structured representing

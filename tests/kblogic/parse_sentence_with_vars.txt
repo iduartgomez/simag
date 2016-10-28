@@ -1,13 +1,13 @@
 ((let x) (dean[x,u=1] |> professor[x,u=1]))
 ((let x) (professor[x,u=1] |> person[x,u=1]))
 {
-	((let x, y) 
+	((let x, y)
 	 ((professor[x,u=1] || dean[y,u=1])
 	   |> (fn::friend[y,u=1;x] && fn::knows[y,u=0;x])))
 }
 {
-	((let x, y) 
-	 ((person[x,u=1] && person[y,u=1] && fn::criticize[y,u=1;x]) 
+	((let x, y)
+	 ((person[x,u=1] && person[y,u=1] && fn::criticize[y,u=1;x])
 	  |> fn::friend[x,u=0;y]))
 }
 {
