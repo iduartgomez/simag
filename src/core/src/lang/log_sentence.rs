@@ -1,20 +1,14 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 
-use lang::parser::AST;
+use lang::parser::{ASTNode, IsTerm, Assert};
 
 /// Takes a parsed FOL sentence and creates an object with the embedded methods to resolve it.
-fn make_logic_sent<P: Particle>(ast: AST) -> LogSentence<P> {
+pub fn make_logic_sent<P: Particle>(ast: ASTNode) -> LogSentence<P> {
     fn traverse_ast() {
         unimplemented!()
     }
-    let sent = match ast {
-        AST::Expr => LogSentence::new(),
-        AST::Rule => LogSentence::new(),
-        AST::Query => LogSentence::new(),
-        _ => panic!(),
-    };
-    sent
+    LogSentence::new()
 }
 
 /// Object to store a first-order logic complex sentence.
@@ -243,31 +237,30 @@ impl<'a, P: Particle> Particle for LogicDisjunction<'a, P> {
 }
 
 #[derive(Debug)]
-struct LogicAtom<'a, P: 'a + Particle> {
+struct LogicAtom<'a, P: 'a + Particle, T: IsTerm> {
     depth: usize,
     cond: Condition,
     parent: &'a P,
-    results: [Solution; 2],
-    next: Vec<&'a P>,
+    pred: Assert<T>,
 }
 
-impl<'a, P: 'a + Particle> LogicAtom<'a, P> {
+impl<'a, P: 'a + Particle, T: IsTerm> LogicAtom<'a, P, T> {
     fn new(cond: Condition,
            depth: usize,
            parent: &'a P,
+           term: Assert<T>,
            args: Option<Vec<&str>>)
-           -> LogicAtom<'a, P> {
+           -> LogicAtom<'a, P, T> {
         LogicAtom {
             depth: depth,
             cond: cond,
             parent: parent,
-            results: [Solution::None; 2],
-            next: Vec::with_capacity(2),
+            pred: term,
         }
     }
 }
 
-impl<'a, P: 'a + Particle> Particle for LogicAtom<'a, P> {
+impl<'a, P: 'a + Particle, T: IsTerm> Particle for LogicAtom<'a, P, T> {
     fn solve_proof(&self, proof: usize) {}
 
     fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr> {
