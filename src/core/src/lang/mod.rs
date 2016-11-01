@@ -4,8 +4,7 @@
 mod log_sentence;
 mod parser;
 
-use self::parser::{Parser, ParseTree, FinalError, IsTerm};
-use self::log_sentence::Particle;
+use self::parser::{Parser, ParseTree, FinalError};
 
 pub enum ParserState {
     Ask,
@@ -27,10 +26,7 @@ impl ParserState {
 ///
 /// It includes a a scanner and parser for the synthatical analysis which translate
 /// to the `program` in form of a ParseResult to be feed to an Agent.
-fn logic_parser<'a, T, U, P>(source: String, tell: bool) -> Result<ParseTree<U, P>, FinalError>
-    where U: IsTerm,
-          P: Particle
-{
+fn logic_parser<'a>(source: String, tell: bool) -> Result<ParseTree, FinalError> {
     let parser_state = match tell {
         false => ParserState::Ask,
         true => ParserState::Tell,

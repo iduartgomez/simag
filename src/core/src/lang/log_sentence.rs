@@ -1,10 +1,10 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 
-use lang::parser::{ASTNode, IsTerm, Assert};
+use lang::parser::{ASTNode, Assert};
 
 /// Takes a parsed FOL sentence and creates an object with the embedded methods to resolve it.
-pub fn make_logic_sent<P: Particle>(ast: ASTNode) -> LogSentence<P> {
+pub fn make_logic_sent(ast: ASTNode) -> LogSentence {
     fn traverse_ast() {
         unimplemented!()
     }
@@ -21,15 +21,15 @@ pub fn make_logic_sent<P: Particle>(ast: ASTNode) -> LogSentence<P> {
 /// 1) the working knowledge-base
 /// 2) n strings which will subsitute the variables in the sentence
 ///    or a list of string.
-pub struct LogSentence<P: Particle> {
+pub struct LogSentence {
     depth: usize,
-    particles: Vec<P>,
-    produced: Vec<Box<LogSentence<P>>>,
+    particles: Vec<Particle>,
+    produced: Vec<Box<LogSentence>>,
     created: usize,
 }
 
-impl<P: Particle> LogSentence<P> {
-    fn new() -> LogSentence<P> {
+impl LogSentence {
+    fn new() -> LogSentence {
         LogSentence {
             depth: 0,
             particles: Vec::new(),
@@ -54,30 +54,30 @@ enum Solution {
     None,
 }
 
-pub trait Particle {
-    fn solve_proof(&self, proof: usize);
-    fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr>;
-    // fn resolve(&mut self, proof: usize, args: Option<Vec<&str>>);
-    // fn get_result(&self) -> Solution;
-    // fn return_val(&mut self);
-    // fn repr(&self) -> &str;
+pub enum Particle {
+    Atom(LogicAtom),
+    Conjunction(LogicConjunction),
+    Disjunction(LogicDisjunction),
+    Implication(LogicImplication),
+    Equivalence(LogicEquivalence),
+    Condition(LogicIndCond),
 }
 
 #[derive(Debug)]
-struct LogicIndCond<'a, P: 'a + Particle> {
+pub struct LogicIndCond {
     depth: usize,
     cond: Condition,
-    parent: &'a P,
+    parent: *const Particle,
     results: [Solution; 2],
-    next: Vec<&'a P>,
+    next: Vec<*const Particle>,
 }
 
-impl<'a, P: 'a + Particle> LogicIndCond<'a, P> {
+impl LogicIndCond {
     fn new(cond: Condition,
            depth: usize,
-           parent: &'a P,
+           parent: *const Particle,
            args: Option<Vec<&str>>)
-           -> LogicIndCond<'a, P> {
+           -> LogicIndCond {
         LogicIndCond {
             depth: depth,
             cond: cond,
@@ -86,9 +86,7 @@ impl<'a, P: 'a + Particle> LogicIndCond<'a, P> {
             next: Vec::with_capacity(2),
         }
     }
-}
 
-impl<'a, P: Particle> Particle for LogicIndCond<'a, P> {
     fn solve_proof(&self, proof: usize) {}
 
     fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr> {
@@ -97,20 +95,20 @@ impl<'a, P: Particle> Particle for LogicIndCond<'a, P> {
 }
 
 #[derive(Debug)]
-struct LogicEquivalence<'a, P: 'a + Particle> {
+pub struct LogicEquivalence {
     depth: usize,
     cond: Condition,
-    parent: &'a P,
+    parent: *const Particle,
     results: [Solution; 2],
-    next: Vec<&'a P>,
+    next: Vec<*const Particle>,
 }
 
-impl<'a, P: 'a + Particle> LogicEquivalence<'a, P> {
+impl LogicEquivalence {
     fn new(cond: Condition,
            depth: usize,
-           parent: &'a P,
+           parent: *const Particle,
            args: Option<Vec<&str>>)
-           -> LogicEquivalence<'a, P> {
+           -> LogicEquivalence {
         LogicEquivalence {
             depth: depth,
             cond: cond,
@@ -119,9 +117,7 @@ impl<'a, P: 'a + Particle> LogicEquivalence<'a, P> {
             next: Vec::with_capacity(2),
         }
     }
-}
 
-impl<'a, P: Particle> Particle for LogicEquivalence<'a, P> {
     fn solve_proof(&self, proof: usize) {}
 
     fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr> {
@@ -134,20 +130,20 @@ impl<'a, P: Particle> Particle for LogicEquivalence<'a, P> {
 }
 
 #[derive(Debug)]
-struct LogicImplication<'a, P: 'a + Particle> {
+pub struct LogicImplication {
     depth: usize,
     cond: Condition,
-    parent: &'a P,
+    parent: *const Particle,
     results: [Solution; 2],
-    next: Vec<&'a P>,
+    next: Vec<*const Particle>,
 }
 
-impl<'a, P: 'a + Particle> LogicImplication<'a, P> {
+impl LogicImplication {
     fn new(cond: Condition,
            depth: usize,
-           parent: &'a P,
+           parent: *const Particle,
            args: Option<Vec<&str>>)
-           -> LogicImplication<'a, P> {
+           -> LogicImplication {
         LogicImplication {
             depth: depth,
             cond: cond,
@@ -156,9 +152,7 @@ impl<'a, P: 'a + Particle> LogicImplication<'a, P> {
             next: Vec::with_capacity(2),
         }
     }
-}
 
-impl<'a, P: Particle> Particle for LogicImplication<'a, P> {
     fn solve_proof(&self, proof: usize) {}
 
     fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr> {
@@ -171,20 +165,20 @@ impl<'a, P: Particle> Particle for LogicImplication<'a, P> {
 }
 
 #[derive(Debug)]
-struct LogicConjunction<'a, P: 'a + Particle> {
+pub struct LogicConjunction {
     depth: usize,
     cond: Condition,
-    parent: &'a P,
+    parent: *const Particle,
     results: [Solution; 2],
-    next: Vec<&'a P>,
+    next: Vec<*const Particle>,
 }
 
-impl<'a, P: 'a + Particle> LogicConjunction<'a, P> {
+impl LogicConjunction {
     fn new(cond: Condition,
            depth: usize,
-           parent: &'a P,
+           parent: *const Particle,
            args: Option<Vec<&str>>)
-           -> LogicConjunction<'a, P> {
+           -> LogicConjunction {
         LogicConjunction {
             depth: depth,
             cond: cond,
@@ -193,9 +187,7 @@ impl<'a, P: 'a + Particle> LogicConjunction<'a, P> {
             next: Vec::with_capacity(2),
         }
     }
-}
 
-impl<'a, P: Particle> Particle for LogicConjunction<'a, P> {
     fn solve_proof(&self, proof: usize) {}
 
     fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr> {
@@ -204,20 +196,20 @@ impl<'a, P: Particle> Particle for LogicConjunction<'a, P> {
 }
 
 #[derive(Debug)]
-struct LogicDisjunction<'a, P: 'a + Particle> {
+pub struct LogicDisjunction {
     depth: usize,
     cond: Condition,
-    parent: &'a P,
+    parent: *const Particle,
     results: [Solution; 2],
-    next: Vec<&'a P>,
+    next: Vec<*const Particle>,
 }
 
-impl<'a, P: 'a + Particle> LogicDisjunction<'a, P> {
+impl LogicDisjunction {
     fn new(cond: Condition,
            depth: usize,
-           parent: &'a P,
+           parent: *const Particle,
            args: Option<Vec<&str>>)
-           -> LogicDisjunction<'a, P> {
+           -> LogicDisjunction {
         LogicDisjunction {
             depth: depth,
             cond: cond,
@@ -226,9 +218,7 @@ impl<'a, P: 'a + Particle> LogicDisjunction<'a, P> {
             next: Vec::with_capacity(2),
         }
     }
-}
 
-impl<'a, P: Particle> Particle for LogicDisjunction<'a, P> {
     fn solve_proof(&self, proof: usize) {}
 
     fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr> {
@@ -237,20 +227,20 @@ impl<'a, P: Particle> Particle for LogicDisjunction<'a, P> {
 }
 
 #[derive(Debug)]
-struct LogicAtom<'a, P: 'a + Particle, T: IsTerm> {
+pub struct LogicAtom {
     depth: usize,
     cond: Condition,
-    parent: &'a P,
-    pred: Assert<T>,
+    parent: *const Particle,
+    pred: Assert,
 }
 
-impl<'a, P: 'a + Particle, T: IsTerm> LogicAtom<'a, P, T> {
+impl LogicAtom {
     fn new(cond: Condition,
            depth: usize,
-           parent: &'a P,
-           term: Assert<T>,
+           parent: *const Particle,
+           term: Assert,
            args: Option<Vec<&str>>)
-           -> LogicAtom<'a, P, T> {
+           -> LogicAtom {
         LogicAtom {
             depth: depth,
             cond: cond,
@@ -258,9 +248,7 @@ impl<'a, P: 'a + Particle, T: IsTerm> LogicAtom<'a, P, T> {
             pred: term,
         }
     }
-}
 
-impl<'a, P: 'a + Particle, T: IsTerm> Particle for LogicAtom<'a, P, T> {
     fn solve_proof(&self, proof: usize) {}
 
     fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr> {

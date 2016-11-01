@@ -6,7 +6,7 @@ use nom::{is_digit, is_alphanumeric, eof};
 use nom;
 
 use lang::ParserState;
-use lang::log_sentence::{Particle};
+use lang::log_sentence::Particle;
 
 const ICOND_OP: &'static [u8] = b"|>";
 const AND_OP: &'static [u8] = b"&&";
@@ -17,15 +17,12 @@ const IMPL_OP: &'static [u8] = b"=>";
 pub struct Parser;
 impl Parser {
     /// Lexerless (mostly) recursive descent parser. Takes a string and outputs a correct ParseTree.
-    pub fn parse<T, P>(input: String, state: &ParserState) -> Result<ParseTree<T, P>, FinalError>
-        where T: IsTerm,
-              P: Particle
-    {
-        let mut store = Vec::new();
+    pub fn parse(input: String, state: &ParserState) -> Result<ParseTree, FinalError> {
         // store is a vec where the sequence of characters after cleaning up comments
         // will be stored; feed to an other fn to avoid lifetime issues (both original
         // input and the store have to have the same lifetime)
-        let first_scope = match Self::feed(&input.as_bytes(), &mut store) {
+        let mut store = Vec::new();
+        let first_scope = match Self::feed(input.as_bytes(), &mut store) {
             Ok(scope) => scope,
             Err(err) => return Err(FinalError::from(err)),
         };
@@ -105,6 +102,24 @@ impl<'a> From<ParseErr<'a>> for FinalError {
     }
 }
 
+pub enum ParseTree {
+    Assertion(Vec<Assert>),
+    Rule(Vec<Rule>),
+    Statement(Vec<Cognition>),
+    Void,
+}
+
+impl ParseTree {
+    fn process_ast<'a>(input: ASTNode, state: &ParserState) -> Result<ParseTree, ParseErr<'a>> {
+        let mut context = Context::new();
+        match input.is_assertion(&mut context) {
+            Some(a) => return Ok(a),
+            None => {}
+        }
+        Ok(ParseTree::Void)
+    }
+}
+
 struct Context<'a> {
     var_names: Vec<&'a str>,
 }
@@ -115,59 +130,29 @@ impl<'a> Context<'a> {
     }
 }
 
-pub enum ParseTree<T, P>
-    where T: IsTerm,
-          P: Particle
-{
-    Assertion(Vec<Assert<T>>),
-    Rule(Vec<Rule<P>>),
-    Statement(Vec<Cognition<P>>),
-    Void,
+pub struct Rule {
+    particles: Vec<Particle>,
 }
 
-impl<T, P> ParseTree<T, P>
-    where T: IsTerm,
-          P: Particle
-{
-    fn process_ast<'a>(input: ASTNode,
-                       state: &'a ParserState)
-                       -> Result<ParseTree<T, P>, ParseErr<'a>> {
-        let mut context = Context::new();
-        match input.is_assertion(&mut context) {
-            Some(a) => return Ok(a),
-            None => {}
-        }
-        Ok(ParseTree::Void)
-    }
-}
-
-pub trait IsTerm {
-    fn from_slice<'a>(other: &'a [u8]) -> Self;
-}
-
-pub struct Rule<P: Particle> {
-    particles: Vec<P>,
-}
-
-pub struct Cognition<P: Particle> {
-    particles: Vec<P>,
+pub struct Cognition {
+    particles: Vec<Particle>,
 }
 
 struct LogPredicate {}
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 struct GroundedTerm {}
 
-impl IsTerm for GroundedTerm {
+impl GroundedTerm {
     fn from_slice<'a>(other: &'a [u8]) -> GroundedTerm {
         GroundedTerm {}
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 struct FreeTerm {}
 
-impl IsTerm for FreeTerm {
+impl FreeTerm {
     fn from_slice<'a>(other: &'a [u8]) -> FreeTerm {
         FreeTerm {}
     }
@@ -181,9 +166,7 @@ pub struct ASTNode<'a> {
 }
 
 impl<'a> ASTNode<'a> {
-    fn is_assertion<T: IsTerm, P: Particle>(&self,
-                                            context: &mut Context)
-                                            -> Option<ParseTree<T, P>> {
+    fn is_assertion(&self, context: &mut Context) -> Option<ParseTree> {
         if self.vars.is_some() &&
            (self.logic_op.is_none() || !self.logic_op.as_ref().unwrap().is_and()) {
             return None;
@@ -201,9 +184,7 @@ enum Next<'a> {
 }
 
 impl<'a> Next<'a> {
-    fn is_assertion<T: IsTerm, P: Particle>(&self,
-                                            context: &mut Context)
-                                            -> Option<ParseTree<T, P>> {
+    fn is_assertion(&self, context: &mut Context) -> Option<ParseTree> {
         match self {
             &Next::Assert(ref decl) => {
                 match decl {
@@ -212,17 +193,17 @@ impl<'a> Next<'a> {
                             vec![Assert::ClassDecl(ClassDecl::from(decl, context))]))
                     }
                     &AssertBorrowed::FuncDecl(ref decl) => {
-                        Some(ParseTree::Assertion(
-                            vec![Assert::FuncDecl(FuncDecl::from(decl, context))]))
+                        Some(ParseTree::Assertion(vec![Assert::FuncDecl(FuncDecl::from(decl,
+                                                                                       context))]))
                     }
                 }
             }
             &Next::Chain(ref multi_decl) => {
-                let mut v0: Vec<Assert<T>> = Vec::with_capacity(multi_decl.len());
+                let mut v0: Vec<Assert> = Vec::with_capacity(multi_decl.len());
                 // chek that indeed all elements are indeed assertions
                 // avoid creating declarations prematurely
                 for decl in multi_decl {
-                    let d: Option<ParseTree<T, P>> = decl.is_assertion(context);
+                    let d: Option<ParseTree> = decl.is_assertion(context);
                     match d {
                         Some(ParseTree::Assertion(mut inner)) => {
                             for e in inner.drain(..) {
@@ -235,7 +216,7 @@ impl<'a> Next<'a> {
                 Some(ParseTree::Assertion(v0))
             }
             &Next::ASTNode(ref node) => {
-                let a: Option<ParseTree<T, P>> = (**node).is_assertion(context);
+                let a: Option<ParseTree> = (**node).is_assertion(context);
                 match a {
                     Some(ParseTree::Assertion(assert)) => Some(ParseTree::Assertion(assert)),
                     _ => None,
@@ -253,9 +234,9 @@ enum AssertBorrowed<'a> {
 }
 
 #[derive(Debug)]
-pub enum Assert<T: IsTerm> {
-    FuncDecl(FuncDecl<T>),
-    ClassDecl(ClassDecl<T>),
+pub enum Assert {
+    FuncDecl(FuncDecl),
+    ClassDecl(ClassDecl),
 }
 
 #[derive(Debug)]
@@ -265,7 +246,7 @@ enum VarDeclBorrowed<'a> {
 }
 
 // scope disambiguation infrastructure:
-fn scope<'a>(input: &'a [u8]) -> IResult<&[u8], Next<'a>> {
+fn scope<'a>(input: &'a [u8]) -> IResult<&'a [u8], Next<'a>> {
     // check that is actually an scope else fail
     let ot = tuple!(input, opt!(take_while!(is_multispace)), char!('('));
     let input = match ot {
@@ -615,15 +596,15 @@ struct FuncDeclBorrowed<'a> {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct FuncDecl<T: IsTerm> {
+pub struct FuncDecl {
     name: Terminal,
     args: Option<Vec<Arg>>,
-    op_args: Option<Vec<OpArg<T>>>,
+    op_args: Option<Vec<OpArg>>,
     variant: FuncVariants,
 }
 
-impl<'a, T: IsTerm> FuncDecl<T> {
-    fn from(other: &FuncDeclBorrowed<'a>, context: &mut Context) -> FuncDecl<T> {
+impl<'a> FuncDecl {
+    fn from(other: &FuncDeclBorrowed<'a>, context: &mut Context) -> FuncDecl {
         let args = match other.args {
             Some(ref oargs) => {
                 let mut v0 = Vec::with_capacity(oargs.len());
@@ -701,15 +682,15 @@ struct ClassDeclBorrowed<'a> {
     op_args: Option<Vec<OpArgBorrowed<'a>>>,
 }
 
-#[derive(Debug, PartialEq)]
-pub struct ClassDecl<T: IsTerm> {
+#[derive(Debug, PartialEq, Clone)]
+pub struct ClassDecl {
     name: Terminal,
     args: Vec<Arg>,
-    op_args: Option<Vec<OpArg<T>>>,
+    op_args: Option<Vec<OpArg>>,
 }
 
-impl<'a, T: IsTerm> ClassDecl<T> {
-    fn from(other: &ClassDeclBorrowed<'a>, context: &mut Context) -> ClassDecl<T> {
+impl<'a> ClassDecl {
+    fn from(other: &ClassDeclBorrowed<'a>, context: &mut Context) -> ClassDecl {
         let args = {
             let mut v0 = Vec::with_capacity(other.args.len());
             for e in &other.args {
@@ -749,7 +730,7 @@ struct ArgBorrowed<'a> {
     uval: Option<UVal>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 struct Arg {
     term: Terminal,
     uval: Option<UVal>,
@@ -801,14 +782,14 @@ struct OpArgBorrowed<'a> {
     comp: Option<(CompOperator, OpArgTermBorrowed<'a>)>,
 }
 
-#[derive(Debug, PartialEq)]
-struct OpArg<T: IsTerm> {
-    term: OpArgTerm<T>,
-    comp: Option<(CompOperator, OpArgTerm<T>)>,
+#[derive(Debug, PartialEq, Clone)]
+struct OpArg {
+    term: OpArgTerm,
+    comp: Option<(CompOperator, OpArgTerm)>,
 }
 
-impl<'a, T: IsTerm> OpArg<T> {
-    fn from(other: &OpArgBorrowed<'a>, context: &mut Context) -> OpArg<T> {
+impl<'a> OpArg {
+    fn from(other: &OpArgBorrowed<'a>, context: &mut Context) -> OpArg {
         let comp = match other.comp {
             Some((op, ref tors)) => Some((op, OpArgTerm::from(&tors, context))),
             None => None,
@@ -858,16 +839,18 @@ enum OpArgTermBorrowed<'a> {
     String(&'a [u8]),
 }
 
-#[derive(Debug, PartialEq)]
-enum OpArgTerm<T: IsTerm> {
-    Terminal(T),
+#[derive(Debug, PartialEq, Clone)]
+enum OpArgTerm {
+    Terminal(Terminal),
     String(String),
 }
 
-impl<'a, T: IsTerm> OpArgTerm<T> {
-    fn from(other: &OpArgTermBorrowed<'a>, context: &mut Context) -> OpArgTerm<T> {
+impl<'a> OpArgTerm {
+    fn from(other: &OpArgTermBorrowed<'a>, context: &mut Context) -> OpArgTerm {
         match *other {
-            OpArgTermBorrowed::Terminal(slice) => OpArgTerm::Terminal(<T>::from_slice(slice)),
+            OpArgTermBorrowed::Terminal(slice) => {
+                OpArgTerm::Terminal(Terminal::from_slice(slice, context))
+            }
             OpArgTermBorrowed::String(slice) => {
                 OpArgTerm::String(String::from_utf8_lossy(slice).into_owned())
             }
@@ -985,7 +968,7 @@ impl<'a> TerminalBorrowed<'a> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 enum Terminal {
     FreeTerm(FreeTerm),
     GroundedTerm(GroundedTerm),
@@ -994,6 +977,16 @@ enum Terminal {
 impl<'a> Terminal {
     fn from(other: &TerminalBorrowed<'a>, context: &mut Context) -> Terminal {
         let &TerminalBorrowed(s) = other;
+        unsafe {
+            if context.var_names.contains(&str::from_utf8_unchecked(s)) {
+                Terminal::FreeTerm(FreeTerm::from_slice(s))
+            } else {
+                Terminal::GroundedTerm(GroundedTerm::from_slice(s))
+            }
+        }
+    }
+
+    fn from_slice(s: &[u8], context: &mut Context) -> Terminal {
         unsafe {
             if context.var_names.contains(&str::from_utf8_unchecked(s)) {
                 Terminal::FreeTerm(FreeTerm::from_slice(s))
@@ -1045,7 +1038,7 @@ impl CompOperator {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum LogicOperator {
     ICond,
     And,
@@ -1162,7 +1155,7 @@ fn parser_ast() {
         )
     ");
     let state = ParserState::Tell;
-    Parser::parse(source, state);
+    // let p: Result<ParseTree<_, _>, FinalError> = Parser::parse(source, &state);
 }
 
 #[test]
@@ -1264,7 +1257,7 @@ fn preliminary_ast() {
                             assert_eq!(s2_1.logic_op.as_ref().unwrap(),
                                        &LogicOperator::ICond);
                             match s2_1.next {
-                                Next::Assert(Assert::ClassDecl(_)) => {}
+                                Next::Assert(AssertBorrowed::ClassDecl(_)) => {}
                                 _ => panic!(),
                             }
                         }
@@ -1319,10 +1312,10 @@ fn parse_predicate() {
     assert!(s3_res.args[0].uval.is_some());
     assert_eq!(
         s3_res.op_args.as_ref().unwrap(),
-        &vec![OpArgBorrowed{term: OpArgTermBorrowed::TerminalBorrowed(b"t1"),
+        &vec![OpArgBorrowed{term: OpArgTermBorrowed::Terminal(b"t1"),
                     comp: Some((CompOperator::Equal, OpArgTermBorrowed::String(b"now")))},
-              OpArgBorrowed{term: OpArgTermBorrowed::TerminalBorrowed(b"t2"),
-                    comp: Some((CompOperator::Equal, OpArgTermBorrowed::TerminalBorrowed(b"t1")))}]
+              OpArgBorrowed{term: OpArgTermBorrowed::Terminal(b"t2"),
+                    comp: Some((CompOperator::Equal, OpArgTermBorrowed::Terminal(b"t1")))}]
     );
 
     let s4 = b"animal(t=\"2015.07.05.11.28\")[cow, u=1; brown, u=0.5]";
@@ -1332,8 +1325,9 @@ fn parse_predicate() {
     assert_eq!(s4_res.args[1].term, TerminalBorrowed(b"brown"));
     assert!(s4_res.op_args.is_some());
     assert_eq!(s4_res.op_args.as_ref().unwrap(),
-        &vec![OpArgBorrowed{term: OpArgTermBorrowed::TerminalBorrowed(b"t"),
-                    comp: Some((CompOperator::Equal, OpArgTermBorrowed::String(b"2015.07.05.11.28")))}]);
+        &vec![OpArgBorrowed{term: OpArgTermBorrowed::Terminal(b"t"),
+                    comp: Some((CompOperator::Equal,
+                                OpArgTermBorrowed::String(b"2015.07.05.11.28")))}]);
 }
 
 #[test]
