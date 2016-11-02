@@ -101,7 +101,7 @@ class ParseResults(object):
         if not hasattr(self, '_queries'):
             setattr(self, '_queries', [])
         return self._queries
-    
+
 def logic_parser(string, tell=True):
     """Takes a string and returns the corresponding structured representing
     object program for the logic function. It can parse several statements

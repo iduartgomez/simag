@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 
-mod log_sentence;
+mod logsent;
 mod parser;
 
 use self::parser::{Parser, ParseTree, FinalError};
@@ -26,7 +26,7 @@ impl ParserState {
 ///
 /// It includes a a scanner and parser for the synthatical analysis which translate
 /// to the `program` in form of a ParseResult to be feed to an Agent.
-fn logic_parser<'a>(source: String, tell: bool) -> Result<ParseTree, FinalError> {
+fn logic_parser<'a>(source: String, tell: bool) -> Result<Vec<ParseTree>, FinalError> {
     let parser_state = match tell {
         false => ParserState::Ask,
         true => ParserState::Tell,

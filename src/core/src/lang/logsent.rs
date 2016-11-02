@@ -39,7 +39,7 @@ impl LogSentence {
     }
 }
 
-pub enum SolveErr {
+enum SolveErr {
     AssertionError(String),
 }
 
@@ -54,7 +54,7 @@ enum Solution {
     None,
 }
 
-pub enum Particle {
+enum Particle {
     Atom(LogicAtom),
     Conjunction(LogicConjunction),
     Disjunction(LogicDisjunction),
@@ -64,7 +64,7 @@ pub enum Particle {
 }
 
 #[derive(Debug)]
-pub struct LogicIndCond {
+struct LogicIndCond {
     depth: usize,
     cond: Condition,
     parent: *const Particle,
@@ -95,7 +95,7 @@ impl LogicIndCond {
 }
 
 #[derive(Debug)]
-pub struct LogicEquivalence {
+struct LogicEquivalence {
     depth: usize,
     cond: Condition,
     parent: *const Particle,
@@ -130,7 +130,7 @@ impl LogicEquivalence {
 }
 
 #[derive(Debug)]
-pub struct LogicImplication {
+struct LogicImplication {
     depth: usize,
     cond: Condition,
     parent: *const Particle,
@@ -165,7 +165,7 @@ impl LogicImplication {
 }
 
 #[derive(Debug)]
-pub struct LogicConjunction {
+struct LogicConjunction {
     depth: usize,
     cond: Condition,
     parent: *const Particle,
@@ -196,7 +196,7 @@ impl LogicConjunction {
 }
 
 #[derive(Debug)]
-pub struct LogicDisjunction {
+struct LogicDisjunction {
     depth: usize,
     cond: Condition,
     parent: *const Particle,
@@ -227,7 +227,7 @@ impl LogicDisjunction {
 }
 
 #[derive(Debug)]
-pub struct LogicAtom {
+struct LogicAtom {
     depth: usize,
     cond: Condition,
     parent: *const Particle,

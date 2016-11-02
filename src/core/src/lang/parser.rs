@@ -6,7 +6,7 @@ use nom::{is_digit, is_alphanumeric, eof};
 use nom;
 
 use lang::ParserState;
-use lang::log_sentence::Particle;
+use lang::logsent::LogSentence;
 
 const ICOND_OP: &'static [u8] = b"|>";
 const AND_OP: &'static [u8] = b"&&";
@@ -17,32 +17,28 @@ const IMPL_OP: &'static [u8] = b"=>";
 pub struct Parser;
 impl Parser {
     /// Lexerless (mostly) recursive descent parser. Takes a string and outputs a correct ParseTree.
-    pub fn parse(input: String, state: &ParserState) -> Result<ParseTree, FinalError> {
+    pub fn parse(input: String, state: &ParserState) -> Result<Vec<ParseTree>, FinalError> {
         // store is a vec where the sequence of characters after cleaning up comments
         // will be stored; feed to an other fn to avoid lifetime issues (both original
         // input and the store have to have the same lifetime)
         let mut store = Vec::new();
-        let first_scope = match Self::feed(input.as_bytes(), &mut store) {
-            Ok(scope) => scope,
+        let scopes = match Self::feed(input.as_bytes(), &mut store) {
+            Ok(scopes) => scopes,
             Err(err) => return Err(FinalError::from(err)),
         };
-        // walk the preliminary AST output and, if correct, and output a final parse tree
-        match ParseTree::process_ast(first_scope, state) {
-            Err(err) => return Err(FinalError::from(err)),
-            Ok(ast) => Ok(ast),
+        // walk the AST output and, if correct, output a final parse tree
+        let mut parse_trees = Vec::new();
+        for s in scopes {
+            match ParseTree::process_ast(s, state) {
+                Err(err) => return Err(FinalError::from(err)),
+                Ok(ast) => parse_trees.push(ast),
+            }
         }
+        Ok(parse_trees)
     }
 
-    /// First pass: will tokenize and output a preliminary AST
-    fn feed<'a>(input: &'a [u8], p2: &'a mut Vec<u8>) -> Result<ASTNode<'a>, ParseErr<'a>> {
-        match Parser::pass1(input, p2) {
-            Err(err) => Err(ParseErr::SyntaxError(Box::new(err))),
-            Ok(Next::ASTNode(first_scope)) => Ok(*first_scope),
-            _ => panic!(),
-        }
-    }
-
-    fn pass1<'a>(input: &'a [u8], p2: &'a mut Vec<u8>) -> Result<Next<'a>, ParseErr<'a>> {
+    /// First pass: will tokenize and output an AST
+    fn feed<'a>(input: &'a [u8], p2: &'a mut Vec<u8>) -> Result<Vec<Next<'a>>, ParseErr<'a>> {
         // clean up every comment to facilitate further parsing
         let p1 = match remove_comments(input) {
             IResult::Done(_, done) => done,
@@ -56,21 +52,27 @@ impl Parser {
         }
         // separate by scopes; everything inside a scope is either an other scope,
         // a var declaration, an operator or a terminal AST node;
-        // scopes are linked by logical operators, and the terminal nodes contain
-        // function and/or class declarations (which can be chained by AND operators)
-        match scope(&p2[..]) {
-            IResult::Done(_, d) => Ok(d),
-            IResult::Error(nom::Err::Position(t, p)) => {
-                match (t, p) {
-                    (ErrorKind::Custom(0), p) => Err(ParseErr::NonTerminal(p)),
-                    (ErrorKind::Custom(1), p) => Err(ParseErr::NonNumber(p)),
-                    (ErrorKind::Custom(11), p) => Err(ParseErr::NotScope(p)),
-                    (ErrorKind::Custom(12), p) => Err(ParseErr::UnbalancedDelimiter(p)),
-                    (ErrorKind::Custom(15), p) => Err(ParseErr::IllegalChain(p)),
-                    (_, p) => Err(ParseErr::SyntaxError1(p)),
+        // inner scopes are linked by logical operators, and the terminal nodes contain
+        // function and/or class declarations (which can be chained by AND operators);
+        // a program consist of one ore more scopes (each representing a compounded expression)
+        let scopes = get_blocks(&p2[..]);
+        if scopes.is_err() {
+            match scopes.unwrap_err() {
+                nom::Err::Position(t, p) => {
+                    match (t, p) {
+                        (ErrorKind::Custom(0), p) => return Err(ParseErr::NonTerminal(p)),
+                        (ErrorKind::Custom(1), p) => return Err(ParseErr::NonNumber(p)),
+                        (ErrorKind::Custom(11), p) => return Err(ParseErr::NotScope(p)),
+                        (ErrorKind::Custom(12), p) => return Err(ParseErr::UnbalDelim(p)),
+                        (ErrorKind::Custom(15), p) => return Err(ParseErr::IllegalChain(p)),
+                        (_, p) => return Err(ParseErr::SyntaxError1(p)),
+                    }
                 }
+                _ => return Err(ParseErr::SyntaxError0),
             }
-            _ => Err(ParseErr::SyntaxError0),
+        } else {
+            let (_, scopes) = scopes.unwrap();
+            Ok(scopes)
         }
     }
 }
@@ -82,7 +84,8 @@ enum ParseErr<'a> {
     SyntaxError0,
     SyntaxError1(&'a [u8]),
     NotScope(&'a [u8]),
-    UnbalancedDelimiter(&'a [u8]),
+    UnbalDelim(&'a [u8]),
+    ExpectOpenDelim(&'a [u8]),
     IllegalChain(&'a [u8]),
     NonTerminal(&'a [u8]),
     NonNumber(&'a [u8]),
@@ -104,17 +107,34 @@ impl<'a> From<ParseErr<'a>> for FinalError {
 
 pub enum ParseTree {
     Assertion(Vec<Assert>),
-    Rule(Vec<Rule>),
-    Statement(Vec<Cognition>),
+    Expr(LogSentence),
+    IExpr(LogSentence),
+    Rule(LogSentence),
     Void,
 }
 
 impl ParseTree {
-    fn process_ast<'a>(input: ASTNode, state: &ParserState) -> Result<ParseTree, ParseErr<'a>> {
+    fn process_ast<'a>(input: Next, state: &ParserState) -> Result<ParseTree, ParseErr<'a>> {
+        let input = match input {
+            Next::ASTNode(val) => val,
+            _ => unimplemented!(),
+        };
         let mut context = Context::new();
-        match input.is_assertion(&mut context) {
-            Some(a) => return Ok(a),
-            None => {}
+        let out = input.is_assertion(&mut context);
+        if out.is_some() {
+            return out.ok_or(ParseErr::None);
+        }
+        let out = input.is_iexpr(&mut context);
+        if out.is_some() {
+            return out.ok_or(ParseErr::None);
+        }
+        let out = input.is_expr(&mut context);
+        if out.is_some() {
+            return out.ok_or(ParseErr::None);
+        }
+        let out = input.is_rule(&mut context);
+        if out.is_some() {
+            return out.ok_or(ParseErr::None);
         }
         Ok(ParseTree::Void)
     }
@@ -129,16 +149,6 @@ impl<'a> Context<'a> {
         Context { var_names: Vec::new() }
     }
 }
-
-pub struct Rule {
-    particles: Vec<Particle>,
-}
-
-pub struct Cognition {
-    particles: Vec<Particle>,
-}
-
-struct LogPredicate {}
 
 #[derive(Debug, PartialEq, Clone)]
 struct GroundedTerm {}
@@ -172,6 +182,18 @@ impl<'a> ASTNode<'a> {
             return None;
         }
         self.next.is_assertion(context)
+    }
+
+    fn is_iexpr(&self, context: &mut Context) -> Option<ParseTree> {
+        None
+    }
+
+    fn is_expr(&self, context: &mut Context) -> Option<ParseTree> {
+        None
+    }
+
+    fn is_rule(&self, context: &mut Context) -> Option<ParseTree> {
+        None
     }
 }
 
@@ -245,18 +267,67 @@ enum VarDeclBorrowed<'a> {
     Skolem(SkolemBorrowed<'a>),
 }
 
+fn get_blocks<'a>(input: &'a [u8]) -> IResult<&'a [u8], Vec<Next<'a>>> {
+    let input = remove_multispace(input);
+    if input.len() == 0 {
+        // empty program
+        return IResult::Done(&b""[..], vec![]);
+    }
+    // find the positions of the closing delimiters and try until it fails
+    let mut results = Vec::new();
+    let mut mcd = Vec::new();
+    let mut lp = 0;
+    let mut rp = 0;
+    let mut slp = -1_i64;
+    for (i, c) in input.iter().enumerate() {
+        if *c == b'(' {
+            lp += 1;
+            if slp < 0 {
+                slp = i as i64;
+            }
+        } else if *c == b')' {
+            rp += 1;
+            if rp == lp {
+                if i + 1 < input.len() {
+                    mcd.push((slp as usize, i + 1));
+                } else {
+                    mcd.push((slp as usize, input.len() - 1));
+                }
+                slp = -1;
+            }
+        }
+    }
+    if lp != rp {
+        return IResult::Error(nom::Err::Position(ErrorKind::Custom(12), input));
+    } else if mcd.len() == 0 {
+        return IResult::Error(nom::Err::Position(ErrorKind::Custom(11), input));
+    }
+    for _ in 0..mcd.len() {
+        let (lp, rp) = mcd.pop().unwrap();
+        match scope(&input[lp..rp]) {
+            IResult::Done(r, done) => results.push(done),
+            IResult::Error(err) => return IResult::Error(err),
+            IResult::Incomplete(err) => return IResult::Error(nom::Err::Code(ErrorKind::Count)),
+        }
+    }
+    if results.len() == 0 {
+        return IResult::Error(nom::Err::Position(ErrorKind::Custom(11), input));
+    }
+    IResult::Done(&b""[..], results)
+}
+
 // scope disambiguation infrastructure:
 fn scope<'a>(input: &'a [u8]) -> IResult<&'a [u8], Next<'a>> {
-    // check that is actually an scope else fail
-    let ot = tuple!(input, opt!(take_while!(is_multispace)), char!('('));
-    let input = match ot {
+    // check that it is indeed an scope
+    let od = tuple!(input, opt!(take_while!(is_multispace)), char!('('));
+    let input = match od {
         IResult::Done(rest, _) => rest,
         _ => return IResult::Error(nom::Err::Position(ErrorKind::Custom(11), input)),
     };
     // try to get scope vars
     let (offset, vars) = take_vars(input);
     // check for inner scopes, fail if unbalanced
-    let (rest, rest_l, rest_r, is_endnode) = match check_balanced(offset, input) {
+    let (rest, rest_l, rest_r, is_endnode) = match take_rest_scope(offset, input) {
         Err(err) => return IResult::Error(err),
         Ok((rest, rest_l, rest_r, is_endnode)) => (rest, rest_l, rest_r, is_endnode),
     };
@@ -386,9 +457,9 @@ fn take_vars(input: &[u8]) -> (usize, Option<Vec<VarDeclBorrowed>>) {
     (offset, vars)
 }
 
-fn check_balanced(offset: usize,
-                  input: &[u8])
-                  -> Result<(&[u8], &[u8], &[u8], bool), nom::Err<&[u8]>> {
+fn take_rest_scope(offset: usize,
+                   input: &[u8])
+                   -> Result<(&[u8], &[u8], &[u8], bool), nom::Err<&[u8]>> {
     let mut lp = 0;
     let mut rp = 0;
     let mut cd = 0;
@@ -397,7 +468,7 @@ fn check_balanced(offset: usize,
     let mut in_func = false;
     for (i, c) in input.iter().enumerate() {
         if *c == b'(' {
-            if is_term_char(input[i - 1]) {
+            if i > 0 && is_term_char(input[i - 1]) {
                 in_func = true;
                 continue;
             }
@@ -413,9 +484,6 @@ fn check_balanced(offset: usize,
         } else if *c == b')' && in_func {
             in_func = false;
         }
-    }
-    if (lp != (rp - 1)) && !(lp == 0 && rp == 0) {
-        return Err(nom::Err::Position(ErrorKind::Custom(12), input));
     }
     let is_endnode;
     if offset > 0 {
@@ -434,23 +502,47 @@ fn check_balanced(offset: usize,
     let rest;
     if offset > 0 {
         rest = &input[offset..cd];
-        if offset < pcd {
-            rest_r = &input[pcd + 1..cd - 1];
+        if ((nod > pcd) && (pcd > offset)) || ((nod > offset) && (offset > pcd)) {
+            return Err(nom::Err::Position(ErrorKind::Custom(15), input));
+        } else if is_endnode {
+            rest_r = &input[offset..cd];
+            rest_l = &input[0..0];
         } else {
-            rest_r = &input[offset..cd - 1];
-        }
-        if offset < nod {
-            rest_l = &input[nod..pcd + 1];
-        } else {
-            rest_l = &input[offset..pcd + 1];
+            if offset < pcd {
+                if pcd + 1 > cd - 1 {
+                    rest_r = &input[pcd..cd];
+                } else {
+                    rest_r = &input[pcd + 1..cd - 1];
+                }
+            } else {
+                if offset > cd - 1 {
+                    rest_r = &b""[..]
+                } else {
+                    rest_r = &input[offset..cd - 1];
+                }
+            }
+            if offset < nod {
+                rest_l = &input[nod..pcd + 1];
+            } else {
+                rest_l = &input[offset..pcd + 1];
+            }
         }
     } else {
         if nod > pcd {
             return Err(nom::Err::Position(ErrorKind::Custom(15), input));
+        } else if is_endnode {
+            rest = &input[0..cd];
+            rest_r = &input[0..cd];
+            rest_l = &input[0..0];
+        } else {
+            rest = &input[0..cd];
+            if pcd + 1 > cd - 1 {
+                rest_r = &input[pcd..cd];
+            } else {
+                rest_r = &input[pcd + 1..cd - 1];
+            }
+            rest_l = &input[nod..pcd + 1];
         }
-        rest = &input[0..cd];
-        rest_r = &input[pcd + 1..cd - 1];
-        rest_l = &input[nod..pcd + 1];
     }
     Ok((rest, rest_l, rest_r, is_endnode))
 }
@@ -1145,7 +1237,7 @@ fn is_multispace(chr: u8) -> bool {
 }
 
 #[test]
-fn parser_ast() {
+fn parse_tree() {
     let source = String::from("
         (   ( let x y z )
             (
@@ -1155,11 +1247,11 @@ fn parser_ast() {
         )
     ");
     let state = ParserState::Tell;
-    // let p: Result<ParseTree<_, _>, FinalError> = Parser::parse(source, &state);
+    let p = Parser::parse(source, &state);
 }
 
 #[test]
-fn preliminary_ast() {
+fn ast() {
     // remove comments:
     let source = b"
         # one line comment
@@ -1175,7 +1267,7 @@ fn preliminary_ast() {
         */
     ";
     let mut data = Vec::new();
-    let scanned = Parser::pass1(source, &mut data);
+    let scanned = Parser::feed(source, &mut data);
     assert!(scanned.is_ok());
 
     // split per scopes and declarations
@@ -1183,35 +1275,35 @@ fn preliminary_ast() {
         ( american[x,u=1] && ( weapon[y,u=1] && hostile[z,u=1 ) )
     ";
     let mut data = Vec::new();
-    let scanned = Parser::pass1(source, &mut data);
+    let scanned = Parser::feed(source, &mut data);
     assert!(scanned.is_ok());
 
     let source = b"
         ( american[x,u=1] && hostile[z,u=1] && ( weapon[y,u=1]) )
     ";
     let mut data = Vec::new();
-    let scanned = Parser::pass1(source, &mut data);
+    let scanned = Parser::feed(source, &mut data);
     assert!(scanned.is_err());
 
     let source = b"
         ( ( american[x,u=1] && hostile[z,u=1 ) && fn::criticize(t=\"now\")[$John,u=1;$Lucy] )
     ";
     let mut data = Vec::new();
-    let scanned = Parser::pass1(source, &mut data);
+    let scanned = Parser::feed(source, &mut data);
     assert!(scanned.is_ok());
 
     let source = b"
         ( ( american[x,u=1] ) && fn::criticize(t=\"now\")[$John,u=1;$Lucy] && weapon[y,u=1] )
     ";
     let mut data = Vec::new();
-    let scanned = Parser::pass1(source, &mut data);
+    let scanned = Parser::feed(source, &mut data);
     assert!(scanned.is_err());
 
     let source = b"
         ( ( ( american[x,u=1] ) ) && hostile[z,u=1] && ( ( weapon[y,u=1] ) ) )
     ";
     let mut data = Vec::new();
-    let scanned = Parser::pass1(source, &mut data);
+    let scanned = Parser::feed(source, &mut data);
     match scanned.unwrap_err() {
         ParseErr::IllegalChain(_) => {}
         _ => panic!(),
@@ -1221,13 +1313,12 @@ fn preliminary_ast() {
         ( american[x,u=1] && ( ( hostile[z,u=1] ) ) && weapon[y,u=1] )
     ";
     let mut data = Vec::new();
-    let scanned = Parser::pass1(source, &mut data);
+    let scanned = Parser::feed(source, &mut data);
     match scanned.unwrap_err() {
         ParseErr::IllegalChain(_) => {}
         _ => panic!(),
     }
 
-    // println!("\n@error: {:?}", unsafe{ str::from_utf8_unchecked(&input[..]) });
     let source = b"
         (   ( let x y z )
             (
@@ -1237,38 +1328,46 @@ fn preliminary_ast() {
         )
     ";
     let mut data = Vec::new();
-    let scanned = Parser::pass1(source, &mut data);
+    let scanned = Parser::feed(source, &mut data);
     assert!(scanned.is_ok());
-    let scanned = scanned.unwrap();
-    match scanned {
-        Next::ASTNode(s0) => {
-            assert!(s0.vars.is_some());
-            match s0.next {
-                Next::Chain(s1) => {
-                    assert_eq!(s1.len(), 2);
-                    match s1[0] {
-                        Next::Chain(ref s2_0) => {
-                            assert_eq!(s2_0.len(), 4);
-                        }
-                        _ => panic!(),
-                    }
-                    match s1[1] {
-                        Next::ASTNode(ref s2_1) => {
-                            assert_eq!(s2_1.logic_op.as_ref().unwrap(),
-                                       &LogicOperator::ICond);
-                            match s2_1.next {
-                                Next::Assert(AssertBorrowed::ClassDecl(_)) => {}
-                                _ => panic!(),
-                            }
-                        }
-                        _ => panic!(),
-                    };
+    let s0 = scanned.unwrap().pop().unwrap();
+    let s0 = match s0 {
+        Next::ASTNode(val) => *val,
+        _ => panic!(),
+    };
+    assert!(s0.vars.is_some());
+    match s0.next {
+        Next::Chain(s1) => {
+            assert_eq!(s1.len(), 2);
+            match s1[0] {
+                Next::Chain(ref s2_0) => {
+                    assert_eq!(s2_0.len(), 4);
                 }
                 _ => panic!(),
             }
+            match s1[1] {
+                Next::ASTNode(ref s2_1) => {
+                    assert_eq!(s2_1.logic_op.as_ref().unwrap(),
+                               &LogicOperator::ICond);
+                    match s2_1.next {
+                        Next::Assert(AssertBorrowed::ClassDecl(_)) => {}
+                        _ => panic!(),
+                    }
+                }
+                _ => panic!(),
+            };
         }
         _ => panic!(),
     }
+
+    let source = b"
+    ((let x y) ((american[x,u=1] && hostile[z,u=1]) |> criminal[x,u=1]))
+    ((let x y) ((american[x,u=1] && hostile[z,u=1]) |> criminal[x,u=1]))
+    ((let x y) ((american[x,u=1] && hostile[z,u=1]) |> criminal[x,u=1]))
+    ";
+    let mut data = Vec::new();
+    let scanned = Parser::feed(source, &mut data);
+    assert!(scanned.is_ok());
 }
 
 macro_rules! assert_done_or_err {
