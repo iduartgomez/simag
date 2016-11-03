@@ -6,7 +6,7 @@ use nom::{is_digit, is_alphanumeric, eof};
 use nom;
 
 use lang::ParserState;
-use lang::logsent::LogSentence;
+use lang::logsent::*;
 
 const ICOND_OP: &'static [u8] = b"|>";
 const AND_OP: &'static [u8] = b"&&";
@@ -17,33 +17,33 @@ const IMPL_OP: &'static [u8] = b"=>";
 pub struct Parser;
 impl Parser {
     /// Lexerless (mostly) recursive descent parser. Takes a string and outputs a correct ParseTree.
-    pub fn parse(input: String, state: &ParserState) -> Result<Vec<ParseTree>, FinalError> {
+    pub fn parse(input: String, state: &ParserState) -> Result<Vec<ParseTree>, ParseErrF> {
         // store is a vec where the sequence of characters after cleaning up comments
         // will be stored; feed to an other fn to avoid lifetime issues (both original
         // input and the store have to have the same lifetime)
         let mut store = Vec::new();
         let scopes = match Self::feed(input.as_bytes(), &mut store) {
             Ok(scopes) => scopes,
-            Err(err) => return Err(FinalError::from(err)),
+            Err(err) => return Err(ParseErrF::from(err)),
         };
         // walk the AST output and, if correct, output a final parse tree
         let mut parse_trees = Vec::new();
-        for s in scopes {
-            match ParseTree::process_ast(s, state) {
-                Err(err) => return Err(FinalError::from(err)),
-                Ok(ast) => parse_trees.push(ast),
+        for ast in scopes {
+            match ParseTree::process_ast(ast, state) {
+                Err(err) => return Err(ParseErrF::from(err)),
+                Ok(tree) => parse_trees.push(tree),
             }
         }
         Ok(parse_trees)
     }
 
     /// First pass: will tokenize and output an AST
-    fn feed<'a>(input: &'a [u8], p2: &'a mut Vec<u8>) -> Result<Vec<Next<'a>>, ParseErr<'a>> {
+    fn feed<'a>(input: &'a [u8], p2: &'a mut Vec<u8>) -> Result<Vec<Next<'a>>, ParseErrB<'a>> {
         // clean up every comment to facilitate further parsing
         let p1 = match remove_comments(input) {
             IResult::Done(_, done) => done,
-            IResult::Error(nom::Err::Position(_, p)) => return Err(ParseErr::UnclosedComment(p)),
-            _ => return Err(ParseErr::SyntaxError0),
+            IResult::Error(nom::Err::Position(_, p)) => return Err(ParseErrB::UnclosedComment(p)),
+            _ => return Err(ParseErrB::SyntaxError0),
         };
         for v in p1 {
             for b in v {
@@ -60,15 +60,15 @@ impl Parser {
             match scopes.unwrap_err() {
                 nom::Err::Position(t, p) => {
                     match (t, p) {
-                        (ErrorKind::Custom(0), p) => return Err(ParseErr::NonTerminal(p)),
-                        (ErrorKind::Custom(1), p) => return Err(ParseErr::NonNumber(p)),
-                        (ErrorKind::Custom(11), p) => return Err(ParseErr::NotScope(p)),
-                        (ErrorKind::Custom(12), p) => return Err(ParseErr::UnbalDelim(p)),
-                        (ErrorKind::Custom(15), p) => return Err(ParseErr::IllegalChain(p)),
-                        (_, p) => return Err(ParseErr::SyntaxError1(p)),
+                        (ErrorKind::Custom(0), p) => return Err(ParseErrB::NonTerminal(p)),
+                        (ErrorKind::Custom(1), p) => return Err(ParseErrB::NonNumber(p)),
+                        (ErrorKind::Custom(11), p) => return Err(ParseErrB::NotScope(p)),
+                        (ErrorKind::Custom(12), p) => return Err(ParseErrB::UnbalDelim(p)),
+                        (ErrorKind::Custom(15), p) => return Err(ParseErrB::IllegalChain(p)),
+                        (_, p) => return Err(ParseErrB::SyntaxError1(p)),
                     }
                 }
-                _ => return Err(ParseErr::SyntaxError0),
+                _ => return Err(ParseErrB::SyntaxError0),
             }
         } else {
             let (_, scopes) = scopes.unwrap();
@@ -78,9 +78,8 @@ impl Parser {
 }
 
 #[derive(Debug)]
-enum ParseErr<'a> {
-    None,
-    SyntaxError(Box<ParseErr<'a>>),
+enum ParseErrB<'a> {
+    SyntaxError(Box<ParseErrB<'a>>),
     SyntaxError0,
     SyntaxError1(&'a [u8]),
     NotScope(&'a [u8]),
@@ -92,113 +91,74 @@ enum ParseErr<'a> {
     UnclosedComment(&'a [u8]),
 }
 
-pub struct FinalError(String);
-impl FinalError {
-    fn format<'a>(err: ParseErr<'a>) -> String {
+#[derive(Debug)]
+pub enum ParseErrF {
+    Msg(String),
+    IConnectInChain,
+    IConnectAfterAnd,
+    IConnectAfterOr,
+    None
+}
+
+impl ParseErrF {
+    fn format<'a>(err: ParseErrB<'a>) -> String {
         unimplemented!()
     }
 }
 
-impl<'a> From<ParseErr<'a>> for FinalError {
-    fn from(err: ParseErr<'a>) -> FinalError {
-        FinalError(String::from("failed"))
+impl<'a> From<ParseErrB<'a>> for ParseErrF {
+    fn from(err: ParseErrB<'a>) -> ParseErrF {
+        ParseErrF::Msg(String::from("failed"))
     }
 }
 
+#[derive(Debug)]
 pub enum ParseTree {
     Assertion(Vec<Assert>),
     Expr(LogSentence),
     IExpr(LogSentence),
     Rule(LogSentence),
-    Void,
 }
 
 impl ParseTree {
-    fn process_ast<'a>(input: Next, state: &ParserState) -> Result<ParseTree, ParseErr<'a>> {
-        let input = match input {
-            Next::ASTNode(val) => val,
-            _ => unimplemented!(),
+    fn process_ast(input: Next, state: &ParserState) -> Result<ParseTree, ParseErrF> {
+        let first = match &input {
+            &Next::ASTNode(ref val) => &(*val),
+            _ => panic!("simag: expected an AST node, found other variant"),
         };
         let mut context = Context::new();
-        let out = input.is_assertion(&mut context);
+        // check if it's an assertion
+        let out = first.is_assertion(&mut context);
         if out.is_some() {
-            return out.ok_or(ParseErr::None);
+            return out.ok_or(ParseErrF::None);
         }
-        let out = input.is_iexpr(&mut context);
-        if out.is_some() {
-            return out.ok_or(ParseErr::None);
-        }
-        let out = input.is_expr(&mut context);
-        if out.is_some() {
-            return out.ok_or(ParseErr::None);
-        }
-        let out = input.is_rule(&mut context);
-        if out.is_some() {
-            return out.ok_or(ParseErr::None);
-        }
-        Ok(ParseTree::Void)
-    }
-}
-
-struct Context<'a> {
-    var_names: Vec<&'a str>,
-}
-
-impl<'a> Context<'a> {
-    fn new() -> Context<'a> {
-        Context { var_names: Vec::new() }
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-struct GroundedTerm {}
-
-impl GroundedTerm {
-    fn from_slice<'a>(other: &'a [u8]) -> GroundedTerm {
-        GroundedTerm {}
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-struct FreeTerm {}
-
-impl FreeTerm {
-    fn from_slice<'a>(other: &'a [u8]) -> FreeTerm {
-        FreeTerm {}
+        // it's an expression, make logic sentence from nested expressions
+        let sent = match LogSentence::new(&input, &mut context) {
+            Ok(sent) => sent,
+            Err(err) => return Err(err),
+        };
+        Ok(ParseTree::Expr(sent))
     }
 }
 
 #[derive(Debug)]
 pub struct ASTNode<'a> {
-    next: Next<'a>,
-    vars: Option<Vec<VarDeclBorrowed<'a>>>,
-    logic_op: Option<LogicOperator>,
+    pub next: Next<'a>,
+    pub vars: Option<Vec<VarDeclBorrowed<'a>>>,
+    pub logic_op: Option<LogicOperator>,
 }
 
 impl<'a> ASTNode<'a> {
     fn is_assertion(&self, context: &mut Context) -> Option<ParseTree> {
-        if self.vars.is_some() &&
-           (self.logic_op.is_none() || !self.logic_op.as_ref().unwrap().is_and()) {
+        if self.vars.is_some() {
             return None;
         }
         self.next.is_assertion(context)
     }
-
-    fn is_iexpr(&self, context: &mut Context) -> Option<ParseTree> {
-        None
-    }
-
-    fn is_expr(&self, context: &mut Context) -> Option<ParseTree> {
-        None
-    }
-
-    fn is_rule(&self, context: &mut Context) -> Option<ParseTree> {
-        None
-    }
 }
 
 #[derive(Debug)]
-enum Next<'a> {
+pub enum Next<'a> {
     Assert(AssertBorrowed<'a>),
     ASTNode(Box<ASTNode<'a>>),
     Chain(Vec<Next<'a>>),
@@ -250,21 +210,27 @@ impl<'a> Next<'a> {
 }
 
 #[derive(Debug)]
-enum AssertBorrowed<'a> {
+pub enum AssertBorrowed<'a> {
     FuncDecl(FuncDeclBorrowed<'a>),
     ClassDecl(ClassDeclBorrowed<'a>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Assert {
     FuncDecl(FuncDecl),
     ClassDecl(ClassDecl),
 }
 
 #[derive(Debug)]
-enum VarDeclBorrowed<'a> {
+pub enum VarDeclBorrowed<'a> {
     Var(VarBorrowed<'a>),
     Skolem(SkolemBorrowed<'a>),
+}
+
+#[derive(Debug)]
+pub enum VarDecl {
+    Var(Var),
+    Skolem(Skolem),
 }
 
 fn get_blocks<'a>(input: &'a [u8]) -> IResult<&'a [u8], Vec<Next<'a>>> {
@@ -613,9 +579,29 @@ fn is_end_node(input: &[u8]) -> IResult<&[u8], Next> {
 
 // skol_decl = '(' 'exists' $(term[':'op_arg]),+ ')' ;
 #[derive(Debug)]
-struct SkolemBorrowed<'a> {
+pub struct SkolemBorrowed<'a> {
     name: TerminalBorrowed<'a>,
     op_arg: Option<OpArgBorrowed<'a>>,
+}
+
+#[derive(Debug)]
+pub struct Skolem {
+    name: String,
+    op_arg: Option<OpArg>,
+}
+
+impl Skolem {
+    pub fn from<'a>(input: &SkolemBorrowed<'a>, context: &mut Context) -> Skolem {
+        let &SkolemBorrowed{name: TerminalBorrowed(name), ref op_arg} = input;
+        let op_arg = match *op_arg {
+            Some(ref op_arg) => Some(OpArg::from(op_arg, context)),
+            None => None,
+        };
+        Skolem {
+            name: unsafe { String::from(str::from_utf8_unchecked(name)) },
+            op_arg: op_arg,
+        }
+    }
 }
 
 named!(skolem(&[u8]) -> Vec<VarDeclBorrowed>, chain!(
@@ -645,10 +631,30 @@ named!(skolem(&[u8]) -> Vec<VarDeclBorrowed>, chain!(
 ));
 
 // var_decl = '(' 'let' $(term[':'op_arg]),+ ')' ;
-#[derive(Debug)]
-struct VarBorrowed<'a> {
+#[derive(Debug, PartialEq)]
+pub struct VarBorrowed<'a> {
     name: TerminalBorrowed<'a>,
     op_arg: Option<OpArgBorrowed<'a>>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Var {
+    name: String,
+    op_arg: Option<OpArg>,
+}
+
+impl Var {
+    pub fn from<'a>(input: &VarBorrowed<'a>, context: &mut Context) -> Var {
+        let &VarBorrowed{name: TerminalBorrowed(name), ref op_arg} = input;
+        let op_arg = match *op_arg {
+            Some(ref op_arg) => Some(OpArg::from(op_arg, context)),
+            None => None,
+        };
+        Var {
+            name: unsafe { String::from(str::from_utf8_unchecked(name)) },
+            op_arg: op_arg,
+        }
+    }
 }
 
 named!(variable(&[u8]) -> Vec<VarDeclBorrowed>, chain!(
@@ -680,14 +686,14 @@ named!(variable(&[u8]) -> Vec<VarDeclBorrowed>, chain!(
 // func_decl = 'fn::' term ['(' op_args ')'] args
 // 			 | 'fn::' term '(' op_args ')' ;
 #[derive(Debug, PartialEq)]
-struct FuncDeclBorrowed<'a> {
+pub struct FuncDeclBorrowed<'a> {
     name: TerminalBorrowed<'a>,
     args: Option<Vec<ArgBorrowed<'a>>>,
     op_args: Option<Vec<OpArgBorrowed<'a>>>,
     variant: FuncVariants,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct FuncDecl {
     name: Terminal,
     args: Option<Vec<Arg>>,
@@ -696,7 +702,7 @@ pub struct FuncDecl {
 }
 
 impl<'a> FuncDecl {
-    fn from(other: &FuncDeclBorrowed<'a>, context: &mut Context) -> FuncDecl {
+    pub fn from(other: &FuncDeclBorrowed<'a>, context: &mut Context) -> FuncDecl {
         let args = match other.args {
             Some(ref oargs) => {
                 let mut v0 = Vec::with_capacity(oargs.len());
@@ -768,7 +774,7 @@ named!(func_decl(&[u8]) -> FuncDeclBorrowed,
 
 // class_decl = term ['(' op_args ')'] args ;
 #[derive(Debug, PartialEq)]
-struct ClassDeclBorrowed<'a> {
+pub struct ClassDeclBorrowed<'a> {
     name: TerminalBorrowed<'a>,
     args: Vec<ArgBorrowed<'a>>,
     op_args: Option<Vec<OpArgBorrowed<'a>>>,
@@ -782,7 +788,7 @@ pub struct ClassDecl {
 }
 
 impl<'a> ClassDecl {
-    fn from(other: &ClassDeclBorrowed<'a>, context: &mut Context) -> ClassDecl {
+    pub fn from(other: &ClassDeclBorrowed<'a>, context: &mut Context) -> ClassDecl {
         let args = {
             let mut v0 = Vec::with_capacity(other.args.len());
             for e in &other.args {
@@ -962,9 +968,9 @@ impl<'a> OpArgTermBorrowed<'a> {
 
 // uval = 'u' comp_op number;
 #[derive(Debug, PartialEq, Clone, Copy)]
-struct UVal {
-    op: CompOperator,
-    val: Number,
+pub struct UVal {
+    pub op: CompOperator,
+    pub val: Number,
 }
 
 named!(uval <UVal>, chain!(
@@ -982,7 +988,7 @@ named!(uval <UVal>, chain!(
 
 // number = -?[0-9\.]+
 #[derive(Debug, PartialEq, Clone, Copy)]
-enum Number {
+pub enum Number {
     SignedFloat(f32),
     UnsignedFloat(f32),
     SignedInteger(i32),
@@ -1062,30 +1068,32 @@ impl<'a> TerminalBorrowed<'a> {
 
 #[derive(Debug, PartialEq, Clone)]
 enum Terminal {
-    FreeTerm(FreeTerm),
-    GroundedTerm(GroundedTerm),
+    FreeTerm(String),
+    GroundedTerm(String),
 }
 
 impl<'a> Terminal {
     fn from(other: &TerminalBorrowed<'a>, context: &mut Context) -> Terminal {
-        let &TerminalBorrowed(s) = other;
-        unsafe {
-            if context.var_names.contains(&str::from_utf8_unchecked(s)) {
-                Terminal::FreeTerm(FreeTerm::from_slice(s))
-            } else {
-                Terminal::GroundedTerm(GroundedTerm::from_slice(s))
+        let &TerminalBorrowed(slice) = other;
+        let name = unsafe { String::from(str::from_utf8_unchecked(slice)) };
+        for v in &context.vars {
+            let v: &Var = unsafe {&**v};
+            if v.name == name {
+                return Terminal::FreeTerm(name);
             }
         }
+        Terminal::GroundedTerm(name)
     }
 
-    fn from_slice(s: &[u8], context: &mut Context) -> Terminal {
-        unsafe {
-            if context.var_names.contains(&str::from_utf8_unchecked(s)) {
-                Terminal::FreeTerm(FreeTerm::from_slice(s))
-            } else {
-                Terminal::GroundedTerm(GroundedTerm::from_slice(s))
+    fn from_slice(slice: &[u8], context: &mut Context) -> Terminal {
+        let name = unsafe { String::from(str::from_utf8_unchecked(slice)) };
+        for v in &context.vars {
+            let v: &Var = unsafe {&**v};
+            if v.name == name {
+                return Terminal::FreeTerm(name);
             }
         }
+        Terminal::GroundedTerm(name)
     }
 }
 
@@ -1112,7 +1120,7 @@ fn is_term_char(c: u8) -> bool {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum CompOperator {
+pub enum CompOperator {
     Equal,
     Less,
     More,
@@ -1131,7 +1139,7 @@ impl CompOperator {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum LogicOperator {
+pub enum LogicOperator {
     ICond,
     And,
     Or,
@@ -1156,14 +1164,14 @@ impl LogicOperator {
         }
     }
 
-    fn is_and(&self) -> bool {
+    pub fn is_and(&self) -> bool {
         match *self {
             LogicOperator::And => true,
             _ => false,
         }
     }
 
-    fn is_or(&self) -> bool {
+    pub fn is_or(&self) -> bool {
         match *self {
             LogicOperator::Or => true,
             _ => false,
@@ -1237,20 +1245,6 @@ fn is_multispace(chr: u8) -> bool {
 }
 
 #[test]
-fn parse_tree() {
-    let source = String::from("
-        (   ( let x y z )
-            (
-                ( american[x,u=1] && weapon[y,u=1] && fn::sells[y,u>0.5;x;z] && hostile[z,u=1] )
-                |> criminal[x,u=1]
-            )
-        )
-    ");
-    let state = ParserState::Tell;
-    let p = Parser::parse(source, &state);
-}
-
-#[test]
 fn ast() {
     // remove comments:
     let source = b"
@@ -1305,7 +1299,7 @@ fn ast() {
     let mut data = Vec::new();
     let scanned = Parser::feed(source, &mut data);
     match scanned.unwrap_err() {
-        ParseErr::IllegalChain(_) => {}
+        ParseErrB::IllegalChain(_) => {}
         _ => panic!(),
     }
 
@@ -1315,7 +1309,7 @@ fn ast() {
     let mut data = Vec::new();
     let scanned = Parser::feed(source, &mut data);
     match scanned.unwrap_err() {
-        ParseErr::IllegalChain(_) => {}
+        ParseErrB::IllegalChain(_) => {}
         _ => panic!(),
     }
 
@@ -1361,8 +1355,7 @@ fn ast() {
     }
 
     let source = b"
-    ((let x y) ((american[x,u=1] && hostile[z,u=1]) |> criminal[x,u=1]))
-    ((let x y) ((american[x,u=1] && hostile[z,u=1]) |> criminal[x,u=1]))
+    ((let x y) (american[x,u=1] && hostile[z,u=1]) |> criminal[x,u=1])
     ((let x y) ((american[x,u=1] && hostile[z,u=1]) |> criminal[x,u=1]))
     ";
     let mut data = Vec::new();
