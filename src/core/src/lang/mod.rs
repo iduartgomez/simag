@@ -3,6 +3,7 @@
 
 mod logsent;
 mod parser;
+mod common;
 
 use self::parser::{Parser, ParseTree, ParseErrF};
 

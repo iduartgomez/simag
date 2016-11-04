@@ -9,7 +9,10 @@
 //! LogSentence types are akin to minimal working compiled programs formed
 //! by compounded expressions which will evaluate with the current knowledge
 //! when called and perform any subtitution in the knowledge base if pertinent.
+use std::str;
+
 use lang::parser::*;
+use lang::common::*;
 
 /// Type to store a first-order logic complex sentence.
 ///
@@ -51,6 +54,15 @@ impl LogSentence {
         if r.is_err() {
             Err(r.unwrap_err())
         } else {
+            if sent.vars.is_none() {
+                if !context.iexpr() {
+                    context.stype = SentType::Rule;
+                } else {
+                    return Err(ParseErrF::RuleIncludesICond);
+                }
+            } else if context.iexpr() && !sent.correct_iexpr() {
+                return Err(ParseErrF::ICondLHS);
+            }
             Ok(sent)
         }
     }
@@ -72,12 +84,128 @@ impl LogSentence {
     fn add_particle(&mut self, p: Box<Particle>) {
         self.particles.push(p)
     }
+
+    pub fn has_vars(&self) -> bool {
+        if self.vars.is_some() {
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn correct_iexpr(&self) -> bool {
+        let first: &Particle = unsafe { &*(self.root.unwrap()) };
+
+        // test that the lhs does not include any indicative conditional connective
+        fn _check_lhs_childs(p: &Particle) -> bool {
+            match p.get_next(0) {
+                Some(n) => {
+                    match n {
+                        &Particle::IndConditional(_) => return true,
+                        _ => {}
+                    }
+                    if _check_lhs_childs(n) {
+                        return true;
+                    }
+                }
+                None => {}
+            }
+            match p.get_next(1) {
+                Some(n) => {
+                    match n {
+                        &Particle::IndConditional(_) => return true,
+                        _ => {}
+                    }
+                    if _check_lhs_childs(n) {
+                        return true;
+                    }
+                }
+                None => {}
+            }
+            false
+        }
+        let icond_in_lhs = match first {
+            &Particle::IndConditional(_) => {
+                match first.get_next(0) {
+                    Some(next) => {
+                        match next {
+                            &Particle::IndConditional(_) => true,
+                            _ => { _check_lhs_childs(next) }
+                        }
+                    }
+                    None => false,
+                }
+            }
+            _ => false,
+        };
+        if icond_in_lhs {
+            return false
+        }
+
+        // test that the rh-most-s does include only icond or 'OR' connectives
+        fn _check_rhs_childs(p: &Particle) -> bool {
+            match p.get_next(1) {
+                Some(n0) => {
+                    match n0 {
+                        &Particle::IndConditional(_) => {
+                            match n0.get_next(0) {
+                                Some(n1) => {
+                                    if _check_lhs_childs(n1) {
+                                        return true;
+                                    }
+                                }
+                                None => {}
+                            }
+                            _check_rhs_childs(n0);
+                        }
+                        &Particle::Disjunction(_) => {
+                            match n0.get_next(0) {
+                                Some(n1) => {
+                                    if _check_lhs_childs(n1) {
+                                        return true;
+                                    }
+                                }
+                                None => {}
+                            }
+                            _check_rhs_childs(n0);
+                        },
+                        _ => {},
+                    }
+                }
+                None => {}
+            }
+            false
+        }
+        if !_check_rhs_childs(first) {
+            true
+        } else {
+            false
+        }
+    }
+}
+
+pub enum SentType {
+    IExpr,
+    Expr,
+    Rule,
 }
 
 pub struct Context {
     pub vars: Vec<*const Var>,
     pub skols: Vec<*const Skolem>,
     ancestor: Option<*const Particle>,
+    in_lhs: bool,
+    pub stype: SentType,
+}
+
+impl Context {
+    fn iexpr(&self) -> bool {
+        match self.stype {
+            SentType::Expr => false,
+            SentType::IExpr => true,
+            SentType::Rule => false,
+        }
+    }
 }
 
 impl<'a> Context {
@@ -86,6 +214,8 @@ impl<'a> Context {
             vars: Vec::new(),
             skols: Vec::new(),
             ancestor: None,
+            in_lhs: false,
+            stype: SentType::Expr,
         }
     }
 }
@@ -126,13 +256,19 @@ fn walk_ast(ast: &Next,
                 for v in ast.vars.as_ref().unwrap() {
                     match *v {
                         VarDeclBorrowed::Var(ref v) => {
-                            let var = Box::new(Var::from(v, context));
+                            let var = match Var::from(v, context) {
+                                Err(err) => return Err(err),
+                                Ok(val) => Box::new(val),
+                            };
                             context.vars.push(&*var);
                             v_cnt += 1;
                             sent.add_var(var);
                         }
                         VarDeclBorrowed::Skolem(ref s) => {
-                            let skolem = Box::new(Skolem::from(s, context));
+                            let skolem = match Skolem::from(s, context) {
+                                Err(err) => return Err(err),
+                                Ok(val) => Box::new(val),
+                            };
                             context.skols.push(&*skolem);
                             s_cnt += 1;
                             sent.add_skolem(skolem);
@@ -143,6 +279,10 @@ fn walk_ast(ast: &Next,
             if ast.logic_op.is_some() {
                 let mut op = Box::new(match ast.logic_op.as_ref().unwrap() {
                     &LogicOperator::ICond => {
+                        if context.in_lhs {
+                            return Err(ParseErrF::ICondLHS);
+                        }
+                        context.stype = SentType::Expr;
                         Particle::IndConditional(LogicIndCond::new(context.ancestor))
                     }
                     &LogicOperator::And => {
@@ -321,6 +461,17 @@ impl Particle {
         }
     }
 
+    fn get_next(&self, pos: usize) -> Option<&Particle> {
+        match *self {
+            Particle::Conjunction(ref p) => p.get_next(pos),
+            Particle::Disjunction(ref p) => p.get_next(pos),
+            Particle::Implication(ref p) => p.get_next(pos),
+            Particle::Equivalence(ref p) => p.get_next(pos),
+            Particle::IndConditional(ref p) => p.get_next(pos),
+            Particle::Atom(ref p) => None,
+        }
+    }
+
     fn add_rhs(&mut self, next: *const Particle) {
         match *self {
             Particle::Conjunction(ref mut p) => p.next.push(next),
@@ -407,6 +558,14 @@ impl LogicIndCond {
             None
         }
     }
+
+    fn get_next(&self, pos: usize) -> Option<&Particle> {
+        if pos == 0 {
+            unsafe { Some(&*(self.next[0])) }
+        } else {
+            unsafe { Some(&*(self.next[1])) }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -443,6 +602,14 @@ impl LogicEquivalence {
             unsafe { Some(&**(self.parent.as_ref().unwrap())) }
         } else {
             None
+        }
+    }
+
+    fn get_next(&self, pos: usize) -> Option<&Particle> {
+        if pos == 0 {
+            unsafe { Some(&*(self.next[0])) }
+        } else {
+            unsafe { Some(&*(self.next[1])) }
         }
     }
 }
@@ -483,6 +650,14 @@ impl LogicImplication {
             None
         }
     }
+
+    fn get_next(&self, pos: usize) -> Option<&Particle> {
+        if pos == 0 {
+            unsafe { Some(&*(self.next[0])) }
+        } else {
+            unsafe { Some(&*(self.next[1])) }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -518,6 +693,14 @@ impl LogicConjunction {
             None
         }
     }
+
+    fn get_next(&self, pos: usize) -> Option<&Particle> {
+        if pos == 0 {
+            unsafe { Some(&*(self.next[0])) }
+        } else {
+            unsafe { Some(&*(self.next[1])) }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -551,6 +734,14 @@ impl LogicDisjunction {
             unsafe { Some(&**(self.parent.as_ref().unwrap())) }
         } else {
             None
+        }
+    }
+
+    fn get_next(&self, pos: usize) -> Option<&Particle> {
+        if pos == 0 {
+            unsafe { Some(&*(self.next[0])) }
+        } else {
+            unsafe { Some(&*(self.next[1])) }
         }
     }
 }
@@ -589,113 +780,6 @@ impl LogicAtom {
         } else {
             None
         }
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct GroundedTerm {
-    term: String,
-    value: Option<f32>,
-    operator: Option<CompOperator>,
-    parent: Terminal,
-    dates: Option<Vec<i32>>,
-}
-
-impl GroundedTerm {
-    pub fn new(term: String,
-               uval: Option<UVal>,
-               parent: &Terminal,
-               dates: Option<Vec<i32>>)
-               -> Result<GroundedTerm, ParseErrF> {
-        let val;
-        let op;
-        if uval.is_some() {
-            let uval = uval.unwrap();
-            val = match uval.val {
-                Number::UnsignedInteger(val) => {
-                    if val == 0 || val == 1 {
-                        Some(val as f32)
-                    } else {
-                        return Err(ParseErrF::IUVal(val as f32))
-                    }
-                }
-                Number::UnsignedFloat(val) => {
-                    if val >= 0. && val <= 1. {
-                        Some(val)
-                    } else {
-                        return Err(ParseErrF::IUVal(val as f32))
-                    }
-                }
-                Number::SignedFloat(val) => return Err(ParseErrF::IUVal(val as f32)),
-                Number::SignedInteger(val) => return Err(ParseErrF::IUVal(val as f32))
-            };
-            op = match uval.op {
-                CompOperator::Equal => Some(CompOperator::Equal),
-                _ => return Err(ParseErrF::IUValComp),
-            };
-        } else {
-            val = None;
-            op = None;
-        }
-        Ok(GroundedTerm {
-            term: term,
-            value: val,
-            operator: op,
-            parent: parent.clone(),
-            dates: None,
-        })
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct FreeTerm {
-    term: String,
-    value: Option<f32>,
-    operator: Option<CompOperator>,
-    parent: Terminal,
-    dates: Option<Vec<i32>>,
-}
-
-impl FreeTerm {
-    pub fn new(term: String,
-               uval: Option<UVal>,
-               parent: &Terminal,
-               dates: Option<Vec<i32>>)
-               -> Result<FreeTerm, ParseErrF> {
-        let val;
-        let op;
-        if uval.is_some() {
-            let uval = uval.unwrap();
-            val = match uval.val {
-                Number::UnsignedInteger(val) => {
-                    if val == 0 || val == 1 {
-                        Some(val as f32)
-                    } else {
-                        return Err(ParseErrF::IUVal(val as f32))
-                    }
-                }
-                Number::UnsignedFloat(val) => {
-                    if val >= 0. && val <= 1. {
-                        Some(val)
-                    } else {
-                        return Err(ParseErrF::IUVal(val as f32))
-                    }
-                }
-                Number::SignedFloat(val) => return Err(ParseErrF::IUVal(val as f32)),
-                Number::SignedInteger(val) => return Err(ParseErrF::IUVal(val as f32))
-            };
-            op = Some(uval.op);
-        } else {
-            val = None;
-            op = None;
-        }
-        Ok(FreeTerm {
-            term: term,
-            value: val,
-            operator: op,
-            parent: parent.clone(),
-            dates: None,
-        })
     }
 }
 

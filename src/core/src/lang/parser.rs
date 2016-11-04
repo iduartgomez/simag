@@ -7,6 +7,7 @@ use nom;
 
 use lang::ParserState;
 use lang::logsent::*;
+use lang::common::*;
 
 const ICOND_OP: &'static [u8] = b"|>";
 const AND_OP: &'static [u8] = b"&&";
@@ -99,7 +100,10 @@ pub enum ParseErrF {
     IConnectAfterOr,
     IUVal(f32),
     IUValComp,
-    NoRootFound,
+    ReservedKW(String),
+    WrongDef,
+    ICondLHS,
+    RuleIncludesICond,
     None,
 }
 
@@ -138,11 +142,16 @@ impl ParseTree {
             _ => {}
         }
         // it's an expression, make logic sentence from nested expressions
-        let sent = match LogSentence::new(&input, &mut context) {
-            Ok(sent) => sent,
-            Err(err) => return Err(err),
-        };
-        Ok(ParseTree::Expr(sent))
+        match LogSentence::new(&input, &mut context) {
+            Ok(sent) => {
+                match context.stype {
+                    SentType::IExpr => Ok(ParseTree::IExpr(sent)),
+                    SentType::Expr => Ok(ParseTree::Expr(sent)),
+                    SentType::Rule => Ok(ParseTree::Rule(sent)),
+                }
+            }
+            Err(err) => Err(err),
+        }
     }
 }
 
@@ -228,21 +237,6 @@ impl<'a> Next<'a> {
 pub enum AssertBorrowed<'a> {
     FuncDecl(FuncDeclBorrowed<'a>),
     ClassDecl(ClassDeclBorrowed<'a>),
-}
-
-#[derive(Debug, Clone)]
-pub enum Assert {
-    FuncDecl(FuncDecl),
-    ClassDecl(ClassDecl),
-}
-
-impl Assert {
-    pub fn get_name(&self) -> &str {
-        match self {
-            &Assert::FuncDecl(ref f) => f.get_name(),
-            &Assert::ClassDecl(ref c) => c.get_name(),
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -596,28 +590,8 @@ fn is_end_node(input: &[u8]) -> IResult<&[u8], Next> {
 // skol_decl = '(' 'exists' $(term[':'op_arg]),+ ')' ;
 #[derive(Debug)]
 pub struct SkolemBorrowed<'a> {
-    name: TerminalBorrowed<'a>,
-    op_arg: Option<OpArgBorrowed<'a>>,
-}
-
-#[derive(Debug)]
-pub struct Skolem {
-    name: String,
-    op_arg: Option<OpArg>,
-}
-
-impl Skolem {
-    pub fn from<'a>(input: &SkolemBorrowed<'a>, context: &mut Context) -> Skolem {
-        let &SkolemBorrowed { name: TerminalBorrowed(name), ref op_arg } = input;
-        let op_arg = match *op_arg {
-            Some(ref op_arg) => Some(OpArg::from(op_arg, context)),
-            None => None,
-        };
-        Skolem {
-            name: unsafe { String::from(str::from_utf8_unchecked(name)) },
-            op_arg: op_arg,
-        }
-    }
+    pub name: TerminalBorrowed<'a>,
+    pub op_arg: Option<OpArgBorrowed<'a>>,
 }
 
 named!(skolem(&[u8]) -> Vec<VarDeclBorrowed>, chain!(
@@ -649,28 +623,8 @@ named!(skolem(&[u8]) -> Vec<VarDeclBorrowed>, chain!(
 // var_decl = '(' 'let' $(term[':'op_arg]),+ ')' ;
 #[derive(Debug, PartialEq)]
 pub struct VarBorrowed<'a> {
-    name: TerminalBorrowed<'a>,
-    op_arg: Option<OpArgBorrowed<'a>>,
-}
-
-#[derive(Debug, PartialEq)]
-pub struct Var {
-    name: String,
-    op_arg: Option<OpArg>,
-}
-
-impl Var {
-    pub fn from<'a>(input: &VarBorrowed<'a>, context: &mut Context) -> Var {
-        let &VarBorrowed { name: TerminalBorrowed(name), ref op_arg } = input;
-        let op_arg = match *op_arg {
-            Some(ref op_arg) => Some(OpArg::from(op_arg, context)),
-            None => None,
-        };
-        Var {
-            name: unsafe { String::from(str::from_utf8_unchecked(name)) },
-            op_arg: op_arg,
-        }
-    }
+    pub name: TerminalBorrowed<'a>,
+    pub op_arg: Option<OpArgBorrowed<'a>>,
 }
 
 named!(variable(&[u8]) -> Vec<VarDeclBorrowed>, chain!(
@@ -703,80 +657,17 @@ named!(variable(&[u8]) -> Vec<VarDeclBorrowed>, chain!(
 // 			 | 'fn::' term '(' op_args ')' ;
 #[derive(Debug, PartialEq)]
 pub struct FuncDeclBorrowed<'a> {
-    name: TerminalBorrowed<'a>,
-    args: Option<Vec<ArgBorrowed<'a>>>,
-    op_args: Option<Vec<OpArgBorrowed<'a>>>,
-    variant: FuncVariants,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct FuncDecl {
-    name: Terminal,
-    args: Option<Vec<Arg>>,
-    op_args: Option<Vec<OpArg>>,
-    variant: FuncVariants,
-}
-
-impl<'a> FuncDecl {
-    pub fn from(other: &FuncDeclBorrowed<'a>,
-                context: &mut Context)
-                -> Result<FuncDecl, ParseErrF> {
-        let func_name = Terminal::from(&other.name, context);
-        let args = match other.args {
-            Some(ref oargs) => {
-                let mut v0 = Vec::with_capacity(oargs.len());
-                for a in oargs {
-                    match Terminal::from(&a.term, context) {
-                        Terminal::FreeTerm(ft) => {
-                            let t = FreeTerm::new(ft, a.uval, &func_name, None);
-                            if t.is_err() {
-                                return Err(t.unwrap_err());
-                            }
-                            v0.push(Arg::FreeTerm(t.unwrap()))
-                        }
-                        Terminal::GroundedTerm(gt) => {
-                            let t = GroundedTerm::new(gt, a.uval, &func_name, None);
-                            if t.is_err() {
-                                return Err(t.unwrap_err());
-                            }
-                            v0.push(Arg::GroundedTerm(t.unwrap()))
-                        }
-                    }
-                }
-                Some(v0)
-            }
-            None => None,
-        };
-        let op_args = match other.op_args {
-            Some(ref oargs) => {
-                let mut v0 = Vec::with_capacity(oargs.len());
-                for e in oargs {
-                    v0.push(OpArg::from(e, context));
-                }
-                Some(v0)
-            }
-            None => None,
-        };
-        Ok(FuncDecl {
-            name: func_name,
-            args: args,
-            op_args: op_args,
-            variant: other.variant,
-        })
-    }
-
-    fn get_name(&self) -> &str {
-        match self.name {
-            Terminal::FreeTerm(ref name) => name,
-            Terminal::GroundedTerm(ref name) => name,
-        }
-    }
+    pub name: TerminalBorrowed<'a>,
+    pub args: Option<Vec<ArgBorrowed<'a>>>,
+    pub op_args: Option<Vec<OpArgBorrowed<'a>>>,
+    pub variant: FuncVariants,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum FuncVariants {
+pub enum FuncVariants {
     Relational,
     NonRelational,
+    TimeCalc
 }
 
 named!(func_decl(&[u8]) -> FuncDeclBorrowed,
@@ -816,68 +707,9 @@ named!(func_decl(&[u8]) -> FuncDeclBorrowed,
 // class_decl = term ['(' op_args ')'] args ;
 #[derive(Debug, PartialEq)]
 pub struct ClassDeclBorrowed<'a> {
-    name: TerminalBorrowed<'a>,
-    args: Vec<ArgBorrowed<'a>>,
-    op_args: Option<Vec<OpArgBorrowed<'a>>>,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct ClassDecl {
-    name: Terminal,
-    args: Vec<Arg>,
-    op_args: Option<Vec<OpArg>>,
-}
-
-impl<'a> ClassDecl {
-    pub fn from(other: &ClassDeclBorrowed<'a>,
-                context: &mut Context)
-                -> Result<ClassDecl, ParseErrF> {
-        let class_name = Terminal::from(&other.name, context);
-        let args = {
-            let mut v0 = Vec::with_capacity(other.args.len());
-            for a in &other.args {
-                match Terminal::from(&a.term, context) {
-                    Terminal::FreeTerm(ft) => {
-                        let t = FreeTerm::new(ft, a.uval, &class_name, None);
-                        if t.is_err() {
-                            return Err(t.unwrap_err());
-                        }
-                        v0.push(Arg::FreeTerm(t.unwrap()))
-                    }
-                    Terminal::GroundedTerm(gt) => {
-                        let t = GroundedTerm::new(gt, a.uval, &class_name, None);
-                        if t.is_err() {
-                            return Err(t.unwrap_err());
-                        }
-                        v0.push(Arg::GroundedTerm(t.unwrap()))
-                    }
-                }
-            }
-            v0
-        };
-        let op_args = match other.op_args {
-            Some(ref oargs) => {
-                let mut v0 = Vec::with_capacity(oargs.len());
-                for e in oargs {
-                    v0.push(OpArg::from(e, context));
-                }
-                Some(v0)
-            }
-            None => None,
-        };
-        Ok(ClassDecl {
-            name: class_name,
-            args: args,
-            op_args: op_args,
-        })
-    }
-
-    fn get_name(&self) -> &str {
-        match self.name {
-            Terminal::FreeTerm(ref name) => name,
-            Terminal::GroundedTerm(ref name) => name,
-        }
-    }
+    pub name: TerminalBorrowed<'a>,
+    pub args: Vec<ArgBorrowed<'a>>,
+    pub op_args: Option<Vec<OpArgBorrowed<'a>>>,
 }
 
 named!(class_decl(&[u8]) -> ClassDeclBorrowed, chain!(
@@ -889,15 +721,9 @@ named!(class_decl(&[u8]) -> ClassDeclBorrowed, chain!(
 
 // arg	= term [',' uval] ;
 #[derive(Debug, PartialEq)]
-struct ArgBorrowed<'a> {
-    term: TerminalBorrowed<'a>,
-    uval: Option<UVal>,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-enum Arg {
-    FreeTerm(FreeTerm),
-    GroundedTerm(GroundedTerm),
+pub struct ArgBorrowed<'a> {
+    pub term: TerminalBorrowed<'a>,
+    pub uval: Option<UVal>,
 }
 
 named!(arg <ArgBorrowed>, chain!(
@@ -928,28 +754,9 @@ fn to_arg_vec(a: ArgBorrowed) -> Vec<ArgBorrowed> {
 
 // op_arg =	(string|term) [comp_op (string|term)] ;
 #[derive(Debug, PartialEq)]
-struct OpArgBorrowed<'a> {
-    term: OpArgTermBorrowed<'a>,
-    comp: Option<(CompOperator, OpArgTermBorrowed<'a>)>,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-struct OpArg {
-    term: OpArgTerm,
-    comp: Option<(CompOperator, OpArgTerm)>,
-}
-
-impl<'a> OpArg {
-    fn from(other: &OpArgBorrowed<'a>, context: &mut Context) -> OpArg {
-        let comp = match other.comp {
-            Some((op, ref tors)) => Some((op, OpArgTerm::from(&tors, context))),
-            None => None,
-        };
-        OpArg {
-            term: OpArgTerm::from(&other.term, context),
-            comp: comp,
-        }
-    }
+pub struct OpArgBorrowed<'a> {
+    pub term: OpArgTermBorrowed<'a>,
+    pub comp: Option<(CompOperator, OpArgTermBorrowed<'a>)>,
 }
 
 named!(op_arg <OpArgBorrowed>, chain!(
@@ -985,28 +792,9 @@ fn to_op_arg_vec(a: OpArgBorrowed) -> Vec<OpArgBorrowed> {
 }
 
 #[derive(Debug, PartialEq)]
-enum OpArgTermBorrowed<'a> {
+pub enum OpArgTermBorrowed<'a> {
     Terminal(&'a [u8]),
     String(&'a [u8]),
-}
-
-#[derive(Debug, PartialEq, Clone)]
-enum OpArgTerm {
-    Terminal(Terminal),
-    String(String),
-}
-
-impl<'a> OpArgTerm {
-    fn from(other: &OpArgTermBorrowed<'a>, context: &mut Context) -> OpArgTerm {
-        match *other {
-            OpArgTermBorrowed::Terminal(slice) => {
-                OpArgTerm::Terminal(Terminal::from_slice(slice, context))
-            }
-            OpArgTermBorrowed::String(slice) => {
-                OpArgTerm::String(String::from_utf8_lossy(slice).into_owned())
-            }
-        }
-    }
 }
 
 impl<'a> OpArgTermBorrowed<'a> {
@@ -1111,42 +899,11 @@ fn string(input: &[u8]) -> IResult<&[u8], &[u8]> {
 
 // terminal = [a-zA-Z0-9_]+ ;
 #[derive(Debug, PartialEq)]
-struct TerminalBorrowed<'a>(&'a [u8]);
+pub struct TerminalBorrowed<'a>(pub &'a [u8]);
 
 impl<'a> TerminalBorrowed<'a> {
-    fn from_slice(i: &'a [u8]) -> TerminalBorrowed<'a> {
+    pub fn from_slice(i: &'a [u8]) -> TerminalBorrowed<'a> {
         TerminalBorrowed(i)
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum Terminal {
-    FreeTerm(String),
-    GroundedTerm(String),
-}
-
-impl<'a> Terminal {
-    fn from(other: &TerminalBorrowed<'a>, context: &mut Context) -> Terminal {
-        let &TerminalBorrowed(slice) = other;
-        let name = unsafe { String::from(str::from_utf8_unchecked(slice)) };
-        for v in &context.vars {
-            let v: &Var = unsafe { &**v };
-            if v.name == name {
-                return Terminal::FreeTerm(name);
-            }
-        }
-        Terminal::GroundedTerm(name)
-    }
-
-    fn from_slice(slice: &[u8], context: &mut Context) -> Terminal {
-        let name = unsafe { String::from(str::from_utf8_unchecked(slice)) };
-        for v in &context.vars {
-            let v: &Var = unsafe { &**v };
-            if v.name == name {
-                return Terminal::FreeTerm(name);
-            }
-        }
-        Terminal::GroundedTerm(name)
     }
 }
 
