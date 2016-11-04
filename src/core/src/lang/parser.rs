@@ -97,7 +97,10 @@ pub enum ParseErrF {
     IConnectInChain,
     IConnectAfterAnd,
     IConnectAfterOr,
-    None
+    IUVal(f32),
+    IUValComp,
+    NoRootFound,
+    None,
 }
 
 impl ParseErrF {
@@ -129,8 +132,10 @@ impl ParseTree {
         let mut context = Context::new();
         // check if it's an assertion
         let out = first.is_assertion(&mut context);
-        if out.is_some() {
-            return out.ok_or(ParseErrF::None);
+        match out {
+            Err(err) => return Err(err),
+            Ok(Some(tree)) => return Ok(tree),
+            _ => {}
         }
         // it's an expression, make logic sentence from nested expressions
         let sent = match LogSentence::new(&input, &mut context) {
@@ -149,9 +154,9 @@ pub struct ASTNode<'a> {
 }
 
 impl<'a> ASTNode<'a> {
-    fn is_assertion(&self, context: &mut Context) -> Option<ParseTree> {
+    fn is_assertion(&self, context: &mut Context) -> Result<Option<ParseTree>, ParseErrF> {
         if self.vars.is_some() {
-            return None;
+            return Ok(None);
         }
         self.next.is_assertion(context)
     }
@@ -166,17 +171,23 @@ pub enum Next<'a> {
 }
 
 impl<'a> Next<'a> {
-    fn is_assertion(&self, context: &mut Context) -> Option<ParseTree> {
+    fn is_assertion(&self, context: &mut Context) -> Result<Option<ParseTree>, ParseErrF> {
         match self {
             &Next::Assert(ref decl) => {
                 match decl {
                     &AssertBorrowed::ClassDecl(ref decl) => {
-                        Some(ParseTree::Assertion(
-                            vec![Assert::ClassDecl(ClassDecl::from(decl, context))]))
+                        let cls = match ClassDecl::from(decl, context) {
+                            Ok(cls) => cls,
+                            Err(err) => return Err(err),
+                        };
+                        Ok(Some(ParseTree::Assertion(vec![Assert::ClassDecl(cls)])))
                     }
                     &AssertBorrowed::FuncDecl(ref decl) => {
-                        Some(ParseTree::Assertion(vec![Assert::FuncDecl(FuncDecl::from(decl,
-                                                                                       context))]))
+                        let func = match FuncDecl::from(decl, context) {
+                            Ok(func) => func,
+                            Err(err) => return Err(err),
+                        };
+                        Ok(Some(ParseTree::Assertion(vec![Assert::FuncDecl(func)])))
                     }
                 }
             }
@@ -185,26 +196,30 @@ impl<'a> Next<'a> {
                 // chek that indeed all elements are indeed assertions
                 // avoid creating declarations prematurely
                 for decl in multi_decl {
-                    let d: Option<ParseTree> = decl.is_assertion(context);
+                    let d = decl.is_assertion(context);
                     match d {
-                        Some(ParseTree::Assertion(mut inner)) => {
+                        Err(err) => return Err(err),
+                        Ok(Some(ParseTree::Assertion(mut inner))) => {
                             for e in inner.drain(..) {
                                 v0.push(e)
                             }
                         }
-                        _ => return None,
+                        _ => return Ok(None),
                     }
                 }
-                Some(ParseTree::Assertion(v0))
+                Ok(Some(ParseTree::Assertion(v0)))
             }
             &Next::ASTNode(ref node) => {
-                let a: Option<ParseTree> = (**node).is_assertion(context);
+                let a: Result<Option<ParseTree>, ParseErrF> = (**node).is_assertion(context);
                 match a {
-                    Some(ParseTree::Assertion(assert)) => Some(ParseTree::Assertion(assert)),
-                    _ => None,
+                    Err(err) => Err(err),
+                    Ok(Some(ParseTree::Assertion(assert))) => {
+                        Ok(Some(ParseTree::Assertion(assert)))
+                    }
+                    _ => Ok(None),
                 }
             }
-            &Next::None => Some(ParseTree::Assertion(Vec::with_capacity(0))),
+            &Next::None => Ok(Some(ParseTree::Assertion(Vec::with_capacity(0)))),
         }
     }
 }
@@ -219,6 +234,15 @@ pub enum AssertBorrowed<'a> {
 pub enum Assert {
     FuncDecl(FuncDecl),
     ClassDecl(ClassDecl),
+}
+
+impl Assert {
+    pub fn get_name(&self) -> &str {
+        match self {
+            &Assert::FuncDecl(ref f) => f.get_name(),
+            &Assert::ClassDecl(ref c) => c.get_name(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -475,16 +499,12 @@ fn take_rest_scope(offset: usize,
             rest_l = &input[0..0];
         } else {
             if offset < pcd {
-                if pcd + 1 > cd - 1 {
-                    rest_r = &input[pcd..cd];
-                } else {
-                    rest_r = &input[pcd + 1..cd - 1];
-                }
+                rest_r = &input[pcd + 1..cd];
             } else {
-                if offset > cd - 1 {
+                if offset > cd {
                     rest_r = &b""[..]
                 } else {
-                    rest_r = &input[offset..cd - 1];
+                    rest_r = &input[offset..cd];
                 }
             }
             if offset < nod {
@@ -502,11 +522,7 @@ fn take_rest_scope(offset: usize,
             rest_l = &input[0..0];
         } else {
             rest = &input[0..cd];
-            if pcd + 1 > cd - 1 {
-                rest_r = &input[pcd..cd];
-            } else {
-                rest_r = &input[pcd + 1..cd - 1];
-            }
+            rest_r = &input[pcd + 1..cd];
             rest_l = &input[nod..pcd + 1];
         }
     }
@@ -592,7 +608,7 @@ pub struct Skolem {
 
 impl Skolem {
     pub fn from<'a>(input: &SkolemBorrowed<'a>, context: &mut Context) -> Skolem {
-        let &SkolemBorrowed{name: TerminalBorrowed(name), ref op_arg} = input;
+        let &SkolemBorrowed { name: TerminalBorrowed(name), ref op_arg } = input;
         let op_arg = match *op_arg {
             Some(ref op_arg) => Some(OpArg::from(op_arg, context)),
             None => None,
@@ -645,7 +661,7 @@ pub struct Var {
 
 impl Var {
     pub fn from<'a>(input: &VarBorrowed<'a>, context: &mut Context) -> Var {
-        let &VarBorrowed{name: TerminalBorrowed(name), ref op_arg} = input;
+        let &VarBorrowed { name: TerminalBorrowed(name), ref op_arg } = input;
         let op_arg = match *op_arg {
             Some(ref op_arg) => Some(OpArg::from(op_arg, context)),
             None => None,
@@ -702,12 +718,30 @@ pub struct FuncDecl {
 }
 
 impl<'a> FuncDecl {
-    pub fn from(other: &FuncDeclBorrowed<'a>, context: &mut Context) -> FuncDecl {
+    pub fn from(other: &FuncDeclBorrowed<'a>,
+                context: &mut Context)
+                -> Result<FuncDecl, ParseErrF> {
+        let func_name = Terminal::from(&other.name, context);
         let args = match other.args {
             Some(ref oargs) => {
                 let mut v0 = Vec::with_capacity(oargs.len());
-                for e in oargs {
-                    v0.push(Arg::from(e, context));
+                for a in oargs {
+                    match Terminal::from(&a.term, context) {
+                        Terminal::FreeTerm(ft) => {
+                            let t = FreeTerm::new(ft, a.uval, &func_name, None);
+                            if t.is_err() {
+                                return Err(t.unwrap_err());
+                            }
+                            v0.push(Arg::FreeTerm(t.unwrap()))
+                        }
+                        Terminal::GroundedTerm(gt) => {
+                            let t = GroundedTerm::new(gt, a.uval, &func_name, None);
+                            if t.is_err() {
+                                return Err(t.unwrap_err());
+                            }
+                            v0.push(Arg::GroundedTerm(t.unwrap()))
+                        }
+                    }
                 }
                 Some(v0)
             }
@@ -723,11 +757,18 @@ impl<'a> FuncDecl {
             }
             None => None,
         };
-        FuncDecl {
-            name: Terminal::from(&other.name, context),
+        Ok(FuncDecl {
+            name: func_name,
             args: args,
             op_args: op_args,
             variant: other.variant,
+        })
+    }
+
+    fn get_name(&self) -> &str {
+        match self.name {
+            Terminal::FreeTerm(ref name) => name,
+            Terminal::GroundedTerm(ref name) => name,
         }
     }
 }
@@ -788,11 +829,29 @@ pub struct ClassDecl {
 }
 
 impl<'a> ClassDecl {
-    pub fn from(other: &ClassDeclBorrowed<'a>, context: &mut Context) -> ClassDecl {
+    pub fn from(other: &ClassDeclBorrowed<'a>,
+                context: &mut Context)
+                -> Result<ClassDecl, ParseErrF> {
+        let class_name = Terminal::from(&other.name, context);
         let args = {
             let mut v0 = Vec::with_capacity(other.args.len());
-            for e in &other.args {
-                v0.push(Arg::from(e, context));
+            for a in &other.args {
+                match Terminal::from(&a.term, context) {
+                    Terminal::FreeTerm(ft) => {
+                        let t = FreeTerm::new(ft, a.uval, &class_name, None);
+                        if t.is_err() {
+                            return Err(t.unwrap_err());
+                        }
+                        v0.push(Arg::FreeTerm(t.unwrap()))
+                    }
+                    Terminal::GroundedTerm(gt) => {
+                        let t = GroundedTerm::new(gt, a.uval, &class_name, None);
+                        if t.is_err() {
+                            return Err(t.unwrap_err());
+                        }
+                        v0.push(Arg::GroundedTerm(t.unwrap()))
+                    }
+                }
             }
             v0
         };
@@ -806,10 +865,17 @@ impl<'a> ClassDecl {
             }
             None => None,
         };
-        ClassDecl {
-            name: Terminal::from(&other.name, context),
+        Ok(ClassDecl {
+            name: class_name,
             args: args,
             op_args: op_args,
+        })
+    }
+
+    fn get_name(&self) -> &str {
+        match self.name {
+            Terminal::FreeTerm(ref name) => name,
+            Terminal::GroundedTerm(ref name) => name,
         }
     }
 }
@@ -829,22 +895,9 @@ struct ArgBorrowed<'a> {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-struct Arg {
-    term: Terminal,
-    uval: Option<UVal>,
-}
-
-impl<'a> Arg {
-    fn from(other: &ArgBorrowed<'a>, context: &mut Context) -> Arg {
-        let uval = match other.uval {
-            Some(val) => Some(val.clone()),
-            None => None,
-        };
-        Arg {
-            term: Terminal::from(&other.term, context),
-            uval: uval,
-        }
-    }
+enum Arg {
+    FreeTerm(FreeTerm),
+    GroundedTerm(GroundedTerm),
 }
 
 named!(arg <ArgBorrowed>, chain!(
@@ -1067,7 +1120,7 @@ impl<'a> TerminalBorrowed<'a> {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-enum Terminal {
+pub enum Terminal {
     FreeTerm(String),
     GroundedTerm(String),
 }
@@ -1077,7 +1130,7 @@ impl<'a> Terminal {
         let &TerminalBorrowed(slice) = other;
         let name = unsafe { String::from(str::from_utf8_unchecked(slice)) };
         for v in &context.vars {
-            let v: &Var = unsafe {&**v};
+            let v: &Var = unsafe { &**v };
             if v.name == name {
                 return Terminal::FreeTerm(name);
             }
@@ -1088,7 +1141,7 @@ impl<'a> Terminal {
     fn from_slice(slice: &[u8], context: &mut Context) -> Terminal {
         let name = unsafe { String::from(str::from_utf8_unchecked(slice)) };
         for v in &context.vars {
-            let v: &Var = unsafe {&**v};
+            let v: &Var = unsafe { &**v };
             if v.name == name {
                 return Terminal::FreeTerm(name);
             }
@@ -1368,6 +1421,7 @@ macro_rules! assert_done_or_err {
         match $i {
             IResult::Error(nom::Err::Position(ref t, ref v)) => {
                 println!("\n@error Err::{:?}: {:?}", t, unsafe{str::from_utf8_unchecked(v)});
+                //println!("@error: {}", unsafe{str::from_utf8_unchecked(v)});
             },
             _ => {}
         }

@@ -1,14 +1,25 @@
+//! `LogSentence
+//! ------------
+//!
+//! Stores a serie of logical atoms (be them predicates or
+//! connectives), that form a well-formed logic formula. These are rulesets
+//! for reasoning, cataloging objects into sets/classes, and the relationships
+//! between these objects.
+//!
+//! LogSentence types are akin to minimal working compiled programs formed
+//! by compounded expressions which will evaluate with the current knowledge
+//! when called and perform any subtitution in the knowledge base if pertinent.
 use lang::parser::*;
 
-/// Object to store a first-order logic complex sentence.
+/// Type to store a first-order logic complex sentence.
 ///
-/// This sentence is the result of parsing a sentence and encode
+/// This sentence is the result of parsing a sentence and compile
 /// it in an usable form for the agent to classify and reason about
 /// objects and relations, cannot be instantiated directly.
 ///
 /// It's callable when instantiated, accepts as arguments:
 /// 1) the working knowledge-base
-/// 2) n strings which will subsitute the variables in the sentence
+/// 2) n types which will subsitute the variables in the sentence
 ///    or a list of string.
 #[derive(Debug)]
 pub struct LogSentence {
@@ -17,6 +28,7 @@ pub struct LogSentence {
     created: usize,
     vars: Option<Vec<Box<Var>>>,
     skolem: Option<Vec<Box<Skolem>>>,
+    root: Option<*const Particle>,
 }
 
 impl LogSentence {
@@ -27,8 +39,15 @@ impl LogSentence {
             created: 0,
             skolem: None,
             vars: None,
+            root: None,
         };
         let r = walk_ast(ast, &mut sent, context);
+        for p in &sent.particles {
+            if ((*p).get_parent()).is_none() {
+                sent.root = Some(&**p as *const Particle);
+                break;
+            }
+        }
         if r.is_err() {
             Err(r.unwrap_err())
         } else {
@@ -79,13 +98,19 @@ fn walk_ast(ast: &Next,
         Next::Assert(ref decl) => {
             let mut particle = Box::new(match decl {
                 &AssertBorrowed::ClassDecl(ref decl) => {
-                    let pred = Assert::ClassDecl(ClassDecl::from(decl, context));
-                    let atom = LogicAtom::new(context.ancestor, pred);
+                    let cls = match ClassDecl::from(decl, context) {
+                        Err(err) => return Err(err),
+                        Ok(cls) => cls,
+                    };
+                    let atom = LogicAtom::new(context.ancestor, Assert::ClassDecl(cls));
                     Particle::Atom(atom)
                 }
                 &AssertBorrowed::FuncDecl(ref decl) => {
-                    let pred = Assert::FuncDecl(FuncDecl::from(decl, context));
-                    let atom = LogicAtom::new(context.ancestor, pred);
+                    let func = match FuncDecl::from(decl, context) {
+                        Err(err) => return Err(err),
+                        Ok(func) => func,
+                    };
+                    let atom = LogicAtom::new(context.ancestor, Assert::FuncDecl(func));
                     Particle::Atom(atom)
                 }
             });
@@ -118,7 +143,7 @@ fn walk_ast(ast: &Next,
             if ast.logic_op.is_some() {
                 let mut op = Box::new(match ast.logic_op.as_ref().unwrap() {
                     &LogicOperator::ICond => {
-                        Particle::Condition(LogicIndCond::new(context.ancestor))
+                        Particle::IndConditional(LogicIndCond::new(context.ancestor))
                     }
                     &LogicOperator::And => {
                         Particle::Conjunction(LogicConjunction::new(context.ancestor))
@@ -267,7 +292,7 @@ enum Particle {
     Disjunction(LogicDisjunction),
     Implication(LogicImplication),
     Equivalence(LogicEquivalence),
-    Condition(LogicIndCond),
+    IndConditional(LogicIndCond),
 }
 
 impl Particle {
@@ -285,13 +310,24 @@ impl Particle {
         }
     }
 
+    fn get_parent(&self) -> Option<&Particle> {
+        match *self {
+            Particle::Conjunction(ref p) => p.get_parent(),
+            Particle::Disjunction(ref p) => p.get_parent(),
+            Particle::Implication(ref p) => p.get_parent(),
+            Particle::Equivalence(ref p) => p.get_parent(),
+            Particle::IndConditional(ref p) => p.get_parent(),
+            Particle::Atom(ref p) => p.get_parent(),
+        }
+    }
+
     fn add_rhs(&mut self, next: *const Particle) {
         match *self {
             Particle::Conjunction(ref mut p) => p.next.push(next),
             Particle::Disjunction(ref mut p) => p.next.push(next),
             Particle::Implication(ref mut p) => p.next.push(next),
             Particle::Equivalence(ref mut p) => p.next.push(next),
-            Particle::Condition(ref mut p) => p.next.push(next),
+            Particle::IndConditional(ref mut p) => p.next.push(next),
             _ => panic!("simag: expected an operator, found a predicate instead"),
         };
     }
@@ -326,7 +362,7 @@ impl Particle {
                     p.next.push(next)
                 }
             }
-            Particle::Condition(ref mut p) => {
+            Particle::IndConditional(ref mut p) => {
                 if p.next.len() == 1 {
                     p.next.insert(0, next)
                 } else {
@@ -363,6 +399,14 @@ impl LogicIndCond {
     fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr> {
         Ok(true)
     }
+
+    fn get_parent(&self) -> Option<&Particle> {
+        if self.parent.is_some() {
+            unsafe { Some(&**(self.parent.as_ref().unwrap())) }
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -392,6 +436,14 @@ impl LogicEquivalence {
         side of sentence: `{:?}`",
                           0);
         Err(SolveErr::AssertionError(err))
+    }
+
+    fn get_parent(&self) -> Option<&Particle> {
+        if self.parent.is_some() {
+            unsafe { Some(&**(self.parent.as_ref().unwrap())) }
+        } else {
+            None
+        }
     }
 }
 
@@ -423,6 +475,14 @@ impl LogicImplication {
                           0);
         Err(SolveErr::AssertionError(err))
     }
+
+    fn get_parent(&self) -> Option<&Particle> {
+        if self.parent.is_some() {
+            unsafe { Some(&**(self.parent.as_ref().unwrap())) }
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -449,6 +509,14 @@ impl LogicConjunction {
 
     fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr> {
         Ok(true)
+    }
+
+    fn get_parent(&self) -> Option<&Particle> {
+        if self.parent.is_some() {
+            unsafe { Some(&**(self.parent.as_ref().unwrap())) }
+        } else {
+            None
+        }
     }
 }
 
@@ -477,6 +545,14 @@ impl LogicDisjunction {
     fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr> {
         Ok(true)
     }
+
+    fn get_parent(&self) -> Option<&Particle> {
+        if self.parent.is_some() {
+            unsafe { Some(&**(self.parent.as_ref().unwrap())) }
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -502,75 +578,124 @@ impl LogicAtom {
     fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr> {
         Ok(true)
     }
-}
 
-#[derive(Debug, PartialEq, Clone)]
-enum Parent {
-    Func(Func),
-    Class(Class),
-}
+    fn get_name(&self) -> &str {
+        self.pred.get_name()
+    }
 
-#[derive(Debug, PartialEq, Clone)]
-struct Func {
-    name: String,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-struct Class {
-    name: String,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-struct GroundedTerm {
-    term: String,
-    value: f32,
-    operator: CompOperator,
-    parent: Parent,
-    dates: Option<Vec<i32>>,
-}
-
-impl GroundedTerm {
-    fn new<'a>(term: String, uval: UVal, parent: Parent, dates: Option<Vec<i32>>) -> GroundedTerm {
-        let val = match uval.val {
-            Number::UnsignedFloat(val) => val,
-            _ => panic!(),
-        };
-        let op = match uval.op {
-            CompOperator::Equal => CompOperator::Equal,
-            _ => panic!(),
-        };
-        GroundedTerm {
-            term: term,
-            value: val,
-            operator: op,
-            parent: parent,
-            dates: None,
+    fn get_parent(&self) -> Option<&Particle> {
+        if self.parent.is_some() {
+            unsafe { Some(&**(self.parent.as_ref().unwrap())) }
+        } else {
+            None
         }
     }
 }
 
 #[derive(Debug, PartialEq, Clone)]
-struct FreeTerm {
+pub struct GroundedTerm {
     term: String,
-    value: f32,
-    operator: CompOperator,
-    parent: Parent,
+    value: Option<f32>,
+    operator: Option<CompOperator>,
+    parent: Terminal,
+    dates: Option<Vec<i32>>,
+}
+
+impl GroundedTerm {
+    pub fn new(term: String,
+               uval: Option<UVal>,
+               parent: &Terminal,
+               dates: Option<Vec<i32>>)
+               -> Result<GroundedTerm, ParseErrF> {
+        let val;
+        let op;
+        if uval.is_some() {
+            let uval = uval.unwrap();
+            val = match uval.val {
+                Number::UnsignedInteger(val) => {
+                    if val == 0 || val == 1 {
+                        Some(val as f32)
+                    } else {
+                        return Err(ParseErrF::IUVal(val as f32))
+                    }
+                }
+                Number::UnsignedFloat(val) => {
+                    if val >= 0. && val <= 1. {
+                        Some(val)
+                    } else {
+                        return Err(ParseErrF::IUVal(val as f32))
+                    }
+                }
+                Number::SignedFloat(val) => return Err(ParseErrF::IUVal(val as f32)),
+                Number::SignedInteger(val) => return Err(ParseErrF::IUVal(val as f32))
+            };
+            op = match uval.op {
+                CompOperator::Equal => Some(CompOperator::Equal),
+                _ => return Err(ParseErrF::IUValComp),
+            };
+        } else {
+            val = None;
+            op = None;
+        }
+        Ok(GroundedTerm {
+            term: term,
+            value: val,
+            operator: op,
+            parent: parent.clone(),
+            dates: None,
+        })
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct FreeTerm {
+    term: String,
+    value: Option<f32>,
+    operator: Option<CompOperator>,
+    parent: Terminal,
     dates: Option<Vec<i32>>,
 }
 
 impl FreeTerm {
-    fn new<'a>(term: String, uval: UVal, parent: Parent, dates: Option<Vec<i32>>) -> FreeTerm {
-        let val = match uval.val {
-            Number::UnsignedFloat(val) => val,
-            _ => panic!(),
-        };
-        FreeTerm {
+    pub fn new(term: String,
+               uval: Option<UVal>,
+               parent: &Terminal,
+               dates: Option<Vec<i32>>)
+               -> Result<FreeTerm, ParseErrF> {
+        let val;
+        let op;
+        if uval.is_some() {
+            let uval = uval.unwrap();
+            val = match uval.val {
+                Number::UnsignedInteger(val) => {
+                    if val == 0 || val == 1 {
+                        Some(val as f32)
+                    } else {
+                        return Err(ParseErrF::IUVal(val as f32))
+                    }
+                }
+                Number::UnsignedFloat(val) => {
+                    if val >= 0. && val <= 1. {
+                        Some(val)
+                    } else {
+                        return Err(ParseErrF::IUVal(val as f32))
+                    }
+                }
+                Number::SignedFloat(val) => return Err(ParseErrF::IUVal(val as f32)),
+                Number::SignedInteger(val) => return Err(ParseErrF::IUVal(val as f32))
+            };
+            op = Some(uval.op);
+        } else {
+            val = None;
+            op = None;
+        }
+        Ok(FreeTerm {
             term: term,
             value: val,
-            operator: uval.op,
-            parent: parent,
+            operator: op,
+            parent: parent.clone(),
             dates: None,
-        }
+        })
     }
 }
 
@@ -579,14 +704,79 @@ fn parse_tree() {
     let source = String::from("
         (   ( let x y z )
             (
-                ( american[x,u=1] && weapon[y,u=1] && fn::sells[y,u>0.5;x;z] && hostile[z,u=1] )
+                ( american[x,u=1] && weapon[y,u=1] && fn::sells[y,u>0.5;x;z] )
                 |> criminal[x,u=1]
             )
         )
     ");
     use lang::ParserState;
     let state = ParserState::Tell;
-    let p = Parser::parse(source, &state);
-    println!("{:?}", p);
-    assert!(p.is_ok());
+    let tree = Parser::parse(source, &state);
+    assert!(tree.is_ok());
+    let sent = match tree.unwrap().pop() {
+        Some(ParseTree::Expr(sent)) => sent,
+        _ => panic!(),
+    };
+    unsafe {
+        let root = &*(sent.root.unwrap());
+        match root {
+            &Particle::IndConditional(ref p) => {
+                match &*(p.next[0]) {
+                    &Particle::Conjunction(ref op) => {
+                        match &*(op.next[0]) {
+                            &Particle::Atom(ref atm) => {
+                                assert_eq!(atm.get_name(), "american");
+                                match atm.get_parent().unwrap() {
+                                    &Particle::Conjunction(ref op) => {
+                                        match &*(op.next[0]) {
+                                            &Particle::Atom(ref atm) => {
+                                                assert_eq!(atm.get_name(), "american")
+                                            }
+                                            _ => panic!(),
+                                        };
+                                    }
+                                    _ => panic!(),
+                                }
+                            }
+                            _ => panic!(),
+                        };
+                        match &*(op.next[1]) {
+                            &Particle::Conjunction(ref op) => {
+                                match &*(op.next[0]) {
+                                    &Particle::Atom(ref atm) => {
+                                        assert_eq!(atm.get_name(), "weapon")
+                                    }
+                                    _ => panic!(),
+                                };
+                                match &*(op.next[1]) {
+                                    &Particle::Atom(ref atm) => {
+                                        assert_eq!(atm.get_name(), "sells");
+                                        match atm.get_parent().unwrap() {
+                                            &Particle::Conjunction(ref op) => {
+                                                match &*(op.next[0]) {
+                                                    &Particle::Atom(ref atm) => {
+                                                        assert_eq!(atm.get_name(), "weapon")
+                                                    }
+                                                    _ => panic!(),
+                                                };
+                                            }
+                                            _ => panic!(),
+                                        }
+                                    }
+                                    _ => panic!(),
+                                };
+                            }
+                            _ => panic!(),
+                        }
+                    }
+                    _ => panic!(),
+                }
+                match &*(p.next[1]) {
+                    &Particle::Atom(ref atm) => assert_eq!(atm.get_name(), "criminal"),
+                    _ => panic!(),
+                }
+            }
+            _ => panic!(),
+        };
+    }
 }
