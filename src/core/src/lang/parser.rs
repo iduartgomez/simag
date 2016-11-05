@@ -31,7 +31,7 @@ impl Parser {
         let mut parse_trees = Vec::new();
         for ast in scopes {
             match ParseTree::process_ast(ast, state) {
-                Err(err) => return Err(ParseErrF::from(err)),
+                Err(err) => parse_trees.push(ParseTree::ParseErr(err)),
                 Ok(tree) => parse_trees.push(tree),
             }
         }
@@ -51,6 +51,7 @@ impl Parser {
                 p2.push(*b)
             }
         }
+
         // separate by scopes; everything inside a scope is either an other scope,
         // a var declaration, an operator or a terminal AST node;
         // inner scopes are linked by logical operators, and the terminal nodes contain
@@ -115,6 +116,7 @@ impl ParseErrF {
 
 impl<'a> From<ParseErrB<'a>> for ParseErrF {
     fn from(err: ParseErrB<'a>) -> ParseErrF {
+        // TODO: implement err messag building
         ParseErrF::Msg(String::from("failed"))
     }
 }
@@ -125,6 +127,7 @@ pub enum ParseTree {
     Expr(LogSentence),
     IExpr(LogSentence),
     Rule(LogSentence),
+    ParseErr(ParseErrF)
 }
 
 impl ParseTree {
@@ -255,11 +258,11 @@ fn get_blocks<'a>(input: &'a [u8]) -> IResult<&'a [u8], Vec<Next<'a>>> {
     let input = remove_multispace(input);
     if input.len() == 0 {
         // empty program
-        return IResult::Done(&b""[..], vec![]);
+        return IResult::Done(&b" "[..], vec![]);
     }
     // find the positions of the closing delimiters and try until it fails
     let mut results = Vec::new();
-    let mut mcd = Vec::new();
+    let mut mcd = ::std::collections::VecDeque::new();
     let mut lp = 0;
     let mut rp = 0;
     let mut slp = -1_i64;
@@ -273,9 +276,9 @@ fn get_blocks<'a>(input: &'a [u8]) -> IResult<&'a [u8], Vec<Next<'a>>> {
             rp += 1;
             if rp == lp {
                 if i + 1 < input.len() {
-                    mcd.push((slp as usize, i + 1));
+                    mcd.push_back((slp as usize, i + 1));
                 } else {
-                    mcd.push((slp as usize, input.len() - 1));
+                    mcd.push_back((slp as usize, input.len() - 1));
                 }
                 slp = -1;
             }
@@ -287,7 +290,7 @@ fn get_blocks<'a>(input: &'a [u8]) -> IResult<&'a [u8], Vec<Next<'a>>> {
         return IResult::Error(nom::Err::Position(ErrorKind::Custom(11), input));
     }
     for _ in 0..mcd.len() {
-        let (lp, rp) = mcd.pop().unwrap();
+        let (lp, rp) = mcd.pop_front().unwrap();
         match scope(&input[lp..rp]) {
             IResult::Done(r, done) => results.push(done),
             IResult::Error(err) => return IResult::Error(err),
@@ -297,7 +300,7 @@ fn get_blocks<'a>(input: &'a [u8]) -> IResult<&'a [u8], Vec<Next<'a>>> {
     if results.len() == 0 {
         return IResult::Error(nom::Err::Position(ErrorKind::Custom(11), input));
     }
-    IResult::Done(&b""[..], results)
+    IResult::Done(&b" "[..], results)
 }
 
 // scope disambiguation infrastructure:
@@ -496,7 +499,7 @@ fn take_rest_scope(offset: usize,
                 rest_r = &input[pcd + 1..cd];
             } else {
                 if offset > cd {
-                    rest_r = &b""[..]
+                    rest_r = &b" "[..]
                 } else {
                     rest_r = &input[offset..cd];
                 }
@@ -1001,10 +1004,10 @@ named!(remove_comments(&[u8]) -> Vec<&[u8]>,
     many1!(
         chain!(
             before: comment_tag ~
-            comment: alt!(
+            alt!(
                 recognize!(delimited!(char!('#'), is_not!("\n"), alt!(is_a!("\n") | eof ))) |
-                recognize!(delimited!(tag!("/*"), take_until_bytes!(b"*/"), tag!("*/")))
-            ) ? ,
+                recognize!(delimited!(tag!("/*"), take_until!("*/"), tag!("*/")))
+            )? ,
             || {
                 before
              }
@@ -1031,7 +1034,7 @@ fn comment_tag(input: &[u8]) -> IResult<&[u8], &[u8]> {
         }
     }
     if idx == 0 {
-        IResult::Done(&input[0..], &input[..])
+        IResult::Done(&b" "[..], &input[0..])
     } else {
         IResult::Done(&input[idx..], &input[0..idx])
     }
@@ -1167,10 +1170,12 @@ fn ast() {
     let source = b"
     ((let x y) (american[x,u=1] && hostile[z,u=1]) |> criminal[x,u=1])
     ((let x y) ((american[x,u=1] && hostile[z,u=1]) |> criminal[x,u=1]))
+    ((let x y) (american[x,u=1] && hostile[z,u=1]) |> criminal[x,u=1])
     ";
     let mut data = Vec::new();
     let scanned = Parser::feed(source, &mut data);
     assert!(scanned.is_ok());
+    assert_eq!(scanned.unwrap().len(), 3);
 }
 
 macro_rules! assert_done_or_err {
