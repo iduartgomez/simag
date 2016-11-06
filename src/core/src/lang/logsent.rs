@@ -58,7 +58,7 @@ impl LogSentence {
                     return Err(ParseErrF::RuleIncludesICond);
                 }
             } else if context.iexpr() && !sent.correct_iexpr() {
-                return Err(ParseErrF::ICondLHS);
+                return Err(ParseErrF::ICondWrongOp);
             }
             Ok(sent)
         }
@@ -91,102 +91,7 @@ impl LogSentence {
     }
 
     fn correct_iexpr(&self) -> bool {
-        let first: &Particle = unsafe { &*(self.root.unwrap()) };
-
-        // test that the lhs does not include any indicative conditional connective
-        fn has_icond_child(p: &Particle) -> bool {
-            match p.get_next(0) {
-                Some(n) => {
-                    match n {
-                        &Particle::IndConditional(_) => return true,
-                        _ => {}
-                    }
-                    if has_icond_child(n) {
-                        return true;
-                    }
-                }
-                None => {}
-            }
-            match p.get_next(1) {
-                Some(n) => {
-                    match n {
-                        &Particle::IndConditional(_) => return true,
-                        _ => {}
-                    }
-                    if has_icond_child(n) {
-                        return true;
-                    }
-                }
-                None => {}
-            }
-            false
-        }
-        let icond_in_lhs = match first {
-            &Particle::IndConditional(_) => {
-                match first.get_next(0) {
-                    Some(next) => {
-                        match next {
-                            &Particle::IndConditional(_) => true,
-                            _ => has_icond_child(next),
-                        }
-                    }
-                    None => false,
-                }
-            }
-            _ => false,
-        };
-        if icond_in_lhs {
-            return false;
-        }
-
-        // test that the rh-most-s does include only icond or 'OR' connectives
-        fn icond_child_wrong_side(p: &Particle) -> bool {
-            match p.get_next(1) {
-                Some(n0) => {
-                    match n0 {
-                        &Particle::IndConditional(_) => {
-                            match n0.get_next(0) {
-                                Some(n1) => {
-                                    if has_icond_child(n1) {
-                                        return true;
-                                    }
-                                }
-                                None => {}
-                            }
-                            icond_child_wrong_side(n0);
-                        }
-                        &Particle::Disjunction(_) => {
-                            match n0.get_next(0) {
-                                Some(n1) => {
-                                    if has_icond_child(n1) {
-                                        return true;
-                                    }
-                                }
-                                None => {}
-                            }
-                            icond_child_wrong_side(n0);
-                        }
-                        _ => {
-                            match n0.get_next(0) {
-                                Some(n1) => {
-                                    if has_icond_child(n1) {
-                                        return true;
-                                    }
-                                }
-                                None => {}
-                            }
-                        }
-                    }
-                }
-                None => {}
-            }
-            false
-        }
-        if !icond_child_wrong_side(first) {
-            true
-        } else {
-            false
-        }
+        _correct_iexpr(&self)
     }
 }
 
@@ -710,6 +615,8 @@ impl fmt::Display for Particle {
     }
 }
 
+// infrastructure to construct compiled logsentences:
+
 pub struct Context {
     pub stype: SentType,
     pub vars: Vec<*const Var>,
@@ -984,6 +891,64 @@ fn _link_sent_childs(sent: &mut LogSentence) {
     }
 }
 
+fn _correct_iexpr(sent: &LogSentence) -> bool {
+    fn has_icond_child(p: &Particle) -> bool {
+        if let Some(n1_0)= p.get_next(0) {
+            match n1_0 {
+                &Particle::IndConditional(_) => return true,
+                _ => {}
+            }
+            if has_icond_child(n1_0) {
+                return true;
+            }
+        }
+        if let Some(n1_1)= p.get_next(1) {
+            match n1_1 {
+                &Particle::IndConditional(_) => return true,
+                _ => {}
+            }
+            if has_icond_child(n1_1) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn wrong_operator(p: &Particle) -> bool {
+        if let Some(n1_0)= p.get_next(0) {
+            // test that the lhs does not include any indicative conditional
+            if has_icond_child(n1_0) {
+                return true;
+            }
+        }
+        // test that the rh-most-s does include only icond or 'OR' connectives
+        let mut is_wrong = false;
+        if let Some(n1_1)= p.get_next(1) {
+            match n1_1 {
+                &Particle::IndConditional(_) => {}
+                &Particle::Disjunction(_) => {}
+                &Particle::Atom(_) => {}
+                _ => return true,
+            }
+            is_wrong = wrong_operator(n1_1);
+        }
+        is_wrong
+    }
+
+    let first: &Particle = unsafe { &*(sent.root.unwrap()) };
+    if let Some(n1_0)= first.get_next(0) {
+        match n1_0 {
+            &Particle::IndConditional(_) => return false,
+            _ => {}
+        }
+    }
+    if !wrong_operator(first) {
+        true
+    } else {
+        false
+    }
+}
+
 #[test]
 fn icond_exprs() {
     let source = String::from("
@@ -992,7 +957,7 @@ fn icond_exprs() {
          ( ( cde[x,u=1] |> fn::fgh[y,u>0.5;x;z] ) |> hij[y,u=1] )
         )
 
-        # Err: chekear pq no pilla
+        # Err
         ((let x y z)
          ( abc[x,u=1]  |> (( cde[x,u=1] |> fn::fgh[y,u>0.5;x;z] ) && hij[y,u=1] ))
         )
@@ -1086,12 +1051,16 @@ fn icond_exprs() {
     };
 
     let sent = match tree.pop() {
-        Some(ParseTree::ParseErr(ParseErrF::ICondLHS)) => {}
+        Some(ParseTree::ParseErr(ParseErrF::ICondWrongOp)) => {},
+        Some(ParseTree::IExpr(sent)) => {
+            println!("{}", sent);
+            panic!()
+        }
         _ => panic!(),
     };
 
     let sent = match tree.pop() {
-        Some(ParseTree::ParseErr(ParseErrF::ICondLHS)) => {}
+        Some(ParseTree::ParseErr(ParseErrF::ICondWrongOp)) => {}
         _ => panic!(),
     };
 }

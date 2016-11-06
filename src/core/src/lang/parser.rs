@@ -103,7 +103,7 @@ pub enum ParseErrF {
     IUValComp,
     ReservedKW(String),
     WrongDef,
-    ICondLHS,
+    ICondWrongOp,
     RuleIncludesICond,
     None,
 }
