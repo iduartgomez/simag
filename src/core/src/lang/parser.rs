@@ -5,7 +5,6 @@ use nom::{IResult, ErrorKind};
 use nom::{is_digit, is_alphanumeric, eof};
 use nom;
 
-use lang::ParserState;
 use lang::logsent::*;
 use lang::common::*;
 
@@ -18,7 +17,7 @@ const IMPL_OP: &'static [u8] = b"=>";
 pub struct Parser;
 impl Parser {
     /// Lexerless (mostly) recursive descent parser. Takes a string and outputs a correct ParseTree.
-    pub fn parse(input: String, state: &ParserState) -> Result<Vec<ParseTree>, ParseErrF> {
+    pub fn parse(input: String) -> Result<Vec<ParseTree>, ParseErrF> {
         // store is a vec where the sequence of characters after cleaning up comments
         // will be stored; feed to an other fn to avoid lifetime issues (both original
         // input and the store have to have the same lifetime)
@@ -30,7 +29,7 @@ impl Parser {
         // walk the AST output and, if correct, output a final parse tree
         let mut parse_trees = Vec::new();
         for ast in scopes {
-            match ParseTree::process_ast(ast, state) {
+            match ParseTree::process_ast(ast) {
                 Err(err) => parse_trees.push(ParseTree::ParseErr(err)),
                 Ok(tree) => parse_trees.push(tree),
             }
@@ -109,13 +108,13 @@ pub enum ParseErrF {
 }
 
 impl ParseErrF {
-    fn format<'a>(err: ParseErrB<'a>) -> String {
+    fn format<'a>(_err: ParseErrB<'a>) -> String {
         unimplemented!()
     }
 }
 
 impl<'a> From<ParseErrB<'a>> for ParseErrF {
-    fn from(err: ParseErrB<'a>) -> ParseErrF {
+    fn from(_err: ParseErrB<'a>) -> ParseErrF {
         // TODO: implement err messag building
         ParseErrF::Msg(String::from("failed"))
     }
@@ -131,7 +130,7 @@ pub enum ParseTree {
 }
 
 impl ParseTree {
-    fn process_ast(input: Next, state: &ParserState) -> Result<ParseTree, ParseErrF> {
+    fn process_ast(input: Next) -> Result<ParseTree, ParseErrF> {
         let first = match &input {
             &Next::ASTNode(ref val) => &(*val),
             _ => panic!("simag: expected an AST node, found other variant"),
@@ -145,6 +144,7 @@ impl ParseTree {
             _ => {}
         }
         // it's an expression, make logic sentence from nested expressions
+        let mut context = Context::new();
         match LogSentence::new(&input, &mut context) {
             Ok(sent) => {
                 match context.stype {
@@ -292,9 +292,9 @@ fn get_blocks<'a>(input: &'a [u8]) -> IResult<&'a [u8], Vec<Next<'a>>> {
     for _ in 0..mcd.len() {
         let (lp, rp) = mcd.pop_front().unwrap();
         match scope(&input[lp..rp]) {
-            IResult::Done(r, done) => results.push(done),
+            IResult::Done(_, done) => results.push(done),
             IResult::Error(err) => return IResult::Error(err),
-            IResult::Incomplete(err) => return IResult::Error(nom::Err::Code(ErrorKind::Count)),
+            IResult::Incomplete(_) => return IResult::Error(nom::Err::Code(ErrorKind::Count)),
         }
     }
     if results.len() == 0 {

@@ -94,7 +94,7 @@ impl GroundedTerm {
 
 #[derive(Debug, PartialEq, Clone)]
 struct FreeTerm {
-    term: String,
+    term: *const Var,
     value: Option<f32>,
     operator: Option<CompOperator>,
     parent: Terminal,
@@ -102,7 +102,7 @@ struct FreeTerm {
 }
 
 impl FreeTerm {
-    fn new(term: String,
+    fn new(term: *const Var,
            uval: Option<UVal>,
            parent: &Terminal,
            _: Option<Vec<i32>>)
@@ -218,7 +218,7 @@ impl<'a> FuncDecl {
             None => return Err(ParseErrF::WrongDef),
         };
         if op_args.as_ref().unwrap().len() != 2 {
-            return Err(ParseErrF::WrongDef)
+            return Err(ParseErrF::WrongDef);
         }
         Ok(FuncDecl {
             name: Terminal::Keyword("time_calc"),
@@ -296,7 +296,7 @@ impl<'a> FuncDecl {
 
     fn get_name(&self) -> &str {
         match self.name {
-            Terminal::FreeTerm(ref name) => name,
+            Terminal::FreeTerm(var) => unsafe { &(&*var).name },
             Terminal::GroundedTerm(ref name) => name,
             Terminal::Keyword(name) => name,
         }
@@ -353,7 +353,7 @@ impl<'a> ClassDecl {
 
     fn get_name(&self) -> &str {
         match self.name {
-            Terminal::FreeTerm(ref name) => name,
+            Terminal::FreeTerm(var) => unsafe { &(&*var).name },
             Terminal::GroundedTerm(ref name) => name,
             Terminal::Keyword(name) => name,
         }
@@ -414,7 +414,7 @@ impl<'a> OpArgTerm {
 
 #[derive(Debug, PartialEq)]
 pub struct Var {
-    name: String,
+    pub name: String,
     op_arg: Option<OpArg>,
 }
 
@@ -444,7 +444,7 @@ impl Var {
 
 #[derive(Debug)]
 pub struct Skolem {
-    name: String,
+    pub name: String,
     op_arg: Option<OpArg>,
 }
 
@@ -476,7 +476,7 @@ impl Skolem {
 
 #[derive(Debug, PartialEq, Clone)]
 enum Terminal {
-    FreeTerm(String),
+    FreeTerm(*const Var),
     GroundedTerm(String),
     Keyword(&'static str),
 }
@@ -489,9 +489,9 @@ impl<'a> Terminal {
             return Err(ParseErrF::ReservedKW(name));
         }
         for v in &context.vars {
-            let v: &Var = unsafe { &**v };
-            if v.name == name {
-                return Ok(Terminal::FreeTerm(name));
+            let v_r: &Var = unsafe { &**v };
+            if v_r.name == name {
+                return Ok(Terminal::FreeTerm(*v));
             }
         }
         Ok(Terminal::GroundedTerm(name))
@@ -505,7 +505,7 @@ impl<'a> Terminal {
         for v in &context.vars {
             let v: &Var = unsafe { &**v };
             if v.name == name {
-                return Ok(Terminal::FreeTerm(name));
+                return Ok(Terminal::FreeTerm(v));
             }
         }
         Ok(Terminal::GroundedTerm(name))

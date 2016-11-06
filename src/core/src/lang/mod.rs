@@ -1,5 +1,4 @@
 #![allow(dead_code)]
-#![allow(unused_variables)]
 
 mod logsent;
 mod parser;
@@ -27,10 +26,10 @@ impl ParserState {
 ///
 /// It includes a a scanner and parser for the synthatical analysis which translate
 /// to the `program` in form of a ParseResult to be feed to an Agent.
-fn logic_parser<'a>(source: String, tell: bool) -> Result<Vec<ParseTree>, ParseErrF> {
-    let parser_state = match tell {
+pub fn logic_parser<'a>(source: String, tell: bool) -> Result<Vec<ParseTree>, ParseErrF> {
+    let _parser_state = match tell {
         false => ParserState::Ask,
         true => ParserState::Tell,
     };
-    Parser::parse(source, &parser_state)
+    Parser::parse(source)
 }

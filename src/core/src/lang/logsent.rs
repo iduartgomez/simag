@@ -9,7 +9,9 @@
 //! LogSentence types are akin to minimal working compiled programs formed
 //! by compounded expressions which will evaluate with the current knowledge
 //! when called and perform any subtitution in the knowledge base if pertinent.
+#![allow(unused_variables)]
 use std::str;
+use std::collections::HashMap;
 use std::fmt;
 
 use lang::parser::*;
@@ -49,7 +51,7 @@ impl LogSentence {
         if r.is_err() {
             Err(r.unwrap_err())
         } else {
-            _link_sent_childs(&mut sent);
+            link_sent_childs(&mut sent);
             // classify the kind of sentence and check that are correct
             if sent.vars.is_none() {
                 if !context.iexpr() {
@@ -57,7 +59,7 @@ impl LogSentence {
                 } else {
                     return Err(ParseErrF::RuleIncludesICond);
                 }
-            } else if context.iexpr() && !sent.correct_iexpr() {
+            } else if context.iexpr() && !correct_iexpr(&sent) {
                 return Err(ParseErrF::ICondWrongOp);
             }
             Ok(sent)
@@ -88,10 +90,6 @@ impl LogSentence {
 
     fn add_particle(&mut self, p: Box<Particle>) {
         self.particles.push(p)
-    }
-
-    fn correct_iexpr(&self) -> bool {
-        _correct_iexpr(&self)
     }
 }
 
@@ -621,6 +619,8 @@ pub struct Context {
     pub stype: SentType,
     pub vars: Vec<*const Var>,
     pub skols: Vec<*const Skolem>,
+    aliasing_vars: HashMap<*const Var, (usize, *const Var)>,
+    aliasing_skols: HashMap<*const Skolem, (usize, *const Skolem)>,
     from_chain: bool,
     in_rhs: bool,
 }
@@ -633,6 +633,8 @@ impl Context {
             stype: SentType::Expr,
             in_rhs: true,
             from_chain: false,
+            aliasing_vars: HashMap::new(),
+            aliasing_skols: HashMap::new(),
         }
     }
 
@@ -677,15 +679,47 @@ fn walk_ast(ast: &Next,
         Next::ASTNode(ref ast) => {
             let mut v_cnt = 0;
             let mut s_cnt = 0;
+            let mut swap_vars: Vec<(usize, *const Var, *const Var)> = Vec::new();
+            let mut swap_skolem: Vec<(usize, *const Skolem, *const Skolem)> = Vec::new();
+
+            fn drop_local_vars(context: &mut Context, v_cnt: usize) {
+                let l = context.vars.len() - v_cnt;
+                let local_vars = context.vars.drain(l..).collect::<Vec<*const Var>>();
+                for v in local_vars {
+                    if context.aliasing_vars.contains_key(&v) {
+                        let (idx, aliased) = context.aliasing_vars.remove(&v).unwrap();
+                        context.vars.insert(idx, aliased);
+                    }
+                }
+            }
+
+            fn drop_local_skolems(context: &mut Context, s_cnt: usize) {
+                let l = context.skols.len() - s_cnt;
+                let local_skolem = context.skols.drain(l..).collect::<Vec<*const Skolem>>();
+                for v in local_skolem {
+                    if context.aliasing_skols.contains_key(&v) {
+                        let (idx, aliased) = context.aliasing_skols.remove(&v).unwrap();
+                        context.skols.insert(idx, aliased);
+                    }
+                }
+            }
+
             // make vars and add to sent, also add them to local scope context
             if ast.vars.is_some() {
                 for v in ast.vars.as_ref().unwrap() {
                     match *v {
+                        // if there is a var in context with the current name, alias it
                         VarDeclBorrowed::Var(ref v) => {
                             let var = match Var::from(v, context) {
                                 Err(err) => return Err(err),
                                 Ok(val) => Box::new(val),
                             };
+                            for (i, v) in context.vars.iter().enumerate() {
+                                let v_r: &Var = unsafe { &**v };
+                                if v_r.name == var.name {
+                                    swap_vars.push((i, *v, &*var as *const Var));
+                                }
+                            }
                             context.vars.push(&*var);
                             v_cnt += 1;
                             sent.add_var(var);
@@ -695,11 +729,25 @@ fn walk_ast(ast: &Next,
                                 Err(err) => return Err(err),
                                 Ok(val) => Box::new(val),
                             };
+                            for (i, v) in context.skols.iter().enumerate() {
+                                let v_r: &Skolem = unsafe { &**v };
+                                if v_r.name == skolem.name {
+                                    swap_skolem.push((i, *v, &*skolem as *const Skolem));
+                                }
+                            }
                             context.skols.push(&*skolem);
                             s_cnt += 1;
                             sent.add_skolem(skolem);
                         }
                     }
+                }
+                for &(i, aliased, var) in &swap_vars {
+                    context.vars.remove(i);
+                    context.aliasing_vars.insert(var, (i, aliased));
+                }
+                for &(i, aliased, var) in &swap_skolem {
+                    context.skols.remove(i);
+                    context.aliasing_skols.insert(var, (i, aliased));
                 }
             }
             if ast.logic_op.is_some() {
@@ -718,12 +766,8 @@ fn walk_ast(ast: &Next,
                     Ok(opt) => opt,
                     Err(err) => return Err(err),
                 };
-                // drop local scope vars from context
-                let l = context.vars.len() - v_cnt;
-                context.vars.truncate(l);
-                let l = context.skols.len() - s_cnt;
-                context.skols.truncate(l);
-
+                drop_local_vars(context, v_cnt);
+                drop_local_skolems(context, s_cnt);
                 if context.in_rhs {
                     op.add_rhs(next);
                 } else {
@@ -733,11 +777,8 @@ fn walk_ast(ast: &Next,
                 Ok(ptr)
             } else {
                 let res = walk_ast(&ast.next, sent, context);
-                // drop local scope vars from context
-                let l = context.vars.len() - v_cnt;
-                context.vars.truncate(l);
-                let l = context.skols.len() - s_cnt;
-                context.skols.truncate(l);
+                drop_local_vars(context, v_cnt);
+                drop_local_skolems(context, s_cnt);
                 res
             }
         }
@@ -849,7 +890,7 @@ fn walk_ast(ast: &Next,
     }
 }
 
-fn _link_sent_childs(sent: &mut LogSentence) {
+fn link_sent_childs(sent: &mut LogSentence) {
     // add entry point of the sentence and parent to childs
     let mut addresses: Vec<*const Particle> = Vec::new();
     for p in &sent.particles {
@@ -860,7 +901,6 @@ fn _link_sent_childs(sent: &mut LogSentence) {
             addresses.push(&*a as *const Particle)
         }
     }
-    use std::collections::HashMap;
     let mut childs: HashMap<usize, (Option<usize>, Option<usize>)> = HashMap::new();
     for a in &sent.particles {
         if !addresses.contains(&(&**a as *const Particle)) {
@@ -891,9 +931,9 @@ fn _link_sent_childs(sent: &mut LogSentence) {
     }
 }
 
-fn _correct_iexpr(sent: &LogSentence) -> bool {
+fn correct_iexpr(sent: &LogSentence) -> bool {
     fn has_icond_child(p: &Particle) -> bool {
-        if let Some(n1_0)= p.get_next(0) {
+        if let Some(n1_0) = p.get_next(0) {
             match n1_0 {
                 &Particle::IndConditional(_) => return true,
                 _ => {}
@@ -902,7 +942,7 @@ fn _correct_iexpr(sent: &LogSentence) -> bool {
                 return true;
             }
         }
-        if let Some(n1_1)= p.get_next(1) {
+        if let Some(n1_1) = p.get_next(1) {
             match n1_1 {
                 &Particle::IndConditional(_) => return true,
                 _ => {}
@@ -915,7 +955,7 @@ fn _correct_iexpr(sent: &LogSentence) -> bool {
     }
 
     fn wrong_operator(p: &Particle) -> bool {
-        if let Some(n1_0)= p.get_next(0) {
+        if let Some(n1_0) = p.get_next(0) {
             // test that the lhs does not include any indicative conditional
             if has_icond_child(n1_0) {
                 return true;
@@ -923,7 +963,7 @@ fn _correct_iexpr(sent: &LogSentence) -> bool {
         }
         // test that the rh-most-s does include only icond or 'OR' connectives
         let mut is_wrong = false;
-        if let Some(n1_1)= p.get_next(1) {
+        if let Some(n1_1) = p.get_next(1) {
             match n1_1 {
                 &Particle::IndConditional(_) => {}
                 &Particle::Disjunction(_) => {}
@@ -936,7 +976,7 @@ fn _correct_iexpr(sent: &LogSentence) -> bool {
     }
 
     let first: &Particle = unsafe { &*(sent.root.unwrap()) };
-    if let Some(n1_0)= first.get_next(0) {
+    if let Some(n1_0) = first.get_next(0) {
         match n1_0 {
             &Particle::IndConditional(_) => return false,
             _ => {}
@@ -972,9 +1012,7 @@ fn icond_exprs() {
         (( let x y z )
          (( american[x,u=1] && weapon[y,u=1] && fn::sells[y,u>0.5;x;z] ) |> criminal[x,u=1]))
     ");
-    use lang::ParserState;
-    let state = ParserState::Tell;
-    let tree = Parser::parse(source, &state);
+    let tree = Parser::parse(source);
     assert!(tree.is_ok());
     let mut tree = tree.unwrap();
 
@@ -1051,7 +1089,7 @@ fn icond_exprs() {
     };
 
     let sent = match tree.pop() {
-        Some(ParseTree::ParseErr(ParseErrF::ICondWrongOp)) => {},
+        Some(ParseTree::ParseErr(ParseErrF::ICondWrongOp)) => {}
         Some(ParseTree::IExpr(sent)) => {
             println!("{}", sent);
             panic!()
