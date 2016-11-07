@@ -16,6 +16,7 @@ use std::fmt;
 
 use lang::parser::*;
 use lang::common::*;
+use agent::Representation;
 
 /// Type to store a first-order logic complex sentence.
 ///
@@ -34,10 +35,11 @@ pub struct LogSentence {
     created: usize,
     vars: Option<Vec<Box<Var>>>,
     skolem: Option<Vec<Box<Skolem>>>,
-    root: Option<*const Particle>,
+    root: *const Particle,
+    var_req: Option<HashMap<*const Var, Vec<*const Assert>>>,
 }
 
-impl LogSentence {
+impl<'a> LogSentence {
     pub fn new(ast: &Next, context: &mut Context) -> Result<LogSentence, ParseErrF> {
         let mut sent = LogSentence {
             particles: Vec::new(),
@@ -45,25 +47,68 @@ impl LogSentence {
             created: 0,
             skolem: None,
             vars: None,
-            root: None,
+            root: ::std::ptr::null(),
+            var_req: None,
         };
         let r = walk_ast(ast, &mut sent, context);
         if r.is_err() {
             Err(r.unwrap_err())
         } else {
             link_sent_childs(&mut sent);
+            // add var requeriments
+            let req = sent.get_var_requeriments();
+            if req.len() > 0 {
+                sent.var_req = Some(req);
+            }
             // classify the kind of sentence and check that are correct
             if sent.vars.is_none() {
                 if !context.iexpr() {
                     context.stype = SentType::Rule;
                 } else {
-                    return Err(ParseErrF::RuleIncludesICond);
+                    return Err(ParseErrF::RuleInclICond(format!("{}", sent)));
                 }
             } else if context.iexpr() && !correct_iexpr(&sent) {
-                return Err(ParseErrF::ICondWrongOp);
+                return Err(ParseErrF::IExprWrongOp);
             }
             Ok(sent)
         }
+    }
+
+    pub fn solve(&self,
+                 agent: &Representation,
+                 assignments: Option<&HashMap<*const Var, &GroundedTerm>>)
+                 -> Option<bool> {
+        let root = unsafe { &*(self.root) as &Particle };
+        if let Some(res) = root.solve(agent, &assignments) {
+            if res {
+                // perform substitutions if it's an ind conditional
+                Some(true)
+            } else {
+                Some(false)
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Returns the requeriments a variable must meet to fit the criteria in a sentence.
+    fn get_var_requeriments(&self) -> HashMap<*const Var, Vec<*const Assert>> {
+        let mut requeriments = HashMap::new();
+        if self.vars.is_none() {
+            return requeriments;
+        }
+        let predicates = self.get_predicates();
+        for var in self.vars.as_ref().unwrap() {
+            let mut var_req = Vec::new();
+            for p in &predicates {
+                let pred = p.get_atom();
+                if pred.contains(var) {
+                    var_req.push(&(pred.pred) as *const Assert)
+                }
+            }
+            requeriments.insert(&**var as *const Var, var_req);
+        }
+        requeriments
     }
 
     pub fn has_vars(&self) -> bool {
@@ -72,6 +117,16 @@ impl LogSentence {
         } else {
             false
         }
+    }
+
+    fn get_predicates(&self) -> Vec<&Particle> {
+        let mut predicates = Vec::new();
+        for p in &self.particles {
+            if p.is_atom() {
+                predicates.push(&**p)
+            }
+        }
+        predicates
     }
 
     fn add_var(&mut self, var: Box<Var>) {
@@ -95,8 +150,50 @@ impl LogSentence {
 
 impl fmt::Display for LogSentence {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let root = unsafe { &*(self.root.unwrap()) };
-        write!(f, "LogSentence({})", root)
+        let root = unsafe { &*(self.root) };
+        let prelim: String = format!("Sentence({})", root);
+        let mut breaks = Vec::new();
+        let mut depth = 0_usize;
+        use std::iter;
+        let tab_times = |depth: usize| -> String { iter::repeat("    ").take(depth).collect() };
+        let mut in_atom = false;
+        for (i, c) in prelim.chars().enumerate() {
+            if c == '(' {
+                if (i >= 10) && (&prelim[i - 9..i] == "Predicate") {
+                    in_atom = true;
+                    continue;
+                }
+                depth += 1;
+                let s = format!("\n{}", tab_times(depth));
+                breaks.push((i + 1, s));
+            } else if c == ')' {
+                if in_atom {
+                    in_atom = false;
+                    continue;
+                }
+                depth -= 1;
+                let s = format!("\n{}", tab_times(depth));
+                breaks.push((i, s));
+            } else if c == 'n' {
+                if &prelim[i..i + 3] == "n1:" {
+                    let s = format!("\n{}", tab_times(depth));
+                    breaks.push((i, s))
+                }
+            }
+        }
+        let mut slices = Vec::new();
+        let mut prev: usize = 0;
+        for (pos, b) in breaks.drain(..) {
+            slices.push(String::from(&prelim[prev..pos]));
+            slices.push(b);
+            prev = pos;
+        }
+        slices.push(String::from(&prelim[prev..]));
+        let mut collected = String::new();
+        for s in slices {
+            collected.push_str(&s)
+        }
+        write!(f, "{}", collected)
     }
 }
 
@@ -124,7 +221,23 @@ impl LogicIndCond {
         }
     }
 
-    fn solve_proof(&self, proof: usize) {}
+    #[inline]
+    fn solve(&self,
+             agent: &Representation,
+             assignments: &Option<&HashMap<*const Var, &GroundedTerm>>)
+             -> Option<bool> {
+        let n0 = unsafe { &*(self.next[0]) };
+        let n1 = unsafe { &*(self.next[1]) };
+        if let Some(res) = n0.solve(agent, assignments) {
+            if res {
+                Some(true)
+            } else {
+                Some(false)
+            }
+        } else {
+            None
+        }
+    }
 
     fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr> {
         Ok(true)
@@ -161,7 +274,7 @@ impl fmt::Display for LogicIndCond {
             Some(n1) => String::from(format!("{}", n1)),
             None => String::from("none"),
         };
-        write!(f, "IndCond(n0: {}, n1: {})", n0, n1)
+        write!(f, "Conditional(n0: {}, n1: {})", n0, n1)
     }
 }
 
@@ -179,7 +292,39 @@ impl LogicEquivalence {
         }
     }
 
-    fn solve_proof(&self, proof: usize) {}
+    #[inline]
+    fn solve(&self,
+             agent: &Representation,
+             assignments: &Option<&HashMap<*const Var, &GroundedTerm>>)
+             -> Option<bool> {
+        let n0 = unsafe { &*(self.next[0]) };
+        let n1 = unsafe { &*(self.next[1]) };
+        let n0_res;
+        if let Some(res) = n0.solve(agent, assignments) {
+            if res {
+                n0_res = true;
+            } else {
+                n0_res = false;
+            }
+        } else {
+            return None;
+        }
+        let n1_res;
+        if let Some(res) = n1.solve(agent, assignments) {
+            if res {
+                n1_res = true;
+            } else {
+                n1_res = false;
+            }
+        } else {
+            return None;
+        }
+        if n0_res == n1_res {
+            Some(true)
+        } else {
+            Some(false)
+        }
+    }
 
     fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr> {
         let err = format!("operators of the type `<=>` can't be on the left \
@@ -219,7 +364,7 @@ impl fmt::Display for LogicEquivalence {
             Some(n1) => String::from(format!("{}", n1)),
             None => String::from("none"),
         };
-        write!(f, "Equiv(n0: {}, n1: {})", n0, n1)
+        write!(f, "Equivalence(n0: {}, n1: {})", n0, n1)
     }
 }
 
@@ -237,7 +382,39 @@ impl LogicImplication {
         }
     }
 
-    fn solve_proof(&self, proof: usize) {}
+    #[inline]
+    fn solve(&self,
+             agent: &Representation,
+             assignments: &Option<&HashMap<*const Var, &GroundedTerm>>)
+             -> Option<bool> {
+        let n0 = unsafe { &*(self.next[0]) };
+        let n1 = unsafe { &*(self.next[1]) };
+        let n0_res;
+        if let Some(res) = n0.solve(agent, assignments) {
+            if res {
+                n0_res = true;
+            } else {
+                n0_res = false;
+            }
+        } else {
+            return None;
+        }
+        let n1_res;
+        if let Some(res) = n1.solve(agent, assignments) {
+            if res {
+                n1_res = true;
+            } else {
+                n1_res = false;
+            }
+        } else {
+            return None;
+        }
+        if n0_res && !n1_res {
+            Some(false)
+        } else {
+            Some(true)
+        }
+    }
 
     fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr> {
         let err = format!("operators of the type `=>` can't be on the left \
@@ -277,7 +454,7 @@ impl fmt::Display for LogicImplication {
             Some(n1) => String::from(format!("{}", n1)),
             None => String::from("none"),
         };
-        write!(f, "Impl(n0: {}, n1: {})", n0, n1)
+        write!(f, "Implication(n0: {}, n1: {})", n0, n1)
     }
 }
 
@@ -295,7 +472,29 @@ impl LogicConjunction {
         }
     }
 
-    fn solve_proof(&self, proof: usize) {}
+    #[inline]
+    fn solve(&self,
+             agent: &Representation,
+             assignments: &Option<&HashMap<*const Var, &GroundedTerm>>)
+             -> Option<bool> {
+        let n0 = unsafe { &*(self.next[0]) };
+        let n1 = unsafe { &*(self.next[1]) };
+        if let Some(res) = n0.solve(agent, assignments) {
+            if !res {
+                return Some(false);
+            }
+        } else {
+            return None;
+        }
+        if let Some(res) = n1.solve(agent, assignments) {
+            if !res {
+                return Some(false);
+            }
+        } else {
+            return None;
+        }
+        Some(true)
+    }
 
     fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr> {
         Ok(true)
@@ -332,7 +531,7 @@ impl fmt::Display for LogicConjunction {
             Some(n1) => String::from(format!("{}", n1)),
             None => String::from("none"),
         };
-        write!(f, "Conj(n0: {}, n1: {})", n0, n1)
+        write!(f, "Conjunction(n0: {}, n1: {})", n0, n1)
     }
 }
 
@@ -350,7 +549,39 @@ impl LogicDisjunction {
         }
     }
 
-    fn solve_proof(&self, proof: usize) {}
+    #[inline]
+    fn solve(&self,
+             agent: &Representation,
+             assignments: &Option<&HashMap<*const Var, &GroundedTerm>>)
+             -> Option<bool> {
+        let n0 = unsafe { &*(self.next[0]) };
+        let n1 = unsafe { &*(self.next[1]) };
+        let n0_res;
+        if let Some(res) = n0.solve(agent, assignments) {
+            if res {
+                n0_res = true;
+            } else {
+                n0_res = false;
+            }
+        } else {
+            return None;
+        }
+        let n1_res;
+        if let Some(res) = n1.solve(agent, assignments) {
+            if res {
+                n1_res = true;
+            } else {
+                n1_res = false;
+            }
+        } else {
+            return None;
+        }
+        if n0_res != n1_res {
+            Some(true)
+        } else {
+            Some(false)
+        }
+    }
 
     fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr> {
         Ok(true)
@@ -387,7 +618,7 @@ impl fmt::Display for LogicDisjunction {
             Some(n1) => String::from(format!("{}", n1)),
             None => String::from("none"),
         };
-        write!(f, "Disj(n0: {}, n1: {})", n0, n1)
+        write!(f, "Disjunction(n0: {}, n1: {})", n0, n1)
     }
 }
 
@@ -405,7 +636,21 @@ impl LogicAtom {
         }
     }
 
-    fn solve_proof(&self, proof: usize) {}
+    #[inline]
+    fn solve(&self,
+             agent: &Representation,
+             assignments: &Option<&HashMap<*const Var, &GroundedTerm>>)
+             -> Option<bool> {
+        if let Some(res) = self.pred.equal_to_grounded(agent, assignments) {
+            if res {
+                Some(true)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
 
     fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr> {
         Ok(true)
@@ -413,6 +658,11 @@ impl LogicAtom {
 
     fn get_name(&self) -> &str {
         self.pred.get_name()
+    }
+
+    #[inline]
+    fn contains(&self, pred: &Var) -> bool {
+        self.pred.contains(pred)
     }
 
     fn get_parent(&self) -> Option<&Particle> {
@@ -426,7 +676,7 @@ impl LogicAtom {
 
 impl fmt::Display for LogicAtom {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Atom({})", self.get_name())
+        write!(f, "Predicate({})", self.get_name())
     }
 }
 
@@ -441,6 +691,22 @@ enum Particle {
 }
 
 impl Particle {
+    #[inline]
+    fn solve(&self,
+             agent: &Representation,
+             assignments: &Option<&HashMap<*const Var, &GroundedTerm>>)
+             -> Option<bool> {
+        match *self {
+            Particle::Conjunction(ref p) => p.solve(agent, assignments),
+            Particle::Disjunction(ref p) => p.solve(agent, assignments),
+            Particle::Implication(ref p) => p.solve(agent, assignments),
+            Particle::Equivalence(ref p) => p.solve(agent, assignments),
+            Particle::IndConditional(ref p) => p.solve(agent, assignments),
+            Particle::Atom(ref p) => p.solve(agent, assignments),
+        }
+    }
+
+    #[inline]
     fn get_disjunction(&mut self) -> Result<&mut LogicDisjunction, ParseErrF> {
         match *self {
             Particle::Disjunction(ref mut p) => Ok(p),
@@ -448,6 +714,7 @@ impl Particle {
         }
     }
 
+    #[inline]
     fn get_conjunction(&mut self) -> Result<&mut LogicConjunction, ParseErrF> {
         match *self {
             Particle::Conjunction(ref mut p) => Ok(p),
@@ -455,6 +722,7 @@ impl Particle {
         }
     }
 
+    #[inline]
     fn add_parent(&mut self, ptr: *const Particle) {
         match *self {
             Particle::Conjunction(ref mut p) => {
@@ -478,6 +746,7 @@ impl Particle {
         }
     }
 
+    #[inline]
     fn get_parent(&self) -> Option<&Particle> {
         match *self {
             Particle::Conjunction(ref p) => p.get_parent(),
@@ -489,6 +758,7 @@ impl Particle {
         }
     }
 
+    #[inline]
     fn get_next(&self, pos: usize) -> Option<&Particle> {
         match *self {
             Particle::Conjunction(ref p) => p.get_next(pos),
@@ -500,6 +770,15 @@ impl Particle {
         }
     }
 
+    #[inline]
+    fn get_atom(&self) -> &LogicAtom {
+        match *self {
+            Particle::Atom(ref p) => p,
+            _ => panic!(),
+        }
+    }
+
+    #[inline]
     fn is_atom(&self) -> bool {
         match *self {
             Particle::Atom(_) => true,
@@ -904,7 +1183,7 @@ fn link_sent_childs(sent: &mut LogSentence) {
     let mut childs: HashMap<usize, (Option<usize>, Option<usize>)> = HashMap::new();
     for a in &sent.particles {
         if !addresses.contains(&(&**a as *const Particle)) {
-            sent.root = Some(&**a as *const Particle);
+            sent.root = &**a as *const Particle;
         }
         let a_int = &**a as *const Particle as usize;
         let c0 = match a.get_next(0) {
@@ -975,7 +1254,7 @@ fn correct_iexpr(sent: &LogSentence) -> bool {
         is_wrong
     }
 
-    let first: &Particle = unsafe { &*(sent.root.unwrap()) };
+    let first: &Particle = unsafe { &*(sent.root) };
     if let Some(n1_0) = first.get_next(0) {
         match n1_0 {
             &Particle::IndConditional(_) => return false,
@@ -1012,12 +1291,28 @@ fn icond_exprs() {
         (( let x y z )
          (( american[x,u=1] && weapon[y,u=1] && fn::sells[y,u>0.5;x;z] ) |> criminal[x,u=1]))
     ");
+
     let tree = Parser::parse(source);
     assert!(tree.is_ok());
     let mut tree = tree.unwrap();
 
+    let sent = match tree.pop_front() {
+        Some(ParseTree::ParseErr(ParseErrF::IExprWrongOp)) => {}
+        _ => panic!(),
+    };
+
+    let sent = match tree.pop_front() {
+        Some(ParseTree::ParseErr(ParseErrF::IExprWrongOp)) => {}
+        _ => panic!(),
+    };
+
+    let sent = match tree.pop_front() {
+        Some(ParseTree::IExpr(sent)) => sent,
+        _ => panic!(),
+    };
+
     unsafe {
-        let sent = match tree.pop().unwrap() {
+        let sent = match tree.pop_front().unwrap() {
             ParseTree::IExpr(sent) => sent,
             _ => panic!(),
         };
@@ -1082,23 +1377,4 @@ fn icond_exprs() {
             _ => panic!(),
         };
     }
-
-    let sent = match tree.pop() {
-        Some(ParseTree::IExpr(sent)) => sent,
-        _ => panic!(),
-    };
-
-    let sent = match tree.pop() {
-        Some(ParseTree::ParseErr(ParseErrF::ICondWrongOp)) => {}
-        Some(ParseTree::IExpr(sent)) => {
-            println!("{}", sent);
-            panic!()
-        }
-        _ => panic!(),
-    };
-
-    let sent = match tree.pop() {
-        Some(ParseTree::ParseErr(ParseErrF::ICondWrongOp)) => {}
-        _ => panic!(),
-    };
 }

@@ -1,7 +1,9 @@
 use std::str;
+use std::collections::HashMap;
 
 use lang::parser::*;
 use lang::logsent::*;
+use agent::Representation;
 
 // Predicate types:
 
@@ -37,8 +39,8 @@ impl<'a> Predicate {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
-struct GroundedTerm {
+#[derive(Debug, Clone)]
+pub struct GroundedTerm {
     term: String,
     value: Option<f32>,
     operator: Option<CompOperator>,
@@ -74,10 +76,7 @@ impl GroundedTerm {
                 Number::SignedFloat(val) => return Err(ParseErrF::IUVal(val as f32)),
                 Number::SignedInteger(val) => return Err(ParseErrF::IUVal(val as f32)),
             };
-            op = match uval.op {
-                CompOperator::Equal => Some(CompOperator::Equal),
-                _ => return Err(ParseErrF::IUValComp),
-            };
+            op = Some(uval.op);
         } else {
             val = None;
             op = None;
@@ -92,8 +91,71 @@ impl GroundedTerm {
     }
 }
 
+impl ::std::cmp::PartialEq for GroundedTerm {
+    fn eq(&self, other: &GroundedTerm) -> bool {
+        if self.term != self.term {
+            panic!("simag: grounded terms with different names cannot be compared")
+        }
+        if self.value.is_some() && other.value.is_some() {
+            let val_lhs = self.value.as_ref().unwrap();
+            let val_rhs = other.value.as_ref().unwrap();
+            match self.operator.as_ref().unwrap() {
+                &CompOperator::Equal => {
+                    if other.operator.as_ref().unwrap().is_equal() {
+                        if val_lhs == val_rhs {
+                            return true;
+                        } else {
+                            return false;
+                        }
+                    } else if other.operator.as_ref().unwrap().is_more() {
+                        if val_lhs > val_rhs {
+                            return true;
+                        } else {
+                            return false;
+                        }
+                    } else {
+                        if val_lhs < val_rhs {
+                            return true;
+                        } else {
+                            return false;
+                        }
+                    }
+                }
+                &CompOperator::More => {
+                    if other.operator.as_ref().unwrap().is_equal() {
+                        if val_lhs < val_rhs {
+                            return true;
+                        } else {
+                            return false;
+                        }
+                    } else {
+                        panic!("simag: grounded terms operators in assertments \
+                                must be assignments")
+                    }
+                }
+                &CompOperator::Less => {
+                    if other.operator.as_ref().unwrap().is_equal() {
+                        if val_lhs > val_rhs {
+                            return true;
+                        } else {
+                            return false;
+                        }
+                    } else {
+                        panic!("simag: grounded terms operators in assertments \
+                                must be assignments")
+                    }
+                }
+            }
+        } else if self.value.is_none() && other.value.is_none() {
+            true
+        } else {
+            panic!("simag: one of the two grounded terms does not include a value")
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
-struct FreeTerm {
+pub struct FreeTerm {
     term: *const Var,
     value: Option<f32>,
     operator: Option<CompOperator>,
@@ -142,6 +204,8 @@ impl FreeTerm {
             dates: None,
         })
     }
+
+    fn equal_to_grounded(&self, other: &GroundedTerm) -> bool {}
 }
 
 // Assert types:
@@ -153,10 +217,56 @@ pub enum Assert {
 }
 
 impl Assert {
+    #[inline]
     pub fn get_name(&self) -> &str {
         match self {
             &Assert::FuncDecl(ref f) => f.get_name(),
             &Assert::ClassDecl(ref c) => c.get_name(),
+        }
+    }
+
+    pub fn unwrap_fn(self) -> FuncDecl {
+        match self {
+            Assert::FuncDecl(f) => f,
+            Assert::ClassDecl(_) => {
+                panic!("simag: expected a function declaration, found class instead")
+            }
+        }
+    }
+
+    pub fn unwrap_cls(self) -> ClassDecl {
+        match self {
+            Assert::FuncDecl(_) => {
+                panic!("simag: expected a class declaration, found function instead")
+            }
+            Assert::ClassDecl(c) => c,
+        }
+    }
+
+    #[inline]
+    pub fn equal_to_grounded(&self,
+                             agent: &Representation,
+                             assignments: &Option<&HashMap<*const Var, &GroundedTerm>>)
+                             -> Option<bool> {
+        match self {
+            &Assert::FuncDecl(ref f) => f.equal_to_grounded(agent, assignments),
+            &Assert::ClassDecl(ref c) => c.equal_to_grounded(agent, assignments),
+        }
+    }
+
+    #[inline]
+    pub fn is_class(&self) -> bool {
+        match self {
+            &Assert::FuncDecl(_) => false,
+            &Assert::ClassDecl(_) => true,
+        }
+    }
+
+    #[inline]
+    pub fn contains(&self, var: &Var) -> bool {
+        match self {
+            &Assert::FuncDecl(ref f) => f.contains(var),
+            &Assert::ClassDecl(ref c) => c.contains(var),
         }
     }
 }
@@ -301,8 +411,57 @@ impl<'a> FuncDecl {
             Terminal::Keyword(name) => name,
         }
     }
-}
 
+    fn contains(&self, var: &Var) -> bool {
+        if self.args.is_some() {
+            for a in self.args.as_ref().unwrap() {
+                match a {
+                    &Predicate::FreeTerm(ref term) => {
+                        if term.term == &*var as *const Var {
+                            return true;
+                        }
+                    }
+                    _ => continue,
+                }
+            }
+        }
+        if self.op_args.is_some() {
+            for a in self.op_args.as_ref().unwrap() {
+                if a.contains(var) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn equal_to_grounded(&self,
+                         agent: &Representation,
+                         assignments: &Option<&HashMap<*const Var, &GroundedTerm>>)
+                         -> Option<bool> {
+        // #class_decl:
+        // name: Terminal,
+        // args: Option<Vec<Predicate>>,
+        // op_args: Option<Vec<OpArg>>,
+        // variant: FuncVariants,
+        //
+        // #free_term:
+        // term: *const Var,
+        // value: Option<f32>,
+        // operator: Option<CompOperator>,
+        // parent: Terminal,
+        // dates: Option<Vec<i32>>,
+        //
+        // #grounded_term:
+        // term: String,
+        // value: Option<f32>,
+        // operator: Option<CompOperator>,
+        // parent: Terminal,
+        // dates: Option<Vec<i32>>,
+        //
+        None
+    }
+}
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ClassDecl {
@@ -358,6 +517,58 @@ impl<'a> ClassDecl {
             Terminal::Keyword(name) => name,
         }
     }
+
+    fn contains(&self, var: &Var) -> bool {
+        for a in &self.args {
+            match a {
+                &Predicate::FreeTerm(ref term) => {
+                    if term.term == &*var as *const Var {
+                        return true;
+                    }
+                }
+                _ => continue,
+            }
+        }
+        if self.op_args.is_some() {
+            for a in self.op_args.as_ref().unwrap() {
+                if a.contains(var) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn equal_to_grounded(&self,
+                         agent: &Representation,
+                         assignments: &Option<&HashMap<*const Var, &GroundedTerm>>)
+                         -> Option<bool> {
+        for a in &self.args {
+            match a {
+                &Predicate::FreeTerm(ref compare) => {
+                    if assignments.is_none() {
+                        return None;
+                    }
+                    if assignments.as_ref().unwrap().contains_key(&compare.term) {
+                        let grounded = assignments.as_ref().unwrap().get(&compare.term);
+                        if !compare.equal_to_grounded(grounded.unwrap()) {
+                            return Some(false);
+                        }
+                    } else {
+                        return None;
+                    }
+                }
+                &Predicate::GroundedTerm(ref compare) => {
+                    if let Some(current) = agent.get_entity_from_class(&compare.term) {
+                        if current != compare {
+                            return Some(false);
+                        }
+                    }
+                }
+            }
+        }
+        Some(true)
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -387,6 +598,19 @@ impl<'a> OpArg {
             comp: comp,
         })
     }
+
+    #[inline]
+    fn contains(&self, var: &Var) -> bool {
+        if self.term.is_var(var) {
+            return true;
+        }
+        if let Some((_, ref term)) = self.comp {
+            if term.is_var(var) {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -408,6 +632,14 @@ impl<'a> OpArgTerm {
             OpArgTermBorrowed::String(slice) => {
                 Ok(OpArgTerm::String(String::from_utf8_lossy(slice).into_owned()))
             }
+        }
+    }
+
+    #[inline]
+    fn is_var(&self, var: &Var) -> bool {
+        match *self {
+            OpArgTerm::Terminal(ref term) => term.is_var(var),
+            OpArgTerm::String(_) => false,
         }
     }
 }
@@ -509,6 +741,19 @@ impl<'a> Terminal {
             }
         }
         Ok(Terminal::GroundedTerm(name))
+    }
+
+    fn is_var(&self, v1: &Var) -> bool {
+        match *self {
+            Terminal::FreeTerm(v0) => {
+                if (&*v1 as *const Var) == v0 {
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
     }
 }
 

@@ -2,3 +2,5 @@
 #![allow(unused_variables)]
 
 mod kb;
+
+pub use self::kb::Representation;

@@ -1,5 +1,6 @@
 use std::str;
 use std::str::FromStr;
+use std::collections::VecDeque;
 
 use nom::{IResult, ErrorKind};
 use nom::{is_digit, is_alphanumeric, eof};
@@ -17,7 +18,7 @@ const IMPL_OP: &'static [u8] = b"=>";
 pub struct Parser;
 impl Parser {
     /// Lexerless (mostly) recursive descent parser. Takes a string and outputs a correct ParseTree.
-    pub fn parse(input: String) -> Result<Vec<ParseTree>, ParseErrF> {
+    pub fn parse(input: String) -> Result<VecDeque<ParseTree>, ParseErrF> {
         // store is a vec where the sequence of characters after cleaning up comments
         // will be stored; feed to an other fn to avoid lifetime issues (both original
         // input and the store have to have the same lifetime)
@@ -27,11 +28,11 @@ impl Parser {
             Err(err) => return Err(ParseErrF::from(err)),
         };
         // walk the AST output and, if correct, output a final parse tree
-        let mut parse_trees = Vec::new();
+        let mut parse_trees = VecDeque::new();
         for ast in scopes {
             match ParseTree::process_ast(ast) {
-                Err(err) => parse_trees.push(ParseTree::ParseErr(err)),
-                Ok(tree) => parse_trees.push(tree),
+                Err(err) => parse_trees.push_back(ParseTree::ParseErr(err)),
+                Ok(tree) => parse_trees.push_back(tree),
             }
         }
         Ok(parse_trees)
@@ -102,8 +103,9 @@ pub enum ParseErrF {
     IUValComp,
     ReservedKW(String),
     WrongDef,
-    ICondWrongOp,
-    RuleIncludesICond,
+    IExprWrongOp,
+    RuleInclICond(String),
+    ExprWithVars(String),
     None,
 }
 
@@ -123,7 +125,6 @@ impl<'a> From<ParseErrB<'a>> for ParseErrF {
 #[derive(Debug)]
 pub enum ParseTree {
     Assertion(Vec<Assert>),
-    Expr(LogSentence),
     IExpr(LogSentence),
     Rule(LogSentence),
     ParseErr(ParseErrF)
@@ -149,8 +150,8 @@ impl ParseTree {
             Ok(sent) => {
                 match context.stype {
                     SentType::IExpr => Ok(ParseTree::IExpr(sent)),
-                    SentType::Expr => Ok(ParseTree::Expr(sent)),
                     SentType::Rule => Ok(ParseTree::Rule(sent)),
+                    SentType::Expr => Err(ParseErrF::ExprWithVars(format!("{}", sent))),
                 }
             }
             Err(err) => Err(err),
@@ -246,12 +247,6 @@ pub enum AssertBorrowed<'a> {
 pub enum VarDeclBorrowed<'a> {
     Var(VarBorrowed<'a>),
     Skolem(SkolemBorrowed<'a>),
-}
-
-#[derive(Debug)]
-pub enum VarDecl {
-    Var(Var),
-    Skolem(Skolem),
 }
 
 fn get_blocks<'a>(input: &'a [u8]) -> IResult<&'a [u8], Vec<Next<'a>>> {
@@ -947,6 +942,27 @@ impl CompOperator {
             CompOperator::More
         } else {
             CompOperator::Equal
+        }
+    }
+
+    pub fn is_equal(&self) -> bool {
+        match *self {
+            CompOperator::Equal => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_more(&self) -> bool {
+        match *self {
+            CompOperator::More => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_less(&self) -> bool {
+        match *self {
+            CompOperator::Less => true,
+            _ => false,
         }
     }
 }

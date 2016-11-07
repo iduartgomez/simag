@@ -4,21 +4,11 @@ mod logsent;
 mod parser;
 mod common;
 
-use self::parser::{Parser, ParseTree, ParseErrF};
+use std::collections::VecDeque;
 
-pub enum ParserState {
-    Ask,
-    Tell,
-}
-
-impl ParserState {
-    fn is_tell(&self) -> bool {
-        match *self {
-            ParserState::Tell => true,
-            ParserState::Ask => false,
-        }
-    }
-}
+pub use self::parser::{ParseErrF, ParseTree};
+pub use self::logsent::LogSentence;
+pub use self::common::{Assert, ClassDecl, FuncDecl, Var, GroundedTerm, FreeTerm};
 
 /// Takes an owned String and returns the corresponding structured representing
 /// object program for the logic function. It can parse several statements
@@ -26,10 +16,6 @@ impl ParserState {
 ///
 /// It includes a a scanner and parser for the synthatical analysis which translate
 /// to the `program` in form of a ParseResult to be feed to an Agent.
-pub fn logic_parser<'a>(source: String, tell: bool) -> Result<Vec<ParseTree>, ParseErrF> {
-    let _parser_state = match tell {
-        false => ParserState::Ask,
-        true => ParserState::Tell,
-    };
-    Parser::parse(source)
+pub fn logic_parser<'a>(source: String) -> Result<VecDeque<ParseTree>, ParseErrF> {
+    self::parser::Parser::parse(source)
 }
