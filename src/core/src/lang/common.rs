@@ -3,12 +3,12 @@ use std::collections::HashMap;
 
 use lang::parser::*;
 use lang::logsent::*;
-use agent::Representation;
+use agent;
 
 // Predicate types:
 
-#[derive(Debug, PartialEq, Clone)]
-enum Predicate {
+#[derive(Debug, Clone)]
+pub enum Predicate {
     FreeTerm(FreeTerm),
     GroundedTerm(GroundedTerm),
 }
@@ -27,7 +27,12 @@ impl<'a> Predicate {
                 Ok(Predicate::FreeTerm(t.unwrap()))
             }
             Ok(Terminal::GroundedTerm(gt)) => {
-                let t = GroundedTerm::new(gt, a.uval, func_name, None);
+                let t;
+                if context.in_assertion {
+                    t = GroundedTerm::new(gt, a.uval, func_name, None, true);
+                } else {
+                    t = GroundedTerm::new(gt, a.uval, func_name, None, false);
+                }
                 if t.is_err() {
                     return Err(t.unwrap_err());
                 }
@@ -52,7 +57,8 @@ impl GroundedTerm {
     fn new(term: String,
            uval: Option<UVal>,
            parent: &Terminal,
-           _: Option<Vec<i32>>)
+           _dates: Option<Vec<i32>>,
+           is_assignment: bool)
            -> Result<GroundedTerm, ParseErrF> {
         let val;
         let op;
@@ -76,7 +82,14 @@ impl GroundedTerm {
                 Number::SignedFloat(val) => return Err(ParseErrF::IUVal(val as f32)),
                 Number::SignedInteger(val) => return Err(ParseErrF::IUVal(val as f32)),
             };
-            op = Some(uval.op);
+            if is_assignment {
+                op = match uval.op {
+                    CompOperator::Equal => Some(CompOperator::Equal),
+                    _ => return Err(ParseErrF::IUValComp),
+                }
+            } else {
+                op = Some(uval.op);
+            }
         } else {
             val = None;
             op = None;
@@ -88,6 +101,38 @@ impl GroundedTerm {
             parent: parent.clone(),
             dates: None,
         })
+    }
+
+    fn from_free(free: &FreeTerm,
+                 assignments: &HashMap<*const Var, &agent::VarAssignment>)
+                 -> Result<GroundedTerm, ()> {
+        if let Some(entity) = assignments.get(&free.term) {
+            let name = String::from(entity.name);
+            Ok(GroundedTerm {
+                term: name,
+                value: free.value,
+                operator: free.operator,
+                parent: free.parent.clone(),
+                dates: None,
+            })
+        } else {
+            Err(())
+        }
+    }
+
+    #[inline]
+    fn comparable(&self, other: &GroundedTerm) -> bool {
+        if self.term != other.get_name() {
+            return false;
+        }
+        if self.parent != other.parent {
+            return false;
+        }
+        true
+    }
+
+    pub fn get_name(&self) -> &str {
+        &self.term
     }
 }
 
@@ -149,12 +194,143 @@ impl ::std::cmp::PartialEq for GroundedTerm {
         } else if self.value.is_none() && other.value.is_none() {
             true
         } else {
-            panic!("simag: one of the two grounded terms does not include a value")
+            panic!("simag: at least one of the two grounded terms does not include a value")
         }
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq)]
+pub struct GroundedFunc {
+    name: String,
+    args: [GroundedTerm; 2],
+    third: Option<GroundedTerm>,
+}
+
+impl GroundedFunc {
+    pub fn get_name(&self) -> &str {
+        self.name.as_str()
+    }
+
+    pub fn comparable_entity(&self, free: &FuncDecl, entity_name: &str, var: Option<*const Var>) -> bool {
+        if free.get_name() != self.name {
+            return false;
+        }
+        if var.is_some() {
+            let var = var.unwrap();
+            if let Some(pos) = free.var_in_pos(var) {
+                match pos {
+                    0 => {
+                        if self.args[0].get_name() == entity_name {
+                            return true;
+                        }
+                    }
+                    1 => {
+                        if self.args[1].get_name() == entity_name {
+                            return true;
+                        }
+                    }
+                    2 => {
+                        if let Some(ref term) = self.third {
+                            if term.get_name() == entity_name {
+                                return true;
+                            }
+                        }
+                    }
+                    _ => return false,
+                }
+            }
+        } else {
+            if let Some(pos) = free.term_in_pos(entity_name) {
+                match pos {
+                    0 => {
+                        if self.args[0].get_name() == entity_name {
+                            return true;
+                        }
+                    }
+                    1 => {
+                        if self.args[1].get_name() == entity_name {
+                            return true;
+                        }
+                    }
+                    2 => {
+                        if let Some(ref term) = self.third {
+                            if term.get_name() == entity_name {
+                                return true;
+                            }
+                        }
+                    }
+                    _ => return false,
+                }
+            }
+        }
+        false
+    }
+
+    pub fn comparable(&self, other: &GroundedFunc) -> bool {
+        if other.get_name() != self.name {
+            return false;
+        }
+        if !self.args[0].comparable(&other.args[0]) {
+            return false;
+        }
+        if !self.args[1].comparable(&other.args[1]) {
+            return false;
+        }
+        if self.third.is_some() && other.third.is_some() {
+            if !self.third.as_ref().unwrap().comparable(
+                other.third.as_ref().unwrap()
+            ) {
+                return false;
+            }
+        } else if self.third.is_none() && other.third.is_none() {
+            return true;
+        } else {
+            return false;
+        }
+        true
+    }
+
+    fn from_free(free: &FuncDecl,
+                 assignments: &HashMap<*const Var, &agent::VarAssignment>)
+                 -> Result<GroundedFunc, ()> {
+        if !free.variant.is_relational() || free.args.as_ref().unwrap().len() < 2 {
+            return Err(());
+        }
+        let name = match free.name {
+            Terminal::GroundedTerm(ref name) => name.clone(),
+            _ => panic!("simag: expected a grounded terminal, found a free terminal"),
+        };
+        let mut n_args: [GroundedTerm; 2];
+        n_args = unsafe { ::std::mem::uninitialized() };
+        let mut third = None;
+        for (i, a) in free.args.as_ref().unwrap().iter().enumerate() {
+            let n_a = match a {
+                &Predicate::FreeTerm(ref free) => {
+                    if let Ok(grounded) = GroundedTerm::from_free(free, assignments) {
+                        grounded
+                    } else {
+                        return Err(());
+                    }
+                }
+                &Predicate::GroundedTerm(ref term) => term.clone(),
+            };
+            if i == 0 {
+                n_args[0] = n_a
+            } else if i == 3 {
+                n_args[1] = n_a
+            } else {
+                third = Some(n_a)
+            }
+        }
+        Ok(GroundedFunc {
+            name: name,
+            args: n_args,
+            third: third,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct FreeTerm {
     term: *const Var,
     value: Option<f32>,
@@ -167,7 +343,7 @@ impl FreeTerm {
     fn new(term: *const Var,
            uval: Option<UVal>,
            parent: &Terminal,
-           _: Option<Vec<i32>>)
+           _dates: Option<Vec<i32>>)
            -> Result<FreeTerm, ParseErrF> {
         let val;
         let op;
@@ -205,7 +381,41 @@ impl FreeTerm {
         })
     }
 
-    fn equal_to_grounded(&self, other: &GroundedTerm) -> bool {}
+    fn equal_to_grounded(&self, other: &GroundedTerm) -> bool {
+        if self.parent != other.parent {
+            panic!("simag: grounded terms from different classes cannot be compared")
+        }
+        if self.value.is_some() && other.value.is_some() {
+            let val_free = self.value.as_ref().unwrap();
+            let val_grounded = other.value.as_ref().unwrap();
+            match other.operator.as_ref().unwrap() {
+                &CompOperator::Equal => {
+                    if self.operator.as_ref().unwrap().is_equal() {
+                        if val_free == val_grounded {
+                            return true;
+                        } else {
+                            return false;
+                        }
+                    } else if self.operator.as_ref().unwrap().is_more() {
+                        if val_grounded > val_free {
+                            return true;
+                        } else {
+                            return false;
+                        }
+                    } else {
+                        if val_grounded < val_free {
+                            return true;
+                        } else {
+                            return false;
+                        }
+                    }
+                }
+                _ => panic!("simag: grounded terms operators in assertments must be assignments"),
+            }
+        } else {
+            panic!("simag: at least one of the two compared terms does not include a value")
+        }
+    }
 }
 
 // Assert types:
@@ -245,8 +455,8 @@ impl Assert {
 
     #[inline]
     pub fn equal_to_grounded(&self,
-                             agent: &Representation,
-                             assignments: &Option<&HashMap<*const Var, &GroundedTerm>>)
+                             agent: &agent::Representation,
+                             assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>)
                              -> Option<bool> {
         match self {
             &Assert::FuncDecl(ref f) => f.equal_to_grounded(agent, assignments),
@@ -269,9 +479,19 @@ impl Assert {
             &Assert::ClassDecl(ref c) => c.contains(var),
         }
     }
+
+    #[inline]
+    pub fn substitute(&self,
+                      agent: &agent::Representation,
+                      assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>) {
+        match self {
+            &Assert::FuncDecl(ref f) => f.substitute(agent, assignments),
+            &Assert::ClassDecl(ref c) => c.substitute(agent, assignments),
+        }
+    }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct FuncDecl {
     name: Terminal,
     args: Option<Vec<Predicate>>,
@@ -305,6 +525,10 @@ impl<'a> FuncDecl {
                 return FuncDecl::decl_nonrelational_fn(other, context, func_name)
             }
         }
+    }
+
+    pub fn into_grounded(self) -> GroundedFunc {
+        unimplemented!()
     }
 
     fn decl_timecalc_fn(other: &FuncDeclBorrowed<'a>,
@@ -404,7 +628,7 @@ impl<'a> FuncDecl {
         })
     }
 
-    fn get_name(&self) -> &str {
+    pub fn get_name(&self) -> &str {
         match self.name {
             Terminal::FreeTerm(var) => unsafe { &(&*var).name },
             Terminal::GroundedTerm(ref name) => name,
@@ -435,35 +659,94 @@ impl<'a> FuncDecl {
         false
     }
 
-    fn equal_to_grounded(&self,
-                         agent: &Representation,
-                         assignments: &Option<&HashMap<*const Var, &GroundedTerm>>)
-                         -> Option<bool> {
-        // #class_decl:
-        // name: Terminal,
-        // args: Option<Vec<Predicate>>,
-        // op_args: Option<Vec<OpArg>>,
-        // variant: FuncVariants,
-        //
-        // #free_term:
-        // term: *const Var,
-        // value: Option<f32>,
-        // operator: Option<CompOperator>,
-        // parent: Terminal,
-        // dates: Option<Vec<i32>>,
-        //
-        // #grounded_term:
-        // term: String,
-        // value: Option<f32>,
-        // operator: Option<CompOperator>,
-        // parent: Terminal,
-        // dates: Option<Vec<i32>>,
-        //
+    pub fn var_in_pos(&self, var: *const Var) -> Option<usize> {
+        if self.args.is_some() {
+            for (i, a) in self.args.as_ref().unwrap().iter().enumerate() {
+                match a {
+                    &Predicate::FreeTerm(ref term) => {
+                        if term.term == var {
+                            return Some(i);
+                        }
+                    }
+                    _ => continue,
+                }
+            }
+        }
         None
+    }
+
+    pub fn term_in_pos(&self, var: &str) -> Option<usize> {
+        if self.args.is_some() {
+            for (i, a) in self.args.as_ref().unwrap().iter().enumerate() {
+                match a {
+                    &Predicate::GroundedTerm(ref term) => {
+                        if term.term == var {
+                            return Some(i);
+                        }
+                    }
+                    _ => continue,
+                }
+            }
+        }
+        None
+    }
+
+    fn equal_to_grounded(&self,
+                         agent: &agent::Representation,
+                         assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>)
+                         -> Option<bool> {
+        match self.variant {
+            FuncVariants::Relational => {}
+            _ => panic!("simag: cannot compare non-relational functions"),
+        }
+        for a in self.args.as_ref().unwrap() {
+            match a {
+                &Predicate::FreeTerm(ref compare) => {
+                    if assignments.is_none() {
+                        return None;
+                    }
+                    let assignments = assignments.as_ref().unwrap();
+                    if let Some(entity) = assignments.get(&compare.term) {
+                        if let Ok(grfunc) = GroundedFunc::from_free(&self, assignments) {
+                            if let Some(current) = entity.get_relationship(&grfunc) {
+                                if current != &grfunc {
+                                    return Some(false);
+                                }
+                            } else {
+                                return None;
+                            }
+                        } else {
+                            return None;
+                        }
+                    } else {
+                        return None;
+                    }
+                }
+                &Predicate::GroundedTerm(ref compare) => {
+                    if let Some(current) = agent.get_entity_from_class(&compare.term) {
+                        if current != compare {
+                            return Some(false);
+                        }
+                    } else {
+                        return None;
+                    }
+                }
+            }
+        }
+        Some(true)
+    }
+
+    fn substitute(&self,
+                  agent: &agent::Representation,
+                  assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>) {
+        let grfunc = GroundedFunc::from_free(&self, assignments.as_ref().unwrap());
+        if grfunc.is_ok() {
+            agent.up_relation(grfunc.unwrap());
+        }
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct ClassDecl {
     name: Terminal,
     args: Vec<Predicate>,
@@ -510,7 +793,7 @@ impl<'a> ClassDecl {
         })
     }
 
-    fn get_name(&self) -> &str {
+    pub fn get_name(&self) -> &str {
         match self.name {
             Terminal::FreeTerm(var) => unsafe { &(&*var).name },
             Terminal::GroundedTerm(ref name) => name,
@@ -540,18 +823,18 @@ impl<'a> ClassDecl {
     }
 
     fn equal_to_grounded(&self,
-                         agent: &Representation,
-                         assignments: &Option<&HashMap<*const Var, &GroundedTerm>>)
+                         agent: &agent::Representation,
+                         assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>)
                          -> Option<bool> {
         for a in &self.args {
             match a {
-                &Predicate::FreeTerm(ref compare) => {
+                &Predicate::FreeTerm(ref free) => {
                     if assignments.is_none() {
                         return None;
                     }
-                    if assignments.as_ref().unwrap().contains_key(&compare.term) {
-                        let grounded = assignments.as_ref().unwrap().get(&compare.term);
-                        if !compare.equal_to_grounded(grounded.unwrap()) {
+                    if let Some(entity) = assignments.as_ref().unwrap().get(&free.term) {
+                        let grounded = entity.get_class(&free.parent.get_name());
+                        if !free.equal_to_grounded(grounded) {
                             return Some(false);
                         }
                     } else {
@@ -563,15 +846,23 @@ impl<'a> ClassDecl {
                         if current != compare {
                             return Some(false);
                         }
+                    } else {
+                        return None;
                     }
                 }
             }
         }
         Some(true)
     }
+
+    fn substitute(&self,
+                  agent: &agent::Representation,
+                  assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>) {
+        unimplemented!()
+    }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 struct OpArg {
     term: OpArgTerm,
     comp: Option<(CompOperator, OpArgTerm)>,
@@ -613,7 +904,7 @@ impl<'a> OpArg {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 enum OpArgTerm {
     Terminal(Terminal),
     String(String),
@@ -644,7 +935,7 @@ impl<'a> OpArgTerm {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct Var {
     pub name: String,
     op_arg: Option<OpArg>,
@@ -707,7 +998,7 @@ impl Skolem {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-enum Terminal {
+pub enum Terminal {
     FreeTerm(*const Var),
     GroundedTerm(String),
     Keyword(&'static str),
@@ -753,6 +1044,13 @@ impl<'a> Terminal {
                 }
             }
             _ => false,
+        }
+    }
+
+    fn get_name(&self) -> &str {
+        match self {
+            &Terminal::GroundedTerm(ref name) => name,
+            _ => panic!("simag: attempted to get a name from a non-grounded terminal"),
         }
     }
 }

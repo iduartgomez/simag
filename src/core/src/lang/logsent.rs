@@ -16,7 +16,7 @@ use std::fmt;
 
 use lang::parser::*;
 use lang::common::*;
-use agent::Representation;
+use agent;
 
 /// Type to store a first-order logic complex sentence.
 ///
@@ -75,15 +75,20 @@ impl<'a> LogSentence {
     }
 
     pub fn solve(&self,
-                 agent: &Representation,
-                 assignments: Option<&HashMap<*const Var, &GroundedTerm>>)
+                 agent: &agent::Representation,
+                 assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>)
                  -> Option<bool> {
         let root = unsafe { &*(self.root) as &Particle };
         if let Some(res) = root.solve(agent, &assignments) {
             if res {
-                // perform substitutions if it's an ind conditional
+                if root.is_icond() {
+                    root.substitute(agent, &assignments, &true)
+                }
                 Some(true)
             } else {
+                if root.is_icond() {
+                    root.substitute(agent, &assignments, &false)
+                }
                 Some(false)
             }
         } else {
@@ -223,11 +228,10 @@ impl LogicIndCond {
 
     #[inline]
     fn solve(&self,
-             agent: &Representation,
-             assignments: &Option<&HashMap<*const Var, &GroundedTerm>>)
+             agent: &agent::Representation,
+             assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>)
              -> Option<bool> {
         let n0 = unsafe { &*(self.next[0]) };
-        let n1 = unsafe { &*(self.next[1]) };
         if let Some(res) = n0.solve(agent, assignments) {
             if res {
                 Some(true)
@@ -239,8 +243,13 @@ impl LogicIndCond {
         }
     }
 
-    fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr> {
-        Ok(true)
+    #[inline]
+    fn substitute(&self,
+                  agent: &agent::Representation,
+                  assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>,
+                  rhs: &bool) {
+        let n1 = unsafe { &*(self.next[1]) };
+        n1.substitute(agent, assignments, rhs)
     }
 
     fn get_parent(&self) -> Option<&Particle> {
@@ -294,8 +303,8 @@ impl LogicEquivalence {
 
     #[inline]
     fn solve(&self,
-             agent: &Representation,
-             assignments: &Option<&HashMap<*const Var, &GroundedTerm>>)
+             agent: &agent::Representation,
+             assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>)
              -> Option<bool> {
         let n0 = unsafe { &*(self.next[0]) };
         let n1 = unsafe { &*(self.next[1]) };
@@ -324,13 +333,6 @@ impl LogicEquivalence {
         } else {
             Some(false)
         }
-    }
-
-    fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr> {
-        let err = format!("operators of the type `<=>` can't be on the left \
-        side of sentence: `{:?}`",
-                          0);
-        Err(SolveErr::AssertionError(err))
     }
 
     fn get_parent(&self) -> Option<&Particle> {
@@ -384,8 +386,8 @@ impl LogicImplication {
 
     #[inline]
     fn solve(&self,
-             agent: &Representation,
-             assignments: &Option<&HashMap<*const Var, &GroundedTerm>>)
+             agent: &agent::Representation,
+             assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>)
              -> Option<bool> {
         let n0 = unsafe { &*(self.next[0]) };
         let n1 = unsafe { &*(self.next[1]) };
@@ -414,13 +416,6 @@ impl LogicImplication {
         } else {
             Some(true)
         }
-    }
-
-    fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr> {
-        let err = format!("operators of the type `=>` can't be on the left \
-        side of sentence: `{:?}`",
-                          0);
-        Err(SolveErr::AssertionError(err))
     }
 
     fn get_parent(&self) -> Option<&Particle> {
@@ -474,8 +469,8 @@ impl LogicConjunction {
 
     #[inline]
     fn solve(&self,
-             agent: &Representation,
-             assignments: &Option<&HashMap<*const Var, &GroundedTerm>>)
+             agent: &agent::Representation,
+             assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>)
              -> Option<bool> {
         let n0 = unsafe { &*(self.next[0]) };
         let n1 = unsafe { &*(self.next[1]) };
@@ -496,8 +491,15 @@ impl LogicConjunction {
         Some(true)
     }
 
-    fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr> {
-        Ok(true)
+    #[inline]
+    fn substitute(&self,
+                  agent: &agent::Representation,
+                  assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>,
+                  rhs: &bool) {
+        let n1 = unsafe { &*(self.next[1]) };
+        n1.substitute(agent, assignments, rhs);
+        let n0 = unsafe { &*(self.next[0]) };
+        n0.substitute(agent, assignments, rhs);
     }
 
     fn get_parent(&self) -> Option<&Particle> {
@@ -551,8 +553,8 @@ impl LogicDisjunction {
 
     #[inline]
     fn solve(&self,
-             agent: &Representation,
-             assignments: &Option<&HashMap<*const Var, &GroundedTerm>>)
+             agent: &agent::Representation,
+             assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>)
              -> Option<bool> {
         let n0 = unsafe { &*(self.next[0]) };
         let n1 = unsafe { &*(self.next[1]) };
@@ -583,8 +585,18 @@ impl LogicDisjunction {
         }
     }
 
-    fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr> {
-        Ok(true)
+    #[inline]
+    fn substitute(&self,
+                  agent: &agent::Representation,
+                  assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>,
+                  rhs: &bool) {
+        if *rhs {
+            let n1 = unsafe { &*(self.next[1]) };
+            n1.substitute(agent, assignments, rhs)
+        } else {
+            let n0 = unsafe { &*(self.next[0]) };
+            n0.substitute(agent, assignments, rhs)
+        }
     }
 
     fn get_parent(&self) -> Option<&Particle> {
@@ -638,22 +650,25 @@ impl LogicAtom {
 
     #[inline]
     fn solve(&self,
-             agent: &Representation,
-             assignments: &Option<&HashMap<*const Var, &GroundedTerm>>)
+             agent: &agent::Representation,
+             assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>)
              -> Option<bool> {
         if let Some(res) = self.pred.equal_to_grounded(agent, assignments) {
             if res {
                 Some(true)
             } else {
-                None
+                Some(false)
             }
         } else {
             None
         }
     }
 
-    fn substitute(&mut self, proof: usize, args: Option<Vec<&str>>) -> Result<bool, SolveErr> {
-        Ok(true)
+    #[inline]
+    fn substitute(&self,
+                  agent: &agent::Representation,
+                  assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>) {
+            self.pred.substitute(agent, assignments)
     }
 
     fn get_name(&self) -> &str {
@@ -693,8 +708,8 @@ enum Particle {
 impl Particle {
     #[inline]
     fn solve(&self,
-             agent: &Representation,
-             assignments: &Option<&HashMap<*const Var, &GroundedTerm>>)
+             agent: &agent::Representation,
+             assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>)
              -> Option<bool> {
         match *self {
             Particle::Conjunction(ref p) => p.solve(agent, assignments),
@@ -703,6 +718,20 @@ impl Particle {
             Particle::Equivalence(ref p) => p.solve(agent, assignments),
             Particle::IndConditional(ref p) => p.solve(agent, assignments),
             Particle::Atom(ref p) => p.solve(agent, assignments),
+        }
+    }
+
+    #[inline]
+    fn substitute(&self,
+                  agent: &agent::Representation,
+                  assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>,
+                  rhs: &bool) {
+        match *self {
+            Particle::IndConditional(ref p) => p.substitute(agent, assignments, rhs),
+            Particle::Disjunction(ref p) => p.substitute(agent, assignments, rhs),
+            Particle::Conjunction(ref p) => p.substitute(agent, assignments, rhs),
+            Particle::Atom(ref p) => p.substitute(agent, assignments),
+            _ => panic!("simag: wrong operator on the rhs of the expression"),
         }
     }
 
@@ -774,7 +803,7 @@ impl Particle {
     fn get_atom(&self) -> &LogicAtom {
         match *self {
             Particle::Atom(ref p) => p,
-            _ => panic!(),
+            _ => panic!("simag: expected a predicate, found an operator"),
         }
     }
 
@@ -782,6 +811,14 @@ impl Particle {
     fn is_atom(&self) -> bool {
         match *self {
             Particle::Atom(_) => true,
+            _ => false,
+        }
+    }
+
+    #[inline]
+    fn is_icond(&self) -> bool {
+        match *self {
+            Particle::IndConditional(_) => true,
             _ => false,
         }
     }
@@ -902,6 +939,7 @@ pub struct Context {
     aliasing_skols: HashMap<*const Skolem, (usize, *const Skolem)>,
     from_chain: bool,
     in_rhs: bool,
+    pub in_assertion: bool,
 }
 
 impl Context {
@@ -914,6 +952,7 @@ impl Context {
             from_chain: false,
             aliasing_vars: HashMap::new(),
             aliasing_skols: HashMap::new(),
+            in_assertion: false,
         }
     }
 
@@ -1246,6 +1285,7 @@ fn correct_iexpr(sent: &LogSentence) -> bool {
             match n1_1 {
                 &Particle::IndConditional(_) => {}
                 &Particle::Disjunction(_) => {}
+                &Particle::Conjunction(_) => {}
                 &Particle::Atom(_) => {}
                 _ => return true,
             }

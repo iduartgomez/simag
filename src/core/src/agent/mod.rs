@@ -3,4 +3,4 @@
 
 mod kb;
 
-pub use self::kb::Representation;
+pub use self::kb::{Representation, Entity, Class, VarAssignment};

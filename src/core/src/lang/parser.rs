@@ -127,7 +127,7 @@ pub enum ParseTree {
     Assertion(Vec<Assert>),
     IExpr(LogSentence),
     Rule(LogSentence),
-    ParseErr(ParseErrF)
+    ParseErr(ParseErrF),
 }
 
 impl ParseTree {
@@ -136,8 +136,9 @@ impl ParseTree {
             &Next::ASTNode(ref val) => &(*val),
             _ => panic!("simag: expected an AST node, found other variant"),
         };
-        let mut context = Context::new();
         // check if it's an assertion
+        let mut context = Context::new();
+        context.in_assertion = true;
         let out = first.is_assertion(&mut context);
         match out {
             Err(err) => return Err(err),
@@ -665,7 +666,16 @@ pub struct FuncDeclBorrowed<'a> {
 pub enum FuncVariants {
     Relational,
     NonRelational,
-    TimeCalc
+    TimeCalc,
+}
+
+impl FuncVariants {
+    pub fn is_relational(&self) -> bool {
+        match *self {
+            FuncVariants::Relational => true,
+            _ => false,
+        }
+    }
 }
 
 named!(func_decl(&[u8]) -> FuncDeclBorrowed,

@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 
 pub use self::parser::{ParseErrF, ParseTree};
 pub use self::logsent::LogSentence;
-pub use self::common::{Assert, ClassDecl, FuncDecl, Var, GroundedTerm, FreeTerm};
+pub use self::common::*;
 
 /// Takes an owned String and returns the corresponding structured representing
 /// object program for the logic function. It can parse several statements

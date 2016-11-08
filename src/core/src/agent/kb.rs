@@ -23,10 +23,10 @@
 use std::collections::{HashMap, VecDeque};
 
 use lang;
-use lang::{ParseTree, ParseErrF, GroundedTerm};
+use lang::{ParseTree, ParseErrF, GroundedTerm, GroundedFunc};
 
 pub struct Representation {
-    entities: HashMap<usize, usize>,
+    entities: HashMap<String, Entity>,
     classes: HashMap<usize, usize>,
 }
 
@@ -67,7 +67,7 @@ impl Representation {
     /// class for future use.
     ///
     /// For more examples check the LogSentence type docs.
-    pub fn tell(&mut self, source: String) -> Result<(), Vec<ParseErrF>> {
+    pub fn tell(&self, source: String) -> Result<(), Vec<ParseErrF>> {
         let pres = lang::logic_parser(source);
         if pres.is_ok() {
             let mut pres: VecDeque<ParseTree> = pres.unwrap();
@@ -79,7 +79,7 @@ impl Representation {
                             if assertion.is_class() {
                                 self.up_membership(assertion.unwrap_cls())
                             } else {
-                                self.up_relation(assertion.unwrap_fn())
+                                self.up_relation(assertion.unwrap_fn().into_grounded())
                             }
                         }
                     }
@@ -99,7 +99,7 @@ impl Representation {
     }
 
     /// Asks the KB if some fact is true and returns the answer to the query.
-    pub fn ask(&mut self, source: String, single_answer: bool) -> Answer {
+    pub fn ask(&self, source: String, single_answer: bool) -> Answer {
         let pres = lang::logic_parser(source);
         if pres.is_ok() {
             let pres = pres.unwrap();
@@ -109,23 +109,197 @@ impl Representation {
         }
     }
 
-    fn up_membership(&mut self, assert: lang::ClassDecl) {}
+    pub fn up_membership(&self, assert: lang::ClassDecl) {}
 
-    fn up_relation(&mut self, assert: lang::FuncDecl) {}
+    pub fn up_relation(&self, assert: lang::GroundedFunc) {}
 
-    fn add_belief(&mut self, belief: lang::LogSentence) {}
+    fn add_belief(&self, belief: lang::LogSentence) {}
 
-    fn add_rule(&mut self, rule: lang::LogSentence) {}
+    fn add_rule(&self, rule: lang::LogSentence) {}
 
-    pub fn get_entity_from_class(&self, name: &str) -> Option<&GroundedTerm> {
-
+    pub fn get_entity_from_class(&self, class_name: &str) -> Option<&GroundedTerm> {
+        unimplemented!()
     }
 
     pub fn test_predicates(&self,
                            req: &HashMap<*const lang::Var, Vec<*const lang::Assert>>)
-                           -> Option<&HashMap<*const lang::Var, Vec<&GroundedTerm>>> {
-        // stub
-        panic!()
+                           -> HashMap<*const lang::Var, Vec<VarAssignment>> {
+        let mut results: HashMap<*const lang::Var, Vec<VarAssignment>> = HashMap::new();
+        for (var, asserts) in req.iter() {
+            let mut class_list = Vec::new();
+            let mut relations_list = Vec::new();
+            for a in asserts {
+                let a = unsafe { &**a };
+                match a {
+                    &lang::Assert::FuncDecl(ref f) => relations_list.push(f),
+                    &lang::Assert::ClassDecl(ref c) => class_list.push(c),
+                }
+            }
+            for (id, entity) in self.entities.iter() {
+                let mut gr_memb: HashMap<&str, &GroundedTerm> = HashMap::new();
+                let mut gr_relations: HashMap<&str, Vec<&GroundedFunc>> = HashMap::new();
+                if class_list.len() > 0 {
+                    if let Some(classes) = entity.belongs_to_classes(&class_list) {
+                        if classes.len() == class_list.len() {
+                            gr_memb = classes;
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                }
+                if relations_list.len() > 0 {
+                    if let Some(relations) = entity.has_relationships(&relations_list, Some(*var)) {
+                        if relations.len() == relations_list.len() {
+                            gr_relations = relations;
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                }
+                if results.contains_key(var) {
+                    let v = results.get_mut(var).unwrap();
+                    v.push(VarAssignment {
+                        name: id,
+                        classes: gr_memb,
+                        funcs: gr_relations,
+                    })
+                } else {
+                    results.insert(*var,
+                                   vec![VarAssignment {
+                                            name: id,
+                                            classes: gr_memb,
+                                            funcs: gr_relations,
+                                        }]);
+                }
+            }
+        }
+        results
+    }
+}
+
+/// An entity is the unique member of it's own class.
+/// Represents an object which can pertain to multiple classes or sets.
+/// It's an abstraction owned by an agent, the internal representation
+/// of the object, not the object itself.
+///
+/// An entity inherits the properties of the classes it belongs to,
+/// and has some implicit attributes which are unique to itself.
+///
+/// Membership to a class is denoted (following fuzzy sets) by a real number
+/// between 0 and 1. If the number is one, the object will always belong to
+/// the set, if it's zero, it will never belong to the set.
+///
+/// For example, an object can belong to the set 'cold' with a degree of
+/// 0.9 (in natural language then it would be 'very cold') or 0.1
+/// (then it would be 'a bit cold', the subjective adjectives are defined
+/// in the class itself).
+pub struct Entity {
+    name: String,
+    classes: HashMap<String, GroundedTerm>,
+    relations: HashMap<String, Vec<GroundedFunc>>,
+}
+
+impl<'a> Entity {
+    /// Returns the intersection between the provided list of classes and the
+    /// set of classes the entity belongs to.
+    fn belongs_to_classes(&'a self,
+                          class_list: &Vec<&'a lang::ClassDecl>)
+                          -> Option<HashMap<&str, &GroundedTerm>> {
+        let mut matches = HashMap::new();
+        for decl in class_list {
+            let key = decl.get_name();
+            if let Some(cls) = self.classes.get(key) {
+                matches.insert(key, cls);
+            }
+        }
+        if matches.len() > 0 {
+            Some(matches)
+        } else {
+            None
+        }
+    }
+
+    fn belongs_to_class(&self, class_name: &str) -> Option<&GroundedTerm> {
+        unimplemented!()
+    }
+
+    fn add_class_membership(&self, grounded: lang::ClassDecl) {
+        unimplemented!()
+    }
+
+    /// Returns the intersection between the provided list of relational functions and the
+    /// set of relational functions the entity has.
+    fn has_relationships(&self,
+                         func_list: &Vec<&lang::FuncDecl>,
+                         var: Option<*const lang::Var>)
+                         -> Option<HashMap<&str, Vec<&GroundedFunc>>> {
+        let mut matches: HashMap<&str, Vec<&GroundedFunc>> = HashMap::new();
+        for decl in func_list {
+            if let Some(relation_type) = self.relations.get(decl.get_name()) {
+                for rel in relation_type {
+                    if rel.comparable_entity(decl, &self.name, var) {
+                        let name = rel.get_name();
+                        if matches.contains_key(name) {
+                            let v = matches.get_mut(name).unwrap();
+                            v.push(rel)
+                        } else {
+                            matches.insert(name, vec![rel]);
+                        }
+                    }
+                }
+            }
+        }
+        if matches.len() > 0 {
+            Some(matches)
+        } else {
+            None
+        }
+    }
+
+    fn get_relationship(&self, func: lang::FuncDecl) -> Option<&GroundedTerm> {
+        unimplemented!()
+    }
+
+    fn add_relationship(&self, fun: lang::FuncDecl) {
+        unimplemented!()
+    }
+}
+
+/// A class is a set of entities that share some properties.
+/// It can be a subset of others supersets, and viceversa.
+///
+/// Membership is not binary, but fuzzy, being the extreme cases (0, 1)
+/// the classic binary membership. Likewise, membership to a class can be
+/// temporal. For more info check '''Entity''' type documentation.
+///
+/// All the attributes of a class are inherited by their members
+/// (to a fuzzy degree).
+pub struct Class;
+
+pub struct VarAssignment<'a> {
+    pub name: &'a str,
+    classes: HashMap<&'a str, &'a GroundedTerm>,
+    funcs: HashMap<&'a str, Vec<&'a GroundedFunc>>,
+}
+
+impl<'a> VarAssignment<'a> {
+    #[inline]
+    pub fn get_class(&self, name: &str) -> &GroundedTerm {
+        self.classes.get(name).unwrap()
+    }
+
+    #[inline]
+    pub fn get_relationship(&self, func: &GroundedFunc) -> Option<&GroundedFunc> {
+        for owned_f in self.funcs.get(func.get_name()).unwrap() {
+            if owned_f.comparable(func) {
+                return Some(owned_f);
+            }
+        }
+        None
     }
 }
 
