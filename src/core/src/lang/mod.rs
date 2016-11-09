@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 mod logsent;
 mod parser;
 mod common;

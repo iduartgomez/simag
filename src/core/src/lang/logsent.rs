@@ -9,7 +9,6 @@
 //! LogSentence types are akin to minimal working compiled programs formed
 //! by compounded expressions which will evaluate with the current knowledge
 //! when called and perform any subtitution in the knowledge base if pertinent.
-#![allow(unused_variables)]
 use std::str;
 use std::collections::HashMap;
 use std::fmt;
@@ -96,6 +95,21 @@ impl<'a> LogSentence {
         }
     }
 
+    pub fn get_all_predicates(&self) -> Vec<&Assert> {
+        let mut v = Vec::new();
+        for p in &self.particles {
+            match **p {
+                Particle::Atom(ref p) => v.push(&p.pred),
+                _ => {}
+            }
+        }
+        v
+    }
+
+    pub fn get_rhs_predicates(&self) -> Vec<&Assert> {
+        unimplemented!()
+    }
+
     /// Returns the requeriments a variable must meet to fit the criteria in a sentence.
     fn get_var_requeriments(&self) -> HashMap<*const Var, Vec<*const Assert>> {
         let mut requeriments = HashMap::new();
@@ -114,14 +128,6 @@ impl<'a> LogSentence {
             requeriments.insert(&**var as *const Var, var_req);
         }
         requeriments
-    }
-
-    pub fn has_vars(&self) -> bool {
-        if self.vars.is_some() {
-            true
-        } else {
-            false
-        }
     }
 
     fn get_predicates(&self) -> Vec<&Particle> {
@@ -206,10 +212,6 @@ pub enum SentType {
     IExpr,
     Expr,
     Rule,
-}
-
-enum SolveErr {
-    AssertionError(String),
 }
 
 #[derive(Debug, Clone)]
@@ -795,7 +797,7 @@ impl Particle {
             Particle::Implication(ref p) => p.get_next(pos),
             Particle::Equivalence(ref p) => p.get_next(pos),
             Particle::IndConditional(ref p) => p.get_next(pos),
-            Particle::Atom(ref p) => None,
+            Particle::Atom(_) => None,
         }
     }
 
