@@ -14,6 +14,6 @@ pub use self::common::*;
 ///
 /// It includes a a scanner and parser for the synthatical analysis which translate
 /// to the `program` in form of a ParseResult to be feed to an Agent.
-pub fn logic_parser<'a>(source: String) -> Result<VecDeque<ParseTree>, ParseErrF> {
-    self::parser::Parser::parse(source)
+pub fn logic_parser<'a>(source: String, tell: bool) -> Result<VecDeque<ParseTree>, ParseErrF> {
+    self::parser::Parser::parse(source, tell)
 }

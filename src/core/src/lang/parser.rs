@@ -18,7 +18,7 @@ const IMPL_OP: &'static [u8] = b"=>";
 pub struct Parser;
 impl Parser {
     /// Lexerless (mostly) recursive descent parser. Takes a string and outputs a correct ParseTree.
-    pub fn parse(input: String) -> Result<VecDeque<ParseTree>, ParseErrF> {
+    pub fn parse(input: String, tell: bool) -> Result<VecDeque<ParseTree>, ParseErrF> {
         // store is a vec where the sequence of characters after cleaning up comments
         // will be stored; feed to an other fn to avoid lifetime issues (both original
         // input and the store have to have the same lifetime)
@@ -30,7 +30,7 @@ impl Parser {
         // walk the AST output and, if correct, output a final parse tree
         let mut parse_trees = VecDeque::new();
         for ast in scopes {
-            match ParseTree::process_ast(ast) {
+            match ParseTree::process_ast(ast, tell) {
                 Err(err) => parse_trees.push_back(ParseTree::ParseErr(err)),
                 Ok(tree) => parse_trees.push_back(tree),
             }
@@ -96,16 +96,21 @@ enum ParseErrB<'a> {
 #[derive(Debug)]
 pub enum ParseErrF {
     Msg(String),
+    ReservedKW(String),
     IConnectInChain,
     IConnectAfterAnd,
     IConnectAfterOr,
     IUVal(f32),
     IUValComp,
-    ReservedKW(String),
-    WrongDef,
     IExprWrongOp,
+    IExprICondLHS,
+    IExprNotIcond,
     RuleInclICond(String),
     ExprWithVars(String),
+    RFuncWrongArgs,
+    WrongArgNumb,
+    WrongPredicate,
+    WrongDef,
     None,
 }
 
@@ -131,7 +136,7 @@ pub enum ParseTree {
 }
 
 impl ParseTree {
-    fn process_ast(input: Next) -> Result<ParseTree, ParseErrF> {
+    fn process_ast(input: Next, _tell: bool) -> Result<ParseTree, ParseErrF> {
         let first = match &input {
             &Next::ASTNode(ref val) => &(*val),
             _ => panic!("simag: expected an AST node, found other variant"),

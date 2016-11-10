@@ -1,6 +1,3 @@
-//! `LogSentence
-//! ------------
-//!
 //! Stores a serie of logical atoms (be them predicates or
 //! connectives), that form a well-formed logic formula. These are rulesets
 //! for reasoning, cataloging objects into sets/classes, and the relationships
@@ -30,7 +27,7 @@ use agent;
 #[derive(Debug)]
 pub struct LogSentence {
     particles: Vec<Box<Particle>>,
-    produced: Vec<Box<LogSentence>>,
+    produced: Vec<*const LogSentence>,
     created: usize,
     vars: Option<Vec<Box<Var>>>,
     skolem: Option<Vec<Box<Skolem>>>,
@@ -66,8 +63,10 @@ impl<'a> LogSentence {
                 } else {
                     return Err(ParseErrF::RuleInclICond(format!("{}", sent)));
                 }
-            } else if context.iexpr() && !correct_iexpr(&sent) {
-                return Err(ParseErrF::IExprWrongOp);
+            } else if context.iexpr() {
+                if let Err(err) = correct_iexpr(&sent) {
+                    return Err(err);
+                }
             }
             Ok(sent)
         }
@@ -77,7 +76,7 @@ impl<'a> LogSentence {
                  agent: &agent::Representation,
                  assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>)
                  -> Option<bool> {
-        let root = unsafe { &*(self.root) as &Particle };
+        let root = unsafe { &*(self.root) };
         if let Some(res) = root.solve(agent, &assignments) {
             if res {
                 if root.is_icond() {
@@ -116,7 +115,12 @@ impl<'a> LogSentence {
         if self.vars.is_none() {
             return requeriments;
         }
-        let predicates = self.get_predicates();
+        let mut predicates = Vec::new();
+        for p in &self.particles {
+            if p.is_atom() {
+                predicates.push(&**p)
+            }
+        }
         for var in self.vars.as_ref().unwrap() {
             let mut var_req = Vec::new();
             for p in &predicates {
@@ -128,16 +132,6 @@ impl<'a> LogSentence {
             requeriments.insert(&**var as *const Var, var_req);
         }
         requeriments
-    }
-
-    fn get_predicates(&self) -> Vec<&Particle> {
-        let mut predicates = Vec::new();
-        for p in &self.particles {
-            if p.is_atom() {
-                predicates.push(&**p)
-            }
-        }
-        predicates
     }
 
     fn add_var(&mut self, var: Box<Var>) {
@@ -670,16 +664,16 @@ impl LogicAtom {
     fn substitute(&self,
                   agent: &agent::Representation,
                   assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>) {
-            self.pred.substitute(agent, assignments)
-    }
-
-    fn get_name(&self) -> &str {
-        self.pred.get_name()
+        self.pred.substitute(agent, assignments)
     }
 
     #[inline]
     fn contains(&self, pred: &Var) -> bool {
         self.pred.contains(pred)
+    }
+
+    fn get_name(&self) -> &str {
+        self.pred.get_name()
     }
 
     fn get_parent(&self) -> Option<&Particle> {
@@ -1172,7 +1166,7 @@ fn walk_ast(ast: &Next,
                             Ok(ptr) => ptr,
                             Err(err) => return Err(err),
                         };
-                        let a = unsafe { &mut *(ptr) };
+                        let a = unsafe { &mut *ptr };
                         let is_conj = a.get_conjunction();
                         if is_conj.is_err() {
                             return Err(is_conj.unwrap_err());
@@ -1188,7 +1182,7 @@ fn walk_ast(ast: &Next,
                             Ok(ptr) => ptr,
                             Err(err) => return Err(err),
                         };
-                        let a = unsafe { &mut *(ptr) };
+                        let a = unsafe { &mut *ptr };
                         let is_disj = a.get_disjunction();
                         if is_disj.is_err() {
                             return Err(is_disj.unwrap_err());
@@ -1251,45 +1245,45 @@ fn link_sent_childs(sent: &mut LogSentence) {
     }
 }
 
-fn correct_iexpr(sent: &LogSentence) -> bool {
-    fn has_icond_child(p: &Particle) -> bool {
+fn correct_iexpr(sent: &LogSentence) -> Result<(), ParseErrF> {
+    fn has_icond_child(p: &Particle) -> Result<(), ParseErrF> {
         if let Some(n1_0) = p.get_next(0) {
             match n1_0 {
-                &Particle::IndConditional(_) => return true,
+                &Particle::IndConditional(_) => return Err(ParseErrF::IExprICondLHS),
                 _ => {}
             }
-            if has_icond_child(n1_0) {
-                return true;
+            if let Err(err) = has_icond_child(n1_0) {
+                return Err(err);
             }
         }
         if let Some(n1_1) = p.get_next(1) {
             match n1_1 {
-                &Particle::IndConditional(_) => return true,
+                &Particle::IndConditional(_) => return Err(ParseErrF::IExprICondLHS),
                 _ => {}
             }
-            if has_icond_child(n1_1) {
-                return true;
+            if let Err(err) = has_icond_child(n1_1) {
+                return Err(err);
             }
         }
-        false
+        Ok(())
     }
 
-    fn wrong_operator(p: &Particle) -> bool {
+    fn wrong_operator(p: &Particle) -> Result<(), ParseErrF> {
         if let Some(n1_0) = p.get_next(0) {
             // test that the lhs does not include any indicative conditional
-            if has_icond_child(n1_0) {
-                return true;
+            if let Err(err) = has_icond_child(n1_0) {
+                return Err(err);
             }
         }
         // test that the rh-most-s does include only icond or 'OR' connectives
-        let mut is_wrong = false;
+        let mut is_wrong = Ok(());
         if let Some(n1_1) = p.get_next(1) {
             match n1_1 {
                 &Particle::IndConditional(_) => {}
                 &Particle::Disjunction(_) => {}
                 &Particle::Conjunction(_) => {}
                 &Particle::Atom(_) => {}
-                _ => return true,
+                _ => return Err(ParseErrF::IExprWrongOp),
             }
             is_wrong = wrong_operator(n1_1);
         }
@@ -1299,15 +1293,21 @@ fn correct_iexpr(sent: &LogSentence) -> bool {
     let first: &Particle = unsafe { &*(sent.root) };
     if let Some(n1_0) = first.get_next(0) {
         match n1_0 {
-            &Particle::IndConditional(_) => return false,
+            &Particle::IndConditional(_) => return Err(ParseErrF::IExprNotIcond),
             _ => {}
         }
     }
-    if !wrong_operator(first) {
-        true
-    } else {
-        false
+    for p in &sent.particles {
+        match **p {
+            Particle::Atom(ref atom) => {
+                if !atom.pred.parent_is_grounded() {
+                    return Err(ParseErrF::WrongPredicate)
+                }
+            }
+            _ => {}
+        }
     }
+    wrong_operator(first)
 }
 
 #[test]
