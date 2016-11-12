@@ -1144,10 +1144,7 @@ fn walk_ast(ast: &Next,
                 }
             } else {
                 let len = nodes.len() - 1;
-                let first: *mut Particle = match walk_ast(&nodes[0], sent, context) {
-                    Ok(opt) => opt,
-                    Err(err) => return Err(err),
-                };
+                let first: *mut Particle = walk_ast(&nodes[0], sent, context)?;
                 let operator;
                 let r = unsafe { &*first };
                 match r {
@@ -1162,10 +1159,7 @@ fn walk_ast(ast: &Next,
                 let mut prev = first;
                 if operator.is_and() {
                     for i in 1..len {
-                        let ptr = match walk_ast(&nodes[i], sent, context) {
-                            Ok(ptr) => ptr,
-                            Err(err) => return Err(err),
-                        };
+                        let ptr = walk_ast(&nodes[i], sent, context)?;
                         let a = unsafe { &mut *ptr };
                         let is_conj = a.get_conjunction();
                         if is_conj.is_err() {
@@ -1178,10 +1172,7 @@ fn walk_ast(ast: &Next,
                     }
                 } else {
                     for i in 1..len {
-                        let ptr = match walk_ast(&nodes[i], sent, context) {
-                            Ok(ptr) => ptr,
-                            Err(err) => return Err(err),
-                        };
+                        let ptr = walk_ast(&nodes[i], sent, context)?;
                         let a = unsafe { &mut *ptr };
                         let is_disj = a.get_disjunction();
                         if is_disj.is_err() {

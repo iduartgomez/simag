@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Main knowledge-base logic module, in this module exist the different 
-classes that transform and store the data for the individual agents and 
-serve as representations of the different objects and the relationships 
+"""Main knowledge-base logic module, in this module exist the different
+classes that transform and store the data for the individual agents and
+serve as representations of the different objects and the relationships
 between them.
 
 Main
@@ -18,9 +18,9 @@ Also stores the types of relations an object can have.
 Support classes (and methods) and functions
 -------------------------------------------
 `LogSentence`: Stores a serie of logical atoms (be them predicates or
-connectives), that form a well-formed logic formula. These are rulesets 
-for reasoning, cataloging objects into sets/classes, and the relationships 
-between these objects. 
+connectives), that form a well-formed logic formula. These are rulesets
+for reasoning, cataloging objects into sets/classes, and the relationships
+between these objects.
 
 LogSentences are owned by the funtion 'make_logic_sentence', and cannot be
 called directly.
@@ -61,24 +61,24 @@ from simag.core.parser import (
 # ===================================================================#
 
 class Representation(object):
-    """This class is a container for internal agent's representations. 
-    An agent can have any number of such representations at any moment, 
+    """This class is a container for internal agent's representations.
+    An agent can have any number of such representations at any moment,
     all of which are contained in this object.
-    
-    The class includes methods to encode and decode the representations 
+
+    The class includes methods to encode and decode the representations
     to/from data streams or idioms.
-    
+
     Attributes:
         individuals -> Unique members (entities) of their own set/class.
         | Entities are denoted with a $ symbol followed by a name.
         classes -> Sets of objects that share a common property.
     """
-    
+
     def __init__(self):
-        """IMPORTANT! 
+        """IMPORTANT!
         A representation shouldn't be initialized directly, instead it must
-        be initialized and owned by an agent. Agents are initialized from 
-        Rust where the main event loop is controlled from to manage 
+        be initialized and owned by an agent. Agents are initialized from
+        Rust where the main event loop is controlled from to manage
         concurrent operations and communication.
         """
         self.bmsWrapper = bms.BmsWrapper(self)
@@ -88,23 +88,23 @@ class Representation(object):
         #rust.start_event_loop(self)
 
     def tell(self, string):
-        """Parses a sentence (or several of them) into an usable formula 
-        and stores it into the internal representation along with the 
-        corresponding classes. In case the sentence is a predicate, 
+        """Parses a sentence (or several of them) into an usable formula
+        and stores it into the internal representation along with the
+        corresponding classes. In case the sentence is a predicate,
         the objects get declared as members of their classes.
-        
-        Accepts first-order logic sentences sentences, both atomic 
-        sentences ('Lucy is a professor') and complex sentences compossed 
+
+        Accepts first-order logic sentences sentences, both atomic
+        sentences ('Lucy is a professor') and complex sentences compossed
         of different atoms and operators ('If someone is a professor,
         then it's a person'). Examples:
-        
+
         >>> r.tell("professor[$Lucy,u=1]")
         will include the individual '$Lucy' in the professor category)
         >>> r.tell(":vars:x: (professor[x,u=1] |= person[x,u=1])")
         all the individuals which are professors will be added to the
         person category, and the formula will be stored in the professor
         class for future use.
-        
+
         For more examples check the LogSentence class docs.
         """
         results = logic_parser(string)
@@ -124,9 +124,9 @@ class Representation(object):
             self.save_rule(a)
         for a in results.assert_cogs:
             self.add_cog(a)
-    
+
     def ask(self, sent, single=True, filter_dates=False, **kwargs):
-        """Asks the KB if some fact is true and returns the answer to 
+        """Asks the KB if some fact is true and returns the answer to
         the query.
         """
         inf_proc = Inference(self, sent, **kwargs)
@@ -135,7 +135,7 @@ class Representation(object):
                 for pred in answ.values():
                     if isinstance(pred, tuple) and pred[0] is False:
                         return False
-                    elif isinstance(pred, tuple) and pred[0] is None: 
+                    elif isinstance(pred, tuple) and pred[0] is None:
                         return None
                     elif pred is False:
                         return False
@@ -144,13 +144,13 @@ class Representation(object):
             return True
         if filter_dates:
             for k1, v1 in inf_proc.results.items():
-                for k2, v2 in v1.items():                    
+                for k2, v2 in v1.items():
                     if isinstance(v2, tuple):
                         inf_proc.results[k1][k2] = v2[0]
         return inf_proc.results
-    
+
     def up_memb(self, pred, return_val=False):
-        # It's a membership declaration.        
+        # It's a membership declaration.
         subject, categ = pred.term, pred.parent
         if subject not in self.individuals and subject[0] == '$':
             # An individual which is member of a class
@@ -203,15 +203,15 @@ class Representation(object):
                     self.classes[relation] = rel
         if return_val: return rel
 
-    def add_cog(self, sent):                
+    def add_cog(self, sent):
         def chk_args(p):
             if hasattr(sent, 'var_order') and sbj in sent.var_order:
                 if p in self.classes:
                     self.classes[p].add_cog(sent)
                 else:
-                    if not issubclass(pred.__class__, LogFunction): 
+                    if not issubclass(pred.__class__, LogFunction):
                         nc = Category(sbj)
-                    else: 
+                    else:
                         nc = Relation(sbj)
                     nc.add_cog(sent)
                     self.classes[p] = nc
@@ -225,17 +225,17 @@ class Representation(object):
                 elif sbj in self.classes:
                     self.classes[sbj].add_cog(sent)
                 else:
-                    if not issubclass(pred.__class__, LogFunction): 
+                    if not issubclass(pred.__class__, LogFunction):
                         nc = Category(sbj)
-                    else: 
+                    else:
                         nc = Relation(sbj)
                     nc.add_cog(sent)
                     self.classes[p] = nc
-        
+
         preds = sent.get_all_preds()
         for pred in preds:
             if issubclass(pred.__class__, LogFunction):
-                if hasattr(pred, 'args'):                    
+                if hasattr(pred, 'args'):
                     for arg in pred.args:
                         if isinstance(arg, tuple): sbj = arg[0]
                         else: sbj = arg
@@ -246,7 +246,7 @@ class Representation(object):
         questions = sent.get_preds('r')
         for query in questions:
             self.ask(query, ignore_current=True)
-    
+
     def save_rule(self, proof):
         preds = proof.get_all_preds()
         n = []
@@ -258,9 +258,9 @@ class Representation(object):
             and proof not in self.classes[name].cog:
                 self.classes[name].add_cog(proof)
             else:
-                if not issubclass(p.__class__, LogFunction): 
+                if not issubclass(p.__class__, LogFunction):
                     nc = Category(name)
-                else: 
+                else:
                     nc = Relation(name)
                 nc.add_cog(proof)
                 self.classes[name] = nc
@@ -271,13 +271,13 @@ class Representation(object):
         obj_dic.update(cls_dic)
         for obj in obj_dic.keys():
             proof(self, obj)
-    
+
     def objs_by_ctg(self, ctgs, type_):
         if type_== 'individuals':
             collect = self.individuals.values()
         elif type_ == 'classes':
             collect = self.classes.values()
-        else: 
+        else:
             raise ValueError("'type_' parameter must have one of the \
             following values: individuals, classes")
         ctg_dic = {}
@@ -288,7 +288,7 @@ class Representation(object):
             t = t.union(s)
             if len(t) != 0: ctg_dic[ind.name] = t
         return ctg_dic
-    
+
     def test_pred(self, p, kls=None):
         if not kls:
             if issubclass(p.__class__, LogPredicate):
@@ -301,9 +301,10 @@ class Representation(object):
                 try: return self.individuals[subject].test_ctg(p)
                 except: return None
             else:
-                try: return self.individuals[subject].test_ctg(p)
+                try: return self.classes[subject].test_ctg(p)
                 except: return None
         elif kls == 'func':
+            raise RuntimeError("FIXME: check all subjects before returning!")
             for subject in p.get_args():
                 if subject[0] == '$':
                     try: return self.individuals[subject].test_rel(p)
@@ -314,13 +315,13 @@ class Representation(object):
         else:
             raise TypeError("the first argument must be of " \
                 + "LogPredicate or LogFunction type")
-    
+
     def thread_manager(self, to_lock, unlock=False):
         """This method is called to manage locks on working objects.
-        
+
         When a substitution is done all the relevant objects are locked until
         it finishes to prevent race conditions.
-        
+
         After it finishes the locks are freed so an other subtitution can pick
         up the request.
         """
@@ -344,22 +345,22 @@ class Representation(object):
 class Individual(object):
     """An individual is the unique member of it's own class.
     Represents an object which can pertain to multiple classes or sets.
-    It's an abstraction owned by an agent, the internal representation 
+    It's an abstraction owned by an agent, the internal representation
     of the object, not the object itself.
-    
+
     An Individual inherits the properties of the classes it belongs to,
     and has some implicit attributes which are unique to itself.
-    
+
     Membership to a class is denoted (following fuzzy sets) by a
     real number between 0 and 1. If the number is one, the object will
     will always belong to the set, if it's zero, it will never belong to
     the set.
-    
+
     For example, an object can belong to the set 'cold' with a degree of
     0.9 (in natural language then it would be 'very cold') or 0.1
     (then it would be 'a bit cold', the subjective adjectives are defined
     in the category itself).
-    
+
     Attributes:
         id -> Unique identifier for the object.
         name -> Name of the unique object.
@@ -380,7 +381,7 @@ class Individual(object):
     def set_attr(self, **kwargs):
         """Sets implicit attributes for the class, if an attribute exists
         it's replaced.
-        
+
         Takes a dictionary as input.
         """
         if not hasattr(self, 'attr'):
@@ -391,18 +392,18 @@ class Individual(object):
     def infer(self):
         """Inferes attributes of the entity from it's classes."""
         pass
-    
+
     def add_cog(self, p, sent):
         if p in self.cog and sent not in self.cog[p]:
             self.cog[p].append(sent)
         else:
             self.cog[p] = [sent]
-        
+
     def add_ctg(self, fact, get_obj=False):
         if issubclass(fact.__class__, LogPredicate):
             ctg_rec = [f.parent for f in self.categ]
             try: idx = ctg_rec.index(fact.parent)
-            except ValueError: 
+            except ValueError:
                 self.categ.append(fact)
                 fact.test_related_preds = run_related_proofs(fact.parent)
                 if get_obj: return fact
@@ -413,7 +414,7 @@ class Individual(object):
                     ctg.test_related_preds = run_related_proofs(fact.parent)
                 if get_obj: return ctg
         else: raise TypeError('The object is not a LogPredicate subclass.')
-    
+
     def check_ctg(self, n):
         """Returns a list that is the intersection of the input iterable
         and the categories of the object.
@@ -424,11 +425,11 @@ class Individual(object):
     def get_ctg(self, ctg=None, obj=False):
         """Returns a dictionary of the categories of the object and
         their truth values.
-        
+
         If a single category is provided in the 'ctg' keyword argument,
         then the value for that category is returned. If it doesn't
         exist, None is returned.
-        
+
         If the obj keyword parameter is True then the object is returned.
         """
         if obj is True:
@@ -441,7 +442,7 @@ class Individual(object):
                 for c in self.categ:
                     if ctg == c: return c
             return None
-        
+
         cat = {c.parent:c.value for c in self.categ}
         if ctg is None:
             return cat
@@ -449,9 +450,9 @@ class Individual(object):
             try: x = cat[ctg]
             except KeyError: return None
             else: return x
-    
+
     def test_ctg(self, pred, obj=False):
-        """Checks if it's child of a category and returns true if it's 
+        """Checks if it's child of a category and returns true if it's
         equal to the comparison, false if it's not, and none if it
         doesn't exist.
         """
@@ -460,11 +461,11 @@ class Individual(object):
                 categ = ctg
                 break
         if 'categ' not in locals(): return None
-        if pred == categ: 
+        if pred == categ:
             if obj: return categ
             return True
         else: return False
-    
+
     def add_rel(self, func, get_obj=False):
         try:
             rels = self.relations[func.func]
@@ -474,7 +475,7 @@ class Individual(object):
             if get_obj: return func
         else:
             found_rel = False
-            for rel in rels:                
+            for rel in rels:
                 if rel.chk_args_eq(func) is True:
                     updated = rel.update(func)
                     if updated:
@@ -485,11 +486,11 @@ class Individual(object):
             if not found_rel:
                 rels.append(func)
                 func.test_related_preds = run_related_proofs(func.func)
-        
+
     def get_rel(self, func=None, obj=False):
         """Returns a list of the relations the object is involved either
         as subject, object or indirect object.
-        
+
         If a function is provided for comparison then the original function
         is returned. If the provided function has variables then a list of
         functions which fit the criteria is returned.
@@ -500,7 +501,7 @@ class Individual(object):
             except KeyError:
                 return None
             ignore_args = False
-            if hasattr(func, '_ignore_args'): ignore_args = True          
+            if hasattr(func, '_ignore_args'): ignore_args = True
             results = []
             for f in funcs:
                 if ignore_args and func == f:
@@ -509,17 +510,17 @@ class Individual(object):
             if ignore_args: return results
         rel = [k for k in self.relations]
         return rel
-    
+
     def test_rel(self, func, obj=False, copy_date=False, cmp_args=False):
         """Checks if a relation exists; and returns true if it's equal
         to the comparison, false if it's not, and None if it doesn't exist.
-        
+
         If the cmp_args parameter is True then a list of relations where
         the arguments are equal to those of the provided comparison function
         will be returned.
         """
         if cmp_args:
-            return [f.func for rel_ls in self.relations.values() 
+            return [f.func for rel_ls in self.relations.values()
                     for f in rel_ls if func.compare_args(f)]
         try:
             funcs = self.relations[func.func]
@@ -535,7 +536,7 @@ class Individual(object):
                     return True
                 else: return False
         return None
-    
+
     def get_date(self, pred):
         """Take a predicate or a function and return the times at which
         those where true or false. If it doesn't exist returns 'None'.
@@ -556,26 +557,26 @@ class Individual(object):
             fact = pred
             ctg_rec = [f.parent for f in self.categ]
             try: idx = ctg_rec.index(fact.parent)
-            except ValueError: return None   
+            except ValueError: return None
             else:
                 if fact == self.categ[idx]:
-                    if hasattr(self.categ[idx], 'dates'): 
+                    if hasattr(self.categ[idx], 'dates'):
                         return self.categ[idx].dates[-1]
                     else: return datetime.now()
                 else: return False
-    
+
     def __str__(self):
         s = "<individual '" + self.name + "' w/ id: " + self.id + ">"
         return s
 
 class Category(object):
-    """A category is a set/class of entities that share some properties.    
+    """A category is a set/class of entities that share some properties.
     It can be a subset of others supersets, and viceversa.
-    
+
     Membership is not binary, but fuzzy, being the extreme cases (0, 1)
-    the classic binary membership. Likewise, membership to a class can be 
+    the classic binary membership. Likewise, membership to a class can be
     temporal. For more info check 'Individual' class.
-    
+
     All the attributes of a category are inherited by their members
     (to a degree).
     """
@@ -586,14 +587,14 @@ class Category(object):
             for k, v in kwargs.items():
                 if k == 'parents': setattr(self, 'parents', v)
                 else: self[k] = v
-    
+
     def infer(self):
         """Infers attributes of the class from it's members."""
         pass
-    
+
     def add_cog(self, sent):
         if sent not in self.cog: self.cog.append(sent)
-    
+
     def add_rel(self, func, get_obj=False):
         if not hasattr(self, 'relations'):
             self.relations = dict()
@@ -601,7 +602,7 @@ class Category(object):
             if get_obj: return func
         else:
             try: rels = self.relations[func.func]
-            except KeyError: 
+            except KeyError:
                 self.relations[func.func] = [func]
                 func.test_related_preds = run_related_proofs(func.func)
                 if get_obj: return func
@@ -618,18 +619,18 @@ class Category(object):
                 if not found_rel:
                     rels.append(func)
                     func.test_related_preds = run_related_proofs(func.func)
-    
+
     def get_rel(self, func=None, cmp_args=False):
         """Returns a list of the relations the object is involved either
         as subject, object or indirect object.
-        
+
         If a function is provided for comparison then the original function
         is returned. If the provided function has variables then a list of
         functions which fit the criteria is returned.
         """
-        if func:            
+        if func:
             try:
-                if hasattr(self, 'relations'):                    
+                if hasattr(self, 'relations'):
                     funcs = self.relations[func.func]
                 else: return None
             except KeyError:
@@ -646,18 +647,18 @@ class Category(object):
         if hasattr(self, 'relations'): rel = [k for k in self.relations]
         else: rel = []
         return rel
-    
+
     def test_rel(self, func, obj=False, copy_date=False, cmp_args=False):
-        """Checks if a relation exists; and returns true if it's 
+        """Checks if a relation exists; and returns true if it's
         equal to the comparison, false if it's not, and None if it
         doesn't exist.
-        
+
         If the cmp_args parameter is True then a list of relations where
         the arguments are equal to those of the provided comparison function
         will be returned.
         """
         if cmp_args:
-            return [f.func for rel_ls in self.relations.values() 
+            return [f.func for rel_ls in self.relations.values()
                     for f in rel_ls if func.compare_args(f)]
         try:
             funcs = self.relations[func.func]
@@ -673,31 +674,31 @@ class Category(object):
                     return True
                 else: return False
         return None
-    
+
     def add_ctg(self, fact, get_obj=False):
         if not hasattr(self,'parents'): self.parents = [fact]
         else:
             ctg_rec = [f.parent for f in self.parents]
             try: idx = ctg_rec.index(fact.parent)
-            except ValueError: 
+            except ValueError:
                 self.parents.append(fact)
                 fact.test_related_preds = run_related_proofs(fact.parent)
-                if get_obj: return fact       
+                if get_obj: return fact
             else:
-                ctg = self.parents[idx]                
+                ctg = self.parents[idx]
                 updated = ctg.update(fact)
                 if updated:
                     ctg.test_related_preds = run_related_proofs(fact.parent)
                 if get_obj: return ctg
-    
+
     def get_ctg(self, ctg=None, obj=False):
         """Returns a dictionary of the categories of the object and
         their truth values.
-        
+
         If a single category is provided in the 'ctg' keyword argument,
         then the value for that category is returned. If it doesn't
         exist, None is returned.
-        
+
         If the obj keyword parameter is True then the object is returned.
         """
         if obj is True:
@@ -706,7 +707,7 @@ class Category(object):
             for c in self.parents:
                 if ctg == c: return c
             return None
-        
+
         cat = {c.parent:c.value for c in self.parents}
         if ctg is None:
             return cat
@@ -714,12 +715,12 @@ class Category(object):
             try: x = cat[ctg]
             except KeyError: return None
             else: return x
-    
+
     def test_ctg(self, pred, obj=False):
-        """Checks if it's child of a category and returns true if it's 
+        """Checks if it's child of a category and returns true if it's
         equal to the comparison, false if it's not, and none if it
         doesn't exist.
-        """        
+        """
         if not hasattr(self,'parents'): return None
         for ctg in self.parents:
             if ctg.parent == pred.parent:
@@ -727,20 +728,20 @@ class Category(object):
                 break
         if 'categ' not in locals(): return None
         if pred == categ:
-            if obj: return categ 
+            if obj: return categ
             return True
         else: return False
-        
-        
+
+
     def check_ctg(self, n):
         """Returns a list that is the intersection of the input iterable
         and the parents of the object.
         """
         if not hasattr(self,'parents'): return list()
         return [c.parent for c in self.parents if c.parent in n]
-    
+
 class Relation(Category):
-    
+
     @property
     def add_rel(self, func):
         raise AttributeError("'Relation' object has no attribute 'add_rel'.")
@@ -771,7 +772,7 @@ def run_related_proofs(ctg):
     return decorated_func
 
 class Inference(object):
-    
+
     class InferNode(object):
         def __init__(self, classes, ants, const, rule):
             self.rule = rule
@@ -796,7 +797,7 @@ class Inference(object):
                     elif issubclass(ant.__class__, LogPredicate):
                         if ant.term in self.subs:
                             self.subs[ant.term].add(ant.parent)
-            # flatten nested disjunctions, 
+            # flatten nested disjunctions,
             # TODO: this probably should be cached when the sentence
             # is constructed
             rm = []
@@ -808,7 +809,7 @@ class Inference(object):
             for k, v in disjunct.items():
                 if k not in rm:
                     names = tuple([
-                        p.pred.parent 
+                        p.pred.parent
                         if issubclass(p.pred.__class__, LogPredicate)
                         else p.pred.func for p in v])
                     for p in v:
@@ -821,14 +822,14 @@ class Inference(object):
                         elif issubclass(ant.__class__, LogPredicate):
                             if ant.term in self.subs:
                                 self.subs[ant.term].add(names)
-    
+
     class NoSolutionError(Exception): pass
-    
+
     def __new__(cls, *args, **kwargs):
         obj = super(Inference, cls).__new__(cls)
         obj.parser = logic_parser
         return obj
-    
+
     def __init__(self, kb, *args, **kwargs):
         self._ignore_current = False
         if kwargs:
@@ -846,13 +847,13 @@ class Inference(object):
     def infer_facts(self, sent):
         """Inference function from first-order logic sentences.
 
-        Gets a query from an ASK, encapsulates the query subtitutions, 
+        Gets a query from an ASK, encapsulates the query subtitutions,
         processes it (including caching of partial results or tracking
-        var substitution) and returns the answer to the query. If new 
+        var substitution) and returns the answer to the query. If new
         knowledge is produced then it's passed to an other procedure for
         addition to the KB.
-        """        
-        def query(pred, q):        
+        """
+        def query(pred, q):
             # create a lookup table for memoizing results of previous passes
             if not hasattr(self, 'queue'):
                 self.queue = dict()
@@ -863,12 +864,12 @@ class Inference(object):
             # Run the query, if there is no result and there is
             # an update, then rerun it again, else stop
             k, result, self._updated = True, None, list()
-            while not result and k is True:                    
+            while not result and k is True:
                 chk, done = deque(), list()
                 result = self.unify(q, chk, done)
                 k = True if True in self._updated else False
                 self._updated = list()
-        
+
         self.get_query(sent)
         # Get relevant rules to infer the query
         self.rules, self.done = OrderedSet(), [None]
@@ -883,10 +884,10 @@ class Inference(object):
         for var, preds in self.query.items():
             if var in self.vrs:
                 for pred in preds:
-                    if issubclass(pred.__class__, LogFunction): 
+                    if issubclass(pred.__class__, LogFunction):
                         q, is_func = pred.func, True
-                    elif issubclass(pred.__class__, LogPredicate): 
-                        q, is_func = pred.parent, False   
+                    elif issubclass(pred.__class__, LogPredicate):
+                        q, is_func = pred.parent, False
                     for obj, ctgs in self.obj_dic.items():
                         if is_func:
                             test = []
@@ -919,7 +920,7 @@ class Inference(object):
                                 # if no result was found from the kb directly
                                 # make an inference from a grounded fact
                                 self.actv_q = (subst.term, subst.parent, subst)
-                                query(subst, self.actv_q[1])                
+                                query(subst, self.actv_q[1])
             else:
                 prev_res = self.results.setdefault(var,{})
                 for pred in preds:
@@ -936,7 +937,7 @@ class Inference(object):
                     # if there is some unresolved query, add none to results
                     curr = self.results[var].setdefault(q, None)
                     if not self._ignore_current and curr is None and isfunc:
-                        curr = self.kb.test_pred(pred, kls='func')                        
+                        curr = self.kb.test_pred(pred, kls='func')
                     elif not self._ignore_current and curr is None:
                         curr = self.kb.test_pred(pred, kls='pred')
                     if not self._ignore_current:
@@ -946,7 +947,7 @@ class Inference(object):
         # repeat all proofs for safety to ensure correcteness of the KB
         for proof, args in self._repeat:
             proof(self.kb, args)
-        
+
     def unify(self, p, chk, done):
         def add_ctg():
             # add category/function to the object dictionary
@@ -1005,20 +1006,20 @@ class Inference(object):
                                 d[query] = (False, date)
                                 self._valid = (node, cargs)
                     except NotCompAssertError: pass
-        
+
         query_obj, query = self.actv_q[0], self.actv_q[1]
         pred = self.actv_q[2]
         self._valid = None
-        # for each node in the subtitution tree unifify variables 
+        # for each node in the subtitution tree unifify variables
         # and try every possible substitution until (if) a solution is found
         # the proofs are tried is order of addition to the KB
         if p in reversed(self.nodes):
             # the node for each rule is stored in an efficient sorted list
-            # by rule creation datetime, from oldest to newest, we iterate 
+            # by rule creation datetime, from oldest to newest, we iterate
             # from newest to oldest as the newest rules take precedence
             #iter_rules = reversed(self.nodes[p])
             for node in self.nodes[p]:
-                # recursively try unifying all possible argument with the 
+                # recursively try unifying all possible argument with the
                 # operating logic sentence:
                 # check what are the possible var substitutions
                 mapped = []
@@ -1060,16 +1061,16 @@ class Inference(object):
                 # the result may be replaced in the KB by other proof which
                 # is less current, to assure that the valid result stays
                 # in the KB after all proofs are done, repeat the valid one
-                # with proper arguments  
+                # with proper arguments
                 self._repeat.append((self._valid[0].rule, self._valid[1]))
-                
+
         if query_obj in self.obj_dic and query in self.obj_dic[query_obj]:
             return True
         elif len(chk) > 0:
             done.append(p)
             p = chk.popleft()
             self.unify(p, chk, done)
-    
+
     def get_query(self, sent):
         def assert_memb(p):
             if not self._ignore_current:
@@ -1086,7 +1087,7 @@ class Inference(object):
                 else:
                     self.query[p.term].append(p)
                     self.ctgs.append(p.parent)
-        
+
         def assert_rel(p):
             if not self._ignore_current:
                 result = self.kb.test_pred(p, kls='func')
@@ -1103,18 +1104,18 @@ class Inference(object):
                         self.query[obj].append(p)
             if not result:
                 self.ctgs.append(p.func)
-        
+
         def filter_ctgs():
             if p.op == '<':
-                return {ctg: True for ctg, val in ctgs.items() 
+                return {ctg: True for ctg, val in ctgs.items()
                         if val < p.value}
             elif p.op == '>':
-                return {ctg: True for ctg, val in ctgs.items() 
+                return {ctg: True for ctg, val in ctgs.items()
                         if val > p.value}
             else:
-                return {ctg: True for ctg, val in ctgs.items() 
+                return {ctg: True for ctg, val in ctgs.items()
                         if val == p.value}
-        
+
         def mangle_var_name(v):
             mangled = None
             while mangled in self.vrs or not mangled:
@@ -1122,7 +1123,7 @@ class Inference(object):
                 rnd = "".join(random.choice(ascii_letters) for _ in range(5))
                 mangled = mangled + rnd
             return mangled
-        
+
         # TODO: support queries for the same function/predicate for the same obj
         # for each query, first try to retrieve the result from the kb
         # if it fails, then add to the query list
@@ -1155,7 +1156,7 @@ class Inference(object):
             return
         else:
             raise TypeError('argument type is not valid')
-        
+
         self.query, self.ctgs = {}, []
         for p in query.assert_rel: assert_rel(p)
         for p in query.assert_memb: assert_memb(p)
@@ -1166,8 +1167,8 @@ class Inference(object):
                 vrs.append(mangled)
                 replace_table[v] = mangled
             self.vrs.update(vrs)
-            for p in q.preds: 
-                if p.parent in q.var_order:                    
+            for p in q.preds:
+                if p.parent in q.var_order:
                     if p.term in q.var_order:
                         raise ValueError(
                             "in this query `{}`, both term `{}` and class `{}`, " /
@@ -1211,7 +1212,7 @@ class Inference(object):
                         if arg in q.var_order:
                             p.replace_var(i, replace_table[arg])
                     assert_rel(p)
-    
+
     def get_rules(self):
         def mk_node(pos):
             # makes inference nodes for the evaluation
@@ -1223,13 +1224,13 @@ class Inference(object):
                     self.nodes[node.const] = SortedListWithKey(
                         key=lambda x: x.rule.created)
                     self.nodes[node.const].add(node)
-        
+
         if len(self.ctgs) > 0:
             cls = self.ctgs.pop()
-        else: 
+        else:
             cls = None
         if cls is not None:
-            self.done.append(cls)            
+            self.done.append(cls)
             try:
                 chk_rules = OrderedSet(self.kb.classes[cls].cog)
                 chk_rules = chk_rules - self.rules
@@ -1244,14 +1245,14 @@ class Inference(object):
                     elif issubclass(p.pred.__class__, LogFunction):
                         classes.append(p.pred.func)
                 mk_node('r')
-                filtered = [e for e in classes 
+                filtered = [e for e in classes
                             if e not in self.done and e not in self.ctgs]
                 self.ctgs.extend(filtered)
                 if cls in classes:
                     preds = sent.get_preds(branch='r', particles=True)
                     classes = []
                     for p in preds:
-                        if issubclass(p.pred.__class__,LogPredicate): 
+                        if issubclass(p.pred.__class__,LogPredicate):
                             classes.append(p.pred.parent)
                         elif issubclass(p.pred.__class__, LogFunction):
                             classes.append(p.pred.func)

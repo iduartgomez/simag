@@ -195,17 +195,11 @@ impl<'a> Next<'a> {
             &Next::Assert(ref decl) => {
                 match decl {
                     &AssertBorrowed::ClassDecl(ref decl) => {
-                        let cls = match ClassDecl::from(decl, context) {
-                            Ok(cls) => cls,
-                            Err(err) => return Err(err),
-                        };
+                        let cls = ClassDecl::from(decl, context)?;
                         Ok(Some(ParseTree::Assertion(vec![Assert::ClassDecl(cls)])))
                     }
                     &AssertBorrowed::FuncDecl(ref decl) => {
-                        let func = match FuncDecl::from(decl, context) {
-                            Ok(func) => func,
-                            Err(err) => return Err(err),
-                        };
+                        let func = FuncDecl::from(decl, context)?;
                         Ok(Some(ParseTree::Assertion(vec![Assert::FuncDecl(func)])))
                     }
                 }
@@ -942,7 +936,7 @@ fn is_term_char(c: u8) -> bool {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum CompOperator {
     Equal,
     Less,

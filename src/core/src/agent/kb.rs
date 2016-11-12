@@ -25,8 +25,8 @@ use lang;
 use lang::{ParseTree, ParseErrF, GroundedTerm, GroundedFunc, LogSentence};
 
 pub struct Representation<'a> {
-    entities: RwLock<HashMap<String, Entity<'a>>>,
-    classes: RwLock<HashMap<String, Class<'a>>>,
+    entities: RwLock<HashMap<&'a str, Box<Entity<'a>>>>,
+    classes: RwLock<HashMap<&'a str, Box<Class<'a>>>>,
     _log_sentences: Mutex<Vec<Box<LogSentence>>>,
 }
 
@@ -90,7 +90,10 @@ impl<'a> Representation<'a> {
                         let r = self.add_logsentence(iexpr);
                         self.add_belief(r)
                     }
-                    ParseTree::Rule(rule) => self.add_rule(rule),
+                    ParseTree::Rule(rule) => {
+                        let r = self.add_logsentence(rule);
+                        self.add_rule(r)
+                    }
                     ParseTree::ParseErr(err) => errors.push(err),
                 }
             }
@@ -113,47 +116,48 @@ impl<'a> Representation<'a> {
     }
 
     /// Asks the KB if some fact is true and returns the answer to the query.
-    pub fn ask(&self, source: String, single_answer: bool) -> Answer {
+    pub fn ask(&'a self, source: String, single_answer: bool) -> Answer {
         let pres = lang::logic_parser(source, false);
         if pres.is_ok() {
-            let pres = pres.unwrap();
-            Inference::new(pres, single_answer)
+            let pres = QueryInput::ManyQueries(pres.unwrap());
+            Inference::new(&self, pres, single_answer)
         } else {
             Answer::ParseErr(pres.unwrap_err())
         }
     }
 
     pub fn up_membership(&self, assert: lang::GroundedTerm) {
-        let subject = String::from(assert.get_name());
-        let parent = String::from(assert.get_parent());
-        let parent_exists = self.classes.read().unwrap().contains_key(&parent);
+        let parent_exists = self.classes.read().unwrap().contains_key(assert.get_parent());
         if !parent_exists {
-            let class = Class::new(parent.clone(), ClassKind::Membership);
-            self.classes.write().unwrap().insert(parent, class);
+            let class = Box::new(Class::new(String::from(assert.get_parent()), ClassKind::Membership));
+            let name = unsafe {&*(&class.name as *const String) as &str };
+            self.classes.write().unwrap().insert(name, class);
         }
-        match (&subject).starts_with("$") {
+        match (&assert.get_name()).starts_with("$") {
             true => {
-                let entity_exists = self.entities.read().unwrap().contains_key(&subject);
+                let entity_exists = self.entities.read().unwrap().contains_key(assert.get_name());
                 if entity_exists {
                     let lock = self.entities.read().unwrap();
-                    let entity = lock.get(&subject).unwrap();
+                    let entity = lock.get(assert.get_name()).unwrap();
                     entity.add_class_membership(assert);
                 } else {
-                    let entity = Entity::new(subject.clone());
+                    let entity = Box::new(Entity::new(String::from(assert.get_name())));
                     entity.add_class_membership(assert);
-                    self.entities.write().unwrap().insert(subject, entity);
+                    let name = unsafe {&*(&entity.name as *const String) as &str };
+                    self.entities.write().unwrap().insert(name, entity);
                 }
             }
             false => {
-                let class_exists = self.classes.read().unwrap().contains_key(&subject);
+                let class_exists = self.classes.read().unwrap().contains_key(assert.get_name());
                 if class_exists {
                     let lock = self.classes.read().unwrap();
-                    let class = lock.get(&subject).unwrap();
+                    let class = lock.get(assert.get_name()).unwrap();
                     class.add_class_membership(assert);
                 } else {
-                    let class = Class::new(subject.clone(), ClassKind::Membership);
+                    let class = Box::new(Class::new(String::from(assert.get_name()), ClassKind::Membership));
                     class.add_class_membership(assert);
-                    self.classes.write().unwrap().insert(subject, class);
+                    let name = unsafe {&*(&class.name as *const String) as &str };
+                    self.classes.write().unwrap().insert(name, class);
                 }
             }
         }
@@ -161,38 +165,41 @@ impl<'a> Representation<'a> {
 
     pub fn up_relation(&self, assert: lang::GroundedFunc) {
         let process_arg = |a: &GroundedTerm| {
-            let subject = String::from(a.get_name());
+            let subject = a.get_name();
             match (&subject).starts_with("$") {
                 true => {
-                    let entity_exists = self.entities.read().unwrap().contains_key(&subject);
+                    let entity_exists = self.entities.read().unwrap().contains_key(subject);
                     if entity_exists {
                         let lock = self.entities.read().unwrap();
-                        let entity = lock.get(&subject).unwrap();
+                        let entity = lock.get(subject).unwrap();
                         entity.add_relationship(&assert);
                     } else {
-                        let entity = Entity::new(subject.clone());
+                        let entity = Box::new(Entity::new(String::from(subject)));
                         entity.add_relationship(&assert);
-                        self.entities.write().unwrap().insert(subject, entity);
+                        let name = unsafe {&*(&entity.name as *const String) as &str };
+                        self.entities.write().unwrap().insert(name, entity);
                     }
                 }
                 false => {
-                    let class_exists = self.classes.read().unwrap().contains_key(&subject);
+                    let class_exists = self.classes.read().unwrap().contains_key(subject);
                     if class_exists {
                         let lock = self.classes.read().unwrap();
                         let class = lock.get(&subject).unwrap();
                         class.add_relationship(&assert);
                     } else {
-                        let class = Class::new(subject.clone(), ClassKind::Membership);
+                        let class = Box::new(Class::new(String::from(subject), ClassKind::Membership));
                         class.add_relationship(&assert);
-                        self.classes.write().unwrap().insert(subject, class);
+                        let name = unsafe {&*(&class.name as *const String) as &str };
+                        self.classes.write().unwrap().insert(name, class);
                     }
                 }
             }
         };
-        let relation_exists = self.classes.read().unwrap().contains_key(&assert.name);
+        let relation_exists = self.classes.read().unwrap().contains_key(assert.name.as_str());
         if !relation_exists {
-            let relationship = Class::new(assert.name.clone(), ClassKind::Relationship);
-            self.classes.write().unwrap().insert(assert.name.clone(), relationship);
+            let relationship = Box::new(Class::new(assert.name.clone(), ClassKind::Relationship));
+            let name = unsafe {&*(&relationship.name as *const String) as &str };
+            self.classes.write().unwrap().insert(name, relationship);
         }
         process_arg(&assert.args[0]);
         process_arg(&assert.args[1]);
@@ -211,12 +218,13 @@ impl<'a> Representation<'a> {
                     let entity = lock.get(subject).unwrap();
                     entity.add_belief(belief, name);
                 } else {
-                    let entity: Entity<'a> = Entity::new(String::from(subject));
+                    let entity = Box::new(Entity::new(String::from(subject)));
                     entity.add_belief(belief, name);
+                    let name = unsafe {&*(&entity.name as *const String) as &str };
                     self.entities
                         .write()
                         .unwrap()
-                        .insert(String::from(subject), entity);
+                        .insert(name, entity);
                 }
             } else {
                 let class_exists = self.classes.read().unwrap().contains_key(subject);
@@ -225,63 +233,64 @@ impl<'a> Representation<'a> {
                     let class = lock.get(subject).unwrap();
                     class.add_belief(belief, name);
                 } else {
-                    let class: Class<'a> = Class::new(String::from(subject), ClassKind::Membership);
+                    let class = Box::new(Class::new(String::from(subject), ClassKind::Membership));
                     class.add_belief(belief, name);
+                    let name = unsafe {&*(&class.name as *const String) as &str };
                     self.classes
                         .write()
                         .unwrap()
-                        .insert(String::from(subject), class);
+                        .insert(name, class);
                 }
             }
         };
         for p in belief.get_all_predicates() {
             match p {
                 &lang::Assert::ClassDecl(ref cls_decl) => {
-                    let parent = cls_decl.get_name_as_string_ref();
-                    let class_exists = self.classes.read().unwrap().contains_key(parent);
+                    let class_exists = self.classes.read().unwrap().contains_key(cls_decl.get_name_as_str());
                     if class_exists {
                         self.classes
                             .read()
                             .unwrap()
-                            .get(parent)
+                            .get(cls_decl.get_name_as_str())
                             .unwrap()
-                            .add_belief(&belief, parent)
+                            .add_belief(&belief, cls_decl.get_name_as_string_ref())
                     } else {
-                        let class = Class::new(parent.clone(), ClassKind::Membership);
-                        class.add_belief(&belief, parent);
-                        self.classes.write().unwrap().insert(String::from(parent.as_str()), class);
+                        let class = Box::new(Class::new(String::from(cls_decl.get_name_as_str()), ClassKind::Membership));
+                        class.add_belief(&belief, cls_decl.get_name_as_str());
+                        let name = unsafe {&*(&class.name as *const String) as &str };
+                        self.classes.write().unwrap().insert(name, class);
                     }
                     for arg in cls_decl.get_args() {
                         if arg.is_not_var() {
                             let subject = arg.get_name();
                             match subject.starts_with("$") {
-                                true => update(subject, parent, true),
-                                false => update(subject, parent, false),
+                                true => update(subject, cls_decl.get_name_as_string_ref(), true),
+                                false => update(subject, cls_decl.get_name_as_string_ref(), false),
                             }
                         }
                     }
                 }
                 &lang::Assert::FuncDecl(ref fn_decl) => {
-                    let parent = fn_decl.get_name_as_string_ref();
-                    let class_exists = self.classes.read().unwrap().contains_key(parent);
+                    let class_exists = self.classes.read().unwrap().contains_key(fn_decl.get_name());
                     if class_exists {
                         self.classes
                             .read()
                             .unwrap()
-                            .get(parent)
+                            .get(fn_decl.get_name())
                             .unwrap()
-                            .add_belief(&belief, parent)
+                            .add_belief(&belief, fn_decl.get_name_as_string_ref())
                     } else {
-                        let class = Class::new(parent.clone(), ClassKind::Relationship);
-                        class.add_belief(&belief, parent);
-                        self.classes.write().unwrap().insert(parent.clone(), class);
+                        let class = Box::new(Class::new(String::from(fn_decl.get_name()), ClassKind::Relationship));
+                        class.add_belief(&belief, fn_decl.get_name());
+                        let name = unsafe {&*(&class.name as *const String) as &str };
+                        self.classes.write().unwrap().insert(name, class);
                     }
                     for arg in fn_decl.get_args() {
                         if arg.is_not_var() {
                             let subject = arg.get_name();
                             match subject.starts_with("$") {
-                                true => update(subject, parent, true),
-                                false => update(subject, parent, false),
+                                true => update(subject, fn_decl.get_name_as_string_ref(), true),
+                                false => update(subject, fn_decl.get_name_as_string_ref(), false),
                             }
                         }
                     }
@@ -291,35 +300,31 @@ impl<'a> Representation<'a> {
         panic!("has to run a query for every lhs pred in the sentence")
     }
 
-    fn add_rule(&'a self, rule: LogSentence) {
-        // TODO: must add the rules to entities/classes in the rel_func args too
-        let rule = Box::new(rule);
+    fn add_rule(&'a self, rule: &'a LogSentence) {
         let mut n = HashSet::new();
-        {
-            let preds = rule.get_all_predicates();
-            for p in preds {
-                let name: &str = unsafe { &*(p.get_name_as_string_ref() as *const String) };
-                n.insert(name);
-                let class_exists = self.classes.read().unwrap().contains_key(name);
-                if class_exists {
-                    let lock = self.classes.read().unwrap();
-                    let class = lock.get(name).unwrap();
-                    class.add_rule(&rule);
-                } else {
-                    let nc = match p {
-                        &lang::Assert::ClassDecl(_) => {
-                            Class::new(String::from(name), ClassKind::Membership)
-                        }
-                        &lang::Assert::FuncDecl(_) => {
-                            Class::new(String::from(name), ClassKind::Relationship)
-                        }
-                    };
-                    nc.add_rule(&rule);
-                    self.classes.write().unwrap().insert(String::from(name), nc);
-                }
+        let preds = rule.get_all_predicates();
+        for p in preds {
+            let name: &str = unsafe { &*(p.get_name_as_string_ref() as *const String) };
+            n.insert(name);
+            let class_exists = self.classes.read().unwrap().contains_key(name);
+            if class_exists {
+                let lock = self.classes.read().unwrap();
+                let class = lock.get(name).unwrap();
+                class.add_rule(&rule);
+            } else {
+                let nc = match p {
+                    &lang::Assert::ClassDecl(_) => {
+                        Box::new(Class::new(String::from(name), ClassKind::Membership))
+                    }
+                    &lang::Assert::FuncDecl(_) => {
+                        Box::new(Class::new(String::from(name), ClassKind::Relationship))
+                    }
+                };
+                nc.add_rule(&rule);
+                let name = unsafe {&*(&nc.name as *const String) as &str };
+                self.classes.write().unwrap().insert(name, nc);
             }
         }
-        self._log_sentences.lock().unwrap().push(rule);
         let mut obj_dic = self.entities_by_class(&n);
         let mut cls_dic = self.classes_by_class(&n);
         for (k, v) in cls_dic.drain() {
@@ -335,16 +340,16 @@ impl<'a> Representation<'a> {
                          -> HashMap<&'a str, HashSet<&'a &str>> {
         let mut dict = HashMap::new();
         let lock = self.entities.read().unwrap();
-        for e in lock.values() {
+        for (name, e) in lock.iter() {
             // lifetime bound to 'a
-            let e = unsafe { &*(e as *const Entity) };
+            let e = unsafe { &*(&**e as *const Entity) };
             let s = e.belongs_to_classes_set(&classes);
             let s = unsafe { &*(&s as *const HashSet<&str>) };
             let t = e.has_relationships_set(&classes);
             let t = unsafe { &*(&t as *const HashSet<&str>) };
             let u = t.union(&s).collect::<HashSet<&&str>>();
             if u.len() > 0 {
-                dict.insert(e.name.as_str(), u);
+                dict.insert(&**name, u);
             }
         }
         dict
@@ -355,16 +360,16 @@ impl<'a> Representation<'a> {
                         -> HashMap<&'a str, HashSet<&'a &str>> {
         let mut dict = HashMap::new();
         let lock = self.classes.read().unwrap();
-        for e in lock.values() {
+        for (name, e) in lock.iter() {
             // lifetime bound to 'a
-            let e = unsafe { &*(e as *const Class) };
+            let e = unsafe { &*(&**e as *const Class) };
             let s = e.belongs_to_classes_set(&classes);
             let s = unsafe { &*(&s as *const HashSet<&str>) };
             let t = e.has_relationships_set(&classes);
             let t = unsafe { &*(&t as *const HashSet<&str>) };
             let u = t.union(&s).collect::<HashSet<&&str>>();
             if u.len() > 0 {
-                dict.insert(e.name.as_str(), u);
+                dict.insert(&**name, u);
             }
         }
         dict
@@ -399,65 +404,61 @@ impl<'a> Representation<'a> {
         }
     }
 
-    pub fn test_predicates(&'a self,
-                           req: &HashMap<*const lang::Var, Vec<*const lang::Assert>>)
-                           -> HashMap<*const lang::Var, Vec<VarAssignment>> {
-        let mut results: HashMap<*const lang::Var, Vec<VarAssignment>> = HashMap::new();
-        for (var, asserts) in req.iter() {
-            let mut class_list = Vec::new();
-            let mut relations_list = Vec::new();
-            for a in asserts {
-                let a = unsafe { &**a };
-                match a {
-                    &lang::Assert::FuncDecl(ref f) => relations_list.push(f),
-                    &lang::Assert::ClassDecl(ref c) => class_list.push(c),
+    fn class_membership(&self, pred: &GroundedTerm) -> Option<bool> {
+        let subject = pred.get_name();
+        match subject.starts_with("$") {
+            true => {
+                if let Some(entity) = self.entities.read().unwrap().get(subject) {
+                    if let Some(current) = entity.belongs_to_class(pred.get_name()) {
+                        if current == pred {
+                            return Some(true)
+                        } else {
+                            return Some(false)
+                        }
+                    }
                 }
             }
-            let lock = self.entities.read().unwrap();
-            let d = unsafe { &*(&*lock as *const HashMap<String, Entity>) };
-            for (id, entity) in d.iter() {
-                let mut gr_memb = HashMap::new();
-                let mut gr_relations = HashMap::new();
-                if class_list.len() > 0 {
-                    if let Some(classes) = entity.belongs_to_classes(&class_list) {
-                        if classes.len() == class_list.len() {
-                            gr_memb = classes;
+            false => {
+                if let Some(class) = self.classes.read().unwrap().get(subject) {
+                    if let Some(current) = class.belongs_to_class(pred.get_name()) {
+                        if current == pred {
+                            return Some(true)
                         } else {
-                            continue;
+                            return Some(false)
                         }
-                    } else {
-                        continue;
                     }
-                }
-                if relations_list.len() > 0 {
-                    if let Some(relations) = entity.has_relationships(&relations_list, Some(*var)) {
-                        if relations.len() == relations_list.len() {
-                            gr_relations = relations;
-                        } else {
-                            continue;
-                        }
-                    } else {
-                        continue;
-                    }
-                }
-                if results.contains_key(var) {
-                    let v = results.get_mut(var).unwrap();
-                    v.push(VarAssignment {
-                        name: id,
-                        classes: gr_memb,
-                        funcs: gr_relations,
-                    })
-                } else {
-                    results.insert(*var,
-                                   vec![VarAssignment {
-                                            name: id,
-                                            classes: gr_memb,
-                                            funcs: gr_relations,
-                                        }]);
                 }
             }
         }
-        results
+        None
+    }
+
+    fn has_relationship(&self, pred: &GroundedFunc, subject: &str) -> Option<bool> {
+        match subject.starts_with("$") {
+            true => {
+                if let Some(entity) = self.entities.read().unwrap().get(subject) {
+                    if let Some(current) = entity.has_relationship(pred) {
+                        if current == pred {
+                            return Some(true)
+                        } else {
+                            return Some(false)
+                        }
+                    }
+                }
+            }
+            false => {
+                if let Some(class) = self.classes.read().unwrap().get(subject) {
+                    if let Some(current) = class.has_relationship(pred) {
+                        if current == pred {
+                            return Some(true)
+                        } else {
+                            return Some(false)
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 }
 
@@ -503,7 +504,7 @@ impl<'a> Entity<'a> {
         let lock = self.classes.read().unwrap();
         let d = unsafe { &*(&*lock as *const HashMap<&str, Box<GroundedTerm>>) };
         for decl in class_list {
-            let key = decl.get_name();
+            let key = decl.get_name_as_str();
             if let Some(cls) = d.get(key) {
                 matches.insert(key, &**cls);
             }
@@ -593,6 +594,19 @@ impl<'a> Entity<'a> {
         matches
     }
 
+    fn has_relationship(&self, func: &GroundedFunc) -> Option<&GroundedFunc> {
+        let lock = self.relations.read().unwrap();
+        let d = unsafe { &*(&*lock as *const HashMap<&str, Vec<Box<GroundedFunc>>>) };
+        if let Some(relation_type) = d.get(func.get_name()) {
+            for rel in relation_type {
+                if rel.comparable(func) {
+                    return Some(rel)
+                }
+            }
+        }
+        None
+    }
+
     fn add_relationship(&self, func: &GroundedFunc) {
         let mut lock = self.relations.write().unwrap();
         let mut d = unsafe { &mut *(&mut *lock as *mut HashMap<&str, Vec<Box<GroundedFunc>>>) };
@@ -635,10 +649,6 @@ impl<'a> Entity<'a> {
             }
         }
     }
-
-    fn add_rule(&self, _rule: &LogSentence) {
-        unimplemented!()
-    }
 }
 
 /// A class is a set of entities that share some properties.
@@ -655,6 +665,7 @@ pub struct Class<'a> {
     classes: RwLock<HashMap<&'a str, Box<GroundedTerm>>>,
     relations: RwLock<HashMap<&'a str, Vec<Box<GroundedFunc>>>>,
     beliefs: RwLock<HashMap<&'a str, Vec<&'a LogSentence>>>,
+    rules: RwLock<Vec<&'a LogSentence>>,
     kind: ClassKind,
 }
 
@@ -671,6 +682,7 @@ impl<'a> Class<'a> {
             classes: RwLock::new(HashMap::new()),
             relations: RwLock::new(HashMap::new()),
             beliefs: RwLock::new(HashMap::new()),
+            rules: RwLock::new(Vec::new()),
             kind: kind,
         }
     }
@@ -722,6 +734,19 @@ impl<'a> Class<'a> {
         matches
     }
 
+    fn has_relationship(&self, func: &GroundedFunc) -> Option<&GroundedFunc> {
+        let lock = self.relations.read().unwrap();
+        let d = unsafe { &*(&*lock as *const HashMap<&str, Vec<Box<GroundedFunc>>>) };
+        if let Some(relation_type) = d.get(func.get_name()) {
+            for rel in relation_type {
+                if rel.comparable(func) {
+                    return Some(rel)
+                }
+            }
+        }
+        None
+    }
+
     fn add_relationship(&self, func: &GroundedFunc) {
         let mut lock = self.relations.write().unwrap();
         let mut d = unsafe { &mut *(&mut *lock as *mut HashMap<&str, Vec<Box<GroundedFunc>>>) };
@@ -765,9 +790,30 @@ impl<'a> Class<'a> {
         }
     }
 
-    fn add_rule(&self, _rule: &LogSentence) {
-        unimplemented!()
+    fn add_rule(&self, rule: &'a LogSentence) {
+        self.rules.write().unwrap().push(rule);
     }
+}
+
+
+struct Inference<'a> {
+    results: HashMap<&'a str, HashMap<&'a str, Option<bool>>>,
+    query: QueryProcessed<'a>,
+    kb: &'a Representation<'a>,
+    obj_dic: HashMap<&'a str, HashSet<&'a &'a str>>,
+}
+
+enum ActiveQuery<'a> {
+    None,
+    Class(&'a str, &'a str, &'a GroundedTerm),
+    Func(&'a str, &'a str, &'a GroundedFunc),
+}
+
+pub enum Answer<'a> {
+    Single(Option<bool>),
+    Multiple(HashMap<&'a str, HashMap<&'a str, Option<bool>>>),
+    QueryErr,
+    ParseErr(ParseErrF),
 }
 
 pub struct VarAssignment<'a> {
@@ -793,29 +839,28 @@ impl<'a> VarAssignment<'a> {
     }
 }
 
-pub enum Answer {
-    Single(Option<bool>),
-    Multiple(Vec<Option<bool>>),
-    QueryErr,
-    ParseErr(ParseErrF),
+struct InferencePass<'a> {
+    query: HashMap<&'a str, bool>,
+    actv: ActiveQuery<'a>,
 }
 
-struct Inference {
-    results: Vec<Option<bool>>,
-}
-
-impl Inference {
-    fn new(_query: VecDeque<ParseTree>, single: bool) -> Answer {
-        let inf = Inference { results: Vec::new() };
+impl<'a> Inference<'a> {
+    fn new(agent: &'a Representation<'a>, query_input: QueryInput, single: bool) -> Answer {
+        let query = QueryProcessed::new().get_query(query_input);
+        let inf = Inference {
+            results: HashMap::new(),
+            query: query.unwrap(),
+            kb: agent,
+            obj_dic: HashMap::new(),
+        };
         if single {
-            for r in inf.get_results() {
-                if r.is_some() {
-                    match r {
-                        Some(false) => return Answer::Single(Some(false)),
-                        _ => {}
+            for r0 in inf.get_results().values() {
+                for r1 in r0.values() {
+                    if let &Some(false) = r1 {
+                        return Answer::Single(Some(false))
+                    } else {
+                        return Answer::Single(None);
                     }
-                } else {
-                    return Answer::Single(None);
                 }
             }
             Answer::Single(Some(true))
@@ -824,8 +869,452 @@ impl Inference {
         }
     }
 
-    fn get_results(self) -> Vec<Option<bool>> {
-        let Inference { results } = self;
+    fn get_results(self) -> HashMap<&'a str, HashMap<&'a str, Option<bool>>> {
+        let Inference {
+            results,
+            query: _,
+            kb: _,
+            obj_dic: _
+        } = self;
         results
+    }
+
+    /// Inference function from first-order logic sentences.
+    ///
+    /// Gets a query from an 'ask' call, encapsulates the query subtitutions,
+    /// processes it (including caching of partial results or tracking
+    /// var substitution) and returns the answer to the query. If new
+    /// knowledge is produced then it's passed to an other procedure for
+    /// addition to the KB.
+    fn infer_facts(&'a mut self, ignore_current: bool) {
+        let query_cls = |query: &str, actv_query: ActiveQuery| {
+            // create a lookup table for memoizing results of previous passes
+            let pass = InferencePass {
+                query: HashMap::new(),
+                actv: actv_query,
+            };
+            
+            /*
+            if not hasattr(self, 'queue'):
+                self.queue = dict()
+                for query in self.nodes.values():
+                    for node in query: self.queue[node] = set()
+            else:
+                for node in self.queue: self.queue[node] = set()
+            # Run the query, if there is no result and there is
+            # an update, then rerun it again, else stop
+            k, result, self._updated = True, None, list()
+            while not result and k is True:
+                chk, done = deque(), list()
+                result = self.unify(q, chk, done)
+                k = True if True in self._updated else False
+                self._updated = list()
+            */
+        };
+
+        /*
+        # Get relevant rules to infer the query
+        self.rules, self.done = OrderedSet(), [None]
+        while hasattr(self, 'ctgs'):
+            try: self.get_rules()
+            except Inference.NoSolutionError: pass
+        # Get the caterogies for each individual/class
+        self.obj_dic = self.kb.objs_by_ctg(self.chk_ctgs, 'individuals')
+        klass_dic = self.kb.objs_by_ctg(self.chk_ctgs, 'classes')
+        self.obj_dic.update(klass_dic)
+        */
+        let mut entities = self.kb.entities_by_class(&self.query.clslist);
+        for (k, v) in entities.drain() {
+            self.obj_dic.insert(k, v);
+        }
+        let mut classes = self.kb.classes_by_class(&self.query.clslist);
+        for (k, v) in classes.drain() {
+            self.obj_dic.insert(k, v);
+        }
+        for (obj, preds) in self.query.cls_queries_grounded.iter() {
+            for pred in preds {
+                let query: &str = pred.get_parent();
+                let mut result = None;
+                if !ignore_current {
+                    result = self.kb.class_membership(pred);
+                }
+                if result.is_some() {
+                    let mut answ = self.results.entry(query).or_insert(HashMap::new());
+                    answ.insert(*obj, result);
+                } else {
+                    // if no result was found from the kb directly
+                    // make an inference from a grounded fact
+                    let actv_query = ActiveQuery::Class(obj, query, pred);
+                    query_cls(query, actv_query);
+                }
+            }
+        }
+
+        for pred in self.query.func_queries_grounded.iter() {
+            let query: &str = pred.name.as_str();
+            let mut result = None;
+            for arg in pred.args.iter() {
+                let obj = arg.get_name();
+                if !ignore_current {
+                    result = self.kb.has_relationship(pred, obj);
+                }
+                if result.is_some() {
+                    let mut answ = self.results.entry(query).or_insert(HashMap::new());
+                    answ.insert(obj, result);
+                } else {
+                    let actv_query = ActiveQuery::Func(obj, query, pred);
+                    query_cls(query, actv_query);
+                }
+            }
+        }
+    }
+
+    fn entities_meet_sent_req(&self,
+                        req: &HashMap<*const lang::Var, Vec<*const lang::Assert>>)
+                           -> HashMap<*const lang::Var, Vec<VarAssignment>> {
+
+        let mut results: HashMap<*const lang::Var, Vec<VarAssignment>> = HashMap::new();
+        for (var, asserts) in req.iter() {
+            let mut class_list = Vec::new();
+            let mut relations_list = Vec::new();
+            for a in asserts {
+                let a = unsafe { &**a };
+                match a {
+                    &lang::Assert::FuncDecl(ref f) => relations_list.push(f),
+                    &lang::Assert::ClassDecl(ref c) => class_list.push(c),
+                }
+            }
+            let lock = self.kb.entities.read().unwrap();
+            let d = unsafe { &*(&*lock as *const HashMap<&str, Box<Entity>>) };
+            for (id, entity) in d.iter() {
+                let mut gr_memb = HashMap::new();
+                let mut gr_relations = HashMap::new();
+                if class_list.len() > 0 {
+                    if let Some(classes) = entity.belongs_to_classes(&class_list) {
+                        if classes.len() == class_list.len() {
+                            gr_memb = classes;
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                }
+                if relations_list.len() > 0 {
+                    if let Some(relations) = entity.has_relationships(&relations_list, Some(*var)) {
+                        if relations.len() == relations_list.len() {
+                            gr_relations = relations;
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                }
+                if results.contains_key(var) {
+                    let v = results.get_mut(var).unwrap();
+                    v.push(VarAssignment {
+                        name: id,
+                        classes: gr_memb,
+                        funcs: gr_relations,
+                    })
+                } else {
+                    results.insert(*var,
+                                   vec![VarAssignment {
+                                            name: id,
+                                            classes: gr_memb,
+                                            funcs: gr_relations,
+                                        }]);
+                }
+            }
+        }
+        results
+    }
+
+    fn get_rules(&mut self) {
+        /*
+        def mk_node(pos):
+            # makes inference nodes for the evaluation
+            for const in sent.get_preds(pos, unique=True):
+                node = self.InferNode(classes, preds, const, sent)
+                if node.const in self.nodes:
+                    self.nodes[node.const].add(node)
+                else:
+                    self.nodes[node.const] = SortedListWithKey(
+                        key=lambda x: x.rule.created)
+                    self.nodes[node.const].add(node)
+
+        if len(self.ctgs) > 0:
+            cls = self.ctgs.pop()
+        else:
+            cls = None
+        if cls is not None:
+            self.done.append(cls)
+            try:
+                chk_rules = OrderedSet(self.kb.classes[cls].cog)
+                chk_rules = chk_rules - self.rules
+            except:
+                raise Inference.NoSolutionError(cls)
+            for sent in chk_rules:
+                preds = sent.get_preds(particles=True)
+                classes = []
+                for p in preds:
+                    if issubclass(p.pred.__class__, LogPredicate):
+                        classes.append(p.pred.parent)
+                    elif issubclass(p.pred.__class__, LogFunction):
+                        classes.append(p.pred.func)
+                mk_node('r')
+                filtered = [e for e in classes
+                            if e not in self.done and e not in self.ctgs]
+                self.ctgs.extend(filtered)
+                if cls in classes:
+                    preds = sent.get_preds(branch='r', particles=True)
+                    classes = []
+                    for p in preds:
+                        if issubclass(p.pred.__class__,LogPredicate):
+                            classes.append(p.pred.parent)
+                        elif issubclass(p.pred.__class__, LogFunction):
+                            classes.append(p.pred.func)
+                    mk_node('l')
+                    filtered = [e for e in classes if e not in self.done
+                                and e not in self.ctgs]
+                    self.ctgs.extend(filtered)
+            self.rules = self.rules | chk_rules
+            self.get_rules()
+        else:
+            self.done.pop(0)
+            self.chk_ctgs = set(self.done)
+            del self.done
+            del self.rules
+            del self.ctgs
+
+            class InferNode(object):
+                def __init__(self, classes, ants, const, rule):
+                    self.rule = rule
+                    self.const = const
+                    self.ants = tuple(classes)
+                    if hasattr(rule, 'var_order'):
+                        self.subs = OrderedDict((v, set()) for v in rule.var_order)
+                    else:
+                        self.subs = {}
+                    disjunct = {}
+                    for p in ants:
+                        ant = p.pred
+                        if p.parent.cond == '||':
+                            prev = disjunct.setdefault(p.parent, [])
+                            prev.append(p)
+                        else:
+                            if issubclass(ant.__class__, LogFunction):
+                                args = ant.get_args()
+                                for v in args:
+                                    if v in self.subs:
+                                        self.subs[v].add(ant.func)
+                            elif issubclass(ant.__class__, LogPredicate):
+                                if ant.term in self.subs:
+                                    self.subs[ant.term].add(ant.parent)
+                    # flatten nested disjunctions,
+                    # TODO: this probably should be cached when the sentence
+                    # is constructed
+                    rm = []
+                    for parent, childs in disjunct.items():
+                        for child in childs:
+                            if child in disjunct:
+                                disjunct[parent].extend(disjunct[child])
+                                rm.append(parent)
+                    for k, v in disjunct.items():
+                        if k not in rm:
+                            names = tuple([
+                                p.pred.parent
+                                if issubclass(p.pred.__class__, LogPredicate)
+                                else p.pred.func for p in v])
+                            for p in v:
+                                ant = p.pred
+                                if issubclass(ant.__class__, LogFunction):
+                                    args = ant.get_args()
+                                    for v in args:
+                                        if v in self.subs:
+                                            self.subs[v].add(names)
+                                elif issubclass(ant.__class__, LogPredicate):
+                                    if ant.term in self.subs:
+                                        self.subs[ant.term].add(names)
+        */
+    }
+}
+
+enum QueryInput {
+    AskRelationalFunc(lang::FuncDecl),
+    AskClassMember(lang::ClassDecl),
+    ManyQueries(VecDeque<ParseTree>),
+}
+
+struct QueryProcessed<'a> {
+    _askcls: Vec<Box<lang::ClassDecl>>,
+    _askfunc: Vec<Box<lang::FuncDecl>>,
+    cls_queries_free: HashMap<&'a lang::Var, Vec<&'a lang::FreeTerm>>,
+    cls_queries_grounded: HashMap<&'a str, Vec<&'a lang::GroundedTerm>>,
+    cls_memb_query: Vec<&'a lang::GroundedTerm>,
+    func_memb_query: Vec<&'a lang::GroundedTerm>,
+    func_queries_free: HashMap<&'a lang::Var, Vec<&'a lang::FuncDecl>>,
+    func_queries_grounded: Vec<lang::GroundedFunc>,
+    clslist: HashSet<&'a str>,
+}
+
+impl<'a> QueryProcessed<'a> {
+    fn new() -> QueryProcessed<'a> {
+        QueryProcessed {
+            _askcls: vec![],
+            _askfunc: vec![],
+            cls_queries_free: HashMap::new(),
+            cls_queries_grounded: HashMap::new(),
+            cls_memb_query: vec![],
+            func_queries_free: HashMap::new(),
+            func_queries_grounded: vec![],
+            func_memb_query: vec![],
+            clslist: HashSet::new(),
+        }
+    }
+
+    fn get_query(mut self, prequery: QueryInput) -> Result<QueryProcessed<'a>, ()> {
+        fn assert_memb(query: &mut QueryProcessed, cdecl: lang::ClassDecl) -> Result<(), ()> {
+            let cdecl = unsafe { &*(query.append_askcls(cdecl) as *const lang::ClassDecl) };
+            match cdecl.get_parent() {
+                &lang::Terminal::GroundedTerm(ref parent) => {
+                    query.push_to_clsls(parent);
+                    for a in cdecl.get_args() {
+                        match a {
+                            &lang::Predicate::FreeTerm(ref t) => {
+                                query.push_to_clsquery_free(t.get_var_ref(), t);
+                            }
+                            &lang::Predicate::GroundedTerm(ref t) => {
+                                query.push_to_clsquery_grounded(t.get_name(), t);
+                            }
+                        }
+                    }
+                }
+                &lang::Terminal::FreeTerm(_) => {
+                    for a in cdecl.get_args() {
+                        match a {
+                            &lang::Predicate::FreeTerm(_) => {
+                                return Err(());
+                            }
+                            &lang::Predicate::GroundedTerm(ref t) => {
+                                query.ask_class_memb(t);
+                            }
+                        }
+                    }
+                }
+                _ => return Err(()),
+            }
+            Ok(())
+        }
+
+        fn assert_rel(query: &mut QueryProcessed, fdecl: lang::FuncDecl) -> Result<(), ()> {
+            let fdecl = unsafe { &*(query.append_askfn(fdecl) as *const lang::FuncDecl) };
+            match fdecl.get_parent() {
+                &lang::Terminal::GroundedTerm(ref parent) => {
+                    query.push_to_clsls(parent);
+                    match fdecl.is_grounded() {
+                        true => {
+                            query.push_to_fnquery_grounded(fdecl.clone().into_grounded());
+                        }
+                        false => {
+                            for a in fdecl.get_args() {
+                                if let &lang::Predicate::FreeTerm(ref t) = a {
+                                    query.push_to_fnquery_free(t.get_var_ref(), fdecl);
+                                }
+                            }
+                        }
+                    }
+                }
+                &lang::Terminal::FreeTerm(_) => {
+                    for a in fdecl.get_args() {
+                        match a {
+                            &lang::Predicate::FreeTerm(_) => {
+                                return Err(());
+                            }
+                            &lang::Predicate::GroundedTerm(ref t) => {
+                                query.ask_relationships(t);
+                            }
+                        }
+                    }
+                }
+                _ => return Err(()),
+            }
+            Ok(())
+        }
+
+        match prequery {
+            QueryInput::AskClassMember(cdecl) => {
+                assert_memb(&mut self, cdecl)?;
+            }
+            QueryInput::AskRelationalFunc(fdecl) => {
+                assert_rel(&mut self, fdecl)?;
+            }
+            QueryInput::ManyQueries(trees) => {
+                for parsetree in trees {
+                    match parsetree {
+                        lang::ParseTree::Assertion(assertions) => {
+                            for a in assertions {
+                                if let Err(()) = match a {
+                                    lang::Assert::ClassDecl(cdecl) => assert_memb(&mut self, cdecl),
+                                    lang::Assert::FuncDecl(fdecl) => assert_rel(&mut self, fdecl),
+                                } {
+                                    return Err(());
+                                }
+                            }
+                        }
+                        _ => return Err(()),
+                    }
+                }
+            }
+        }
+        Ok(self)
+    }
+
+    #[inline]
+    fn append_askcls(&mut self, cls: lang::ClassDecl) -> &lang::ClassDecl {
+        self._askcls.push(Box::new(cls));
+        &**self._askcls.get(self._askcls.len() - 1).unwrap()
+    }
+
+    #[inline]
+    fn append_askfn(&mut self, func: lang::FuncDecl) -> &lang::FuncDecl {
+        self._askfunc.push(Box::new(func));
+        &**self._askfunc.get(self._askfunc.len() - 1).unwrap()
+    }
+
+    #[inline]
+    fn push_to_clsquery_grounded(&mut self, term: &'a str, cls: &'a lang::GroundedTerm) {
+        self.cls_queries_grounded.entry(term).or_insert(vec![]).push(cls);
+    }
+
+    #[inline]
+    fn push_to_clsquery_free(&mut self, term: &'a lang::Var, cls: &'a lang::FreeTerm) {
+        self.cls_queries_free.entry(term).or_insert(vec![]).push(cls);
+    }
+
+    #[inline]
+    fn push_to_fnquery_grounded(&mut self, func: lang::GroundedFunc) {
+        self.func_queries_grounded.push(func)
+    }
+
+    #[inline]
+    fn push_to_fnquery_free(&mut self, term: &'a lang::Var, func: &'a lang::FuncDecl) {
+        self.func_queries_free.entry(term).or_insert(vec![]).push(func);
+    }
+
+    #[inline]
+    fn push_to_clsls(&mut self, term: &'a str) {
+        self.clslist.insert(term);
+    }
+
+    #[inline]
+    fn ask_class_memb(&mut self, term: &'a lang::GroundedTerm) {
+        self.cls_memb_query.push(term);
+    }
+
+    #[inline]
+    fn ask_relationships(&mut self, term: &'a lang::GroundedTerm) {
+        self.func_memb_query.push(term);
     }
 }

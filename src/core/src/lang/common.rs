@@ -157,19 +157,13 @@ impl GroundedTerm {
         panic!("not implemented: updating existing terminals")
     }
 
-    fn from_free(free: &FreeTerm,
-                 assignments: &HashMap<*const Var, &agent::VarAssignment>)
-                 -> Result<GroundedTerm, ()> {
-        if let Some(ref entity) = assignments.get(&free.term) {
-            Ok(GroundedTerm {
-                term: String::from(entity.name),
-                value: free.value,
-                operator: free.operator,
-                parent: free.parent.to_string(),
-                dates: None,
-            })
-        } else {
-            Err(())
+    pub fn from_free(free: &FreeTerm, assignment: &str) -> GroundedTerm {
+        GroundedTerm {
+            term: String::from(assignment),
+            value: free.value,
+            operator: free.operator,
+            parent: free.parent.to_string(),
+            dates: None,
         }
     }
 
@@ -256,6 +250,45 @@ pub struct GroundedFunc {
 }
 
 impl GroundedFunc {
+    pub fn from_free(free: &FuncDecl,
+                 assignments: &HashMap<*const Var, &agent::VarAssignment>)
+                 -> Result<GroundedFunc, ()> {
+        if !free.variant.is_relational() || free.args.as_ref().unwrap().len() < 2 {
+            return Err(());
+        }
+        let name = match free.name {
+            Terminal::GroundedTerm(ref name) => name.clone(),
+            _ => panic!("simag: expected a grounded terminal, found a free terminal"),
+        };
+        let mut first = None;
+        let mut second = None;
+        let mut third = None;
+        for (i, a) in free.args.as_ref().unwrap().iter().enumerate() {
+            let n_a = match a {
+                &Predicate::FreeTerm(ref free) => {
+                    if let Some(ref entity) = assignments.get(&free.term) {
+                        GroundedTerm::from_free(free, entity.name)
+                    } else {
+                        return Err(())
+                    }
+                }
+                &Predicate::GroundedTerm(ref term) => term.clone(),
+            };
+            if i == 0 {
+                first = Some(n_a)
+            } else if i == 1 {
+                second = Some(n_a)
+            } else {
+                third = Some(n_a)
+            }
+        }
+        Ok(GroundedFunc {
+            name: name,
+            args: [first.unwrap(), second.unwrap()],
+            third: third,
+        })
+    }
+
     #[inline]
     pub fn get_name(&self) -> &str {
         self.name.as_str()
@@ -350,45 +383,6 @@ impl GroundedFunc {
     pub fn update(&mut self, data: &GroundedFunc) {
         panic!("not implemented: updating existing GroundedFunc")
     }
-
-    fn from_free(free: &FuncDecl,
-                 assignments: &HashMap<*const Var, &agent::VarAssignment>)
-                 -> Result<GroundedFunc, ()> {
-        if !free.variant.is_relational() || free.args.as_ref().unwrap().len() < 2 {
-            return Err(());
-        }
-        let name = match free.name {
-            Terminal::GroundedTerm(ref name) => name.clone(),
-            _ => panic!("simag: expected a grounded terminal, found a free terminal"),
-        };
-        let mut first = None;
-        let mut second = None;
-        let mut third = None;
-        for (i, a) in free.args.as_ref().unwrap().iter().enumerate() {
-            let n_a = match a {
-                &Predicate::FreeTerm(ref free) => {
-                    if let Ok(grounded) = GroundedTerm::from_free(free, assignments) {
-                        grounded
-                    } else {
-                        return Err(());
-                    }
-                }
-                &Predicate::GroundedTerm(ref term) => term.clone(),
-            };
-            if i == 0 {
-                first = Some(n_a)
-            } else if i == 1 {
-                second = Some(n_a)
-            } else {
-                third = Some(n_a)
-            }
-        }
-        Ok(GroundedFunc {
-            name: name,
-            args: [first.unwrap(), second.unwrap()],
-            third: third,
-        })
-    }
 }
 
 impl ::std::clone::Clone for GroundedFunc {
@@ -452,6 +446,21 @@ impl FreeTerm {
         })
     }
 
+    #[inline]
+    pub fn get_var_ref(&self) -> &Var {
+        unsafe { &*(self.term) }
+    }
+
+    #[inline]
+    pub fn get_parent(&self) -> &Terminal {
+        &self.parent
+    }
+
+    #[inline]
+    pub fn get_parent_as_str(&self) -> &str {
+        &self.parent.get_name()
+    }
+
     /// Compares a free term with a grounded term, assumes they are comparable
     /// (panics otherwise).
     fn equal_to_grounded(&self, other: &GroundedTerm) -> bool {
@@ -504,7 +513,7 @@ impl Assert {
     pub fn get_name(&self) -> &str {
         match self {
             &Assert::FuncDecl(ref f) => f.get_name(),
-            &Assert::ClassDecl(ref c) => c.get_name(),
+            &Assert::ClassDecl(ref c) => c.get_name_as_str(),
         }
     }
 
@@ -591,19 +600,30 @@ pub struct FuncDecl {
 }
 
 impl<'a> FuncDecl {
-    pub fn get_name(&self) -> &str {
-        match self.name {
-            Terminal::FreeTerm(var) => unsafe { &(&*var).name },
-            Terminal::GroundedTerm(ref name) => name,
-            Terminal::Keyword(name) => name,
-        }
-    }
-
-    pub fn get_name_as_string_ref(&self) -> &String {
-        match self.name {
-            Terminal::FreeTerm(var) => unsafe { &(&*var).name },
-            Terminal::GroundedTerm(ref name) => &name,
-            Terminal::Keyword(_) => panic!(),
+    pub fn from(other: &FuncDeclBorrowed<'a>,
+                context: &mut Context)
+                -> Result<FuncDecl, ParseErrF> {
+        let mut variant = other.variant;
+        let func_name = match Terminal::from(&other.name, context) {
+            Err(ParseErrF::ReservedKW(val)) => {
+                if &val == "time_calc" {
+                    variant = FuncVariants::TimeCalc;
+                    Terminal::Keyword("time_calc")
+                } else {
+                    return Err(ParseErrF::ReservedKW(val));
+                }
+            }
+            Err(err) => return Err(err),
+            Ok(val) => val,
+        };
+        match variant {
+            FuncVariants::TimeCalc => return FuncDecl::decl_timecalc_fn(other, context),
+            FuncVariants::Relational => {
+                return FuncDecl::decl_relational_fn(other, context, func_name)
+            }
+            FuncVariants::NonRelational => {
+                return FuncDecl::decl_nonrelational_fn(other, context, func_name)
+            }
         }
     }
 
@@ -640,31 +660,43 @@ impl<'a> FuncDecl {
         }
     }
 
-    pub fn from(other: &FuncDeclBorrowed<'a>,
-                context: &mut Context)
-                -> Result<FuncDecl, ParseErrF> {
-        let mut variant = other.variant;
-        let func_name = match Terminal::from(&other.name, context) {
-            Err(ParseErrF::ReservedKW(val)) => {
-                if &val == "time_calc" {
-                    variant = FuncVariants::TimeCalc;
-                    Terminal::Keyword("time_calc")
-                } else {
-                    return Err(ParseErrF::ReservedKW(val));
-                }
-            }
-            Err(err) => return Err(err),
-            Ok(val) => val,
-        };
-        match variant {
-            FuncVariants::TimeCalc => return FuncDecl::decl_timecalc_fn(other, context),
-            FuncVariants::Relational => {
-                return FuncDecl::decl_relational_fn(other, context, func_name)
-            }
-            FuncVariants::NonRelational => {
-                return FuncDecl::decl_nonrelational_fn(other, context, func_name)
+    pub fn is_grounded(&self) -> bool {
+        if !self.parent_is_grounded() {
+            return false
+        }
+        for a in self.args.as_ref().unwrap().iter() {
+            match a {
+                &Predicate::GroundedTerm(_) => {}
+                _ => return false,
             }
         }
+        true
+    }
+
+    pub fn get_name(&self) -> &str {
+        match self.name {
+            Terminal::FreeTerm(var) => unsafe { &(&*var).name },
+            Terminal::GroundedTerm(ref name) => name,
+            Terminal::Keyword(name) => name,
+        }
+    }
+
+    pub fn get_name_as_string_ref(&self) -> &String {
+        match self.name {
+            Terminal::FreeTerm(var) => unsafe { &(&*var).name },
+            Terminal::GroundedTerm(ref name) => &name,
+            Terminal::Keyword(_) => panic!(),
+        }
+    }
+
+    #[inline]
+    pub fn get_parent(&self) -> &Terminal {
+        &self.name
+    }
+
+    #[inline]
+    pub fn get_parent_as_str(&self) -> &str {
+        &self.name.get_name()
     }
 
     pub fn get_args(&self) -> DeclArgsIter {
@@ -712,7 +744,7 @@ impl<'a> FuncDecl {
         let mut args = Vec::with_capacity(3);
         if let Some(oargs) = other.args.as_ref() {
             if oargs.len() > 3 || oargs.len() < 2 {
-                return Err(ParseErrF::WrongArgNumb)
+                return Err(ParseErrF::WrongArgNumb);
             }
             for (i, a) in oargs.iter().enumerate() {
                 let pred = Predicate::from(a, context, &name);
@@ -721,12 +753,12 @@ impl<'a> FuncDecl {
                 }
                 let pred = pred.unwrap();
                 if pred.has_uval() && (i == 0 || i == 2) {
-                    return Err(ParseErrF::RFuncWrongArgs)
+                    return Err(ParseErrF::RFuncWrongArgs);
                 }
                 args.push(pred);
             }
         } else {
-            return Err(ParseErrF::WrongArgNumb)
+            return Err(ParseErrF::WrongArgNumb);
         }
         let op_args = match other.op_args {
             Some(ref oargs) => {
@@ -906,7 +938,7 @@ pub struct ClassDecl {
 }
 
 impl<'a> ClassDecl {
-    pub fn get_name(&self) -> &str {
+    pub fn get_name_as_str(&self) -> &str {
         match self.name {
             Terminal::FreeTerm(var) => unsafe { &(&*var).name },
             Terminal::GroundedTerm(ref name) => name,
@@ -922,13 +954,14 @@ impl<'a> ClassDecl {
         }
     }
 
+    pub fn get_parent(&self) -> &Terminal {
+        &self.name
+    }
+
     pub fn from(other: &ClassDeclBorrowed<'a>,
                 context: &mut Context)
                 -> Result<ClassDecl, ParseErrF> {
-        let class_name = match Terminal::from(&other.name, context) {
-            Ok(val) => val,
-            Err(err) => return Err(err),
-        };
+        let class_name = Terminal::from(&other.name, context)?;
         let args = {
             let mut v0 = Vec::with_capacity(other.args.len());
             for a in &other.args {
@@ -944,10 +977,7 @@ impl<'a> ClassDecl {
             Some(ref oargs) => {
                 let mut v0 = Vec::with_capacity(oargs.len());
                 for e in oargs {
-                    let a = match OpArg::from(e, context) {
-                        Err(err) => return Err(err),
-                        Ok(a) => a,
-                    };
+                    let a = OpArg::from(e, context)?;
                     v0.push(a);
                 }
                 Some(v0)
@@ -1016,8 +1046,9 @@ impl<'a> ClassDecl {
                     }
                 }
                 &Predicate::GroundedTerm(ref compare) => {
-                    if let Some(current) =
-                           agent.get_entity_from_class(self.get_name(), compare.term.as_str()) {
+                    let entity =
+                        agent.get_entity_from_class(self.get_name_as_str(), compare.term.as_str());
+                    if let Some(current) = entity {
                         if current != compare {
                             return Some(false);
                         }
@@ -1038,9 +1069,8 @@ impl<'a> ClassDecl {
         for a in &self.args {
             let grfact = match a {
                 &Predicate::FreeTerm(ref free) => {
-                    if let Ok(grounded) = GroundedTerm::from_free(free,
-                                                                  assignments.as_ref().unwrap()) {
-                        grounded
+                    if let Some(ref entity) = assignments.as_ref().unwrap().get(&free.term) {
+                        GroundedTerm::from_free(free, entity.name)
                     } else {
                         break;
                     }
@@ -1088,7 +1118,7 @@ impl<'a> ::std::iter::Iterator for DeclArgsIter<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct OpArg {
     term: OpArgTerm,
     comp: Option<(CompOperator, OpArgTerm)>,
@@ -1130,7 +1160,7 @@ impl<'a> OpArg {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum OpArgTerm {
     Terminal(Terminal),
     String(String),
@@ -1140,10 +1170,7 @@ impl<'a> OpArgTerm {
     fn from(other: &OpArgTermBorrowed<'a>, context: &mut Context) -> Result<OpArgTerm, ParseErrF> {
         match *other {
             OpArgTermBorrowed::Terminal(slice) => {
-                let t = match Terminal::from_slice(slice, context) {
-                    Err(err) => return Err(err),
-                    Ok(val) => val,
-                };
+                let t = Terminal::from_slice(slice, context)?;
                 Ok(OpArgTerm::Terminal(t))
             }
             OpArgTermBorrowed::String(slice) => {
@@ -1161,7 +1188,7 @@ impl<'a> OpArgTerm {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct Var {
     pub name: String,
     op_arg: Option<OpArg>,
@@ -1172,10 +1199,7 @@ impl Var {
         let &VarBorrowed { name: TerminalBorrowed(name), ref op_arg } = input;
         let op_arg = match *op_arg {
             Some(ref op_arg) => {
-                let t = match OpArg::from(op_arg, context) {
-                    Err(err) => return Err(err),
-                    Ok(v) => v,
-                };
+                let t = OpArg::from(op_arg, context)?;
                 Some(t)
             }
             None => None,
@@ -1204,10 +1228,7 @@ impl Skolem {
         let &SkolemBorrowed { name: TerminalBorrowed(name), ref op_arg } = input;
         let op_arg = match *op_arg {
             Some(ref op_arg) => {
-                let t = match OpArg::from(op_arg, context) {
-                    Err(err) => return Err(err),
-                    Ok(v) => v,
-                };
+                let t = OpArg::from(op_arg, context)?;
                 Some(t)
             }
             None => None,
@@ -1223,7 +1244,7 @@ impl Skolem {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Eq, Hash)]
 pub enum Terminal {
     FreeTerm(*const Var),
     GroundedTerm(String),
