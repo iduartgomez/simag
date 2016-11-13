@@ -1,7 +1,6 @@
-#![allow(dead_code)]
-
 #[macro_use]
 extern crate nom;
+extern crate uuid;
 
 mod lang;
 mod agent;

@@ -20,6 +20,10 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{RwLock, Mutex};
+use std::hash::{Hash, Hasher};
+use std::iter::FromIterator;
+
+use uuid::Uuid;
 
 use lang;
 use lang::{ParseTree, ParseErrF, GroundedTerm, GroundedFunc, LogSentence};
@@ -120,7 +124,7 @@ impl<'a> Representation<'a> {
         let pres = lang::logic_parser(source, false);
         if pres.is_ok() {
             let pres = QueryInput::ManyQueries(pres.unwrap());
-            Inference::new(&self, pres, single_answer)
+            Inference::new(&self, pres, single_answer, false)
         } else {
             Answer::ParseErr(pres.unwrap_err())
         }
@@ -261,7 +265,7 @@ impl<'a> Representation<'a> {
                         self.classes.write().unwrap().insert(name, class);
                     }
                     for arg in cls_decl.get_args() {
-                        if arg.is_not_var() {
+                        if !arg.is_var() {
                             let subject = arg.get_name();
                             match subject.starts_with("$") {
                                 true => update(subject, cls_decl.get_name_as_string_ref(), true),
@@ -286,7 +290,7 @@ impl<'a> Representation<'a> {
                         self.classes.write().unwrap().insert(name, class);
                     }
                     for arg in fn_decl.get_args() {
-                        if arg.is_not_var() {
+                        if !arg.is_var() {
                             let subject = arg.get_name();
                             match subject.starts_with("$") {
                                 true => update(subject, fn_decl.get_name_as_string_ref(), true),
@@ -795,12 +799,12 @@ impl<'a> Class<'a> {
     }
 }
 
-
 struct Inference<'a> {
     results: HashMap<&'a str, HashMap<&'a str, Option<bool>>>,
     query: QueryProcessed<'a>,
     kb: &'a Representation<'a>,
     obj_dic: HashMap<&'a str, HashSet<&'a &'a str>>,
+    ignore_current: bool,
 }
 
 enum ActiveQuery<'a> {
@@ -816,42 +820,16 @@ pub enum Answer<'a> {
     ParseErr(ParseErrF),
 }
 
-pub struct VarAssignment<'a> {
-    pub name: &'a str,
-    classes: HashMap<&'a str, &'a GroundedTerm>,
-    funcs: HashMap<&'a str, Vec<&'a GroundedFunc>>,
-}
-
-impl<'a> VarAssignment<'a> {
-    #[inline]
-    pub fn get_class(&self, name: &str) -> &GroundedTerm {
-        self.classes.get(name).unwrap()
-    }
-
-    #[inline]
-    pub fn get_relationship(&self, func: &GroundedFunc) -> Option<&GroundedFunc> {
-        for owned_f in self.funcs.get(func.get_name()).unwrap() {
-            if owned_f.comparable(func) {
-                return Some(owned_f);
-            }
-        }
-        None
-    }
-}
-
-struct InferencePass<'a> {
-    query: HashMap<&'a str, bool>,
-    actv: ActiveQuery<'a>,
-}
-
 impl<'a> Inference<'a> {
-    fn new(agent: &'a Representation<'a>, query_input: QueryInput, single: bool) -> Answer {
+    fn new(agent: &'a Representation<'a>, query_input: QueryInput, single: bool,
+           ignore_current: bool) -> Answer {
         let query = QueryProcessed::new().get_query(query_input);
         let inf = Inference {
             results: HashMap::new(),
             query: query.unwrap(),
             kb: agent,
             obj_dic: HashMap::new(),
+            ignore_current: ignore_current,
         };
         if single {
             for r0 in inf.get_results().values() {
@@ -870,13 +848,7 @@ impl<'a> Inference<'a> {
     }
 
     fn get_results(self) -> HashMap<&'a str, HashMap<&'a str, Option<bool>>> {
-        let Inference {
-            results,
-            query: _,
-            kb: _,
-            obj_dic: _
-        } = self;
-        results
+        self.results
     }
 
     /// Inference function from first-order logic sentences.
@@ -886,56 +858,28 @@ impl<'a> Inference<'a> {
     /// var substitution) and returns the answer to the query. If new
     /// knowledge is produced then it's passed to an other procedure for
     /// addition to the KB.
-    fn infer_facts(&'a mut self, ignore_current: bool) {
-        let query_cls = |query: &str, actv_query: ActiveQuery| {
-            // create a lookup table for memoizing results of previous passes
-            let pass = InferencePass {
-                query: HashMap::new(),
-                actv: actv_query,
-            };
-            
-            /*
-            if not hasattr(self, 'queue'):
-                self.queue = dict()
-                for query in self.nodes.values():
-                    for node in query: self.queue[node] = set()
-            else:
-                for node in self.queue: self.queue[node] = set()
-            # Run the query, if there is no result and there is
-            # an update, then rerun it again, else stop
-            k, result, self._updated = True, None, list()
-            while not result and k is True:
-                chk, done = deque(), list()
-                result = self.unify(q, chk, done)
-                k = True if True in self._updated else False
-                self._updated = list()
-            */
-        };
-
-        /*
-        # Get relevant rules to infer the query
-        self.rules, self.done = OrderedSet(), [None]
-        while hasattr(self, 'ctgs'):
-            try: self.get_rules()
-            except Inference.NoSolutionError: pass
-        # Get the caterogies for each individual/class
-        self.obj_dic = self.kb.objs_by_ctg(self.chk_ctgs, 'individuals')
-        klass_dic = self.kb.objs_by_ctg(self.chk_ctgs, 'classes')
-        self.obj_dic.update(klass_dic)
-        */
-        let mut entities = self.kb.entities_by_class(&self.query.clslist);
-        for (k, v) in entities.drain() {
-            self.obj_dic.insert(k, v);
-        }
-        let mut classes = self.kb.classes_by_class(&self.query.clslist);
-        for (k, v) in classes.drain() {
-            self.obj_dic.insert(k, v);
+    fn infer_facts(&'a mut self) {
+        fn query_cls<'a>(kb: &'a Representation<'a>, query: &'a str, actv_query: ActiveQuery<'a>) {
+            let mut pass = InferencePass::new(kb, actv_query);
+            // run the query, if there is no result and there is an update,
+            // then loop again, else stop
+            loop {
+                let chk = VecDeque::new();
+                let done = vec![];
+                pass.unify(query, chk, done);
+                if !pass.updated.contains(&true) && !pass.feedback {
+                    break;
+                } else {
+                    pass.updated = vec![];
+                }
+            }
+            // return the lookup table for memoizing results of previous passes
         }
         for (obj, preds) in self.query.cls_queries_grounded.iter() {
             for pred in preds {
                 let query: &str = pred.get_parent();
                 let mut result = None;
-                if !ignore_current {
+                if !self.ignore_current {
                     result = self.kb.class_membership(pred);
                 }
                 if result.is_some() {
@@ -945,7 +889,7 @@ impl<'a> Inference<'a> {
                     // if no result was found from the kb directly
                     // make an inference from a grounded fact
                     let actv_query = ActiveQuery::Class(obj, query, pred);
-                    query_cls(query, actv_query);
+                    query_cls(self.kb, query, actv_query);
                 }
             }
         }
@@ -955,7 +899,7 @@ impl<'a> Inference<'a> {
             let mut result = None;
             for arg in pred.args.iter() {
                 let obj = arg.get_name();
-                if !ignore_current {
+                if !self.ignore_current {
                     result = self.kb.has_relationship(pred, obj);
                 }
                 if result.is_some() {
@@ -963,15 +907,173 @@ impl<'a> Inference<'a> {
                     answ.insert(obj, result);
                 } else {
                     let actv_query = ActiveQuery::Func(obj, query, pred);
-                    query_cls(query, actv_query);
+                    query_cls(self.kb, query, actv_query);
                 }
             }
         }
     }
+}
+
+
+struct InferencePass<'a, 'b> {
+    kb: &'a Representation<'a>,
+    actv: ActiveQuery<'a>,
+    updated: Vec<bool>,
+    feedback: bool,
+    query: HashMap<&'a str, bool>,
+    nodes: HashMap<&'a str, ProofNode<'b>>,
+    queue: HashMap<&'b ProofNode<'b>, HashSet<&'b str>>,
+    _valid: Option<(&'b ProofNode<'b>, HashMap<*const lang::Var, VarAssignment<'b>>)>,
+    _repeat: Vec<(&'a LogSentence, HashMap<*const lang::Var, VarAssignment<'b>>)>
+}
+
+#[derive(Hash, PartialEq, Eq)]
+struct ProofArgs<'a>(Vec<(*const lang::Var, &'a str)>);
+
+impl<'a, 'b> InferencePass<'a, 'b> {
+
+    fn new(kb: &'a Representation<'a>, actv_query: ActiveQuery<'a>)
+        -> InferencePass<'a, 'b>
+    {
+        InferencePass {
+            kb: kb,
+            actv: actv_query,
+            updated: vec![],
+            feedback: false,
+            query: HashMap::new(),
+            nodes: HashMap::new(),
+            queue: HashMap::new(),
+            _valid: None,
+            _repeat: vec![],
+        }
+    }
+
+    fn unify(&mut self, parent: &'a str, mut chk: VecDeque<&'a str>, mut done: Vec<&'a str>)
+    -> Option<bool> {
+        /*
+        def add_ctg():
+            # add category/function to the object dictionary
+            # and to results dict if is the result for the query
+            if proof_result is False:
+                self.results[query_obj][query] = False
+                return
+            for r in proof_result:
+                if issubclass(r.__class__, LogFunction):
+                    args = r.get_args()
+                    for obj in args:
+                        curr = self.obj_dic.setdefault(obj, set())
+                        curr.add(r.func)
+                    if hasattr(r, 'test_related_preds'):
+                        del r.test_related_preds
+                    if issubclass(pred.__class__, LogFunction):
+                        try:
+                            if pred == r:
+                                d = self.results.setdefault(query_obj, {})
+                                if query in d and date >= d[query][1]:
+                                    d[query] = (True, date)
+                                    self._valid = (node, cargs)
+                                elif query not in d:
+                                    d[query] = (True, date)
+                                    self._valid = (node, cargs)
+                            else:
+                                d = self.results.setdefault(query_obj, {})
+                                if query in d and date >= d[query][1]:
+                                    d[query] = (False, date)
+                                    self._valid = (node, cargs)
+                                elif query not in d:
+                                    d[query] = (False, date)
+                                    self._valid = (node, cargs)
+                        except NotCompFuncError: pass
+                elif issubclass(pred.__class__, LogPredicate):
+                    cat, obj = r.parent, r.term
+                    curr = self.obj_dic.setdefault(obj, set([cat]))
+                    curr.add(cat)
+                    if hasattr(r, 'test_related_preds'):
+                        del r.test_related_preds
+                    try:
+                        if pred == r:
+                            d = self.results.setdefault(query_obj, {})
+                            if query in d and date >= d[query][1]:
+                                d[query] = (True, date)
+                                self._valid = (node, cargs)
+                            elif query not in d:
+                                d[query] = (True, date)
+                                self._valid = (node, cargs)
+                        else:
+                            d = self.results.setdefault(query_obj, {})
+                            if query in d and date >= d[query][1]:
+                                d[query] = (False, date)
+                                self._valid = (node, cargs)
+                            elif query not in d:
+                                d[query] = (False, date)
+                                self._valid = (node, cargs)
+                    except NotCompAssertError: pass
+        */
+
+        let (query_obj, query_pred) = match self.actv {
+            ActiveQuery::Class(ref obj, ref query_pred, _) => (obj, query_pred),
+            ActiveQuery::Func(ref obj, ref query_pred, _) => (obj, query_pred),
+            _ => panic!("simag: no active queue!")
+        };
+        self._valid = None;
+
+        // for each node in the subtitution tree unifify variables
+        // and try every possible substitution until (if) a solution is found
+        // the proofs are tried in order of addition to the KB
+        if self.nodes.contains_key(query_pred) {
+            // the node for each rule is stored in an efficient sorted list
+            // by rule creation datetime, from oldest to newest, we iterate
+            // from newest to oldest as the newest rules take precedence
+            for node in self.nodes.get(query_pred) {
+                // recursively try unifying all possible argument with the
+                // operating logic sentence:
+                // get all the entities/classes from the kb that meet the proof requeriments
+                let assignments = self.entities_meet_sent_req(
+                    node.proof.var_req.as_ref().unwrap());
+                // work out which are all the possible combinations
+                let mut mapped = HashSet::new();
+                product(&mut mapped, &assignments.unwrap());
+                // try all possible combinations of the substitutions
+                for args in mapped.drain() {
+                    let mut result_memoization;
+                    let mut n_args = HashMap::from_iter(args);
+                    if !self.queue.get(node).unwrap().contains(args) {
+                        if let Some(proof_result) = node.proof.solve(self.kb, Some(n_args)) {
+                            self.updated.push(true);
+                            add_ctg();
+                            self.queue.get_mut(node).unwrap().insert(result_memoization);
+                        }
+                    }
+                }
+                if !done.contains(query_pred) {
+                    let mut n_chk = VecDeque::from(node.antecedents);
+                    chk.append(&mut n_chk);
+                }
+                if let Some((node, assignments)) = self._valid {
+                    // the result may be replaced in the KB by other proof which is less current,
+                    // to ensure that the valid result stays in the KB after all proofs are done,
+                    // repeat the valid one with proper arguments
+                    self._repeat.push((node.proof, assignments))
+                }
+                if self.obj_dic.contains_key(query_obj) {
+                    if self.obj_dic.get(query_obj).contains(query_obj) {
+                        return Some(true);
+                    }
+                } else if chk.len() > 0 {
+                    done.push(parent);
+                    let p = chk.pop_front();
+                    if let Some(res) = self.unify(p.unwrap(), chk, done) {
+                        return Some(res);
+                    }
+                }
+            }
+        }
+        None
+    }
 
     fn entities_meet_sent_req(&self,
                         req: &HashMap<*const lang::Var, Vec<*const lang::Assert>>)
-                           -> HashMap<*const lang::Var, Vec<VarAssignment>> {
+                           -> Option<HashMap<*const lang::Var, Vec<VarAssignment>>> {
 
         let mut results: HashMap<*const lang::Var, Vec<VarAssignment>> = HashMap::new();
         for (var, asserts) in req.iter() {
@@ -1027,8 +1129,11 @@ impl<'a> Inference<'a> {
                                         }]);
                 }
             }
+            if !results.contains_key(var) {
+                return None;
+            }
         }
-        results
+        Some(results)
     }
 
     fn get_rules(&mut self) {
@@ -1087,57 +1192,118 @@ impl<'a> Inference<'a> {
             del self.done
             del self.rules
             del self.ctgs
-
-            class InferNode(object):
-                def __init__(self, classes, ants, const, rule):
-                    self.rule = rule
-                    self.const = const
-                    self.ants = tuple(classes)
-                    if hasattr(rule, 'var_order'):
-                        self.subs = OrderedDict((v, set()) for v in rule.var_order)
-                    else:
-                        self.subs = {}
-                    disjunct = {}
-                    for p in ants:
-                        ant = p.pred
-                        if p.parent.cond == '||':
-                            prev = disjunct.setdefault(p.parent, [])
-                            prev.append(p)
-                        else:
-                            if issubclass(ant.__class__, LogFunction):
-                                args = ant.get_args()
-                                for v in args:
-                                    if v in self.subs:
-                                        self.subs[v].add(ant.func)
-                            elif issubclass(ant.__class__, LogPredicate):
-                                if ant.term in self.subs:
-                                    self.subs[ant.term].add(ant.parent)
-                    # flatten nested disjunctions,
-                    # TODO: this probably should be cached when the sentence
-                    # is constructed
-                    rm = []
-                    for parent, childs in disjunct.items():
-                        for child in childs:
-                            if child in disjunct:
-                                disjunct[parent].extend(disjunct[child])
-                                rm.append(parent)
-                    for k, v in disjunct.items():
-                        if k not in rm:
-                            names = tuple([
-                                p.pred.parent
-                                if issubclass(p.pred.__class__, LogPredicate)
-                                else p.pred.func for p in v])
-                            for p in v:
-                                ant = p.pred
-                                if issubclass(ant.__class__, LogFunction):
-                                    args = ant.get_args()
-                                    for v in args:
-                                        if v in self.subs:
-                                            self.subs[v].add(names)
-                                elif issubclass(ant.__class__, LogPredicate):
-                                    if ant.term in self.subs:
-                                        self.subs[ant.term].add(names)
         */
+    }
+}
+
+fn product<'a, 'b>(mapped: &mut HashSet<Vec<(*const lang::Var, &'b VarAssignment<'a>)>>,
+                         input: &'b HashMap<*const lang::Var, Vec<VarAssignment<'a>>>) {
+    let mut indexes = HashMap::new();
+    for (k, _) in input.iter() {
+        indexes.insert(k, 0_usize);
+    }
+    for (k0, v0) in input.iter() {
+        loop {
+            for idx_0 in 0..v0.len() {
+                let mut row_0 = vec![];
+                let e: (*const lang::Var, &VarAssignment) = (*k0, &v0[idx_0]);
+                row_0.push(e);
+                for (k1, v1) in input.iter() {
+                    if k0 != k1 {
+                        let idx_1 = *(indexes.get(k1).unwrap());
+                        let e = (*k1, &v1[idx_1]);
+                        row_0.push(e);
+                    }
+                }
+                mapped.insert(row_0);
+            }
+            let mut max = 0;
+            for (k, v) in indexes.iter_mut() {
+                if *v <= (input.get(k).unwrap().len() - 1) {
+                    *v += 1;
+                    break;
+                } else {
+                    max += 1;
+                }
+            }
+            if max == indexes.len() {
+                break;
+            }
+        }
+        break;
+    }
+}
+
+struct ProofNode<'a> {
+    proof: &'a LogSentence,
+    antecedents: Vec<&'a str>,
+    predicate: &'a str,
+    _id: Uuid,
+}
+
+impl<'a> ProofNode<'a> {
+    fn new(proof: &'a LogSentence,
+           classes: Vec<&'a str>,
+           antecedents: Vec<&'a str>,
+           predicate: &'a str,
+       ) -> ProofNode<'a> {
+        ProofNode {
+            proof: proof,
+            antecedents: antecedents,
+            predicate: predicate,
+            _id: Uuid::new_v4(),
+        }
+    }
+}
+
+impl<'a> ::std::cmp::PartialEq for ProofNode<'a> {
+    fn eq(&self, other: &ProofNode) -> bool {
+        self._id == other._id
+    }
+}
+
+impl<'a> ::std::cmp::Eq for ProofNode<'a> {}
+
+impl<'a> Hash for ProofNode<'a> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self._id.hash(state);
+    }
+}
+
+pub struct VarAssignment<'a> {
+    pub name: &'a str,
+    classes: HashMap<&'a str, &'a GroundedTerm>,
+    funcs: HashMap<&'a str, Vec<&'a GroundedFunc>>,
+}
+
+impl<'a> VarAssignment<'a> {
+    #[inline]
+    pub fn get_class(&self, name: &str) -> &GroundedTerm {
+        self.classes.get(name).unwrap()
+    }
+
+    #[inline]
+    pub fn get_relationship(&self, func: &GroundedFunc) -> Option<&GroundedFunc> {
+        for owned_f in self.funcs.get(func.get_name()).unwrap() {
+            if owned_f.comparable(func) {
+                return Some(owned_f);
+            }
+        }
+        None
+    }
+}
+
+impl<'a> ::std::cmp::PartialEq for VarAssignment<'a> {
+    fn eq(&self, other: &VarAssignment) -> bool {
+        self.name == other.name
+    }
+}
+
+impl<'a> ::std::cmp::Eq for VarAssignment<'a> {}
+
+impl<'a> Hash for VarAssignment<'a> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
     }
 }
 

@@ -1,3 +1,35 @@
+//! # Grammar for the SIMAG declarative language
+//! ```BNF
+//! @comments			::	regex: \/\*(.*)\*\/ (multiline)
+//! @eol_comments 		::	/#.*?$/
+//!
+//! scope = '(' ${var_decl}* ${skol_decl}*
+//!             (class_decl | func_decl | scope | multiple)
+//!             logic_op (class_decl | func_decl | scope | multiple)
+//!         ')' ;
+//! multiple = '(' ${(func_decl | class_decl)} (or_op | and_op) + ')' ;
+//! var_decl = '(' 'let ' ${term [':' op_arg]','+ ')' ;
+//! skol_decl = '(' 'exists ' ${term [':' op_arg]}','+ ')' ;
+//! class_decl = term ['(' ${op_arg}','+ ')'] args ;
+//! func_decl = 'fn::' term ['(' ${op_arg}','+ ')'] args
+//! 		  | 'fn::' term '(' ${op_arg}','+ ')' ;
+//! args = '[' ${ arg }';'+ ']';
+//! arg = term [',' uval] ;
+//! uval = 'u' comp_op number ;
+//! op_arg = (string|term) [comp_op (string|term)] ;
+//! icond_op    =	'|>' ;
+//! and_op      =	'&&' ;
+//! or_op		=	'||' ;
+//! logic_op	=    '<=>'
+//! 		    |    '=>'
+//!             |    or_op
+//!             |	 and_op ;
+//! comp_op	= ('=' | '<' | '>') ;
+//! term = regex: \$?[a-zA-Z0-9_]+ ;
+//! number = regex: -?[0-9\.]+ ;
+//! string = regex: ".*?"|'.*?' ;
+//! ```
+
 use std::str;
 use std::str::FromStr;
 use std::collections::VecDeque;

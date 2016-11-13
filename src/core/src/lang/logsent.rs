@@ -32,7 +32,7 @@ pub struct LogSentence {
     vars: Option<Vec<Box<Var>>>,
     skolem: Option<Vec<Box<Skolem>>>,
     root: *const Particle,
-    var_req: Option<HashMap<*const Var, Vec<*const Assert>>>,
+    pub var_req: Option<HashMap<*const Var, Vec<*const Assert>>>,
 }
 
 impl<'a> LogSentence {
@@ -74,7 +74,7 @@ impl<'a> LogSentence {
 
     pub fn solve(&self,
                  agent: &agent::Representation,
-                 assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>)
+                 assignments: Option<HashMap<*const Var, &agent::VarAssignment>>)
                  -> Option<bool> {
         let root = unsafe { &*(self.root) };
         if let Some(res) = root.solve(agent, &assignments) {
@@ -225,7 +225,7 @@ impl LogicIndCond {
     #[inline]
     fn solve(&self,
              agent: &agent::Representation,
-             assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>)
+             assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>)
              -> Option<bool> {
         let n0 = unsafe { &*(self.next[0]) };
         if let Some(res) = n0.solve(agent, assignments) {
@@ -242,7 +242,7 @@ impl LogicIndCond {
     #[inline]
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>,
+                  assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>,
                   rhs: &bool) {
         let n1 = unsafe { &*(self.next[1]) };
         n1.substitute(agent, assignments, rhs)
@@ -300,7 +300,7 @@ impl LogicEquivalence {
     #[inline]
     fn solve(&self,
              agent: &agent::Representation,
-             assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>)
+             assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>)
              -> Option<bool> {
         let n0 = unsafe { &*(self.next[0]) };
         let n1 = unsafe { &*(self.next[1]) };
@@ -383,7 +383,7 @@ impl LogicImplication {
     #[inline]
     fn solve(&self,
              agent: &agent::Representation,
-             assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>)
+             assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>)
              -> Option<bool> {
         let n0 = unsafe { &*(self.next[0]) };
         let n1 = unsafe { &*(self.next[1]) };
@@ -466,7 +466,7 @@ impl LogicConjunction {
     #[inline]
     fn solve(&self,
              agent: &agent::Representation,
-             assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>)
+             assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>)
              -> Option<bool> {
         let n0 = unsafe { &*(self.next[0]) };
         let n1 = unsafe { &*(self.next[1]) };
@@ -490,7 +490,7 @@ impl LogicConjunction {
     #[inline]
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>,
+                  assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>,
                   rhs: &bool) {
         let n1 = unsafe { &*(self.next[1]) };
         n1.substitute(agent, assignments, rhs);
@@ -550,7 +550,7 @@ impl LogicDisjunction {
     #[inline]
     fn solve(&self,
              agent: &agent::Representation,
-             assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>)
+             assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>)
              -> Option<bool> {
         let n0 = unsafe { &*(self.next[0]) };
         let n1 = unsafe { &*(self.next[1]) };
@@ -584,7 +584,7 @@ impl LogicDisjunction {
     #[inline]
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>,
+                  assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>,
                   rhs: &bool) {
         if *rhs {
             let n1 = unsafe { &*(self.next[1]) };
@@ -647,7 +647,7 @@ impl LogicAtom {
     #[inline]
     fn solve(&self,
              agent: &agent::Representation,
-             assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>)
+             assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>)
              -> Option<bool> {
         if let Some(res) = self.pred.equal_to_grounded(agent, assignments) {
             if res {
@@ -663,7 +663,7 @@ impl LogicAtom {
     #[inline]
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>) {
+                  assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>) {
         self.pred.substitute(agent, assignments)
     }
 
@@ -705,7 +705,7 @@ impl Particle {
     #[inline]
     fn solve(&self,
              agent: &agent::Representation,
-             assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>)
+             assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>)
              -> Option<bool> {
         match *self {
             Particle::Conjunction(ref p) => p.solve(agent, assignments),
@@ -720,7 +720,7 @@ impl Particle {
     #[inline]
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>,
+                  assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>,
                   rhs: &bool) {
         match *self {
             Particle::IndConditional(ref p) => p.substitute(agent, assignments, rhs),

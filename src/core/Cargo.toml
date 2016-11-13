@@ -5,3 +5,4 @@ authors = ["IDG <iduartgomez@gmail.com>"]
 
 [dependencies]
 nom = "*"
+uuid = { version = "*", features = ["v4"] }

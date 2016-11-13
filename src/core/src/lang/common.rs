@@ -44,10 +44,10 @@ impl<'a> Predicate {
     }
 
     #[inline]
-    pub fn is_not_var(&self) -> bool {
+    pub fn is_var(&self) -> bool {
         match *self {
-            Predicate::FreeTerm(_) => false,
-            Predicate::GroundedTerm(_) => true,
+            Predicate::FreeTerm(_) => true,
+            Predicate::GroundedTerm(_) => false,
         }
     }
 
@@ -556,7 +556,7 @@ impl Assert {
     #[inline]
     pub fn equal_to_grounded(&self,
                              agent: &agent::Representation,
-                             assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>)
+                             assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>)
                              -> Option<bool> {
         match self {
             &Assert::FuncDecl(ref f) => f.equal_to_grounded(agent, assignments),
@@ -583,7 +583,7 @@ impl Assert {
     #[inline]
     pub fn substitute(&self,
                       agent: &agent::Representation,
-                      assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>) {
+                      assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>) {
         match self {
             &Assert::FuncDecl(ref f) => f.substitute(agent, assignments),
             &Assert::ClassDecl(ref c) => c.substitute(agent, assignments),
@@ -874,7 +874,7 @@ impl<'a> FuncDecl {
     /// assignments must be provided or will return None or panic in worst case.
     fn equal_to_grounded(&self,
                          agent: &agent::Representation,
-                         assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>)
+                         assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>)
                          -> Option<bool> {
         match self.variant {
             FuncVariants::Relational => {}
@@ -920,7 +920,7 @@ impl<'a> FuncDecl {
 
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>) {
+                  assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>) {
         panic!("the substituted variable from the LHS must be assigned to the free term here \
                 shouldn't be included in the logsentence requeriments");
         let grfunc = GroundedFunc::from_free(&self, assignments.as_ref().unwrap());
@@ -1028,7 +1028,7 @@ impl<'a> ClassDecl {
 
     fn equal_to_grounded(&self,
                          agent: &agent::Representation,
-                         assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>)
+                         assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>)
                          -> Option<bool> {
         for a in &self.args {
             match a {
@@ -1063,7 +1063,7 @@ impl<'a> ClassDecl {
 
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<&HashMap<*const Var, &agent::VarAssignment>>) {
+                  assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>) {
         panic!("the substituted variable from the LHS must be assigned to the free term here \
                 shouldn't be included in the logsentence requeriments");
         for a in &self.args {
