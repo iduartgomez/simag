@@ -1114,208 +1114,214 @@ fn is_multispace(chr: u8) -> bool {
     }
 }
 
-#[test]
-fn ast() {
-    // remove comments:
-    let source = b"
-        # one line comment
-        ( # first scope
-            ( # second scope
-                (let x, y)
-                professor[$Lucy, u=1]
+#[cfg(test)]
+mod test {
+    use super::*;
+    use lang::common::*;
+
+    #[test]
+    fn ast() {
+        // remove comments:
+        let source = b"
+            # one line comment
+            ( # first scope
+                ( # second scope
+                    (let x, y)
+                    professor[$Lucy, u=1]
+                )
             )
-        )
-        /*
-            multi line
-            comment
-        */
-    ";
-    let mut data = Vec::new();
-    let scanned = Parser::feed(source, &mut data);
-    assert!(scanned.is_ok());
+            /*
+                multi line
+                comment
+            */
+        ";
+        let mut data = Vec::new();
+        let scanned = Parser::feed(source, &mut data);
+        assert!(scanned.is_ok());
 
-    // split per scopes and declarations
-    let source = b"
-        ( american[x,u=1] && ( weapon[y,u=1] && hostile[z,u=1 ) )
-    ";
-    let mut data = Vec::new();
-    let scanned = Parser::feed(source, &mut data);
-    assert!(scanned.is_ok());
+        // split per scopes and declarations
+        let source = b"
+            ( american[x,u=1] && ( weapon[y,u=1] && hostile[z,u=1 ) )
+        ";
+        let mut data = Vec::new();
+        let scanned = Parser::feed(source, &mut data);
+        assert!(scanned.is_ok());
 
-    let source = b"
-        ( american[x,u=1] && hostile[z,u=1] && ( weapon[y,u=1]) )
-    ";
-    let mut data = Vec::new();
-    let scanned = Parser::feed(source, &mut data);
-    assert!(scanned.is_err());
+        let source = b"
+            ( american[x,u=1] && hostile[z,u=1] && ( weapon[y,u=1]) )
+        ";
+        let mut data = Vec::new();
+        let scanned = Parser::feed(source, &mut data);
+        assert!(scanned.is_err());
 
-    let source = b"
-        ( ( american[x,u=1] && hostile[z,u=1 ) && fn::criticize(t=\"now\")[$John,u=1;$Lucy] )
-    ";
-    let mut data = Vec::new();
-    let scanned = Parser::feed(source, &mut data);
-    assert!(scanned.is_ok());
+        let source = b"
+            ( ( american[x,u=1] && hostile[z,u=1 ) && fn::criticize(t=\"now\")[$John,u=1;$Lucy] )
+        ";
+        let mut data = Vec::new();
+        let scanned = Parser::feed(source, &mut data);
+        assert!(scanned.is_ok());
 
-    let source = b"
-        ( ( american[x,u=1] ) && fn::criticize(t=\"now\")[$John,u=1;$Lucy] && weapon[y,u=1] )
-    ";
-    let mut data = Vec::new();
-    let scanned = Parser::feed(source, &mut data);
-    assert!(scanned.is_err());
+        let source = b"
+            ( ( american[x,u=1] ) && fn::criticize(t=\"now\")[$John,u=1;$Lucy] && weapon[y,u=1] )
+        ";
+        let mut data = Vec::new();
+        let scanned = Parser::feed(source, &mut data);
+        assert!(scanned.is_err());
 
-    let source = b"
-        ( ( ( american[x,u=1] ) ) && hostile[z,u=1] && ( ( weapon[y,u=1] ) ) )
-    ";
-    let mut data = Vec::new();
-    let scanned = Parser::feed(source, &mut data);
-    match scanned.unwrap_err() {
-        ParseErrB::IllegalChain(_) => {}
-        _ => panic!(),
-    }
+        let source = b"
+            ( ( ( american[x,u=1] ) ) && hostile[z,u=1] && ( ( weapon[y,u=1] ) ) )
+        ";
+        let mut data = Vec::new();
+        let scanned = Parser::feed(source, &mut data);
+        match scanned.unwrap_err() {
+            ParseErrB::IllegalChain(_) => {}
+            _ => panic!(),
+        }
 
-    let source = b"
-        ( american[x,u=1] && ( ( hostile[z,u=1] ) ) && weapon[y,u=1] )
-    ";
-    let mut data = Vec::new();
-    let scanned = Parser::feed(source, &mut data);
-    match scanned.unwrap_err() {
-        ParseErrB::IllegalChain(_) => {}
-        _ => panic!(),
-    }
+        let source = b"
+            ( american[x,u=1] && ( ( hostile[z,u=1] ) ) && weapon[y,u=1] )
+        ";
+        let mut data = Vec::new();
+        let scanned = Parser::feed(source, &mut data);
+        match scanned.unwrap_err() {
+            ParseErrB::IllegalChain(_) => {}
+            _ => panic!(),
+        }
 
-    let source = b"
-        (   ( let x y z )
-            (
-                ( american[x,u=1] && weapon[y,u=1] && fn::sells[y,u>0.5;x;z] && hostile[z,u=1] )
-                |> criminal[x,u=1]
+        let source = b"
+            (   ( let x y z )
+                (
+                    ( american[x,u=1] && weapon[y,u=1] && fn::sells[y,u>0.5;x;z] && hostile[z,u=1] )
+                    |> criminal[x,u=1]
+                )
             )
-        )
-    ";
-    let mut data = Vec::new();
-    let scanned = Parser::feed(source, &mut data);
-    assert!(scanned.is_ok());
-    let s0 = scanned.unwrap().pop().unwrap();
-    let s0 = match s0 {
-        Next::ASTNode(val) => *val,
-        _ => panic!(),
-    };
-    assert!(s0.vars.is_some());
-    match s0.next {
-        Next::Chain(s1) => {
-            assert_eq!(s1.len(), 2);
-            match s1[0] {
-                Next::Chain(ref s2_0) => {
-                    assert_eq!(s2_0.len(), 4);
-                }
-                _ => panic!(),
-            }
-            match s1[1] {
-                Next::ASTNode(ref s2_1) => {
-                    assert_eq!(s2_1.logic_op.as_ref().unwrap(),
-                               &LogicOperator::ICond);
-                    match s2_1.next {
-                        Next::Assert(AssertBorrowed::ClassDecl(_)) => {}
-                        _ => panic!(),
+        ";
+        let mut data = Vec::new();
+        let scanned = Parser::feed(source, &mut data);
+        assert!(scanned.is_ok());
+        let s0 = scanned.unwrap().pop().unwrap();
+        let s0 = match s0 {
+            Next::ASTNode(val) => *val,
+            _ => panic!(),
+        };
+        assert!(s0.vars.is_some());
+        match s0.next {
+            Next::Chain(s1) => {
+                assert_eq!(s1.len(), 2);
+                match s1[0] {
+                    Next::Chain(ref s2_0) => {
+                        assert_eq!(s2_0.len(), 4);
                     }
+                    _ => panic!(),
                 }
-                _ => panic!(),
-            };
+                match s1[1] {
+                    Next::ASTNode(ref s2_1) => {
+                        assert_eq!(s2_1.logic_op.as_ref().unwrap(),
+                                   &LogicOperator::ICond);
+                        match s2_1.next {
+                            Next::Assert(AssertBorrowed::ClassDecl(_)) => {}
+                            _ => panic!(),
+                        }
+                    }
+                    _ => panic!(),
+                };
+            }
+            _ => panic!(),
         }
-        _ => panic!(),
+
+        let source = b"
+        ((let x y) (american[x,u=1] && hostile[z,u=1]) |> criminal[x,u=1])
+        ((let x y) ((american[x,u=1] && hostile[z,u=1]) |> criminal[x,u=1]))
+        ((let x y) (american[x,u=1] && hostile[z,u=1]) |> criminal[x,u=1])
+        ";
+        let mut data = Vec::new();
+        let scanned = Parser::feed(source, &mut data);
+        assert!(scanned.is_ok());
+        assert_eq!(scanned.unwrap().len(), 3);
     }
 
-    let source = b"
-    ((let x y) (american[x,u=1] && hostile[z,u=1]) |> criminal[x,u=1])
-    ((let x y) ((american[x,u=1] && hostile[z,u=1]) |> criminal[x,u=1]))
-    ((let x y) (american[x,u=1] && hostile[z,u=1]) |> criminal[x,u=1])
-    ";
-    let mut data = Vec::new();
-    let scanned = Parser::feed(source, &mut data);
-    assert!(scanned.is_ok());
-    assert_eq!(scanned.unwrap().len(), 3);
-}
+    macro_rules! assert_done_or_err {
+        ($i:ident) => {{
+            match $i {
+                IResult::Error(nom::Err::Position(ref t, ref v)) => {
+                    println!("\n@error Err::{:?}: {:?}", t, unsafe{str::from_utf8_unchecked(v)});
+                    //println!("@error: {}", unsafe{str::from_utf8_unchecked(v)});
+                },
+                _ => {}
+            }
+            assert!(!$i.is_err());
+        }}
+    }
 
-macro_rules! assert_done_or_err {
-    ($i:ident) => {{
-        match $i {
-            IResult::Error(nom::Err::Position(ref t, ref v)) => {
-                println!("\n@error Err::{:?}: {:?}", t, unsafe{str::from_utf8_unchecked(v)});
-                //println!("@error: {}", unsafe{str::from_utf8_unchecked(v)});
-            },
-            _ => {}
-        }
-        assert!(!$i.is_err());
-    }}
-}
+    #[test]
+    fn parse_predicate() {
+        let s1 = b"professor[$Lucy,u=1]";
+        let s1_res = class_decl(s1);
+        assert_done_or_err!(s1_res);
+        let s1_res = s1_res.unwrap().1;
+        assert_eq!(s1_res.name, TerminalBorrowed(b"professor"));
+        assert_eq!(s1_res.args[0].term, TerminalBorrowed(b"$Lucy"));
+        assert!(s1_res.args[0].uval.is_some());
 
-#[test]
-fn parse_predicate() {
-    let s1 = b"professor[$Lucy,u=1]";
-    let s1_res = class_decl(s1);
-    assert_done_or_err!(s1_res);
-    let s1_res = s1_res.unwrap().1;
-    assert_eq!(s1_res.name, TerminalBorrowed(b"professor"));
-    assert_eq!(s1_res.args[0].term, TerminalBorrowed(b"$Lucy"));
-    assert!(s1_res.args[0].uval.is_some());
+        let s2 = b"missile[$M1,u>-1.5]";
+        let s2_res = class_decl(s2);
+        assert_done_or_err!(s2_res);
+        let s2_res = s2_res.unwrap().1;
+        assert_eq!(s2_res.name, TerminalBorrowed(b"missile"));
+        assert_eq!(s2_res.args[0].term, TerminalBorrowed(b"$M1"));
+        let s2_uval = s2_res.args[0].uval.as_ref().unwrap();
+        assert_eq!(s2_uval.op, CompOperator::More);
+        assert_eq!(s2_uval.val, Number::SignedFloat(-1.5_f32));
 
-    let s2 = b"missile[$M1,u>-1.5]";
-    let s2_res = class_decl(s2);
-    assert_done_or_err!(s2_res);
-    let s2_res = s2_res.unwrap().1;
-    assert_eq!(s2_res.name, TerminalBorrowed(b"missile"));
-    assert_eq!(s2_res.args[0].term, TerminalBorrowed(b"$M1"));
-    let s2_uval = s2_res.args[0].uval.as_ref().unwrap();
-    assert_eq!(s2_uval.op, CompOperator::More);
-    assert_eq!(s2_uval.val, Number::SignedFloat(-1.5_f32));
+        let s3 = b"dean(t1=\"now\",t2=t1)[$John,u=0]";
+        let s3_res = class_decl(s3);
+        assert_done_or_err!(s3_res);
+        let s3_res = s3_res.unwrap().1;
+        assert_eq!(s3_res.name, TerminalBorrowed(b"dean"));
+        assert_eq!(s3_res.args[0].term, TerminalBorrowed(b"$John"));
+        assert!(s3_res.args[0].uval.is_some());
+        assert_eq!(
+            s3_res.op_args.as_ref().unwrap(),
+            &vec![OpArgBorrowed{term: OpArgTermBorrowed::Terminal(b"t1"),
+                        comp: Some((CompOperator::Equal, OpArgTermBorrowed::String(b"now")))},
+                  OpArgBorrowed{term: OpArgTermBorrowed::Terminal(b"t2"),
+                        comp: Some((CompOperator::Equal, OpArgTermBorrowed::Terminal(b"t1")))}]
+        );
 
-    let s3 = b"dean(t1=\"now\",t2=t1)[$John,u=0]";
-    let s3_res = class_decl(s3);
-    assert_done_or_err!(s3_res);
-    let s3_res = s3_res.unwrap().1;
-    assert_eq!(s3_res.name, TerminalBorrowed(b"dean"));
-    assert_eq!(s3_res.args[0].term, TerminalBorrowed(b"$John"));
-    assert!(s3_res.args[0].uval.is_some());
-    assert_eq!(
-        s3_res.op_args.as_ref().unwrap(),
-        &vec![OpArgBorrowed{term: OpArgTermBorrowed::Terminal(b"t1"),
-                    comp: Some((CompOperator::Equal, OpArgTermBorrowed::String(b"now")))},
-              OpArgBorrowed{term: OpArgTermBorrowed::Terminal(b"t2"),
-                    comp: Some((CompOperator::Equal, OpArgTermBorrowed::Terminal(b"t1")))}]
-    );
+        let s4 = b"animal(t=\"2015.07.05.11.28\")[cow, u=1; brown, u=0.5]";
+        let s4_res = class_decl(s4);
+        assert_done_or_err!(s4_res);
+        let s4_res = s4_res.unwrap().1;
+        assert_eq!(s4_res.args[1].term, TerminalBorrowed(b"brown"));
+        assert!(s4_res.op_args.is_some());
+        assert_eq!(s4_res.op_args.as_ref().unwrap(),
+            &vec![OpArgBorrowed{term: OpArgTermBorrowed::Terminal(b"t"),
+                        comp: Some((CompOperator::Equal,
+                                    OpArgTermBorrowed::String(b"2015.07.05.11.28")))}]);
+    }
 
-    let s4 = b"animal(t=\"2015.07.05.11.28\")[cow, u=1; brown, u=0.5]";
-    let s4_res = class_decl(s4);
-    assert_done_or_err!(s4_res);
-    let s4_res = s4_res.unwrap().1;
-    assert_eq!(s4_res.args[1].term, TerminalBorrowed(b"brown"));
-    assert!(s4_res.op_args.is_some());
-    assert_eq!(s4_res.op_args.as_ref().unwrap(),
-        &vec![OpArgBorrowed{term: OpArgTermBorrowed::Terminal(b"t"),
-                    comp: Some((CompOperator::Equal,
-                                OpArgTermBorrowed::String(b"2015.07.05.11.28")))}]);
-}
+    #[test]
+    fn parse_function() {
+        let s1 = b"fn::criticize(t=\"now\")[$John,u=1;$Lucy]";
+        let s1_res = func_decl(s1);
+        assert_done_or_err!(s1_res);
+        assert_eq!(s1_res.unwrap().1.variant, FuncVariants::Relational);
 
-#[test]
-fn parse_function() {
-    let s1 = b"fn::criticize(t=\"now\")[$John,u=1;$Lucy]";
-    let s1_res = func_decl(s1);
-    assert_done_or_err!(s1_res);
-    assert_eq!(s1_res.unwrap().1.variant, FuncVariants::Relational);
+        let s2 = b"fn::takes[$analysis,u>0;$Bill]";
+        let s2_res = func_decl(s2);
+        assert_done_or_err!(s2_res);
+        let s2_res = s2_res.unwrap().1;
+        assert_eq!(s2_res.name, TerminalBorrowed(b"takes"));
+        assert_eq!(s2_res.variant, FuncVariants::Relational);
 
-    let s2 = b"fn::takes[$analysis,u>0;$Bill]";
-    let s2_res = func_decl(s2);
-    assert_done_or_err!(s2_res);
-    let s2_res = s2_res.unwrap().1;
-    assert_eq!(s2_res.name, TerminalBorrowed(b"takes"));
-    assert_eq!(s2_res.variant, FuncVariants::Relational);
+        let s3 = b"fn::loves[cow, u=1; bull ]";
+        let s3_res = func_decl(s3);
+        assert_done_or_err!(s3_res);
+        assert_eq!(s3_res.unwrap().1.variant, FuncVariants::Relational);
 
-    let s3 = b"fn::loves[cow, u=1; bull ]";
-    let s3_res = func_decl(s3);
-    assert_done_or_err!(s3_res);
-    assert_eq!(s3_res.unwrap().1.variant, FuncVariants::Relational);
-
-    let s4 = b"fn::time_calc(t1<t2)";
-    let s4_res = func_decl(s4);
-    assert_done_or_err!(s4_res);
-    assert_eq!(s4_res.unwrap().1.variant, FuncVariants::NonRelational);
+        let s4 = b"fn::time_calc(t1<t2)";
+        let s4_res = func_decl(s4);
+        assert_done_or_err!(s4_res);
+        assert_eq!(s4_res.unwrap().1.variant, FuncVariants::NonRelational);
+    }
 }

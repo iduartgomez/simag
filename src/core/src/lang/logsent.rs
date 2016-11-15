@@ -10,6 +10,8 @@ use std::str;
 use std::collections::HashMap;
 use std::fmt;
 
+use chrono::{UTC, DateTime};
+
 use lang::parser::*;
 use lang::common::*;
 use agent;
@@ -33,6 +35,7 @@ pub struct LogSentence {
     skolem: Option<Vec<Box<Skolem>>>,
     root: *const Particle,
     pub var_req: Option<HashMap<*const Var, Vec<*const Assert>>>,
+    _id: Vec<u8>,
 }
 
 impl<'a> LogSentence {
@@ -45,6 +48,7 @@ impl<'a> LogSentence {
             vars: None,
             root: ::std::ptr::null(),
             var_req: None,
+            _id: vec![],
         };
         let r = walk_ast(ast, &mut sent, context);
         if r.is_err() {
@@ -68,29 +72,30 @@ impl<'a> LogSentence {
                     return Err(err);
                 }
             }
+            sent.generate_unique_id();
             Ok(sent)
         }
     }
 
     pub fn solve(&self,
                  agent: &agent::Representation,
-                 assignments: Option<HashMap<*const Var, &agent::VarAssignment>>)
-                 -> Option<bool> {
+                 assignments: Option<HashMap<*const Var, &agent::VarAssignment>>,
+                 context: &mut agent::ProofResult) {
         let root = unsafe { &*(self.root) };
         if let Some(res) = root.solve(agent, &assignments) {
             if res {
                 if root.is_icond() {
                     root.substitute(agent, &assignments, &true)
                 }
-                Some(true)
+                context.result = Some(true);
             } else {
                 if root.is_icond() {
                     root.substitute(agent, &assignments, &false)
                 }
-                Some(false)
+                context.result = Some(false);
             }
         } else {
-            None
+            context.result = None;
         }
     }
 
@@ -106,6 +111,10 @@ impl<'a> LogSentence {
     }
 
     pub fn get_rhs_predicates(&self) -> Vec<&Assert> {
+        unimplemented!()
+    }
+
+    pub fn get_lhs_predicates(&self) -> Vec<&Assert> {
         unimplemented!()
     }
 
@@ -150,6 +159,40 @@ impl<'a> LogSentence {
 
     fn add_particle(&mut self, p: Box<Particle>) {
         self.particles.push(p)
+    }
+
+    fn generate_unique_id(&mut self) {
+        for a in self.particles.iter() {
+            match &**a {
+                &Particle::Conjunction(_) => self._id.push(0),
+                &Particle::Disjunction(_) => self._id.push(1),
+                &Particle::Equivalence(_) => self._id.push(2),
+                &Particle::Implication(_) => self._id.push(3),
+                &Particle::IndConditional(_) => self._id.push(4),
+                &Particle::Atom(ref p) => {
+                    let mut id_1 = p.get_id();
+                    self._id.append(&mut id_1)
+                }
+            }
+        }
+    }
+
+    pub fn get_id(&self) -> &[u8] {
+        &self._id
+    }
+}
+
+impl ::std::cmp::PartialEq for LogSentence {
+    fn eq(&self, other: &LogSentence) -> bool {
+        self._id == other._id
+    }
+}
+
+impl ::std::cmp::Eq for LogSentence {}
+
+impl ::std::hash::Hash for LogSentence {
+    fn hash<H: ::std::hash::Hasher>(&self, state: &mut H) {
+        self._id.hash(state);
     }
 }
 
@@ -683,6 +726,11 @@ impl LogicAtom {
             unsafe { Some(&*(self.parent)) }
         }
     }
+
+    #[inline]
+    fn get_id(&self) -> Vec<u8> {
+        self.pred.get_id()
+    }
 }
 
 impl fmt::Display for LogicAtom {
@@ -815,6 +863,38 @@ impl Particle {
     fn is_icond(&self) -> bool {
         match *self {
             Particle::IndConditional(_) => true,
+            _ => false,
+        }
+    }
+
+    #[inline]
+    fn is_conj(&self) -> bool {
+        match *self {
+            Particle::Conjunction(_) => true,
+            _ => false,
+        }
+    }
+
+    #[inline]
+    fn is_disj(&self) -> bool {
+        match *self {
+            Particle::Disjunction(_) => true,
+            _ => false,
+        }
+    }
+
+    #[inline]
+    fn is_equiv(&self) -> bool {
+        match *self {
+            Particle::Equivalence(_) => true,
+            _ => false,
+        }
+    }
+
+    #[inline]
+    fn is_impl(&self) -> bool {
+        match *self {
+            Particle::Implication(_) => true,
             _ => false,
         }
     }
@@ -1301,113 +1381,119 @@ fn correct_iexpr(sent: &LogSentence) -> Result<(), ParseErrF> {
     wrong_operator(first)
 }
 
-#[test]
-fn icond_exprs() {
-    let source = String::from("
-        # Err:
-        ((let x y z)
-         ( ( cde[x,u=1] |> fn::fgh[y,u>0.5;x;z] ) |> hij[y,u=1] )
-        )
+#[cfg(test)]
+mod test {
+    use super::*;
+    use lang::parser::*;
 
-        # Err
-        ((let x y z)
-         ( abc[x,u=1]  |> (( cde[x,u=1] |> fn::fgh[y,u>0.5;x;z] ) && hij[y,u=1] ))
-        )
+    #[test]
+    fn icond_exprs() {
+        let source = String::from("
+            # Err:
+            ((let x y z)
+             ( ( cde[x,u=1] |> fn::fgh[y,u>0.5;x;z] ) |> hij[y,u=1] )
+            )
 
-        # Ok:
-        ((let x y z)
-         ( abc[x,u=1]  |> (
-             ( cde[x,u=1] && fn::fgh[y,u>0.5;x;z] ) |> hij[y,u=1]
-         )))
+            # Err
+            ((let x y z)
+             ( abc[x,u=1]  |> (( cde[x,u=1] |> fn::fgh[y,u>0.5;x;z] ) && hij[y,u=1] ))
+            )
 
-        # Ok:
-        (( let x y z )
-         (( american[x,u=1] && weapon[y,u=1] && fn::sells[y,u>0.5;x;z] ) |> criminal[x,u=1]))
-    ");
+            # Ok:
+            ((let x y z)
+             ( abc[x,u=1]  |> (
+                 ( cde[x,u=1] && fn::fgh[y,u>0.5;x;z] ) |> hij[y,u=1]
+             )))
 
-    let tree = Parser::parse(source);
-    assert!(tree.is_ok());
-    let mut tree = tree.unwrap();
+            # Ok:
+            (( let x y z )
+             (( american[x,u=1] && weapon[y,u=1] && fn::sells[y,u>0.5;x;z] ) |> criminal[x,u=1]))
+        ");
 
-    let sent = match tree.pop_front() {
-        Some(ParseTree::ParseErr(ParseErrF::IExprWrongOp)) => {}
-        _ => panic!(),
-    };
+        let tree = Parser::parse(source);
+        assert!(tree.is_ok());
+        let mut tree = tree.unwrap();
 
-    let sent = match tree.pop_front() {
-        Some(ParseTree::ParseErr(ParseErrF::IExprWrongOp)) => {}
-        _ => panic!(),
-    };
-
-    let sent = match tree.pop_front() {
-        Some(ParseTree::IExpr(sent)) => sent,
-        _ => panic!(),
-    };
-
-    unsafe {
-        let sent = match tree.pop_front().unwrap() {
-            ParseTree::IExpr(sent) => sent,
+        let sent = match tree.pop_front() {
+            Some(ParseTree::ParseErr(ParseErrF::IExprWrongOp)) => {}
             _ => panic!(),
         };
-        let root = &*(sent.root.unwrap());
-        match root {
-            &Particle::IndConditional(ref p) => {
-                match &*(p.next[0]) {
-                    &Particle::Conjunction(ref op) => {
-                        match &*(op.next[0]) {
-                            &Particle::Atom(ref atm) => {
-                                assert_eq!(atm.get_name(), "american");
-                                match atm.get_parent().unwrap() {
-                                    &Particle::Conjunction(ref op) => {
-                                        match &*(op.next[0]) {
-                                            &Particle::Atom(ref atm) => {
-                                                assert_eq!(atm.get_name(), "american")
-                                            }
-                                            _ => panic!(),
-                                        };
-                                    }
-                                    _ => panic!(),
-                                }
-                            }
-                            _ => panic!(),
-                        };
-                        match &*(op.next[1]) {
-                            &Particle::Conjunction(ref op) => {
-                                match &*(op.next[0]) {
-                                    &Particle::Atom(ref atm) => {
-                                        assert_eq!(atm.get_name(), "weapon")
-                                    }
-                                    _ => panic!(),
-                                };
-                                match &*(op.next[1]) {
-                                    &Particle::Atom(ref atm) => {
-                                        assert_eq!(atm.get_name(), "sells");
-                                        match atm.get_parent().unwrap() {
-                                            &Particle::Conjunction(ref op) => {
-                                                match &*(op.next[0]) {
-                                                    &Particle::Atom(ref atm) => {
-                                                        assert_eq!(atm.get_name(), "weapon")
-                                                    }
-                                                    _ => panic!(),
-                                                };
-                                            }
-                                            _ => panic!(),
+
+        let sent = match tree.pop_front() {
+            Some(ParseTree::ParseErr(ParseErrF::IExprWrongOp)) => {}
+            _ => panic!(),
+        };
+
+        let sent = match tree.pop_front() {
+            Some(ParseTree::IExpr(sent)) => sent,
+            _ => panic!(),
+        };
+
+        unsafe {
+            let sent = match tree.pop_front().unwrap() {
+                ParseTree::IExpr(sent) => sent,
+                _ => panic!(),
+            };
+            let root = &*(sent.root.unwrap());
+            match root {
+                &Particle::IndConditional(ref p) => {
+                    match &*(p.next[0]) {
+                        &Particle::Conjunction(ref op) => {
+                            match &*(op.next[0]) {
+                                &Particle::Atom(ref atm) => {
+                                    assert_eq!(atm.get_name(), "american");
+                                    match atm.get_parent().unwrap() {
+                                        &Particle::Conjunction(ref op) => {
+                                            match &*(op.next[0]) {
+                                                &Particle::Atom(ref atm) => {
+                                                    assert_eq!(atm.get_name(), "american")
+                                                }
+                                                _ => panic!(),
+                                            };
                                         }
+                                        _ => panic!(),
                                     }
-                                    _ => panic!(),
-                                };
+                                }
+                                _ => panic!(),
+                            };
+                            match &*(op.next[1]) {
+                                &Particle::Conjunction(ref op) => {
+                                    match &*(op.next[0]) {
+                                        &Particle::Atom(ref atm) => {
+                                            assert_eq!(atm.get_name(), "weapon")
+                                        }
+                                        _ => panic!(),
+                                    };
+                                    match &*(op.next[1]) {
+                                        &Particle::Atom(ref atm) => {
+                                            assert_eq!(atm.get_name(), "sells");
+                                            match atm.get_parent().unwrap() {
+                                                &Particle::Conjunction(ref op) => {
+                                                    match &*(op.next[0]) {
+                                                        &Particle::Atom(ref atm) => {
+                                                            assert_eq!(atm.get_name(), "weapon")
+                                                        }
+                                                        _ => panic!(),
+                                                    };
+                                                }
+                                                _ => panic!(),
+                                            }
+                                        }
+                                        _ => panic!(),
+                                    };
+                                }
+                                _ => panic!(),
                             }
-                            _ => panic!(),
                         }
+                        _ => panic!(),
                     }
-                    _ => panic!(),
+                    match &*(p.next[1]) {
+                        &Particle::Atom(ref atm) => assert_eq!(atm.get_name(), "criminal"),
+                        _ => panic!(),
+                    }
                 }
-                match &*(p.next[1]) {
-                    &Particle::Atom(ref atm) => assert_eq!(atm.get_name(), "criminal"),
-                    _ => panic!(),
-                }
-            }
-            _ => panic!(),
-        };
+                _ => panic!(),
+            };
+        }
     }
 }

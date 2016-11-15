@@ -1,6 +1,8 @@
 use std::str;
 use std::collections::HashMap;
 
+use chrono::{UTC, DateTime};
+
 use lang::parser::*;
 use lang::logsent::*;
 use agent;
@@ -59,6 +61,14 @@ impl<'a> Predicate {
         }
     }
 
+    #[inline]
+    fn get_id(&self) -> Vec<u8> {
+        match *self {
+            Predicate::FreeTerm(ref t) => t.get_id(),
+            Predicate::GroundedTerm(ref t) => t.get_id(),
+        }
+    }
+
     fn has_uval(&self) -> bool {
         match *self {
             Predicate::GroundedTerm(ref t) => {
@@ -79,12 +89,19 @@ impl<'a> Predicate {
     }
 }
 
+// Grounded types:
+
+pub enum Grounded {
+    Function(GroundedFunc),
+    Terminal(GroundedTerm),
+}
+
 #[derive(Debug, Clone)]
 pub struct GroundedTerm {
-    term: String,
-    value: Option<f32>,
+    pub term: String,
+    pub value: Option<f32>,
     operator: Option<CompOperator>,
-    parent: String,
+    pub parent: String,
     dates: Option<Vec<i32>>,
 }
 
@@ -92,7 +109,7 @@ impl GroundedTerm {
     fn new(term: String,
            uval: Option<UVal>,
            parent: String,
-           _dates: Option<Vec<i32>>,
+           _dates: Option<Vec<DateTime<UTC>>>,
            is_assignment: bool)
            -> Result<GroundedTerm, ParseErrF> {
         let val;
@@ -138,6 +155,24 @@ impl GroundedTerm {
         })
     }
 
+    fn get_id(&self) -> Vec<u8> {
+        let mut id: Vec<u8> = vec![];
+        let mut id_1 = Vec::from(self.term.as_bytes());
+        id.append(&mut id_1);
+        if let Some(op) = self.operator {
+            match op {
+                CompOperator::Equal => id.push(0),
+                CompOperator::Less => id.push(1),
+                CompOperator::More => id.push(2),
+            }
+        }
+        if let Some(value) = self.value {
+            let mut id_2 = format!("{}", value).into_bytes();
+            id.append(&mut id_2);
+        }
+        id
+    }
+
     #[inline]
     pub fn get_name(&self) -> &str {
         &self.term
@@ -168,7 +203,7 @@ impl GroundedTerm {
     }
 
     #[inline]
-    fn comparable(&self, other: &GroundedTerm) -> bool {
+    pub fn comparable(&self, other: &GroundedTerm) -> bool {
         if self.term != other.get_name() {
             return false;
         }
@@ -408,7 +443,7 @@ impl FreeTerm {
     fn new(term: *const Var,
            uval: Option<UVal>,
            parent: &Terminal,
-           _dates: Option<Vec<i32>>)
+           _dates: Option<Vec<DateTime<UTC>>>,)
            -> Result<FreeTerm, ParseErrF> {
         let val;
         let op;
@@ -444,6 +479,22 @@ impl FreeTerm {
             parent: parent.clone(),
             dates: None,
         })
+    }
+
+    fn get_id(&self) -> Vec<u8> {
+        let mut id: Vec<u8> = vec![];
+        if let Some(op) = self.operator {
+            match op {
+                CompOperator::Equal => id.push(0),
+                CompOperator::Less => id.push(1),
+                CompOperator::More => id.push(2),
+            }
+        }
+        if let Some(value) = self.value {
+            let mut id_2 = format!("{}", value).into_bytes();
+            id.append(&mut id_2);
+        }
+        id
     }
 
     #[inline]
@@ -589,6 +640,14 @@ impl Assert {
             &Assert::ClassDecl(ref c) => c.substitute(agent, assignments),
         }
     }
+
+    #[inline]
+    pub fn get_id(&self) -> Vec<u8> {
+        match self {
+            &Assert::FuncDecl(ref f) => f.get_id(),
+            &Assert::ClassDecl(ref c) => c.get_id(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -704,6 +763,25 @@ impl<'a> FuncDecl {
             count: 0,
             data_ref: self.args.as_ref().unwrap(),
         }
+    }
+
+    fn get_id(&self) -> Vec<u8> {
+        let mut id = vec![];
+        let mut id_1 = Vec::from(self.name.get_name().as_bytes());
+        id.append(&mut id_1);
+        if let Some(ref args) = self.args {
+            for a in args {
+                let mut id_2 = a.get_id();
+                id.append(&mut id_2)
+            }
+        }
+        if let Some(ref args) = self.op_args {
+            for a in args {
+                let mut id_2 = a.get_id();
+                id.append(&mut id_2)
+            }
+        }
+        id
     }
 
     fn decl_timecalc_fn(other: &FuncDeclBorrowed<'a>,
@@ -998,6 +1076,23 @@ impl<'a> ClassDecl {
         }
     }
 
+    fn get_id(&self) -> Vec<u8> {
+        let mut id = vec![];
+        let mut id_1 = Vec::from(self.name.get_name().as_bytes());
+        id.append(&mut id_1);
+        for a in self.args.iter() {
+            let mut id_2 = a.get_id();
+            id.append(&mut id_2)
+        }
+        if let Some(ref args) = self.op_args {
+            for a in args {
+                let mut id_2 = a.get_id();
+                id.append(&mut id_2)
+            }
+        }
+        id
+    }
+
     fn contains(&self, var: &Var) -> bool {
         for a in &self.args {
             match a {
@@ -1158,6 +1253,22 @@ impl<'a> OpArg {
         }
         false
     }
+
+    fn get_id(&self) -> Vec<u8> {
+        let mut id = vec![];
+        let mut id_1 = Vec::from(self.term.get_name().as_bytes());
+        id.append(&mut id_1);
+        if let Some((ref op, ref t)) = self.comp {
+            match op {
+                &CompOperator::Equal => id.push(0),
+                &CompOperator::Less => id.push(1),
+                &CompOperator::More => id.push(2),
+            }
+            let mut id_2 = Vec::from(self.term.get_name().as_bytes());
+            id.append(&mut id_2);
+        }
+        id
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1184,6 +1295,13 @@ impl<'a> OpArgTerm {
         match *self {
             OpArgTerm::Terminal(ref term) => term.is_var(var),
             OpArgTerm::String(_) => false,
+        }
+    }
+
+    fn get_name(&self) -> &str {
+        match *self {
+            OpArgTerm::Terminal(ref term) => term.get_name(),
+            OpArgTerm::String(ref s) => s.as_str(),
         }
     }
 }
