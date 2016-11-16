@@ -23,19 +23,20 @@ use std::iter::FromIterator;
 use std::hash::{Hash, Hasher};
 use std::cell::RefCell;
 use std::sync::{RwLock, Mutex, Arc};
-use std::thread;
+//use std::thread;
+use std::rc::Rc;
 
 use chrono::{UTC, DateTime};
 
 use lang;
-use lang::{ParseTree, ParseErrF, GroundedTerm, GroundedFunc, LogSentence};
+use lang::{ParseTree, ParseErrF, GroundedClsMemb, GroundedFunc, LogSentence};
 
 type Date = DateTime<UTC>;
 
 pub struct Representation<'a> {
     entities: RwLock<HashMap<&'a str, Box<Entity<'a>>>>,
     classes: RwLock<HashMap<&'a str, Box<Class<'a>>>>,
-    _log_sentences: Mutex<Vec<Box<LogSentence>>>,
+    log_sentences: Mutex<Vec<Box<LogSentence>>>,
 }
 
 /// This type is a container for internal agent's representations.
@@ -54,7 +55,7 @@ impl<'a> Representation<'a> {
         Representation {
             entities: RwLock::new(HashMap::new()),
             classes: RwLock::new(HashMap::new()),
-            _log_sentences: Mutex::new(Vec::new()),
+            log_sentences: Mutex::new(Vec::new()),
         }
     }
 
@@ -87,10 +88,12 @@ impl<'a> Representation<'a> {
                         for assertion in assertions {
                             if assertion.is_class() {
                                 for a in assertion.unwrap_cls().into_iter() {
+                                    let a = Rc::new(a);
                                     self.up_membership(a)
                                 }
                             } else {
-                                self.up_relation(assertion.unwrap_fn().into_grounded())
+                                let a = Rc::new(assertion.unwrap_fn().into_grounded());
+                                self.up_relation(a)
                             }
                         }
                     }
@@ -116,7 +119,7 @@ impl<'a> Representation<'a> {
     }
 
     fn add_logsentence(&self, sent: LogSentence) -> &LogSentence {
-        let mut lock = self._log_sentences.lock().unwrap();
+        let mut lock = self.log_sentences.lock().unwrap();
         let ls: &mut Vec<Box<LogSentence>> =
             unsafe { &mut *(&mut *lock as *mut Vec<Box<LogSentence>>) };
         ls.push(Box::new(sent));
@@ -128,13 +131,18 @@ impl<'a> Representation<'a> {
         let pres = lang::logic_parser(source, false);
         if pres.is_ok() {
             let pres = QueryInput::ManyQueries(pres.unwrap());
-            Inference::new(&self, pres, single_answer, false)
+            let mut inf = Inference::new(&self, pres, single_answer, false);
+            {
+                let mut inf_r = unsafe { &mut *(&mut inf as *mut Inference) as &mut Inference };
+                inf_r.infer_facts();
+            }
+            inf.get_results()
         } else {
             Answer::ParseErr(pres.unwrap_err())
         }
     }
 
-    pub fn up_membership(&self, assert: lang::GroundedTerm) {
+    pub fn up_membership(&self, assert: Rc<lang::GroundedClsMemb>) {
         let parent_exists = self.classes.read().unwrap().contains_key(assert.get_parent());
         if !parent_exists {
             let class = Box::new(Class::new(String::from(assert.get_parent()),
@@ -173,8 +181,8 @@ impl<'a> Representation<'a> {
         }
     }
 
-    pub fn up_relation(&self, assert: lang::GroundedFunc) {
-        let process_arg = |a: &GroundedTerm| {
+    pub fn up_relation(&self, assert: Rc<lang::GroundedFunc>) {
+        let process_arg = |a: &GroundedClsMemb| {
             let subject = a.get_name();
             match (&subject).starts_with("$") {
                 true => {
@@ -182,10 +190,10 @@ impl<'a> Representation<'a> {
                     if entity_exists {
                         let lock = self.entities.read().unwrap();
                         let entity = lock.get(subject).unwrap();
-                        entity.add_relationship(&assert);
+                        entity.add_relationship(assert.clone());
                     } else {
                         let entity = Box::new(Entity::new(String::from(subject)));
-                        entity.add_relationship(&assert);
+                        entity.add_relationship(assert.clone());
                         let name = unsafe { &*(&entity.name as *const String) as &str };
                         self.entities.write().unwrap().insert(name, entity);
                     }
@@ -195,11 +203,11 @@ impl<'a> Representation<'a> {
                     if class_exists {
                         let lock = self.classes.read().unwrap();
                         let class = lock.get(&subject).unwrap();
-                        class.add_relationship(&assert);
+                        class.add_relationship(assert.clone());
                     } else {
                         let class = Box::new(Class::new(String::from(subject),
                                                         ClassKind::Membership));
-                        class.add_relationship(&assert);
+                        class.add_relationship(assert.clone());
                         let name = unsafe { &*(&class.name as *const String) as &str };
                         self.classes.write().unwrap().insert(name, class);
                     }
@@ -390,14 +398,16 @@ impl<'a> Representation<'a> {
         dict
     }
 
-    pub fn get_entity_from_class(&self, class: &str, subject: &str) -> Option<&GroundedTerm> {
+    pub fn get_entity_from_class(&self, class: &str, subject: &str) -> Option<&GroundedClsMemb> {
         match subject.starts_with("$") {
             true => {
                 let entity_exists = self.entities.read().unwrap().contains_key(subject);
                 if entity_exists {
                     let lock = self.entities.read().unwrap();
                     match lock.get(subject).unwrap().belongs_to_class(class) {
-                        Some(r) => Some(unsafe { &*(r as *const GroundedTerm) as &GroundedTerm }),
+                        Some(r) => {
+                            Some(unsafe { &*(r as *const GroundedClsMemb) as &GroundedClsMemb })
+                        }
                         None => None,
                     }
                 } else {
@@ -409,7 +419,9 @@ impl<'a> Representation<'a> {
                 if class_exists {
                     let lock = self.classes.read().unwrap();
                     match lock.get(subject).unwrap().belongs_to_class(class) {
-                        Some(r) => Some(unsafe { &*(r as *const GroundedTerm) as &GroundedTerm }),
+                        Some(r) => {
+                            Some(unsafe { &*(r as *const GroundedClsMemb) as &GroundedClsMemb })
+                        }
                         None => None,
                     }
                 } else {
@@ -419,7 +431,7 @@ impl<'a> Representation<'a> {
         }
     }
 
-    fn class_membership(&self, pred: &GroundedTerm) -> Option<bool> {
+    fn class_membership(&self, pred: &GroundedClsMemb) -> Option<bool> {
         let subject = pred.get_name();
         match subject.starts_with("$") {
             true => {
@@ -495,8 +507,8 @@ impl<'a> Representation<'a> {
 /// in the class itself).
 pub struct Entity<'a> {
     pub name: String,
-    classes: RwLock<HashMap<&'a str, Box<GroundedTerm>>>,
-    relations: RwLock<HashMap<&'a str, Vec<Box<GroundedFunc>>>>,
+    classes: RwLock<HashMap<&'a str, Rc<GroundedClsMemb>>>,
+    relations: RwLock<HashMap<&'a str, Vec<Rc<GroundedFunc>>>>,
     beliefs: RwLock<HashMap<&'a str, Vec<&'a LogSentence>>>,
 }
 
@@ -514,10 +526,10 @@ impl<'a> Entity<'a> {
     /// set of classes the entity belongs to.
     fn belongs_to_classes<'b>(&'a self,
                               class_list: &Vec<&'b lang::ClassDecl>)
-                              -> Option<HashMap<&'b str, &GroundedTerm>> {
+                              -> Option<HashMap<&'b str, &GroundedClsMemb>> {
         let mut matches = HashMap::new();
         let lock = self.classes.read().unwrap();
-        let d = unsafe { &*(&*lock as *const HashMap<&str, Box<GroundedTerm>>) };
+        let d = unsafe { &*(&*lock as *const HashMap<&str, Rc<GroundedClsMemb>>) };
         for decl in class_list {
             let key = decl.get_name_as_str();
             if let Some(cls) = d.get(key) {
@@ -543,24 +555,23 @@ impl<'a> Entity<'a> {
         matches
     }
 
-    fn belongs_to_class(&self, class_name: &str) -> Option<&GroundedTerm> {
+    fn belongs_to_class(&self, class_name: &str) -> Option<&GroundedClsMemb> {
         let lock = self.classes.read().unwrap();
         match lock.get(class_name) {
-            Some(ref r) => Some(unsafe { &*(&***r as *const GroundedTerm) as &GroundedTerm }),
+            Some(ref r) => Some(unsafe { &*(&***r as *const GroundedClsMemb) as &GroundedClsMemb }),
             None => None,
         }
     }
 
-    fn add_class_membership(&self, grounded: GroundedTerm) {
+    fn add_class_membership(&self, grounded: Rc<GroundedClsMemb>) {
         let mut lock = self.classes.write().unwrap();
-        let mut d = unsafe { &mut *(&mut *lock as *mut HashMap<&str, Box<GroundedTerm>>) };
-        let grounded = Box::new(grounded);
-        let name: &str = unsafe { &*(grounded.get_parent_as_string_ref() as *const String) };
+        let mut d = unsafe { &mut *(&mut *lock as *mut HashMap<&str, Rc<GroundedClsMemb>>) };
+        let name: &str = unsafe { &**(grounded.get_parent_as_string_ref() as *const String) };
         let stmt_exists = d.contains_key(name);
         match stmt_exists {
             true => {
-                let current = d.get_mut(&name).unwrap();
-                current.update(*grounded)
+                let current = d.get(&name).unwrap();
+                current.update(grounded)
             }
             false => {
                 d.insert(name, grounded);
@@ -576,7 +587,7 @@ impl<'a> Entity<'a> {
                              -> Option<HashMap<&'b str, Vec<&GroundedFunc>>> {
         let mut matches: HashMap<&str, Vec<&GroundedFunc>> = HashMap::new();
         let lock = self.relations.read().unwrap();
-        let d = unsafe { &*(&*lock as *const HashMap<&str, Vec<Box<GroundedFunc>>>) };
+        let d = unsafe { &*(&*lock as *const HashMap<&str, Vec<Rc<GroundedFunc>>>) };
         for decl in func_list {
             if let Some(relation_type) = d.get(decl.get_name()) {
                 for rel in relation_type {
@@ -611,7 +622,7 @@ impl<'a> Entity<'a> {
 
     fn has_relationship(&self, func: &GroundedFunc) -> Option<&GroundedFunc> {
         let lock = self.relations.read().unwrap();
-        let d = unsafe { &*(&*lock as *const HashMap<&str, Vec<Box<GroundedFunc>>>) };
+        let d = unsafe { &*(&*lock as *const HashMap<&str, Vec<Rc<GroundedFunc>>>) };
         if let Some(relation_type) = d.get(func.get_name()) {
             for rel in relation_type {
                 if rel.comparable(func) {
@@ -622,9 +633,9 @@ impl<'a> Entity<'a> {
         None
     }
 
-    fn add_relationship(&self, func: &GroundedFunc) {
+    fn add_relationship(&self, func: Rc<GroundedFunc>) {
         let mut lock = self.relations.write().unwrap();
-        let mut d = unsafe { &mut *(&mut *lock as *mut HashMap<&str, Vec<Box<GroundedFunc>>>) };
+        let mut d = unsafe { &mut *(&mut *lock as *mut HashMap<&str, Vec<Rc<GroundedFunc>>>) };
         let name = func.get_name();
         let stmt_exists = d.contains_key(name);
         match stmt_exists {
@@ -632,21 +643,19 @@ impl<'a> Entity<'a> {
                 let funcs_type = d.get_mut(name).unwrap();
                 let mut found_rel = false;
                 for f in funcs_type.iter_mut() {
-                    if f.comparable(func) {
-                        f.update(func);
+                    if f.comparable(&*func) {
+                        f.update(func.clone());
                         found_rel = true;
                         break;
                     }
                 }
                 if !found_rel {
-                    funcs_type.push(Box::new((*func).clone()))
+                    funcs_type.push(func.clone())
                 }
             }
             false => {
-                let grounded = Box::new((*func).clone());
-                let name: &str =
-                    unsafe { &*(grounded.get_parent_as_string_ref() as *const String) };
-                d.insert(name, vec![grounded]);
+                let name: &str = unsafe { &**(func.get_parent_as_string_ref() as *const String) };
+                d.insert(name, vec![func.clone()]);
             }
         }
     }
@@ -677,8 +686,8 @@ impl<'a> Entity<'a> {
 /// (to a fuzzy degree).
 pub struct Class<'a> {
     pub name: String,
-    classes: RwLock<HashMap<&'a str, Box<GroundedTerm>>>,
-    relations: RwLock<HashMap<&'a str, Vec<Box<GroundedFunc>>>>,
+    classes: RwLock<HashMap<&'a str, Rc<GroundedClsMemb>>>,
+    relations: RwLock<HashMap<&'a str, Vec<Rc<GroundedFunc>>>>,
     beliefs: RwLock<HashMap<&'a str, Vec<&'a LogSentence>>>,
     rules: RwLock<Vec<&'a LogSentence>>,
     kind: ClassKind,
@@ -702,10 +711,10 @@ impl<'a> Class<'a> {
         }
     }
 
-    fn belongs_to_class(&self, class_name: &str) -> Option<&GroundedTerm> {
+    fn belongs_to_class(&self, class_name: &str) -> Option<&GroundedClsMemb> {
         let lock = self.classes.read().unwrap();
         match lock.get(class_name) {
-            Some(ref r) => Some(unsafe { &*(&***r as *const GroundedTerm) as &GroundedTerm }),
+            Some(ref r) => Some(unsafe { &*(&***r as *const GroundedClsMemb) as &GroundedClsMemb }),
             None => None,
         }
     }
@@ -722,20 +731,71 @@ impl<'a> Class<'a> {
         matches
     }
 
-    fn add_class_membership(&self, grounded: GroundedTerm) {
+    /// Returns the intersection between the provided list of classes and the
+    /// set of classes the entity belongs to.
+    fn belongs_to_classes<'b>(&'a self,
+                              class_list: &Vec<&'b lang::ClassDecl>)
+                              -> Option<HashMap<&'b str, &GroundedClsMemb>> {
+        let mut matches = HashMap::new();
+        let lock = self.classes.read().unwrap();
+        let d = unsafe { &*(&*lock as *const HashMap<&str, Rc<GroundedClsMemb>>) };
+        for decl in class_list {
+            let key = decl.get_name_as_str();
+            if let Some(cls) = d.get(key) {
+                matches.insert(key, &**cls);
+            }
+        }
+        if matches.len() > 0 {
+            Some(matches)
+        } else {
+            None
+        }
+    }
+
+    fn add_class_membership(&self, grounded: Rc<GroundedClsMemb>) {
         let mut lock = self.classes.write().unwrap();
-        let mut d = unsafe { &mut *(&mut *lock as *mut HashMap<&str, Box<GroundedTerm>>) };
-        let grounded = Box::new(grounded);
-        let name: &str = unsafe { &*(grounded.get_parent_as_string_ref() as *const String) };
+        let mut d = unsafe { &mut *(&mut *lock as *mut HashMap<&str, Rc<GroundedClsMemb>>) };
+        let name: &str = unsafe { &**(grounded.get_parent_as_string_ref() as *const String) };
         let stmt_exists = d.contains_key(name);
         match stmt_exists {
             true => {
                 let current = d.get_mut(&name).unwrap();
-                current.update(*grounded)
+                current.update(grounded)
             }
             false => {
                 d.insert(name, grounded);
             }
+        }
+    }
+
+    /// Returns the intersection between the provided list of relational functions and the
+    /// set of relational functions the entity has.
+    fn has_relationships<'b>(&'a self,
+                             func_list: &Vec<&'b lang::FuncDecl>,
+                             var: Option<*const lang::Var>)
+                             -> Option<HashMap<&'b str, Vec<&GroundedFunc>>> {
+        let mut matches: HashMap<&str, Vec<&GroundedFunc>> = HashMap::new();
+        let lock = self.relations.read().unwrap();
+        let d = unsafe { &*(&*lock as *const HashMap<&str, Vec<Rc<GroundedFunc>>>) };
+        for decl in func_list {
+            if let Some(relation_type) = d.get(decl.get_name()) {
+                for rel in relation_type {
+                    if rel.comparable_entity(decl, &self.name, var) {
+                        let name = rel.get_name();
+                        if matches.contains_key(name) {
+                            let v = matches.get_mut(name).unwrap();
+                            v.push(rel)
+                        } else {
+                            matches.insert(decl.get_name(), vec![rel]);
+                        }
+                    }
+                }
+            }
+        }
+        if matches.len() > 0 {
+            Some(matches)
+        } else {
+            None
         }
     }
 
@@ -751,7 +811,7 @@ impl<'a> Class<'a> {
 
     fn has_relationship(&self, func: &GroundedFunc) -> Option<&GroundedFunc> {
         let lock = self.relations.read().unwrap();
-        let d = unsafe { &*(&*lock as *const HashMap<&str, Vec<Box<GroundedFunc>>>) };
+        let d = unsafe { &*(&*lock as *const HashMap<&str, Vec<Rc<GroundedFunc>>>) };
         if let Some(relation_type) = d.get(func.get_name()) {
             for rel in relation_type {
                 if rel.comparable(func) {
@@ -762,9 +822,9 @@ impl<'a> Class<'a> {
         None
     }
 
-    fn add_relationship(&self, func: &GroundedFunc) {
+    fn add_relationship(&self, func: Rc<GroundedFunc>) {
         let mut lock = self.relations.write().unwrap();
-        let mut d = unsafe { &mut *(&mut *lock as *mut HashMap<&str, Vec<Box<GroundedFunc>>>) };
+        let mut d = unsafe { &mut *(&mut *lock as *mut HashMap<&str, Vec<Rc<GroundedFunc>>>) };
         let name = func.get_name();
         let stmt_exists = d.contains_key(name);
         match stmt_exists {
@@ -772,21 +832,19 @@ impl<'a> Class<'a> {
                 let funcs_type = d.get_mut(name).unwrap();
                 let mut found_rel = false;
                 for f in funcs_type.iter_mut() {
-                    if f.comparable(func) {
-                        f.update(func);
+                    if f.comparable(&*func) {
+                        f.update(func.clone());
                         found_rel = true;
                         break;
                     }
                 }
                 if !found_rel {
-                    funcs_type.push(Box::new((*func).clone()))
+                    funcs_type.push(func.clone())
                 }
             }
             false => {
-                let grounded = Box::new((*func).clone());
-                let name: &str =
-                    unsafe { &*(grounded.get_parent_as_string_ref() as *const String) };
-                d.insert(name, vec![grounded]);
+                let name: &str = unsafe { &**(func.get_parent_as_string_ref() as *const String) };
+                d.insert(name, vec![func.clone()]);
             }
         }
     }
@@ -814,11 +872,12 @@ struct Inference<'a> {
     query: QueryProcessed<'a>,
     kb: &'a Representation<'a>,
     ignore_current: bool,
+    single: bool,
     nodes: RwLock<HashMap<&'a str, Vec<Arc<ProofNode<'a>>>>>,
     queue: RwLock<HashMap<Arc<ProofNode<'a>>, HashSet<Arc<ProofArgs<'a>>>>>,
     results: RwLock<HashMap<&'a str, HashMap<&'a str, Option<(bool, Option<Date>)>>>>,
-    _repeat: Mutex<Vec<(&'a LogSentence, Arc<ProofArgs<'a>>)>>,
-    _assignments: Mutex<Vec<VarAssignment<'a>>>,
+    repeat: Mutex<Vec<(&'a LogSentence, Arc<ProofArgs<'a>>)>>,
+    assignments: Mutex<Vec<VarAssignment<'a>>>,
 }
 
 pub enum Answer<'a> {
@@ -833,20 +892,24 @@ impl<'a> Inference<'a> {
            query_input: QueryInput,
            single: bool,
            ignore_current: bool)
-           -> Answer {
+           -> Inference {
         let query = QueryProcessed::new().get_query(query_input);
-        let inf = Inference {
+        Inference {
             query: query.unwrap(),
             kb: agent,
             ignore_current: ignore_current,
+            single: single,
             nodes: RwLock::new(HashMap::new()),
             queue: RwLock::new(HashMap::new()),
             results: RwLock::new(HashMap::new()),
-            _repeat: Mutex::new(vec![]),
-            _assignments: Mutex::new(vec![]),
-        };
-        if single {
-            for r0 in inf.get_results().values() {
+            repeat: Mutex::new(vec![]),
+            assignments: Mutex::new(vec![]),
+        }
+    }
+
+    fn get_results(self) -> Answer<'a> {
+        if self.single {
+            for r0 in self.results.into_inner().unwrap().values() {
                 for r1 in r0.values() {
                     if let &Some((false, _)) = r1 {
                         return Answer::Single(Some(false));
@@ -857,12 +920,8 @@ impl<'a> Inference<'a> {
             }
             Answer::Single(Some(true))
         } else {
-            Answer::Multiple(inf.get_results())
+            Answer::Multiple(self.results.into_inner().unwrap())
         }
-    }
-
-    fn get_results(self) -> HashMap<&'a str, HashMap<&'a str, Option<(bool, Option<Date>)>>> {
-        self.results.into_inner().unwrap()
     }
 
     /// Inference function from first-order logic sentences.
@@ -876,6 +935,12 @@ impl<'a> Inference<'a> {
         fn query_cls<'a>(inf: &'a Inference<'a>, query: &'a str, actv_query: ActiveQuery<'a>) {
             let mut pass = InfTrial::new(inf, actv_query);
             pass.get_rules(vec![], vec![], HashSet::new());
+            {
+                let mut lock = inf.nodes.write().unwrap();
+                for nodes in lock.values_mut() {
+                    nodes.sort_by(|a, b| a.proof.created.cmp(&b.proof.created))
+                }
+            }
             let ref mut pass_ref = unsafe { &*(&pass as *const InfTrial) as &InfTrial };
             // run the query, if there is no result and there is an update,
             // then loop again, else stop
@@ -940,14 +1005,14 @@ struct InfTrial<'a> {
     nodes: &'a RwLock<HashMap<&'a str, Vec<Arc<ProofNode<'a>>>>>,
     queue: &'a RwLock<HashMap<Arc<ProofNode<'a>>, HashSet<Arc<ProofArgs<'a>>>>>,
     results: &'a RwLock<HashMap<&'a str, HashMap<&'a str, Option<(bool, Option<Date>)>>>>,
-    _repeat: &'a Mutex<Vec<(&'a LogSentence, Arc<ProofArgs<'a>>)>>,
-    _assignments: &'a Mutex<Vec<VarAssignment<'a>>>,
-    _valid: RefCell<Option<(Arc<ProofNode<'a>>, Arc<ProofArgs<'a>>)>>,
+    repeat: &'a Mutex<Vec<(&'a LogSentence, Arc<ProofArgs<'a>>)>>,
+    assignments: &'a Mutex<Vec<VarAssignment<'a>>>,
+    valid: RefCell<Option<(Arc<ProofNode<'a>>, Arc<ProofArgs<'a>>)>>,
 }
 
 enum ActiveQuery<'a> {
-    /// (obj_name, pred_name, fn/cls decl)
-    Class(&'a str, &'a str, &'a GroundedTerm),
+    /// `(obj_name, pred_name, fn/cls decl)`
+    Class(&'a str, &'a str, &'a GroundedClsMemb),
     Func(&'a str, &'a str, &'a GroundedFunc),
 }
 
@@ -961,7 +1026,7 @@ impl<'a> ActiveQuery<'a> {
     }
 
     #[inline]
-    fn get_cls(&self) -> &'a GroundedTerm {
+    fn get_cls(&self) -> &'a GroundedClsMemb {
         match self {
             &ActiveQuery::Class(_, _, ref gt) => gt,
             _ => panic!(),
@@ -983,7 +1048,7 @@ pub struct ProofResult<'a> {
     pub result: Option<bool>,
     args: Arc<ProofArgs<'a>>,
     node: Arc<ProofNode<'a>>,
-    grounded: Vec<(lang::Grounded, Date)>,
+    pub grounded: Vec<(lang::Grounded, Date)>,
 }
 
 impl<'a> ProofResult<'a> {
@@ -999,7 +1064,6 @@ impl<'a> ProofResult<'a> {
 
 impl<'a> InfTrial<'a> {
     fn new(inf: &'a Inference<'a>, actv_query: ActiveQuery<'a>) -> InfTrial<'a> {
-        let init_cls = actv_query.get_pred();
         InfTrial {
             kb: inf.kb,
             actv: actv_query,
@@ -1008,37 +1072,41 @@ impl<'a> InfTrial<'a> {
             nodes: &inf.nodes,
             queue: &inf.queue,
             results: &inf.results,
-            _repeat: &inf._repeat,
-            _assignments: &inf._assignments,
-            _valid: RefCell::new(None),
+            repeat: &inf.repeat,
+            assignments: &inf.assignments,
+            valid: RefCell::new(None),
         }
     }
 
     fn unify(&'a self, parent: &'a str, chk: &mut VecDeque<&'a str>, done: &mut Vec<&'a str>) {
         let query_pred = self.actv.get_pred();
         {
-            *(self._valid.borrow_mut()) = None;
+            *(self.valid.borrow_mut()) = None;
         }
-
         // for each node in the subtitution tree unifify variables
         // and try every possible substitution until (if) a solution is found
         // the proofs are tried in order of addition to the KB
         if let Some(nodes) = self.nodes.read().unwrap().get(query_pred) {
             // the node for each rule is stored in an efficient sorted list
-            // by rule creation datetime, from oldest to newest, we iterate
-            // from newest to oldest as the newest rules take precedence;
-            for node in nodes {
+            // by rule creation datetime, from newest to oldest
+            // as the newest rules take precedence
+            for node in nodes.iter().rev() {
                 // recursively try unifying all possible argument with the
                 // operating logic sentence:
                 // get all the entities/classes from the kb that meet the proof requeriments
                 let mut assignments =
                     self.entities_meet_sent_req(node.proof.var_req.as_ref().unwrap())
                         .unwrap();
+                let mut a1 = self.classes_meet_sent_req(node.proof.var_req.as_ref().unwrap())
+                    .unwrap();
+                for (k, v) in a1.drain() {
+                    assignments.insert(k, v);
+                }
                 let mut n_a: HashMap<*const lang::Var, Vec<&VarAssignment>> = HashMap::new();
                 for (var, assigned) in assignments.drain() {
                     let mut n_av: Vec<&VarAssignment> = vec![];
                     for a in assigned {
-                        let mut lock = self._assignments.lock().unwrap();
+                        let mut lock = self.assignments.lock().unwrap();
                         lock.push(a);
                         let a_ref = unsafe {
                             &*(lock.last().unwrap() as *const VarAssignment) as &VarAssignment
@@ -1076,11 +1144,11 @@ impl<'a> InfTrial<'a> {
                     let mut n_chk = VecDeque::from(node.antecedents.clone());
                     chk.append(&mut n_chk);
                 }
-                if let Some((ref node, ref assigned)) = *(self._valid.borrow()) {
+                if let Some((ref node, ref assigned)) = *(self.valid.borrow()) {
                     // the result may be replaced in the KB by other proof which is less current,
                     // to ensure that the valid result stays in the KB after all proofs are done,
                     // repeat the valid one with proper arguments
-                    self._repeat.lock().unwrap().push((node.proof, (*assigned).clone()))
+                    self.repeat.lock().unwrap().push((node.proof, (*assigned).clone()))
                 }
                 if !*(self.feedback.borrow()) {
                     return;
@@ -1112,11 +1180,12 @@ impl<'a> InfTrial<'a> {
         for subst in context.grounded.drain(..) {
             match subst {
                 (lang::Grounded::Function(gf), date) => {
+                    let gf: &GroundedFunc = &*gf;
                     if is_func {
                         let query_func = self.actv.get_func();
                         if query_func.comparable(&gf) {
                             let val;
-                            if query_func == &gf {
+                            if query_func == gf {
                                 val = true;
                             } else {
                                 val = false;
@@ -1138,12 +1207,12 @@ impl<'a> InfTrial<'a> {
                                 }
                                 if cond_ok {
                                     d.insert(query_pred, Some((val, Some(date))));
-                                    *(self._valid.borrow_mut()) = Some((context.node.clone(),
+                                    *(self.valid.borrow_mut()) = Some((context.node.clone(),
                                                                         context.args.clone()));
                                 }
                             } else if !d.contains_key(query_pred) {
                                 d.insert(query_pred, Some((val, Some(date))));
-                                *(self._valid.borrow_mut()) = Some((context.node.clone(),
+                                *(self.valid.borrow_mut()) = Some((context.node.clone(),
                                                                     context.args.clone()));
                             }
                             *(self.feedback.borrow_mut()) = false;
@@ -1154,8 +1223,9 @@ impl<'a> InfTrial<'a> {
                     if !is_func {
                         let query_cls = self.actv.get_cls();
                         if query_cls.comparable(&gt) {
+                            let gt: &GroundedClsMemb = &*gt;
                             let val;
-                            if query_cls == &gt {
+                            if query_cls == gt {
                                 val = true;
                             } else {
                                 val = false;
@@ -1177,12 +1247,12 @@ impl<'a> InfTrial<'a> {
                                 }
                                 if cond_ok {
                                     d.insert(query_pred, Some((val, Some(date))));
-                                    *(self._valid.borrow_mut()) = Some((context.node.clone(),
+                                    *(self.valid.borrow_mut()) = Some((context.node.clone(),
                                                                         context.args.clone()));
                                 }
                             } else if !d.contains_key(query_pred) {
                                 d.insert(query_pred, Some((val, Some(date))));
-                                *(self._valid.borrow_mut()) = Some((context.node.clone(),
+                                *(self.valid.borrow_mut()) = Some((context.node.clone(),
                                                                     context.args.clone()));
                             }
                             *(self.feedback.borrow_mut()) = false;
@@ -1258,10 +1328,75 @@ impl<'a> InfTrial<'a> {
         Some(results)
     }
 
+    fn classes_meet_sent_req(&self,
+                             req: &HashMap<*const lang::Var, Vec<*const lang::Assert>>)
+                             -> Option<HashMap<*const lang::Var, Vec<VarAssignment>>> {
+
+        let mut results: HashMap<*const lang::Var, Vec<VarAssignment>> = HashMap::new();
+        for (var, asserts) in req.iter() {
+            let mut class_list = Vec::new();
+            let mut relations_list = Vec::new();
+            for a in asserts {
+                let a = unsafe { &**a };
+                match a {
+                    &lang::Assert::FuncDecl(ref f) => relations_list.push(f),
+                    &lang::Assert::ClassDecl(ref c) => class_list.push(c),
+                }
+            }
+            let lock = self.kb.classes.read().unwrap();
+            let d = unsafe { &*(&*lock as *const HashMap<&str, Box<Class>>) };
+            for (id, cls) in d.iter() {
+                let mut gr_memb = HashMap::new();
+                let mut gr_relations = HashMap::new();
+                if class_list.len() > 0 {
+                    if let Some(classes) = cls.belongs_to_classes(&class_list) {
+                        if classes.len() == class_list.len() {
+                            gr_memb = classes;
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                }
+                if relations_list.len() > 0 {
+                    if let Some(relations) = cls.has_relationships(&relations_list, Some(*var)) {
+                        if relations.len() == relations_list.len() {
+                            gr_relations = relations;
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                }
+                if results.contains_key(var) {
+                    let v = results.get_mut(var).unwrap();
+                    v.push(VarAssignment {
+                        name: id,
+                        classes: gr_memb,
+                        funcs: gr_relations,
+                    })
+                } else {
+                    results.insert(*var,
+                                   vec![VarAssignment {
+                                            name: id,
+                                            classes: gr_memb,
+                                            funcs: gr_relations,
+                                        }]);
+                }
+            }
+            if !results.contains_key(var) {
+                return None;
+            }
+        }
+        Some(results)
+    }
+
     fn get_rules(&mut self,
                  mut cls_ls: Vec<&'a str>,
                  mut done: Vec<&'a str>,
-                 mut rules: HashSet<&&'a LogSentence>) {
+                 rules: HashSet<&&'a LogSentence>) {
         if let Some(cls) = cls_ls.pop() {
             done.push(cls);
             if let Some(stored) = self.kb.classes.read().unwrap().get(cls) {
@@ -1274,18 +1409,10 @@ impl<'a> InfTrial<'a> {
                     }
                     for pred in sent.get_rhs_predicates() {
                         let name = pred.get_name();
-                        let node = Arc::new(ProofNode::new(sent, antecedents.clone(), name));
+                        let node = Arc::new(ProofNode::new(sent, antecedents.clone()));
                         let mut lock = self.nodes.write().unwrap();
                         let mut ls = lock.entry(name).or_insert(vec![]);
-                        ls.push(node.clone());                        
-                        /*
-                        if node.const in self.nodes:
-                            self.nodes[node.const].add(node)
-                        else:
-                            self.nodes[node.const] = SortedListWithKey(
-                                key=lambda x: x.rule.created)
-                            self.nodes[node.const].add(node)
-                        */
+                        ls.push(node.clone());
                     }
                     let mut filtered: Vec<_> = antecedents.iter()
                         .filter(|e| if !done.contains(e) && !cls_ls.contains(e) {
@@ -1303,7 +1430,7 @@ impl<'a> InfTrial<'a> {
                         }
                         for pred in sent.get_lhs_predicates() {
                             let name = pred.get_name();
-                            let node = Arc::new(ProofNode::new(sent, previous.clone(), name));
+                            let node = Arc::new(ProofNode::new(sent, previous.clone()));
                             let mut lock = self.nodes.write().unwrap();
                             let mut ls = lock.entry(name).or_insert(vec![]);
                             ls.push(node.clone());
@@ -1367,24 +1494,22 @@ fn product<'a>(mapped: &mut HashSet<Arc<ProofArgs<'a>>>,
 struct ProofNode<'a> {
     proof: &'a LogSentence,
     antecedents: Vec<&'a str>,
-    predicate: &'a str,
-    _id: &'a [u8],
+    id: &'a [u8],
 }
 
 impl<'a> ProofNode<'a> {
-    fn new(proof: &'a LogSentence, antecedents: Vec<&'a str>, predicate: &'a str) -> ProofNode<'a> {
+    fn new(proof: &'a LogSentence, antecedents: Vec<&'a str>) -> ProofNode<'a> {
         ProofNode {
             proof: proof,
             antecedents: antecedents,
-            predicate: predicate,
-            _id: proof.get_id(),
+            id: proof.get_id(),
         }
     }
 }
 
 impl<'a> ::std::cmp::PartialEq for ProofNode<'a> {
     fn eq(&self, other: &ProofNode) -> bool {
-        self._id == other._id
+        self.id == other.id
     }
 }
 
@@ -1392,20 +1517,20 @@ impl<'a> ::std::cmp::Eq for ProofNode<'a> {}
 
 impl<'a> Hash for ProofNode<'a> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self._id.hash(state);
+        self.id.hash(state);
     }
 }
 
 #[derive(Clone)]
 pub struct VarAssignment<'a> {
     pub name: &'a str,
-    classes: HashMap<&'a str, &'a GroundedTerm>,
+    classes: HashMap<&'a str, &'a GroundedClsMemb>,
     funcs: HashMap<&'a str, Vec<&'a GroundedFunc>>,
 }
 
 impl<'a> VarAssignment<'a> {
     #[inline]
-    pub fn get_class(&self, name: &str) -> &GroundedTerm {
+    pub fn get_class(&self, name: &str) -> &GroundedClsMemb {
         self.classes.get(name).unwrap()
     }
 
@@ -1441,12 +1566,12 @@ enum QueryInput {
 }
 
 struct QueryProcessed<'a> {
-    _askcls: Vec<Box<lang::ClassDecl>>,
-    _askfunc: Vec<Box<lang::FuncDecl>>,
-    cls_queries_free: HashMap<&'a lang::Var, Vec<&'a lang::FreeTerm>>,
-    cls_queries_grounded: HashMap<&'a str, Vec<&'a lang::GroundedTerm>>,
-    cls_memb_query: Vec<&'a lang::GroundedTerm>,
-    func_memb_query: Vec<&'a lang::GroundedTerm>,
+    askcls: Vec<Box<lang::ClassDecl>>,
+    askfunc: Vec<Box<lang::FuncDecl>>,
+    cls_queries_free: HashMap<&'a lang::Var, Vec<&'a lang::FreeClsMemb>>,
+    cls_queries_grounded: HashMap<&'a str, Vec<&'a lang::GroundedClsMemb>>,
+    cls_memb_query: Vec<&'a lang::GroundedClsMemb>,
+    func_memb_query: Vec<&'a lang::GroundedClsMemb>,
     func_queries_free: HashMap<&'a lang::Var, Vec<&'a lang::FuncDecl>>,
     func_queries_grounded: Vec<lang::GroundedFunc>,
 }
@@ -1454,8 +1579,8 @@ struct QueryProcessed<'a> {
 impl<'a> QueryProcessed<'a> {
     fn new() -> QueryProcessed<'a> {
         QueryProcessed {
-            _askcls: vec![],
-            _askfunc: vec![],
+            askcls: vec![],
+            askfunc: vec![],
             cls_queries_free: HashMap::new(),
             cls_queries_grounded: HashMap::new(),
             cls_memb_query: vec![],
@@ -1472,10 +1597,10 @@ impl<'a> QueryProcessed<'a> {
                 &lang::Terminal::GroundedTerm(_) => {
                     for a in cdecl.get_args() {
                         match a {
-                            &lang::Predicate::FreeTerm(ref t) => {
+                            &lang::Predicate::FreeClsMemb(ref t) => {
                                 query.push_to_clsquery_free(t.get_var_ref(), t);
                             }
-                            &lang::Predicate::GroundedTerm(ref t) => {
+                            &lang::Predicate::GroundedClsMemb(ref t) => {
                                 query.push_to_clsquery_grounded(t.get_name(), t);
                             }
                         }
@@ -1484,10 +1609,10 @@ impl<'a> QueryProcessed<'a> {
                 &lang::Terminal::FreeTerm(_) => {
                     for a in cdecl.get_args() {
                         match a {
-                            &lang::Predicate::FreeTerm(_) => {
+                            &lang::Predicate::FreeClsMemb(_) => {
                                 return Err(());
                             }
-                            &lang::Predicate::GroundedTerm(ref t) => {
+                            &lang::Predicate::GroundedClsMemb(ref t) => {
                                 query.ask_class_memb(t);
                             }
                         }
@@ -1508,7 +1633,7 @@ impl<'a> QueryProcessed<'a> {
                         }
                         false => {
                             for a in fdecl.get_args() {
-                                if let &lang::Predicate::FreeTerm(ref t) = a {
+                                if let &lang::Predicate::FreeClsMemb(ref t) = a {
                                     query.push_to_fnquery_free(t.get_var_ref(), fdecl);
                                 }
                             }
@@ -1518,10 +1643,10 @@ impl<'a> QueryProcessed<'a> {
                 &lang::Terminal::FreeTerm(_) => {
                     for a in fdecl.get_args() {
                         match a {
-                            &lang::Predicate::FreeTerm(_) => {
+                            &lang::Predicate::FreeClsMemb(_) => {
                                 return Err(());
                             }
-                            &lang::Predicate::GroundedTerm(ref t) => {
+                            &lang::Predicate::GroundedClsMemb(ref t) => {
                                 query.ask_relationships(t);
                             }
                         }
@@ -1562,23 +1687,23 @@ impl<'a> QueryProcessed<'a> {
 
     #[inline]
     fn append_askcls(&mut self, cls: lang::ClassDecl) -> &lang::ClassDecl {
-        self._askcls.push(Box::new(cls));
-        &**self._askcls.last().unwrap()
+        self.askcls.push(Box::new(cls));
+        &**self.askcls.last().unwrap()
     }
 
     #[inline]
     fn append_askfn(&mut self, func: lang::FuncDecl) -> &lang::FuncDecl {
-        self._askfunc.push(Box::new(func));
-        &**self._askfunc.last().unwrap()
+        self.askfunc.push(Box::new(func));
+        &**self.askfunc.last().unwrap()
     }
 
     #[inline]
-    fn push_to_clsquery_grounded(&mut self, term: &'a str, cls: &'a lang::GroundedTerm) {
+    fn push_to_clsquery_grounded(&mut self, term: &'a str, cls: &'a lang::GroundedClsMemb) {
         self.cls_queries_grounded.entry(term).or_insert(vec![]).push(cls);
     }
 
     #[inline]
-    fn push_to_clsquery_free(&mut self, term: &'a lang::Var, cls: &'a lang::FreeTerm) {
+    fn push_to_clsquery_free(&mut self, term: &'a lang::Var, cls: &'a lang::FreeClsMemb) {
         self.cls_queries_free.entry(term).or_insert(vec![]).push(cls);
     }
 
@@ -1593,12 +1718,12 @@ impl<'a> QueryProcessed<'a> {
     }
 
     #[inline]
-    fn ask_class_memb(&mut self, term: &'a lang::GroundedTerm) {
+    fn ask_class_memb(&mut self, term: &'a lang::GroundedClsMemb) {
         self.cls_memb_query.push(term);
     }
 
     #[inline]
-    fn ask_relationships(&mut self, term: &'a lang::GroundedTerm) {
+    fn ask_relationships(&mut self, term: &'a lang::GroundedClsMemb) {
         self.func_memb_query.push(term);
     }
 }

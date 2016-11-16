@@ -6,8 +6,7 @@
 //! LogSentence types are akin to minimal working compiled programs formed
 //! by compounded expressions which will evaluate with the current knowledge
 //! when called and perform any subtitution in the knowledge base if pertinent.
-use std::str;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use chrono::{UTC, DateTime};
@@ -30,12 +29,13 @@ use agent;
 pub struct LogSentence {
     particles: Vec<Box<Particle>>,
     produced: Vec<*const LogSentence>,
-    created: usize,
     vars: Option<Vec<Box<Var>>>,
     skolem: Option<Vec<Box<Skolem>>>,
     root: *const Particle,
+    predicates: (Vec<*const Assert>, Vec<*const Assert>),
     pub var_req: Option<HashMap<*const Var, Vec<*const Assert>>>,
-    _id: Vec<u8>,
+    pub created: DateTime<UTC>,
+    id: Vec<u8>,
 }
 
 impl<'a> LogSentence {
@@ -43,12 +43,13 @@ impl<'a> LogSentence {
         let mut sent = LogSentence {
             particles: Vec::new(),
             produced: Vec::new(),
-            created: 0,
             skolem: None,
             vars: None,
             root: ::std::ptr::null(),
+            predicates: (vec![], vec![]),
             var_req: None,
-            _id: vec![],
+            created: UTC::now(),
+            id: vec![],
         };
         let r = walk_ast(ast, &mut sent, context);
         if r.is_err() {
@@ -68,11 +69,35 @@ impl<'a> LogSentence {
                     return Err(ParseErrF::RuleInclICond(format!("{}", sent)));
                 }
             } else if context.iexpr() {
-                if let Err(err) = correct_iexpr(&sent) {
+                let mut lhs = HashSet::new();
+                if let Err(err) = correct_iexpr(&sent, &mut lhs) {
                     return Err(err);
                 }
+                let mut rhs = HashSet::new();
+                for p in &sent.particles {
+                    if p.is_atom() {
+                        rhs.insert(&**p as *const Particle);
+                    }
+                }
+                let mut rhs_v = vec![];
+                for p in rhs.difference(&lhs).map(|x| *x) {
+                    let p = unsafe { &*p as &Particle };
+                    match p {
+                        &Particle::Atom(ref p) => rhs_v.push(&p.pred as *const Assert),
+                        _ => {}
+                    }
+                }
+                let mut lhs_v = vec![];
+                for p in lhs.into_iter() {
+                    let p = unsafe { &*p as &Particle };
+                    match p {
+                        &Particle::Atom(ref p) => lhs_v.push(&p.pred as *const Assert),
+                        _ => {}
+                    }
+                }
+                sent.predicates = (lhs_v, rhs_v);
             }
-            sent.generate_unique_id();
+            sent.generate_uniqueid();
             Ok(sent)
         }
     }
@@ -85,12 +110,12 @@ impl<'a> LogSentence {
         if let Some(res) = root.solve(agent, &assignments) {
             if res {
                 if root.is_icond() {
-                    root.substitute(agent, &assignments, &true)
+                    root.substitute(agent, &assignments, context, &true)
                 }
                 context.result = Some(true);
             } else {
                 if root.is_icond() {
-                    root.substitute(agent, &assignments, &false)
+                    root.substitute(agent, &assignments, context, &false)
                 }
                 context.result = Some(false);
             }
@@ -100,22 +125,28 @@ impl<'a> LogSentence {
     }
 
     pub fn get_all_predicates(&self) -> Vec<&Assert> {
-        let mut v = Vec::new();
-        for p in &self.particles {
-            match **p {
-                Particle::Atom(ref p) => v.push(&p.pred),
-                _ => {}
-            }
-        }
+        let mut v = self.get_lhs_predicates();
+        let mut v_rhs = self.get_rhs_predicates();
+        v.append(&mut v_rhs);
         v
     }
 
     pub fn get_rhs_predicates(&self) -> Vec<&Assert> {
-        unimplemented!()
+        let mut v = vec![];
+        for p in &self.predicates.1 {
+            let p = unsafe { &**p as &Assert };
+            v.push(p);
+        }
+        v
     }
 
     pub fn get_lhs_predicates(&self) -> Vec<&Assert> {
-        unimplemented!()
+        let mut v = vec![];
+        for p in &self.predicates.0 {
+            let p = unsafe { &**p as &Assert };
+            v.push(p);
+        }
+        v
     }
 
     /// Returns the requeriments a variable must meet to fit the criteria in a sentence.
@@ -161,30 +192,30 @@ impl<'a> LogSentence {
         self.particles.push(p)
     }
 
-    fn generate_unique_id(&mut self) {
+    fn generate_uniqueid(&mut self) {
         for a in self.particles.iter() {
             match &**a {
-                &Particle::Conjunction(_) => self._id.push(0),
-                &Particle::Disjunction(_) => self._id.push(1),
-                &Particle::Equivalence(_) => self._id.push(2),
-                &Particle::Implication(_) => self._id.push(3),
-                &Particle::IndConditional(_) => self._id.push(4),
+                &Particle::Conjunction(_) => self.id.push(0),
+                &Particle::Disjunction(_) => self.id.push(1),
+                &Particle::Equivalence(_) => self.id.push(2),
+                &Particle::Implication(_) => self.id.push(3),
+                &Particle::IndConditional(_) => self.id.push(4),
                 &Particle::Atom(ref p) => {
                     let mut id_1 = p.get_id();
-                    self._id.append(&mut id_1)
+                    self.id.append(&mut id_1)
                 }
             }
         }
     }
 
     pub fn get_id(&self) -> &[u8] {
-        &self._id
+        &self.id
     }
 }
 
 impl ::std::cmp::PartialEq for LogSentence {
     fn eq(&self, other: &LogSentence) -> bool {
-        self._id == other._id
+        self.id == other.id
     }
 }
 
@@ -192,7 +223,7 @@ impl ::std::cmp::Eq for LogSentence {}
 
 impl ::std::hash::Hash for LogSentence {
     fn hash<H: ::std::hash::Hasher>(&self, state: &mut H) {
-        self._id.hash(state);
+        self.id.hash(state);
     }
 }
 
@@ -286,17 +317,10 @@ impl LogicIndCond {
     fn substitute(&self,
                   agent: &agent::Representation,
                   assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>,
+                  context: &mut agent::ProofResult,
                   rhs: &bool) {
         let n1 = unsafe { &*(self.next[1]) };
-        n1.substitute(agent, assignments, rhs)
-    }
-
-    fn get_parent(&self) -> Option<&Particle> {
-        if self.parent.is_null() {
-            None
-        } else {
-            unsafe { Some(&*(self.parent)) }
-        }
+        n1.substitute(agent, assignments, context, rhs)
     }
 
     fn get_next(&self, pos: usize) -> Option<&Particle> {
@@ -371,14 +395,6 @@ impl LogicEquivalence {
             Some(true)
         } else {
             Some(false)
-        }
-    }
-
-    fn get_parent(&self) -> Option<&Particle> {
-        if self.parent.is_null() {
-            None
-        } else {
-            unsafe { Some(&*(self.parent)) }
         }
     }
 
@@ -457,14 +473,6 @@ impl LogicImplication {
         }
     }
 
-    fn get_parent(&self) -> Option<&Particle> {
-        if self.parent.is_null() {
-            None
-        } else {
-            unsafe { Some(&*(self.parent)) }
-        }
-    }
-
     fn get_next(&self, pos: usize) -> Option<&Particle> {
         unsafe {
             if pos == 0 && self.next.len() >= 1 {
@@ -534,19 +542,12 @@ impl LogicConjunction {
     fn substitute(&self,
                   agent: &agent::Representation,
                   assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>,
+                  context: &mut agent::ProofResult,
                   rhs: &bool) {
         let n1 = unsafe { &*(self.next[1]) };
-        n1.substitute(agent, assignments, rhs);
+        n1.substitute(agent, assignments, context, rhs);
         let n0 = unsafe { &*(self.next[0]) };
-        n0.substitute(agent, assignments, rhs);
-    }
-
-    fn get_parent(&self) -> Option<&Particle> {
-        if self.parent.is_null() {
-            None
-        } else {
-            unsafe { Some(&*(self.parent)) }
-        }
+        n0.substitute(agent, assignments, context, rhs);
     }
 
     fn get_next(&self, pos: usize) -> Option<&Particle> {
@@ -628,21 +629,14 @@ impl LogicDisjunction {
     fn substitute(&self,
                   agent: &agent::Representation,
                   assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>,
+                  context: &mut agent::ProofResult,
                   rhs: &bool) {
         if *rhs {
             let n1 = unsafe { &*(self.next[1]) };
-            n1.substitute(agent, assignments, rhs)
+            n1.substitute(agent, assignments, context, rhs)
         } else {
             let n0 = unsafe { &*(self.next[0]) };
-            n0.substitute(agent, assignments, rhs)
-        }
-    }
-
-    fn get_parent(&self) -> Option<&Particle> {
-        if self.parent.is_null() {
-            None
-        } else {
-            unsafe { Some(&*(self.parent)) }
+            n0.substitute(agent, assignments, context, rhs)
         }
     }
 
@@ -706,8 +700,9 @@ impl LogicAtom {
     #[inline]
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>) {
-        self.pred.substitute(agent, assignments)
+                  assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>,
+                  context: &mut agent::ProofResult) {
+        self.pred.substitute(agent, assignments, context)
     }
 
     #[inline]
@@ -717,14 +712,6 @@ impl LogicAtom {
 
     fn get_name(&self) -> &str {
         self.pred.get_name()
-    }
-
-    fn get_parent(&self) -> Option<&Particle> {
-        if self.parent.is_null() {
-            None
-        } else {
-            unsafe { Some(&*(self.parent)) }
-        }
     }
 
     #[inline]
@@ -769,12 +756,13 @@ impl Particle {
     fn substitute(&self,
                   agent: &agent::Representation,
                   assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>,
+                  context: &mut agent::ProofResult,
                   rhs: &bool) {
         match *self {
-            Particle::IndConditional(ref p) => p.substitute(agent, assignments, rhs),
-            Particle::Disjunction(ref p) => p.substitute(agent, assignments, rhs),
-            Particle::Conjunction(ref p) => p.substitute(agent, assignments, rhs),
-            Particle::Atom(ref p) => p.substitute(agent, assignments),
+            Particle::IndConditional(ref p) => p.substitute(agent, assignments, context, rhs),
+            Particle::Disjunction(ref p) => p.substitute(agent, assignments, context, rhs),
+            Particle::Conjunction(ref p) => p.substitute(agent, assignments, context, rhs),
+            Particle::Atom(ref p) => p.substitute(agent, assignments, context),
             _ => panic!("simag: wrong operator on the rhs of the expression"),
         }
     }
@@ -820,18 +808,6 @@ impl Particle {
     }
 
     #[inline]
-    fn get_parent(&self) -> Option<&Particle> {
-        match *self {
-            Particle::Conjunction(ref p) => p.get_parent(),
-            Particle::Disjunction(ref p) => p.get_parent(),
-            Particle::Implication(ref p) => p.get_parent(),
-            Particle::Equivalence(ref p) => p.get_parent(),
-            Particle::IndConditional(ref p) => p.get_parent(),
-            Particle::Atom(ref p) => p.get_parent(),
-        }
-    }
-
-    #[inline]
     fn get_next(&self, pos: usize) -> Option<&Particle> {
         match *self {
             Particle::Conjunction(ref p) => p.get_next(pos),
@@ -863,38 +839,6 @@ impl Particle {
     fn is_icond(&self) -> bool {
         match *self {
             Particle::IndConditional(_) => true,
-            _ => false,
-        }
-    }
-
-    #[inline]
-    fn is_conj(&self) -> bool {
-        match *self {
-            Particle::Conjunction(_) => true,
-            _ => false,
-        }
-    }
-
-    #[inline]
-    fn is_disj(&self) -> bool {
-        match *self {
-            Particle::Disjunction(_) => true,
-            _ => false,
-        }
-    }
-
-    #[inline]
-    fn is_equiv(&self) -> bool {
-        match *self {
-            Particle::Equivalence(_) => true,
-            _ => false,
-        }
-    }
-
-    #[inline]
-    fn is_impl(&self) -> bool {
-        match *self {
-            Particle::Implication(_) => true,
             _ => false,
         }
     }
@@ -1264,7 +1208,7 @@ fn walk_ast(ast: &Next,
                         }
                     }
                 }
-                let last = walk_ast(&nodes[len], sent, context).unwrap();
+                let last = walk_ast(&nodes[len], sent, context)?;
                 let r = unsafe { &mut *prev };
                 r.add_rhs(last);
                 context.from_chain = true;
@@ -1316,35 +1260,41 @@ fn link_sent_childs(sent: &mut LogSentence) {
     }
 }
 
-fn correct_iexpr(sent: &LogSentence) -> Result<(), ParseErrF> {
-    fn has_icond_child(p: &Particle) -> Result<(), ParseErrF> {
+fn correct_iexpr(sent: &LogSentence, lhs: &mut HashSet<*const Particle>) -> Result<(), ParseErrF> {
+
+    fn has_icond_child(p: &Particle, lhs: &mut HashSet<*const Particle>) -> Result<(), ParseErrF> {
         if let Some(n1_0) = p.get_next(0) {
             match n1_0 {
                 &Particle::IndConditional(_) => return Err(ParseErrF::IExprICondLHS),
+                &Particle::Atom(_) => {
+                    lhs.insert(n1_0 as *const Particle);
+                }
                 _ => {}
             }
-            if let Err(err) = has_icond_child(n1_0) {
-                return Err(err);
-            }
+            has_icond_child(n1_0, lhs)?;
         }
         if let Some(n1_1) = p.get_next(1) {
             match n1_1 {
                 &Particle::IndConditional(_) => return Err(ParseErrF::IExprICondLHS),
+                &Particle::Atom(_) => {
+                    lhs.insert(n1_1 as *const Particle);
+                }
                 _ => {}
             }
-            if let Err(err) = has_icond_child(n1_1) {
-                return Err(err);
-            }
+            has_icond_child(n1_1, lhs)?;
         }
         Ok(())
     }
 
-    fn wrong_operator(p: &Particle) -> Result<(), ParseErrF> {
+    fn wrong_operator(p: &Particle, lhs: &mut HashSet<*const Particle>) -> Result<(), ParseErrF> {
         if let Some(n1_0) = p.get_next(0) {
             // test that the lhs does not include any indicative conditional
-            if let Err(err) = has_icond_child(n1_0) {
-                return Err(err);
+            if n1_0.is_icond() {
+                return Err(ParseErrF::IExprICondLHS);
+            } else if n1_0.is_atom() {
+                lhs.insert(n1_0 as *const Particle);
             }
+            has_icond_child(n1_0, lhs)?;
         }
         // test that the rh-most-s does include only icond or 'OR' connectives
         let mut is_wrong = Ok(());
@@ -1356,15 +1306,19 @@ fn correct_iexpr(sent: &LogSentence) -> Result<(), ParseErrF> {
                 &Particle::Atom(_) => {}
                 _ => return Err(ParseErrF::IExprWrongOp),
             }
-            is_wrong = wrong_operator(n1_1);
+            is_wrong = wrong_operator(n1_1, lhs);
         }
         is_wrong
     }
 
     let first: &Particle = unsafe { &*(sent.root) };
+    match first {
+        &Particle::IndConditional(_) => {}
+        _ => return Err(ParseErrF::IExprNotIcond),
+    }
     if let Some(n1_0) = first.get_next(0) {
         match n1_0 {
-            &Particle::IndConditional(_) => return Err(ParseErrF::IExprNotIcond),
+            &Particle::IndConditional(_) => return Err(ParseErrF::IExprICondLHS),
             _ => {}
         }
     }
@@ -1372,18 +1326,18 @@ fn correct_iexpr(sent: &LogSentence) -> Result<(), ParseErrF> {
         match **p {
             Particle::Atom(ref atom) => {
                 if !atom.pred.parent_is_grounded() {
-                    return Err(ParseErrF::WrongPredicate)
+                    return Err(ParseErrF::WrongPredicate);
                 }
             }
             _ => {}
         }
     }
-    wrong_operator(first)
+    wrong_operator(first, lhs)
 }
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use super::Particle;
     use lang::parser::*;
 
     #[test]
@@ -1394,7 +1348,7 @@ mod test {
              ( ( cde[x,u=1] |> fn::fgh[y,u>0.5;x;z] ) |> hij[y,u=1] )
             )
 
-            # Err
+            # Err:
             ((let x y z)
              ( abc[x,u=1]  |> (( cde[x,u=1] |> fn::fgh[y,u>0.5;x;z] ) && hij[y,u=1] ))
             )
@@ -1410,31 +1364,39 @@ mod test {
              (( american[x,u=1] && weapon[y,u=1] && fn::sells[y,u>0.5;x;z] ) |> criminal[x,u=1]))
         ");
 
-        let tree = Parser::parse(source);
+        let tree = Parser::parse(source, true);
         assert!(tree.is_ok());
         let mut tree = tree.unwrap();
 
-        let sent = match tree.pop_front() {
-            Some(ParseTree::ParseErr(ParseErrF::IExprWrongOp)) => {}
+        match tree.pop_front().unwrap() {
+            ParseTree::ParseErr(ParseErrF::IExprICondLHS) => {}
+            ParseTree::IExpr(sent) => {
+                println!("@failed_err: {}", sent);
+                panic!()
+            }
             _ => panic!(),
-        };
+        }
 
-        let sent = match tree.pop_front() {
-            Some(ParseTree::ParseErr(ParseErrF::IExprWrongOp)) => {}
+        match tree.pop_front().unwrap() {
+            ParseTree::ParseErr(ParseErrF::IExprICondLHS) => {}
+            ParseTree::IExpr(sent) => {
+                println!("@failed_err: {}", sent);
+                panic!()
+            }
             _ => panic!(),
-        };
+        }
 
-        let sent = match tree.pop_front() {
-            Some(ParseTree::IExpr(sent)) => sent,
+        match tree.pop_front().unwrap() {
+            ParseTree::IExpr(_) => {}
             _ => panic!(),
-        };
+        }
 
         unsafe {
             let sent = match tree.pop_front().unwrap() {
                 ParseTree::IExpr(sent) => sent,
                 _ => panic!(),
             };
-            let root = &*(sent.root.unwrap());
+            let root = &*(sent.root);
             match root {
                 &Particle::IndConditional(ref p) => {
                     match &*(p.next[0]) {
@@ -1442,17 +1404,6 @@ mod test {
                             match &*(op.next[0]) {
                                 &Particle::Atom(ref atm) => {
                                     assert_eq!(atm.get_name(), "american");
-                                    match atm.get_parent().unwrap() {
-                                        &Particle::Conjunction(ref op) => {
-                                            match &*(op.next[0]) {
-                                                &Particle::Atom(ref atm) => {
-                                                    assert_eq!(atm.get_name(), "american")
-                                                }
-                                                _ => panic!(),
-                                            };
-                                        }
-                                        _ => panic!(),
-                                    }
                                 }
                                 _ => panic!(),
                             };
@@ -1467,17 +1418,6 @@ mod test {
                                     match &*(op.next[1]) {
                                         &Particle::Atom(ref atm) => {
                                             assert_eq!(atm.get_name(), "sells");
-                                            match atm.get_parent().unwrap() {
-                                                &Particle::Conjunction(ref op) => {
-                                                    match &*(op.next[0]) {
-                                                        &Particle::Atom(ref atm) => {
-                                                            assert_eq!(atm.get_name(), "weapon")
-                                                        }
-                                                        _ => panic!(),
-                                                    };
-                                                }
-                                                _ => panic!(),
-                                            }
                                         }
                                         _ => panic!(),
                                     };

@@ -1,7 +1,7 @@
-#![allow(dead_code)]
+//#![allow(dead_code)]
 
 #[macro_use] extern crate nom;
-extern crate uuid;
+//extern crate uuid;
 extern crate chrono;
 
 mod lang;

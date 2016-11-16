@@ -999,13 +999,6 @@ impl CompOperator {
             _ => false,
         }
     }
-
-    pub fn is_less(&self) -> bool {
-        match *self {
-            CompOperator::Less => true,
-            _ => false,
-        }
-    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -1037,13 +1030,6 @@ impl LogicOperator {
     pub fn is_and(&self) -> bool {
         match *self {
             LogicOperator::And => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_or(&self) -> bool {
-        match *self {
-            LogicOperator::Or => true,
             _ => false,
         }
     }
@@ -1116,8 +1102,12 @@ fn is_multispace(chr: u8) -> bool {
 
 #[cfg(test)]
 mod test {
+    use super::{class_decl, func_decl, ParseErrB};
     use super::*;
-    use lang::common::*;
+    use std::str;
+
+    use nom::{IResult};
+    use nom;
 
     #[test]
     fn ast() {

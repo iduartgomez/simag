@@ -1,5 +1,6 @@
 use std::str;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use chrono::{UTC, DateTime};
 
@@ -11,8 +12,8 @@ use agent;
 
 #[derive(Debug, Clone)]
 pub enum Predicate {
-    FreeTerm(FreeTerm),
-    GroundedTerm(GroundedTerm),
+    FreeClsMemb(FreeClsMemb),
+    GroundedClsMemb(GroundedClsMemb),
 }
 
 impl<'a> Predicate {
@@ -22,23 +23,23 @@ impl<'a> Predicate {
             -> Result<Predicate, ParseErrF> {
         match Terminal::from(&a.term, context) {
             Ok(Terminal::FreeTerm(ft)) => {
-                let t = FreeTerm::new(ft, a.uval, func_name, None);
+                let t = FreeClsMemb::new(ft, a.uval, func_name, None);
                 if t.is_err() {
                     return Err(t.unwrap_err());
                 }
-                Ok(Predicate::FreeTerm(t.unwrap()))
+                Ok(Predicate::FreeClsMemb(t.unwrap()))
             }
             Ok(Terminal::GroundedTerm(gt)) => {
                 let t;
                 if context.in_assertion {
-                    t = GroundedTerm::new(gt, a.uval, func_name.to_string(), None, true);
+                    t = GroundedClsMemb::new(gt, a.uval, func_name.to_string(), None, true);
                 } else {
-                    t = GroundedTerm::new(gt, a.uval, func_name.to_string(), None, false);
+                    t = GroundedClsMemb::new(gt, a.uval, func_name.to_string(), None, false);
                 }
                 if t.is_err() {
                     return Err(t.unwrap_err());
                 }
-                Ok(Predicate::GroundedTerm(t.unwrap()))
+                Ok(Predicate::GroundedClsMemb(t.unwrap()))
             }
             Ok(Terminal::Keyword(kw)) => return Err(ParseErrF::ReservedKW(String::from(kw))),
             Err(err) => Err(err),
@@ -48,15 +49,15 @@ impl<'a> Predicate {
     #[inline]
     pub fn is_var(&self) -> bool {
         match *self {
-            Predicate::FreeTerm(_) => true,
-            Predicate::GroundedTerm(_) => false,
+            Predicate::FreeClsMemb(_) => true,
+            Predicate::GroundedClsMemb(_) => false,
         }
     }
 
     #[inline]
     pub fn get_name(&self) -> &str {
         match *self {
-            Predicate::GroundedTerm(ref t) => t.get_name(),
+            Predicate::GroundedClsMemb(ref t) => t.get_name(),
             _ => panic!("simag: expected a grounded terminal, found a free terminal"),
         }
     }
@@ -64,21 +65,21 @@ impl<'a> Predicate {
     #[inline]
     fn get_id(&self) -> Vec<u8> {
         match *self {
-            Predicate::FreeTerm(ref t) => t.get_id(),
-            Predicate::GroundedTerm(ref t) => t.get_id(),
+            Predicate::FreeClsMemb(ref t) => t.get_id(),
+            Predicate::GroundedClsMemb(ref t) => t.get_id(),
         }
     }
 
     fn has_uval(&self) -> bool {
         match *self {
-            Predicate::GroundedTerm(ref t) => {
+            Predicate::GroundedClsMemb(ref t) => {
                 if t.value.is_some() {
                     true
                 } else {
                     false
                 }
             }
-            Predicate::FreeTerm(ref t) => {
+            Predicate::FreeClsMemb(ref t) => {
                 if t.value.is_some() {
                     true
                 } else {
@@ -92,12 +93,12 @@ impl<'a> Predicate {
 // Grounded types:
 
 pub enum Grounded {
-    Function(GroundedFunc),
-    Terminal(GroundedTerm),
+    Function(Rc<GroundedFunc>),
+    Terminal(Rc<GroundedClsMemb>),
 }
 
 #[derive(Debug, Clone)]
-pub struct GroundedTerm {
+pub struct GroundedClsMemb {
     pub term: String,
     pub value: Option<f32>,
     operator: Option<CompOperator>,
@@ -105,13 +106,13 @@ pub struct GroundedTerm {
     dates: Option<Vec<i32>>,
 }
 
-impl GroundedTerm {
+impl GroundedClsMemb {
     fn new(term: String,
            uval: Option<UVal>,
            parent: String,
            _dates: Option<Vec<DateTime<UTC>>>,
            is_assignment: bool)
-           -> Result<GroundedTerm, ParseErrF> {
+           -> Result<GroundedClsMemb, ParseErrF> {
         let val;
         let op;
         if uval.is_some() {
@@ -146,7 +147,7 @@ impl GroundedTerm {
             val = None;
             op = None;
         }
-        Ok(GroundedTerm {
+        Ok(GroundedClsMemb {
             term: term,
             value: val,
             operator: op,
@@ -188,12 +189,12 @@ impl GroundedTerm {
         &self.parent
     }
 
-    pub fn update(&mut self, data: GroundedTerm) {
+    pub fn update(&self, data: Rc<GroundedClsMemb>) {
         panic!("not implemented: updating existing terminals")
     }
 
-    pub fn from_free(free: &FreeTerm, assignment: &str) -> GroundedTerm {
-        GroundedTerm {
+    pub fn from_free(free: &FreeClsMemb, assignment: &str) -> GroundedClsMemb {
+        GroundedClsMemb {
             term: String::from(assignment),
             value: free.value,
             operator: free.operator,
@@ -203,7 +204,7 @@ impl GroundedTerm {
     }
 
     #[inline]
-    pub fn comparable(&self, other: &GroundedTerm) -> bool {
+    pub fn comparable(&self, other: &GroundedClsMemb) -> bool {
         if self.term != other.get_name() {
             return false;
         }
@@ -214,8 +215,8 @@ impl GroundedTerm {
     }
 }
 
-impl ::std::cmp::PartialEq for GroundedTerm {
-    fn eq(&self, other: &GroundedTerm) -> bool {
+impl ::std::cmp::PartialEq for GroundedClsMemb {
+    fn eq(&self, other: &GroundedClsMemb) -> bool {
         if self.term != self.term {
             panic!("simag: grounded terms with different names cannot be compared")
         }
@@ -280,14 +281,14 @@ impl ::std::cmp::PartialEq for GroundedTerm {
 #[derive(Debug, PartialEq)]
 pub struct GroundedFunc {
     pub name: String,
-    pub args: [GroundedTerm; 2],
-    pub third: Option<GroundedTerm>,
+    pub args: [GroundedClsMemb; 2],
+    pub third: Option<GroundedClsMemb>,
 }
 
 impl GroundedFunc {
     pub fn from_free(free: &FuncDecl,
-                 assignments: &HashMap<*const Var, &agent::VarAssignment>)
-                 -> Result<GroundedFunc, ()> {
+                     assignments: &HashMap<*const Var, &agent::VarAssignment>)
+                     -> Result<GroundedFunc, ()> {
         if !free.variant.is_relational() || free.args.as_ref().unwrap().len() < 2 {
             return Err(());
         }
@@ -300,14 +301,14 @@ impl GroundedFunc {
         let mut third = None;
         for (i, a) in free.args.as_ref().unwrap().iter().enumerate() {
             let n_a = match a {
-                &Predicate::FreeTerm(ref free) => {
+                &Predicate::FreeClsMemb(ref free) => {
                     if let Some(ref entity) = assignments.get(&free.term) {
-                        GroundedTerm::from_free(free, entity.name)
+                        GroundedClsMemb::from_free(free, entity.name)
                     } else {
-                        return Err(())
+                        return Err(());
                     }
                 }
-                &Predicate::GroundedTerm(ref term) => term.clone(),
+                &Predicate::GroundedClsMemb(ref term) => term.clone(),
             };
             if i == 0 {
                 first = Some(n_a)
@@ -415,7 +416,7 @@ impl GroundedFunc {
         true
     }
 
-    pub fn update(&mut self, data: &GroundedFunc) {
+    pub fn update(&self, data: Rc<GroundedFunc>) {
         panic!("not implemented: updating existing GroundedFunc")
     }
 }
@@ -431,7 +432,7 @@ impl ::std::clone::Clone for GroundedFunc {
 }
 
 #[derive(Debug, Clone)]
-pub struct FreeTerm {
+pub struct FreeClsMemb {
     term: *const Var,
     value: Option<f32>,
     operator: Option<CompOperator>,
@@ -439,12 +440,12 @@ pub struct FreeTerm {
     dates: Option<Vec<i32>>,
 }
 
-impl FreeTerm {
+impl FreeClsMemb {
     fn new(term: *const Var,
            uval: Option<UVal>,
            parent: &Terminal,
-           _dates: Option<Vec<DateTime<UTC>>>,)
-           -> Result<FreeTerm, ParseErrF> {
+           _dates: Option<Vec<DateTime<UTC>>>)
+           -> Result<FreeClsMemb, ParseErrF> {
         let val;
         let op;
         if uval.is_some() {
@@ -472,7 +473,7 @@ impl FreeTerm {
             val = None;
             op = None;
         }
-        Ok(FreeTerm {
+        Ok(FreeClsMemb {
             term: term,
             value: val,
             operator: op,
@@ -502,19 +503,9 @@ impl FreeTerm {
         unsafe { &*(self.term) }
     }
 
-    #[inline]
-    pub fn get_parent(&self) -> &Terminal {
-        &self.parent
-    }
-
-    #[inline]
-    pub fn get_parent_as_str(&self) -> &str {
-        &self.parent.get_name()
-    }
-
     /// Compares a free term with a grounded term, assumes they are comparable
     /// (panics otherwise).
-    fn equal_to_grounded(&self, other: &GroundedTerm) -> bool {
+    fn equal_to_grounded(&self, other: &GroundedClsMemb) -> bool {
         if self.parent.get_name() != other.parent.as_str() {
             panic!("simag: grounded terms from different classes cannot be compared")
         }
@@ -634,10 +625,11 @@ impl Assert {
     #[inline]
     pub fn substitute(&self,
                       agent: &agent::Representation,
-                      assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>) {
+                      assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>,
+                      context: &mut agent::ProofResult) {
         match self {
-            &Assert::FuncDecl(ref f) => f.substitute(agent, assignments),
-            &Assert::ClassDecl(ref c) => c.substitute(agent, assignments),
+            &Assert::FuncDecl(ref f) => f.substitute(agent, assignments, context),
+            &Assert::ClassDecl(ref c) => c.substitute(agent, assignments, context),
         }
     }
 
@@ -698,7 +690,7 @@ impl<'a> FuncDecl {
         let mut args = self.args.unwrap();
         for (i, a) in args.drain(..).enumerate() {
             let n_a = match a {
-                Predicate::GroundedTerm(term) => term,
+                Predicate::GroundedClsMemb(term) => term,
                 _ => {
                     panic!("simag: found a non-grounded terminal while making a grounded \
                             relational function")
@@ -721,11 +713,11 @@ impl<'a> FuncDecl {
 
     pub fn is_grounded(&self) -> bool {
         if !self.parent_is_grounded() {
-            return false
+            return false;
         }
         for a in self.args.as_ref().unwrap().iter() {
             match a {
-                &Predicate::GroundedTerm(_) => {}
+                &Predicate::GroundedClsMemb(_) => {}
                 _ => return false,
             }
         }
@@ -751,11 +743,6 @@ impl<'a> FuncDecl {
     #[inline]
     pub fn get_parent(&self) -> &Terminal {
         &self.name
-    }
-
-    #[inline]
-    pub fn get_parent_as_str(&self) -> &str {
-        &self.name.get_name()
     }
 
     pub fn get_args(&self) -> DeclArgsIter {
@@ -830,7 +817,7 @@ impl<'a> FuncDecl {
                     return Err(pred.unwrap_err());
                 }
                 let pred = pred.unwrap();
-                if pred.has_uval() && (i == 0 || i == 2) {
+                if pred.has_uval() && (i == 1 || i == 2) {
                     return Err(ParseErrF::RFuncWrongArgs);
                 }
                 args.push(pred);
@@ -890,7 +877,7 @@ impl<'a> FuncDecl {
         if self.args.is_some() {
             for a in self.args.as_ref().unwrap() {
                 match a {
-                    &Predicate::FreeTerm(ref term) => {
+                    &Predicate::FreeClsMemb(ref term) => {
                         if term.term == &*var as *const Var {
                             return true;
                         }
@@ -913,7 +900,7 @@ impl<'a> FuncDecl {
         if self.args.is_some() {
             for (i, a) in self.args.as_ref().unwrap().iter().enumerate() {
                 match a {
-                    &Predicate::FreeTerm(ref term) => {
+                    &Predicate::FreeClsMemb(ref term) => {
                         if term.term == var {
                             return Some(i);
                         }
@@ -929,7 +916,7 @@ impl<'a> FuncDecl {
         if self.args.is_some() {
             for (i, a) in self.args.as_ref().unwrap().iter().enumerate() {
                 match a {
-                    &Predicate::GroundedTerm(ref term) => {
+                    &Predicate::GroundedClsMemb(ref term) => {
                         if term.term == var {
                             return Some(i);
                         }
@@ -960,7 +947,7 @@ impl<'a> FuncDecl {
         }
         for a in self.args.as_ref().unwrap() {
             match a {
-                &Predicate::FreeTerm(ref compare) => {
+                &Predicate::FreeClsMemb(ref compare) => {
                     if assignments.is_none() {
                         return None;
                     }
@@ -981,7 +968,7 @@ impl<'a> FuncDecl {
                         return None;
                     }
                 }
-                &Predicate::GroundedTerm(ref compare) => {
+                &Predicate::GroundedClsMemb(ref compare) => {
                     if let Some(current) =
                            agent.get_entity_from_class(self.get_name(), compare.term.as_str()) {
                         if current != compare {
@@ -998,12 +985,13 @@ impl<'a> FuncDecl {
 
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>) {
-        panic!("the substituted variable from the LHS must be assigned to the free term here \
-                shouldn't be included in the logsentence requeriments");
+                  assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>,
+                  context: &mut agent::ProofResult) {
         let grfunc = GroundedFunc::from_free(&self, assignments.as_ref().unwrap());
         if grfunc.is_ok() {
-            agent.up_relation(grfunc.unwrap());
+            let grfunc = Rc::new(grfunc.unwrap());
+            agent.up_relation(grfunc.clone());
+            context.grounded.push((Grounded::Function(grfunc.clone()), UTC::now()))
         }
     }
 }
@@ -1096,7 +1084,7 @@ impl<'a> ClassDecl {
     fn contains(&self, var: &Var) -> bool {
         for a in &self.args {
             match a {
-                &Predicate::FreeTerm(ref term) => {
+                &Predicate::FreeClsMemb(ref term) => {
                     if term.term == &*var as *const Var {
                         return true;
                     }
@@ -1127,7 +1115,7 @@ impl<'a> ClassDecl {
                          -> Option<bool> {
         for a in &self.args {
             match a {
-                &Predicate::FreeTerm(ref free) => {
+                &Predicate::FreeClsMemb(ref free) => {
                     if assignments.is_none() {
                         return None;
                     }
@@ -1140,7 +1128,7 @@ impl<'a> ClassDecl {
                         return None;
                     }
                 }
-                &Predicate::GroundedTerm(ref compare) => {
+                &Predicate::GroundedClsMemb(ref compare) => {
                     let entity =
                         agent.get_entity_from_class(self.get_name_as_str(), compare.term.as_str());
                     if let Some(current) = entity {
@@ -1158,33 +1146,34 @@ impl<'a> ClassDecl {
 
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>) {
-        panic!("the substituted variable from the LHS must be assigned to the free term here \
-                shouldn't be included in the logsentence requeriments");
+                  assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>,
+                  context: &mut agent::ProofResult) {
         for a in &self.args {
             let grfact = match a {
-                &Predicate::FreeTerm(ref free) => {
+                &Predicate::FreeClsMemb(ref free) => {
                     if let Some(ref entity) = assignments.as_ref().unwrap().get(&free.term) {
-                        GroundedTerm::from_free(free, entity.name)
+                        GroundedClsMemb::from_free(free, entity.name)
                     } else {
                         break;
                     }
                 }
-                &Predicate::GroundedTerm(ref grounded) => grounded.clone(),
+                &Predicate::GroundedClsMemb(ref grounded) => grounded.clone(),
             };
-            agent.up_membership(grfact)
+            let grfact = Rc::new(grfact);
+            context.grounded.push((Grounded::Terminal(grfact.clone()), UTC::now()));
+            agent.up_membership(grfact.clone())
         }
     }
 }
 
 impl ::std::iter::IntoIterator for ClassDecl {
-    type Item = GroundedTerm;
-    type IntoIter = ::std::vec::IntoIter<GroundedTerm>;
+    type Item = GroundedClsMemb;
+    type IntoIter = ::std::vec::IntoIter<GroundedClsMemb>;
     fn into_iter(mut self) -> Self::IntoIter {
         let mut v = Vec::new();
         for _ in 0..self.args.len() {
             match self.args.pop() {
-                Some(Predicate::GroundedTerm(grfact)) => v.push(grfact),
+                Some(Predicate::GroundedClsMemb(grfact)) => v.push(grfact),
                 Some(_) => {
                     panic!("simag: expected a grounded predicate, found a free term instead")
                 }
@@ -1258,13 +1247,13 @@ impl<'a> OpArg {
         let mut id = vec![];
         let mut id_1 = Vec::from(self.term.get_name().as_bytes());
         id.append(&mut id_1);
-        if let Some((ref op, ref t)) = self.comp {
+        if let Some((ref op, ref term)) = self.comp {
             match op {
                 &CompOperator::Equal => id.push(0),
                 &CompOperator::Less => id.push(1),
                 &CompOperator::More => id.push(2),
             }
-            let mut id_2 = Vec::from(self.term.get_name().as_bytes());
+            let mut id_2 = Vec::from(term.get_name().as_bytes());
             id.append(&mut id_2);
         }
         id
