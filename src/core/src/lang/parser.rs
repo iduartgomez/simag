@@ -125,7 +125,7 @@ enum ParseErrB<'a> {
     UnclosedComment(&'a [u8]),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ParseErrF {
     Msg(String),
     ReservedKW(String),
@@ -147,6 +147,7 @@ pub enum ParseErrF {
 }
 
 impl ParseErrF {
+    #[allow(dead_code)]
     fn format<'a>(_err: ParseErrB<'a>) -> String {
         unimplemented!()
     }
@@ -168,22 +169,16 @@ pub enum ParseTree {
 }
 
 impl ParseTree {
-    fn process_ast(input: Next, _tell: bool) -> Result<ParseTree, ParseErrF> {
-        let first = match &input {
-            &Next::ASTNode(ref val) => &(*val),
-            _ => panic!("simag: expected an AST node, found other variant"),
-        };
-        // check if it's an assertion
+    fn process_ast(input: Next, tell: bool) -> Result<ParseTree, ParseErrF> {
         let mut context = Context::new();
         context.in_assertion = true;
-        let out = first.is_assertion(&mut context);
-        match out {
-            Err(err) => return Err(err),
-            Ok(Some(tree)) => return Ok(tree),
-            _ => {}
+        context.is_tell = tell;
+        if let Ok(Some(tree)) = input.is_assertion(&mut context) {
+            return Ok(tree);
         }
         // it's an expression, make logic sentence from nested expressions
         let mut context = Context::new();
+        context.is_tell = tell;
         match LogSentence::new(&input, &mut context) {
             Ok(sent) => {
                 match context.stype {
@@ -264,7 +259,7 @@ impl<'a> Next<'a> {
                     _ => Ok(None),
                 }
             }
-            &Next::None => Ok(Some(ParseTree::Assertion(Vec::with_capacity(0)))),
+            &Next::None => Ok(None),
         }
     }
 }
@@ -274,6 +269,22 @@ pub enum AssertBorrowed<'a> {
     FuncDecl(FuncDeclBorrowed<'a>),
     ClassDecl(ClassDeclBorrowed<'a>),
 }
+
+// impl<'a> AssertBorrowed<'a> {
+// fn into_owned(&self) -> Assert {
+// match &self {
+// &AssertBorrowed::ClassDecl(ref decl) => {
+// let cls = ClassDecl::from(decl, context)?;
+// Ok(Some(ParseTree::Assertion(vec![Assert::ClassDecl(cls)])))
+// }
+// &AssertBorrowed::FuncDecl(ref decl) => {
+// let func = FuncDecl::from(decl, context)?;
+// Ok(Some(ParseTree::Assertion(vec![Assert::FuncDecl(func)])))
+// }
+// }
+// }
+// }
+//
 
 #[derive(Debug)]
 pub enum VarDeclBorrowed<'a> {
@@ -305,7 +316,7 @@ fn get_blocks<'a>(input: &'a [u8]) -> IResult<&'a [u8], Vec<Next<'a>>> {
                 if i + 1 < input.len() {
                     mcd.push_back((slp as usize, i + 1));
                 } else {
-                    mcd.push_back((slp as usize, input.len() - 1));
+                    mcd.push_back((slp as usize, input.len()));
                 }
                 slp = -1;
             }
@@ -1106,7 +1117,7 @@ mod test {
     use super::*;
     use std::str;
 
-    use nom::{IResult};
+    use nom::IResult;
     use nom;
 
     #[test]

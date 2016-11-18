@@ -11,19 +11,19 @@
 //! member of it's own set.
 //!
 //! **Classes**: The sets in which the agent can classify objects.
-//! Also stores the types of relations an object can have.
+//! Also stores the types of relations an object can have (class of relations).
 //!
 //! ## Support types, methods and functions
-//! **Inference**: Encapsulates the whole inference process, from making
-//! a temporal substitution representation where the inference is operated to
-//! solving the query (including query parsing, data fetching and unification).
+//! **Inference**: Encapsulates the whole inference process, where the inference
+//! is operated to solving the query (including query parsing, data fetching
+//! and unification).
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::iter::FromIterator;
 use std::hash::{Hash, Hasher};
 use std::cell::RefCell;
 use std::sync::{RwLock, Mutex, Arc};
-//use std::thread;
+// use std::thread;
 use std::rc::Rc;
 
 use chrono::{UTC, DateTime};
@@ -142,6 +142,19 @@ impl<'a> Representation<'a> {
         }
     }
 
+    fn ask_processed(&'a self,
+                     source: QueryInput,
+                     single_answer: bool,
+                     ignore_current: bool)
+                     -> Answer {
+        let mut inf = Inference::new(&self, source, single_answer, ignore_current);
+        {
+            let mut inf_r = unsafe { &mut *(&mut inf as *mut Inference) as &mut Inference };
+            inf_r.infer_facts();
+        }
+        inf.get_results()
+    }
+
     pub fn up_membership(&self, assert: Rc<lang::GroundedClsMemb>) {
         let parent_exists = self.classes.read().unwrap().contains_key(assert.get_parent());
         if !parent_exists {
@@ -227,7 +240,7 @@ impl<'a> Representation<'a> {
         }
     }
 
-    fn add_belief(&self, belief: &'a LogSentence) {
+    fn add_belief(&'a self, belief: &'a LogSentence) {
         let update = move |subject: &str, name: &String, is_entity: bool| {
             let name = unsafe { &*(&*name as *const String) };
             if is_entity {
@@ -262,6 +275,7 @@ impl<'a> Representation<'a> {
                 }
             }
         };
+
         for p in belief.get_all_predicates() {
             match p {
                 &lang::Assert::ClassDecl(ref cls_decl) => {
@@ -320,7 +334,19 @@ impl<'a> Representation<'a> {
                 }
             }
         }
-        panic!("has to run a query for every lhs pred in the sentence")
+
+        for query in belief.get_rhs_predicates() {
+            match query {
+                &lang::Assert::ClassDecl(ref cls_decl) => {
+                    self.ask_processed(QueryInput::AskClassMember(cls_decl.clone()), true, true);
+                }
+                &lang::Assert::FuncDecl(ref func_decl) => {
+                    self.ask_processed(QueryInput::AskRelationalFunc(func_decl.clone()),
+                                       true,
+                                       true);
+                }
+            }
+        }
     }
 
     fn add_rule(&'a self, rule: &'a LogSentence) {
@@ -353,7 +379,7 @@ impl<'a> Representation<'a> {
         for (k, v) in cls_dic.drain() {
             obj_dic.insert(k, v);
         }
-        for _ in obj_dic.keys() {
+        for _e in obj_dic.keys() {
             panic!("not implemented: rule.call(self, e)")
         }
     }
@@ -436,7 +462,7 @@ impl<'a> Representation<'a> {
         match subject.starts_with("$") {
             true => {
                 if let Some(entity) = self.entities.read().unwrap().get(subject) {
-                    if let Some(current) = entity.belongs_to_class(pred.get_name()) {
+                    if let Some(current) = entity.belongs_to_class(pred.get_parent()) {
                         if current == pred {
                             return Some(true);
                         } else {
@@ -447,7 +473,7 @@ impl<'a> Representation<'a> {
             }
             false => {
                 if let Some(class) = self.classes.read().unwrap().get(subject) {
-                    if let Some(current) = class.belongs_to_class(pred.get_name()) {
+                    if let Some(current) = class.belongs_to_class(pred.get_parent()) {
                         if current == pred {
                             return Some(true);
                         } else {
@@ -460,7 +486,7 @@ impl<'a> Representation<'a> {
         None
     }
 
-    fn has_relationship(&self, pred: &GroundedFunc, subject: &str) -> Option<bool> {
+    pub fn has_relationship(&self, pred: &GroundedFunc, subject: &str) -> Option<bool> {
         match subject.starts_with("$") {
             true => {
                 if let Some(entity) = self.entities.read().unwrap().get(subject) {
@@ -505,6 +531,7 @@ impl<'a> Representation<'a> {
 /// 0.9 (in natural language then it would be 'very cold') or 0.1
 /// (then it would be 'a bit cold', the subjective adjectives are defined
 /// in the class itself).
+#[derive(Debug)]
 pub struct Entity<'a> {
     pub name: String,
     classes: RwLock<HashMap<&'a str, Rc<GroundedClsMemb>>>,
@@ -684,13 +711,14 @@ impl<'a> Entity<'a> {
 ///
 /// All the attributes of a class are inherited by their members
 /// (to a fuzzy degree).
+#[derive(Debug)]
 pub struct Class<'a> {
     pub name: String,
     classes: RwLock<HashMap<&'a str, Rc<GroundedClsMemb>>>,
     relations: RwLock<HashMap<&'a str, Vec<Rc<GroundedFunc>>>>,
     beliefs: RwLock<HashMap<&'a str, Vec<&'a LogSentence>>>,
     rules: RwLock<Vec<&'a LogSentence>>,
-    kind: ClassKind,
+    _kind: ClassKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -707,7 +735,7 @@ impl<'a> Class<'a> {
             relations: RwLock::new(HashMap::new()),
             beliefs: RwLock::new(HashMap::new()),
             rules: RwLock::new(Vec::new()),
-            kind: kind,
+            _kind: kind,
         }
     }
 
@@ -880,6 +908,7 @@ struct Inference<'a> {
     assignments: Mutex<Vec<VarAssignment<'a>>>,
 }
 
+#[derive(Debug, PartialEq)]
 pub enum Answer<'a> {
     Single(Option<bool>),
     Multiple(HashMap<&'a str, HashMap<&'a str, Option<(bool, Option<Date>)>>>),
@@ -892,7 +921,7 @@ impl<'a> Inference<'a> {
            query_input: QueryInput,
            single: bool,
            ignore_current: bool)
-           -> Inference {
+           -> Inference<'a> {
         let query = QueryProcessed::new().get_query(query_input);
         Inference {
             query: query.unwrap(),
@@ -909,11 +938,16 @@ impl<'a> Inference<'a> {
 
     fn get_results(self) -> Answer<'a> {
         if self.single {
-            for r0 in self.results.into_inner().unwrap().values() {
+            let results = self.results.into_inner().unwrap();
+            if results.len() == 0 {
+                return Answer::Single(None);
+            }
+            for r0 in results.values() {
                 for r1 in r0.values() {
                     if let &Some((false, _)) = r1 {
                         return Answer::Single(Some(false));
-                    } else {
+                    }
+                    if let &None = r1 {
                         return Answer::Single(None);
                     }
                 }
@@ -934,11 +968,11 @@ impl<'a> Inference<'a> {
     fn infer_facts(&'a mut self) {
         fn query_cls<'a>(inf: &'a Inference<'a>, query: &'a str, actv_query: ActiveQuery<'a>) {
             let mut pass = InfTrial::new(inf, actv_query);
-            pass.get_rules(vec![], vec![], HashSet::new());
+            pass.get_rules(vec![query], HashSet::new(), HashSet::new(), 0);
             {
                 let mut lock = inf.nodes.write().unwrap();
                 for nodes in lock.values_mut() {
-                    nodes.sort_by(|a, b| a.proof.created.cmp(&b.proof.created))
+                    nodes.sort_by(|a, b| a.proof.created.cmp(&b.proof.created));
                 }
             }
             let ref mut pass_ref = unsafe { &*(&pass as *const InfTrial) as &InfTrial };
@@ -946,9 +980,9 @@ impl<'a> Inference<'a> {
             // then loop again, else stop
             loop {
                 let mut chk = VecDeque::new();
-                let mut done = vec![];
+                let mut done = HashSet::new();
                 pass_ref.unify(query, &mut chk, &mut done);
-                if !pass.updated.borrow().contains(&true) || !*(pass.feedback.borrow()) {
+                if !pass.updated.borrow().contains(&true) || !*pass.feedback.borrow() {
                     break;
                 } else {
                     pass.updated = RefCell::new(vec![]);
@@ -968,6 +1002,11 @@ impl<'a> Inference<'a> {
                     let mut answ = lock.entry(query).or_insert(HashMap::new());
                     answ.insert(*obj, Some((result.unwrap(), None)));
                 } else {
+                    {
+                        let mut lock = self.results.write().unwrap();
+                        let mut answ = lock.entry(query).or_insert(HashMap::new());
+                        answ.insert(*obj, None);
+                    }
                     // if no result was found from the kb directly
                     // make an inference from a grounded fact
                     let actv_query = ActiveQuery::Class(obj, query, pred);
@@ -989,11 +1028,21 @@ impl<'a> Inference<'a> {
                     let mut answ = lock.entry(query).or_insert(HashMap::new());
                     answ.insert(obj, Some((result.unwrap(), None)));
                 } else {
+                    {
+                        let mut lock = self.results.write().unwrap();
+                        let mut answ = lock.entry(query).or_insert(HashMap::new());
+                        answ.insert(obj, None);
+                    }
                     let actv_query = ActiveQuery::Func(obj, query, pred);
                     query_cls(self, query, actv_query);
                 }
             }
         }
+
+        // cls_queries_free: HashMap<&'a lang::Var, Vec<&'a lang::FreeClsMemb>>,
+        // cls_queries_grounded: HashMap<&'a str, Vec<&'a lang::GroundedClsMemb>>,
+        // func_memb_query: Vec<&'a lang::GroundedClsMemb>,
+        // func_queries_free: HashMap<&'a lang::Var, Vec<&'a lang::FuncDecl>>,
     }
 }
 
@@ -1011,7 +1060,7 @@ struct InfTrial<'a> {
 }
 
 enum ActiveQuery<'a> {
-    /// `(obj_name, pred_name, fn/cls decl)`
+    // `(obj_name, pred_name, fn/cls decl)`
     Class(&'a str, &'a str, &'a GroundedClsMemb),
     Func(&'a str, &'a str, &'a GroundedFunc),
 }
@@ -1032,18 +1081,11 @@ impl<'a> ActiveQuery<'a> {
             _ => panic!(),
         }
     }
-
-    #[inline]
-    fn get_pred(&self) -> &'a str {
-        match self {
-            &ActiveQuery::Class(_, ref query_pred, _) => query_pred,
-            &ActiveQuery::Func(_, ref query_pred, _) => query_pred,
-        }
-    }
 }
 
 type ProofArgs<'a> = Vec<(*const lang::Var, &'a VarAssignment<'a>)>;
 
+#[derive(Debug)]
 pub struct ProofResult<'a> {
     pub result: Option<bool>,
     args: Arc<ProofArgs<'a>>,
@@ -1078,29 +1120,39 @@ impl<'a> InfTrial<'a> {
         }
     }
 
-    fn unify(&'a self, parent: &'a str, chk: &mut VecDeque<&'a str>, done: &mut Vec<&'a str>) {
-        let query_pred = self.actv.get_pred();
-        {
-            *(self.valid.borrow_mut()) = None;
-        }
+    fn unify(&'a self, parent: &'a str, chk: &mut VecDeque<&'a str>, done: &mut HashSet<&'a str>) {
+        *self.valid.borrow_mut() = None;
         // for each node in the subtitution tree unifify variables
         // and try every possible substitution until (if) a solution is found
         // the proofs are tried in order of addition to the KB
-        if let Some(nodes) = self.nodes.read().unwrap().get(query_pred) {
+        if let Some(nodes) = self.nodes.read().unwrap().get(parent) {
             // the node for each rule is stored in an efficient sorted list
             // by rule creation datetime, from newest to oldest
             // as the newest rules take precedence
-            for node in nodes.iter().rev() {
+            for node in nodes.iter() {
                 // recursively try unifying all possible argument with the
                 // operating logic sentence:
                 // get all the entities/classes from the kb that meet the proof requeriments
-                let mut assignments =
-                    self.entities_meet_sent_req(node.proof.var_req.as_ref().unwrap())
-                        .unwrap();
-                let mut a1 = self.classes_meet_sent_req(node.proof.var_req.as_ref().unwrap())
-                    .unwrap();
-                for (k, v) in a1.drain() {
-                    assignments.insert(k, v);
+                let aents = self.entities_meet_sent_req(node.proof.var_req.as_ref().unwrap());
+                let acls = self.classes_meet_sent_req(node.proof.var_req.as_ref().unwrap());
+                let mut assignments;
+                if aents.is_some() && acls.is_some() {
+                    assignments = aents.unwrap();
+                    let mut acls = acls.unwrap();
+                    for (k, v) in acls.drain() {
+                        assignments.insert(k, v);
+                    }
+                } else if acls.is_some() {
+                    assignments = acls.unwrap();
+                } else if aents.is_some() {
+                    assignments = aents.unwrap();
+                } else {
+                    for e in node.antecedents.clone() {
+                        if !done.contains(&e) && !chk.contains(&e) {
+                            chk.push_back(e);
+                        }
+                    }
+                    continue;
                 }
                 let mut n_a: HashMap<*const lang::Var, Vec<&VarAssignment>> = HashMap::new();
                 for (var, assigned) in assignments.drain() {
@@ -1109,6 +1161,7 @@ impl<'a> InfTrial<'a> {
                         let mut lock = self.assignments.lock().unwrap();
                         lock.push(a);
                         let a_ref = unsafe {
+                            // extend lifetime of VarAssignment ref
                             &*(lock.last().unwrap() as *const VarAssignment) as &VarAssignment
                         };
                         n_av.push(a_ref);
@@ -1120,44 +1173,57 @@ impl<'a> InfTrial<'a> {
                     &*(&n_a as *const HashMap<*const lang::Var, Vec<&VarAssignment>>)
                             as &HashMap<*const lang::Var, Vec<&VarAssignment>>
                 };
-                // work out which are all the possible combinations
-                let mut mapped = HashSet::new();
-                product(&mut mapped, n_a_ref);
-                // try all possible combinations of the substitutions
-                for args in mapped.drain() {
-                    let args_done;
-                    {
-                        args_done = self.queue.read().unwrap().get(node).unwrap().contains(&args)
-                    }
+                // lazily iterate over all possible combinations of the substitutions
+                let mapped = ArgsProduct::product(n_a_ref);
+                for args in mapped {
+                    let args_done = {
+                        if let Some(queued) = self.queue.read().unwrap().get(node) {
+                            queued.contains(&args)
+                        } else {
+                            false
+                        }
+                    };
                     if !args_done {
-                        let n_args = HashMap::with_capacity(args.len());
+                        let mut n_args = HashMap::with_capacity(args.len());
+                        let mut pargs = vec![];
+                        for &(k, v) in args.iter() {
+                            n_args.insert(k, v);
+                            pargs.push(v.name)
+                        }
                         let mut context = ProofResult::new(args.clone(), node.clone());
                         node.proof.solve(self.kb, Some(n_args), &mut context);
                         if context.result.is_some() {
                             self.updated.borrow_mut().push(true);
-                            self.queue.write().unwrap().get_mut(node).unwrap().insert(args);
+                            let mut lock = self.queue.write().unwrap();
+                            lock.entry(node.clone()).or_insert(HashSet::new()).insert(args);
                             self.add_result(context);
+                            break;
                         }
                     }
                 }
-                if !done.contains(&query_pred) {
-                    let mut n_chk = VecDeque::from(node.antecedents.clone());
-                    chk.append(&mut n_chk);
+                for e in node.antecedents.clone() {
+                    if !done.contains(&e) && !chk.contains(&e) {
+                        chk.push_back(e);
+                    }
                 }
-                if let Some((ref node, ref assigned)) = *(self.valid.borrow()) {
+                if let Some((ref node, ref assigned)) = *self.valid.borrow() {
                     // the result may be replaced in the KB by other proof which is less current,
                     // to ensure that the valid result stays in the KB after all proofs are done,
                     // repeat the valid one with proper arguments
-                    self.repeat.lock().unwrap().push((node.proof, (*assigned).clone()))
-                }
-                if !*(self.feedback.borrow()) {
-                    return;
-                } else if chk.len() > 0 {
-                    done.push(parent);
-                    let p = chk.pop_front();
-                    self.unify(p.unwrap(), chk, done)
+                    self.repeat.lock().unwrap().push((node.proof, assigned.clone()))
                 }
             }
+        }
+        if !*self.feedback.borrow() {
+            return;
+        } else if chk.len() > 0 {
+            done.insert(parent);
+            let p = chk.pop_front().unwrap();
+            let has_key = self.nodes.read().unwrap().contains_key(p);
+            if !has_key {
+                self.get_rules(vec![p], HashSet::new(), HashSet::new(), 0);
+            }
+            self.unify(p, chk, done)
         }
     }
 
@@ -1191,31 +1257,29 @@ impl<'a> InfTrial<'a> {
                                 val = false;
                             }
                             let mut d = self.results.write().unwrap();
-                            let mut d = d.entry(query_obj).or_insert(HashMap::new());
-                            if d.contains_key(query_pred) {
+                            let mut d = d.entry(query_pred).or_insert(HashMap::new());
+                            if d.contains_key(query_obj) {
                                 let cond_ok;
-                                if let Some(&(_, Some(ref cdate))) = d.get(query_pred)
-                                    .unwrap()
-                                    .as_ref() {
+                                if let Some(&Some((_, Some(ref cdate)))) = d.get(query_obj) {
                                     if &date >= cdate {
                                         cond_ok = true;
                                     } else {
                                         cond_ok = false;
                                     }
                                 } else {
-                                    cond_ok = false;
+                                    cond_ok = true;
                                 }
                                 if cond_ok {
-                                    d.insert(query_pred, Some((val, Some(date))));
+                                    d.insert(query_obj, Some((val, Some(date))));
                                     *(self.valid.borrow_mut()) = Some((context.node.clone(),
-                                                                        context.args.clone()));
+                                                                       context.args.clone()));
                                 }
-                            } else if !d.contains_key(query_pred) {
-                                d.insert(query_pred, Some((val, Some(date))));
+                            } else {
+                                d.insert(query_obj, Some((val, Some(date))));
                                 *(self.valid.borrow_mut()) = Some((context.node.clone(),
-                                                                    context.args.clone()));
+                                                                   context.args.clone()));
                             }
-                            *(self.feedback.borrow_mut()) = false;
+                            *self.feedback.borrow_mut() = false;
                         }
                     }
                 }
@@ -1231,31 +1295,29 @@ impl<'a> InfTrial<'a> {
                                 val = false;
                             }
                             let mut d = self.results.write().unwrap();
-                            let mut d = d.entry(query_obj).or_insert(HashMap::new());
-                            if d.contains_key(query_pred) {
+                            let mut d = d.entry(query_pred).or_insert(HashMap::new());
+                            if d.contains_key(query_obj) {
                                 let cond_ok;
-                                if let Some(&(_, Some(ref cdate))) = d.get(query_pred)
-                                    .unwrap()
-                                    .as_ref() {
+                                if let Some(&Some((_, Some(ref cdate)))) = d.get(query_obj) {
                                     if &date >= cdate {
                                         cond_ok = true;
                                     } else {
                                         cond_ok = false;
                                     }
                                 } else {
-                                    cond_ok = false;
+                                    cond_ok = true;
                                 }
                                 if cond_ok {
-                                    d.insert(query_pred, Some((val, Some(date))));
+                                    d.insert(query_obj, Some((val, Some(date))));
                                     *(self.valid.borrow_mut()) = Some((context.node.clone(),
-                                                                        context.args.clone()));
+                                                                       context.args.clone()));
                                 }
-                            } else if !d.contains_key(query_pred) {
-                                d.insert(query_pred, Some((val, Some(date))));
+                            } else {
+                                d.insert(query_obj, Some((val, Some(date))));
                                 *(self.valid.borrow_mut()) = Some((context.node.clone(),
-                                                                    context.args.clone()));
+                                                                   context.args.clone()));
                             }
-                            *(self.feedback.borrow_mut()) = false;
+                            *self.feedback.borrow_mut() = false;
                         }
                     }
                 }
@@ -1393,29 +1455,35 @@ impl<'a> InfTrial<'a> {
         Some(results)
     }
 
-    fn get_rules(&mut self,
+    fn get_rules(&self,
                  mut cls_ls: Vec<&'a str>,
-                 mut done: Vec<&'a str>,
-                 rules: HashSet<&&'a LogSentence>) {
+                 mut done: HashSet<&'a str>,
+                 rules: HashSet<&&'a LogSentence>,
+                 depth: usize) {
+        if depth == 10 {
+            return;
+        }
         if let Some(cls) = cls_ls.pop() {
-            done.push(cls);
+            done.insert(cls);
             if let Some(stored) = self.kb.classes.read().unwrap().get(cls) {
                 let lock = stored.beliefs.read().unwrap();
                 let a: HashSet<&&LogSentence> = HashSet::from_iter(lock.get(cls).unwrap());
-                for sent in rules.difference(&a) {
+                for sent in a.difference(&rules) {
                     let mut antecedents = vec![];
                     for p in sent.get_lhs_predicates() {
                         antecedents.push(p.get_name())
                     }
+                    let node = Arc::new(ProofNode::new(sent, antecedents.clone()));
                     for pred in sent.get_rhs_predicates() {
                         let name = pred.get_name();
-                        let node = Arc::new(ProofNode::new(sent, antecedents.clone()));
                         let mut lock = self.nodes.write().unwrap();
                         let mut ls = lock.entry(name).or_insert(vec![]);
-                        ls.push(node.clone());
+                        if let None = ls.iter().map(|x| x.id).find(|x| *x == sent.get_id()) {
+                            ls.push(node.clone());
+                        }
                     }
                     let mut filtered: Vec<_> = antecedents.iter()
-                        .filter(|e| if !done.contains(e) && !cls_ls.contains(e) {
+                        .filter(|e| if !done.contains(*e) && !cls_ls.contains(e) {
                             true
                         } else {
                             false
@@ -1423,74 +1491,149 @@ impl<'a> InfTrial<'a> {
                         .map(|x| *x)
                         .collect();
                     cls_ls.append(&mut filtered);
-                    if antecedents.contains(&cls) {
-                        let mut previous = vec![];
-                        for p in sent.get_rhs_predicates() {
-                            previous.push(p.get_name())
-                        }
-                        for pred in sent.get_lhs_predicates() {
-                            let name = pred.get_name();
-                            let node = Arc::new(ProofNode::new(sent, previous.clone()));
-                            let mut lock = self.nodes.write().unwrap();
-                            let mut ls = lock.entry(name).or_insert(vec![]);
-                            ls.push(node.clone());
-                        }
-                        let mut filtered: Vec<_> = previous.iter()
-                            .filter(|e| if !done.contains(e) && !cls_ls.contains(e) {
-                                true
-                            } else {
-                                false
-                            })
-                            .map(|x| *x)
-                            .collect();
-                        cls_ls.append(&mut filtered);
-                    }
                 }
                 let rules: HashSet<_> = rules.union(&a).map(|x| *x).collect();
-                self.get_rules(cls_ls, done, rules)
+                self.get_rules(cls_ls, done, rules, depth + 1)
             }
         }
     }
 }
 
-fn product<'a>(mapped: &mut HashSet<Arc<ProofArgs<'a>>>,
-               input: &'a HashMap<*const lang::Var, Vec<&'a VarAssignment<'a>>>) {
-    let mut indexes = HashMap::new();
-    for (k, _) in input.iter() {
-        indexes.insert(k, 0_usize);
+#[derive(Debug)]
+struct ArgsProduct<'a> {
+    indexes: RwLock<HashMap<*const lang::Var, usize>>,
+    input: &'a HashMap<*const lang::Var, Vec<&'a VarAssignment<'a>>>,
+    skey: Option<Arc<*const lang::Var>>,
+    sval: Option<Arc<Vec<&'a VarAssignment<'a>>>>,
+    counter: Mutex<Option<usize>>,
+    done: RwLock<HashSet<Arc<ProofArgs<'a>>>>,
+}
+
+type ArgsProductInput<'a> = HashMap<*const lang::Var, Vec<&'a VarAssignment<'a>>>;
+
+impl<'a> ArgsProduct<'a> {
+    fn product(input: &'a ArgsProductInput<'a>) -> ArgsProduct<'a> {
+        let mut indexes = HashMap::new();
+        for (k, _) in input.iter() {
+            indexes.insert(*k, 0_usize);
+        }
+        let mut key = None;
+        let mut value = None;
+        for (k0, v0) in input.iter() {
+            key = Some(Arc::new(*k0));
+            value = Some(Arc::new(v0.clone()));
+            break;
+        }
+        let counter;
+        if let Some(_) = value {
+            counter = Mutex::new(Some(0_usize));
+        } else {
+            counter = Mutex::new(None);
+        }
+        ArgsProduct {
+            indexes: RwLock::new(indexes),
+            input: input,
+            skey: key,
+            sval: value,
+            counter: counter,
+            done: RwLock::new(HashSet::new()),
+        }
     }
-    for (k0, v0) in input.iter() {
+}
+
+impl<'a> ::std::iter::Iterator for ArgsProduct<'a> {
+    type Item = Arc<ProofArgs<'a>>;
+
+    fn next(&mut self) -> Option<Arc<ProofArgs<'a>>> {
+        fn completed_iter<'a>(iter: &ArgsProduct<'a>) -> bool {
+            let mut max = 0;
+            {
+                let mut lock = iter.indexes.write().unwrap();
+                for (k, v) in lock.iter_mut() {
+                    if *v < iter.input.get(k).unwrap().len() {
+                        *v += 1;
+                        break;
+                    } else {
+                        max += 1;
+                    }
+                }
+            }
+            if max == iter.indexes.read().unwrap().len() {
+                true
+            } else {
+                false
+            }
+        }
+
         loop {
-            for idx_0 in 0..v0.len() {
-                let mut row_0 = vec![];
-                let e: (*const lang::Var, &VarAssignment) = (*k0, &*v0[idx_0]);
+            let mut row_0 = vec![];
+            {
+                let idx_0: usize;
+                let sval;
+                loop {
+                    if let Ok(mut guard) = self.counter.try_lock() {
+                        if let Some(ref mut n) = *guard {
+                            idx_0 = *n;
+                            sval = self.sval.as_ref().unwrap();
+                            if idx_0 < sval.len() - 1 {
+                                *n += 1;
+                            } else {
+                                *n = 0;
+                                if completed_iter(self) {
+                                    return None;
+                                }
+                            }
+                        } else {
+                            return None;
+                        }
+                        break;
+                    } else if self.counter.is_poisoned() {
+                        if let Err(poisoned) = self.counter.lock() {
+                            let mut guard = poisoned.into_inner();
+                            if let Some(ref mut n) = *guard {
+                                idx_0 = *n;
+                                sval = self.sval.as_ref().unwrap();
+                                if idx_0 < sval.len() {
+                                    *n += 1;
+                                } else {
+                                    *n = 0;
+                                    if completed_iter(self) {
+                                        return None;
+                                    }
+                                }
+                            } else {
+                                return None;
+                            }
+                        } else {
+                            return None;
+                        }
+                        break;
+                    } else {
+                        return None;
+                    }
+                }
+                let skey: *const lang::Var = **self.skey.as_ref().unwrap();
+                let e: (*const lang::Var, &VarAssignment) = (skey, &*sval[idx_0]);
                 row_0.push(e);
-                for (k1, v1) in input.iter() {
-                    if k0 != k1 {
-                        let idx_1 = *(indexes.get(k1).unwrap());
+                for (k1, v1) in self.input.iter() {
+                    if skey != *k1 {
+                        let idx_1 = *(self.indexes.read().unwrap().get(k1).unwrap());
                         let e = (*k1, &*v1[idx_1]);
                         row_0.push(e);
                     }
                 }
-                mapped.insert(Arc::new(row_0));
             }
-            let mut max = 0;
-            for (k, v) in indexes.iter_mut() {
-                if *v <= (input.get(k).unwrap().len() - 1) {
-                    *v += 1;
-                    break;
-                } else {
-                    max += 1;
-                }
-            }
-            if max == indexes.len() {
-                break;
+            let res = Arc::new(row_0);
+            let exists = self.done.read().unwrap().contains(&res);
+            if !exists {
+                self.done.write().unwrap().insert(res.clone());
+                return Some(res);
             }
         }
-        break;
     }
 }
 
+#[derive(Debug)]
 struct ProofNode<'a> {
     proof: &'a LogSentence,
     antecedents: Vec<&'a str>,
@@ -1521,7 +1664,7 @@ impl<'a> Hash for ProofNode<'a> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct VarAssignment<'a> {
     pub name: &'a str,
     classes: HashMap<&'a str, &'a GroundedClsMemb>,
@@ -1559,40 +1702,44 @@ impl<'a> Hash for VarAssignment<'a> {
     }
 }
 
+#[derive(Debug)]
 enum QueryInput {
     AskRelationalFunc(lang::FuncDecl),
     AskClassMember(lang::ClassDecl),
     ManyQueries(VecDeque<ParseTree>),
 }
 
+#[derive(Debug)]
 struct QueryProcessed<'a> {
-    askcls: Vec<Box<lang::ClassDecl>>,
-    askfunc: Vec<Box<lang::FuncDecl>>,
     cls_queries_free: HashMap<&'a lang::Var, Vec<&'a lang::FreeClsMemb>>,
     cls_queries_grounded: HashMap<&'a str, Vec<&'a lang::GroundedClsMemb>>,
     cls_memb_query: Vec<&'a lang::GroundedClsMemb>,
-    func_memb_query: Vec<&'a lang::GroundedClsMemb>,
-    func_queries_free: HashMap<&'a lang::Var, Vec<&'a lang::FuncDecl>>,
+    func_queries_free: HashMap<&'a lang::Var, Vec<Rc<lang::FuncDecl>>>,
     func_queries_grounded: Vec<lang::GroundedFunc>,
+    func_memb_query: Vec<&'a lang::GroundedClsMemb>,
+    vars: Vec<Box<lang::Var>>,
+    cls: Vec<Rc<lang::ClassDecl>>,
+    func: Vec<Rc<lang::FuncDecl>>,
 }
 
 impl<'a> QueryProcessed<'a> {
     fn new() -> QueryProcessed<'a> {
         QueryProcessed {
-            askcls: vec![],
-            askfunc: vec![],
             cls_queries_free: HashMap::new(),
             cls_queries_grounded: HashMap::new(),
             cls_memb_query: vec![],
             func_queries_free: HashMap::new(),
             func_queries_grounded: vec![],
             func_memb_query: vec![],
+            vars: vec![],
+            cls: vec![],
+            func: vec![],
         }
     }
 
     fn get_query(mut self, prequery: QueryInput) -> Result<QueryProcessed<'a>, ()> {
-        fn assert_memb(query: &mut QueryProcessed, cdecl: lang::ClassDecl) -> Result<(), ()> {
-            let cdecl = unsafe { &*(query.append_askcls(cdecl) as *const lang::ClassDecl) };
+        fn assert_memb(query: &mut QueryProcessed, cdecl: Rc<lang::ClassDecl>) -> Result<(), ()> {
+            let cdecl = unsafe { &*(&cdecl as *const Rc<lang::ClassDecl>) as &Rc<lang::ClassDecl> };
             match cdecl.get_parent() {
                 &lang::Terminal::GroundedTerm(_) => {
                     for a in cdecl.get_args() {
@@ -1623,18 +1770,18 @@ impl<'a> QueryProcessed<'a> {
             Ok(())
         }
 
-        fn assert_rel(query: &mut QueryProcessed, fdecl: lang::FuncDecl) -> Result<(), ()> {
-            let fdecl = unsafe { &*(query.append_askfn(fdecl) as *const lang::FuncDecl) };
+        fn assert_rel(query: &mut QueryProcessed, fdecl: Rc<lang::FuncDecl>) -> Result<(), ()> {
+            let fdecl = unsafe { &*(&fdecl as *const Rc<lang::FuncDecl>) as &Rc<lang::FuncDecl> };
             match fdecl.get_parent() {
                 &lang::Terminal::GroundedTerm(_) => {
                     match fdecl.is_grounded() {
                         true => {
-                            query.push_to_fnquery_grounded(fdecl.clone().into_grounded());
+                            query.push_to_fnquery_grounded(fdecl.as_ref().clone().into_grounded());
                         }
                         false => {
                             for a in fdecl.get_args() {
                                 if let &lang::Predicate::FreeClsMemb(ref t) = a {
-                                    query.push_to_fnquery_free(t.get_var_ref(), fdecl);
+                                    query.push_to_fnquery_free(t.get_var_ref(), fdecl.clone());
                                 }
                             }
                         }
@@ -1659,9 +1806,13 @@ impl<'a> QueryProcessed<'a> {
 
         match prequery {
             QueryInput::AskClassMember(cdecl) => {
+                self.cls.push(Rc::new(cdecl));
+                let cdecl = self.cls.last().unwrap().clone();
                 assert_memb(&mut self, cdecl)?;
             }
             QueryInput::AskRelationalFunc(fdecl) => {
+                self.func.push(Rc::new(fdecl));
+                let fdecl = self.func.last().unwrap().clone();
                 assert_rel(&mut self, fdecl)?;
             }
             QueryInput::ManyQueries(trees) => {
@@ -1670,8 +1821,36 @@ impl<'a> QueryProcessed<'a> {
                         lang::ParseTree::Assertion(assertions) => {
                             for a in assertions {
                                 if let Err(()) = match a {
-                                    lang::Assert::ClassDecl(cdecl) => assert_memb(&mut self, cdecl),
-                                    lang::Assert::FuncDecl(fdecl) => assert_rel(&mut self, fdecl),
+                                    lang::Assert::ClassDecl(cdecl) => {
+                                        self.cls.push(Rc::new(cdecl));
+                                        let cdecl = self.cls.last().unwrap().clone();
+                                        assert_memb(&mut self, cdecl)
+                                    }
+                                    lang::Assert::FuncDecl(fdecl) => {
+                                        self.func.push(Rc::new(fdecl));
+                                        let fdecl = self.func.last().unwrap().clone();
+                                        assert_rel(&mut self, fdecl)
+                                    }
+                                } {
+                                    return Err(());
+                                }
+                            }
+                        }
+                        lang::ParseTree::IExpr(expr) => {
+                            let (mut vars, preds) = expr.extract_all_predicates();
+                            self.vars.append(&mut vars);
+                            for a in preds {
+                                if let Err(()) = match a {
+                                    lang::Assert::ClassDecl(cdecl) => {
+                                        self.cls.push(Rc::new(cdecl));
+                                        let cdecl = self.cls.last().unwrap().clone();
+                                        assert_memb(&mut self, cdecl)
+                                    }
+                                    lang::Assert::FuncDecl(fdecl) => {
+                                        self.func.push(Rc::new(fdecl));
+                                        let fdecl = self.func.last().unwrap().clone();
+                                        assert_rel(&mut self, fdecl)
+                                    }
                                 } {
                                     return Err(());
                                 }
@@ -1683,18 +1862,6 @@ impl<'a> QueryProcessed<'a> {
             }
         }
         Ok(self)
-    }
-
-    #[inline]
-    fn append_askcls(&mut self, cls: lang::ClassDecl) -> &lang::ClassDecl {
-        self.askcls.push(Box::new(cls));
-        &**self.askcls.last().unwrap()
-    }
-
-    #[inline]
-    fn append_askfn(&mut self, func: lang::FuncDecl) -> &lang::FuncDecl {
-        self.askfunc.push(Box::new(func));
-        &**self.askfunc.last().unwrap()
     }
 
     #[inline]
@@ -1713,7 +1880,7 @@ impl<'a> QueryProcessed<'a> {
     }
 
     #[inline]
-    fn push_to_fnquery_free(&mut self, term: &'a lang::Var, func: &'a lang::FuncDecl) {
+    fn push_to_fnquery_free(&mut self, term: &'a lang::Var, func: Rc<lang::FuncDecl>) {
         self.func_queries_free.entry(term).or_insert(vec![]).push(func);
     }
 
@@ -1725,5 +1892,189 @@ impl<'a> QueryProcessed<'a> {
     #[inline]
     fn ask_relationships(&mut self, term: &'a lang::GroundedClsMemb) {
         self.func_memb_query.push(term);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn ask_pred() {
+        let test_01 = String::from("
+            ( professor[$Lucy,u=1] )
+        ");
+        let q01_01 = "(professor[$Lucy,u=1] && person[$Lucy,u=1])".to_string();
+        let q01_02 = "(professor[$Lucy,u=1])".to_string();
+        let rep = Representation::new();
+        rep.tell(test_01).unwrap();
+        assert_eq!(rep.ask(q01_01, true), Answer::Single(None));
+        assert_eq!(rep.ask(q01_02, true), Answer::Single(Some(true)));
+
+        let test_02 = String::from("
+            ( professor[$Lucy,u=1] )
+            ( dean[$John,u=1] )
+            ( ( let x ) ( dean[x,u=1] |> professor[x,u=1] ) )
+            ( ( let x ) ( professor[x,u=1] |> person[x,u=1] ) )
+        ");
+        let q02_01 = "(professor[$Lucy,u>0] && person[$Lucy,u<1])".to_string();
+        let q02_02 = "(person[$John,u=1])".to_string();
+        let rep = Representation::new();
+        rep.tell(test_02).unwrap();
+        assert_eq!(rep.ask(q02_01, true), Answer::Single(Some(false)));
+        assert_eq!(rep.ask(q02_02, true), Answer::Single(Some(true)));
+
+        let test_03 = String::from("
+            ( fn::owns[$M1,u=1;$Nono] )
+            ( missile[$M1,u=1] )
+            ( american[$West,u=1] )
+            ( fn::enemy[$Nono,u=1;$America] )
+            (( let x, y, z )
+             (( american[x,u=1] && weapon[y,u=1] && fn::sells[y,u=1;x;z] && hostile[z,u=1]  )
+                 |> criminal[x,u=1] ))
+            (( let x )
+             (( fn::owns[x,u=1;$Nono] && missile[x,u=1] ) |> fn::sells[x,u=1;$West;$Nono] ))
+            (( let x ) ( missile[x,u=1] |> weapon[x,u=1] ) )
+            (( let x ) ( fn::enemy[x,u=1;$America] |> hostile[x,u=1] ) )
+        ");
+        let q03_01 = "(criminal[$West,u=1])".to_string();
+        let rep = Representation::new();
+        rep.tell(test_03).unwrap();
+        assert_eq!(rep.ask(q03_01, true), Answer::Single(Some(true)));
+
+        let _test_04 = String::from("
+            (( let x, y, t1:time, t2:time=\"*now\" )
+             (( dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x] && fn::time_calc(t1<t2) )
+              |> fat(time=t2)[x,u=1] ))
+            ( dog[$Pancho,u=1] )
+            ( meat[$M1,u=1] )
+            ( fn::eat(time=\"2015.07.05.10.25\")[$M1,u=1;$Pancho] )
+        ");
+        let _q04_01 = "(fat(t='*now')[$Pancho,u=1])".to_string();
+
+        let _test_05 = String::from("
+            (( let x, y, t1:time, t2:time=\"2016.01.01\" )
+             (( (dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x]) && fn::time_calc(t1<t2) )
+              |> fat(time=t2)[x,u=1] ))
+            ( dog[$Pancho,u=1] )
+            ( meat[$M1,u=1] )
+            ( fn::eat(time=\"2015.07.05.10.25\")[$M1,u=1;$Pancho] )
+        ");
+        let _q05_01 = "(fat(t='*now')[$Pancho,u=1])".to_string();
+
+        let _test_06 = String::from("
+            # query for all 'professor'
+        	( \
+                                     professor[$Lucy,u=1] )
+        	( dean[$John,u=1] )
+        	\
+                                     ((let x) (dean[x,u=1] |> professor[x,u=1]))
+        ");
+        let _q06_01 = "((let x) (professor[x,u=1]))".to_string();
+
+        let _test_07 = String::from("
+            # query for all classes '$Lucy' is member of
+        	\
+                                     (professor[$Lucy,u=1])
+        	((let x) (professor[x,u=1] \
+                                     |> person[x,u=1]))
+        	(ugly[$Lucy,u=0.2])
+        ");
+        let _q07_01 = "((let x) (x[$Lucy,u>0.5]))".to_string();
+    }
+
+    #[test]
+    fn ask_func() {
+        let test_01 = String::from("
+            ( professor[$Lucy,u=1] )
+            ( dean[$John,u=1] )
+            ( fn::criticize[$John,u=1;$Lucy] )
+        ");
+        let q01_01 = "(fn::criticize[$John,u=1;$Lucy])".to_string();
+        let rep = Representation::new();
+        rep.tell(test_01).unwrap();
+        assert_eq!(rep.ask(q01_01, true), Answer::Single(Some(true)));
+
+        let test_02 = String::from("
+            ( professor[$Lucy,u=1] )
+            ( dean[$John,u=1] )
+            ( fn::criticize[$John,u=1;$Lucy] )
+            ( (let x) ( dean[x,u=1] |> professor[x,u=1] ) )
+            ( (let x) ( professor[x,u=1] |> person[x,u=1] ) )
+            ( (let x, y)
+              (( person[x,u=1] && person[y,u=1] && dean[y,u=1] && fn::criticize[y,u=1;x] )
+                 |> fn::friend[x,u=0;y] ))
+        ");
+        let q02_01 = "(fn::friend[$Lucy,u=0;$John])".to_string();
+        let rep = Representation::new();
+        rep.tell(test_02).unwrap();
+        assert_eq!(rep.ask(q02_01, true), Answer::Single(Some(true)));
+
+        let test_03 = String::from("
+            ( fn::owns[$M1,u=1;$Nono] )
+            ( missile[$M1,u=1] )
+            ( american[$West,u=1] )
+            ( fn::enemy[$Nono,u=1;$America] )
+            (( let x,y,z )
+                (( american[x,u=1] && weapon[y,u=1] && fn::sells[y,u>0.5;x;z] && hostile[z,u=1] )
+                 |> criminal[x,u=1] ))
+            (( let x ) ( ( fn::owns[x,u=1;$Nono] && missile[x,u=1] )
+                        |> fn::sells[x,u=1;$West;$Nono] ) )
+            (( let x ) ( missile[x,u=1] |> weapon[x,u=1] ) )
+            (( let x ) ( fn::enemy[x,u=1;$America] |> hostile[x,u=1] ) )
+        ");
+        let q03_01 = "(fn::sells[$M1,u=1;$West;$Nono])".to_string();
+        let rep = Representation::new();
+        rep.tell(test_03).unwrap();
+        assert_eq!(rep.ask(q03_01, true), Answer::Single(Some(true)));
+
+        let test_04 = String::from("
+            ( animal[cow,u=1] )
+            ( female[cow,u=1] )
+            ( (animal[cow,u=1] && female[cow,u=1]) |> fn::produce[milk,u=1;cow] )
+        ");
+        let q04_01 = "(fn::produce[milk,u=1;cow])".to_string();
+        let rep = Representation::new();
+        rep.tell(test_04).unwrap();
+        assert_eq!(rep.ask(q04_01, true), Answer::Single(Some(true)));
+
+        let _test_05 = String::from("
+            (( let x, y, t1: time=\"2015.01.01\", t2: time=\"2015.02.01\" )
+             ( ( dog[x,u=1] && meat[y,u=1] && fat(time=t2)[x,u=1] && fn::time_calc(t1<t2) )
+               |> fn::eat(time=t1)[y,u=1;x]
+             )
+            )
+            ( dog[$Pancho,u=1] )
+            ( meat[$M1,u=1] )
+            ( fat[$Pancho,u=1] )
+        ");
+        let _q05_01 = "(fn::eat[$M1,u=1;$Pancho])".to_string();
+
+        let _test_06 = String::from("
+        	(( let x, y, t1: time=\"2015.01.01\", t2: time )
+             ( ( dog[x,u=1] && meat[y,u=1] && fat(time=t2)[x,u=1] && fn::time_calc(t1<t2) )
+               |> fn::eat(time=t1)[y,u=1;x]
+             )
+            )
+            ( dog[$Pancho,u=1] )
+            ( meat[$M1,u=1] )
+            ( fat(time=\"2015.12.01\")[$Pancho,u=1] )
+        ");
+        let _q06_01 = "(fn::eat[$M1,u=1;$Pancho])".to_string();
+
+        let _test_07 = String::from("
+            # retrieve all objs which fit to a criteria
+            (cow[$Lucy,u=1])
+            (goat[$Vicky,u=1])
+            ((let x) ((cow[x,u=1] || goat[x,u=1]) |> (female[x,u=1] && animal[x,u=1])))
+            ((let x) ((female[x,u>0] && animal[x,u>0]) |> fn::produce[milk,u=1;x]))
+        ");
+        let _q07_01 = "((let x) (fn::produce[milk,u>0;x]))".to_string();
+
+        let _test_08 = String::from("
+            # retrieve all relations between objects
+            (fn::loves[$Vicky,u=1;$Lucy])
+        ");
+        let _q08_01 = "((let x) (fn::x[$Vicky,u>0;$Lucy]))".to_string();
     }
 }

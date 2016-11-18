@@ -56,11 +56,6 @@ impl<'a> LogSentence {
             Err(r.unwrap_err())
         } else {
             link_sent_childs(&mut sent);
-            // add var requeriments
-            let req = sent.get_var_requeriments();
-            if req.len() > 0 {
-                sent.var_req = Some(req);
-            }
             // classify the kind of sentence and check that are correct
             if sent.vars.is_none() {
                 if !context.iexpr() {
@@ -96,8 +91,13 @@ impl<'a> LogSentence {
                     }
                 }
                 sent.predicates = (lhs_v, rhs_v);
+                // add var requeriments
+                let req = sent.get_var_requeriments();
+                if req.len() > 0 {
+                    sent.var_req = Some(req);
+                }
             }
-            sent.generate_uniqueid();
+            sent.generate_uid();
             Ok(sent)
         }
     }
@@ -122,6 +122,17 @@ impl<'a> LogSentence {
         } else {
             context.result = None;
         }
+    }
+
+    pub fn extract_all_predicates(self) -> (Vec<Box<Var>>, Vec<Assert>) {
+        let LogSentence { vars, particles, .. } = self;
+        let mut preds = vec![];
+        for p in particles {
+            if p.is_atom() {
+                preds.push(p.extract_assertion())
+            }
+        }
+        (vars.unwrap(), preds)
     }
 
     pub fn get_all_predicates(&self) -> Vec<&Assert> {
@@ -150,23 +161,18 @@ impl<'a> LogSentence {
     }
 
     /// Returns the requeriments a variable must meet to fit the criteria in a sentence.
+    /// This just takes into consideration the LHS variables.
     fn get_var_requeriments(&self) -> HashMap<*const Var, Vec<*const Assert>> {
         let mut requeriments = HashMap::new();
         if self.vars.is_none() {
             return requeriments;
         }
-        let mut predicates = Vec::new();
-        for p in &self.particles {
-            if p.is_atom() {
-                predicates.push(&**p)
-            }
-        }
         for var in self.vars.as_ref().unwrap() {
             let mut var_req = Vec::new();
-            for p in &predicates {
-                let pred = p.get_atom();
+            for p in &self.predicates.0 {
+                let pred = unsafe { &**p as &Assert };
                 if pred.contains(var) {
-                    var_req.push(&(pred.pred) as *const Assert)
+                    var_req.push(*p)
                 }
             }
             requeriments.insert(&**var as *const Var, var_req);
@@ -192,7 +198,7 @@ impl<'a> LogSentence {
         self.particles.push(p)
     }
 
-    fn generate_uniqueid(&mut self) {
+    fn generate_uid(&mut self) {
         for a in self.particles.iter() {
             match &**a {
                 &Particle::Conjunction(_) => self.id.push(0),
@@ -705,11 +711,6 @@ impl LogicAtom {
         self.pred.substitute(agent, assignments, context)
     }
 
-    #[inline]
-    fn contains(&self, pred: &Var) -> bool {
-        self.pred.contains(pred)
-    }
-
     fn get_name(&self) -> &str {
         self.pred.get_name()
     }
@@ -820,18 +821,18 @@ impl Particle {
     }
 
     #[inline]
-    fn get_atom(&self) -> &LogicAtom {
-        match *self {
-            Particle::Atom(ref p) => p,
-            _ => panic!("simag: expected a predicate, found an operator"),
-        }
-    }
-
-    #[inline]
     fn is_atom(&self) -> bool {
         match *self {
             Particle::Atom(_) => true,
             _ => false,
+        }
+    }
+
+    #[inline]
+    fn extract_assertion(self) -> Assert {
+        match self {
+            Particle::Atom(atom) => atom.pred,
+            _ => panic!(),
         }
     }
 
@@ -960,6 +961,7 @@ pub struct Context {
     from_chain: bool,
     in_rhs: bool,
     pub in_assertion: bool,
+    pub is_tell: bool,
 }
 
 impl Context {
@@ -973,6 +975,7 @@ impl Context {
             aliasing_vars: HashMap::new(),
             aliasing_skols: HashMap::new(),
             in_assertion: false,
+            is_tell: false,
         }
     }
 

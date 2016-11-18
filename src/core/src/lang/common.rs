@@ -1,6 +1,7 @@
 use std::str;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::cell::RefCell;
 
 use chrono::{UTC, DateTime};
 
@@ -30,16 +31,9 @@ impl<'a> Predicate {
                 Ok(Predicate::FreeClsMemb(t.unwrap()))
             }
             Ok(Terminal::GroundedTerm(gt)) => {
-                let t;
-                if context.in_assertion {
-                    t = GroundedClsMemb::new(gt, a.uval, func_name.to_string(), None, true);
-                } else {
-                    t = GroundedClsMemb::new(gt, a.uval, func_name.to_string(), None, false);
-                }
-                if t.is_err() {
-                    return Err(t.unwrap_err());
-                }
-                Ok(Predicate::GroundedClsMemb(t.unwrap()))
+                let t =
+                    GroundedClsMemb::new(gt, a.uval.clone(), func_name.to_string(), None, context)?;
+                Ok(Predicate::GroundedClsMemb(t))
             }
             Ok(Terminal::Keyword(kw)) => return Err(ParseErrF::ReservedKW(String::from(kw))),
             Err(err) => Err(err),
@@ -92,6 +86,7 @@ impl<'a> Predicate {
 
 // Grounded types:
 
+#[derive(Debug)]
 pub enum Grounded {
     Function(Rc<GroundedFunc>),
     Terminal(Rc<GroundedClsMemb>),
@@ -99,60 +94,66 @@ pub enum Grounded {
 
 #[derive(Debug, Clone)]
 pub struct GroundedClsMemb {
-    pub term: String,
-    pub value: Option<f32>,
+    term: String,
+    value: Option<RefCell<f32>>,
     operator: Option<CompOperator>,
-    pub parent: String,
-    dates: Option<Vec<i32>>,
+    parent: String,
+    dates: RefCell<Vec<DateTime<UTC>>>,
 }
 
 impl GroundedClsMemb {
     fn new(term: String,
            uval: Option<UVal>,
            parent: String,
-           _dates: Option<Vec<DateTime<UTC>>>,
-           is_assignment: bool)
+           dates: Option<Vec<DateTime<UTC>>>,
+           context: &Context)
            -> Result<GroundedClsMemb, ParseErrF> {
         let val;
         let op;
-        if uval.is_some() {
-            let uval = uval.unwrap();
-            val = match uval.val {
+        if let Some(uval) = uval {
+            let UVal { val: val0, op: op0 } = uval;
+            val = Some(RefCell::new(match val0 {
                 Number::UnsignedInteger(val) => {
                     if val == 0 || val == 1 {
-                        Some(val as f32)
+                        val as f32
                     } else {
                         return Err(ParseErrF::IUVal(val as f32));
                     }
                 }
                 Number::UnsignedFloat(val) => {
                     if val >= 0. && val <= 1. {
-                        Some(val)
+                        val
                     } else {
                         return Err(ParseErrF::IUVal(val as f32));
                     }
                 }
                 Number::SignedFloat(val) => return Err(ParseErrF::IUVal(val as f32)),
                 Number::SignedInteger(val) => return Err(ParseErrF::IUVal(val as f32)),
-            };
-            if is_assignment {
-                op = match uval.op {
+            }));
+            if context.in_assertion && context.is_tell {
+                op = match op0 {
                     CompOperator::Equal => Some(CompOperator::Equal),
                     _ => return Err(ParseErrF::IUValComp),
-                }
+                };
             } else {
-                op = Some(uval.op);
+                op = Some(op0);
             }
         } else {
             val = None;
             op = None;
+        }
+        let dates_e;
+        if let Some(dates) = dates {
+            dates_e = dates;
+        } else {
+            dates_e = vec![UTC::now()];
         }
         Ok(GroundedClsMemb {
             term: term,
             value: val,
             operator: op,
             parent: parent,
-            dates: None,
+            dates: RefCell::new(dates_e),
         })
     }
 
@@ -160,15 +161,14 @@ impl GroundedClsMemb {
         let mut id: Vec<u8> = vec![];
         let mut id_1 = Vec::from(self.term.as_bytes());
         id.append(&mut id_1);
-        if let Some(op) = self.operator {
-            match op {
-                CompOperator::Equal => id.push(0),
-                CompOperator::Less => id.push(1),
-                CompOperator::More => id.push(2),
-            }
+        match self.operator {
+            None => id.push(0),
+            Some(CompOperator::Equal) => id.push(1),
+            Some(CompOperator::Less) => id.push(2),
+            Some(CompOperator::More) => id.push(3),
         }
-        if let Some(value) = self.value {
-            let mut id_2 = format!("{}", value).into_bytes();
+        if let Some(ref val) = self.value {
+            let mut id_2 = format!("{}", *val.borrow()).into_bytes();
             id.append(&mut id_2);
         }
         id
@@ -190,16 +190,26 @@ impl GroundedClsMemb {
     }
 
     pub fn update(&self, data: Rc<GroundedClsMemb>) {
-        panic!("not implemented: updating existing terminals")
+        let data: &GroundedClsMemb = &*data;
+        *self.value.as_ref().unwrap().borrow_mut() = *data.value.as_ref().unwrap().borrow();
     }
 
     pub fn from_free(free: &FreeClsMemb, assignment: &str) -> GroundedClsMemb {
+        let val;
+        let op;
+        if free.value.is_some() {
+            val = Some(RefCell::new(free.value.unwrap()));
+            op = Some(free.operator.unwrap());
+        } else {
+            val = None;
+            op = None;
+        }
         GroundedClsMemb {
             term: String::from(assignment),
-            value: free.value,
-            operator: free.operator,
+            value: val,
+            operator: op,
             parent: free.parent.to_string(),
-            dates: None,
+            dates: RefCell::new(vec![UTC::now()]),
         }
     }
 
@@ -211,69 +221,79 @@ impl GroundedClsMemb {
         if self.parent != other.parent {
             return false;
         }
+        if self.operator.is_some() && other.operator.is_none() {
+            return false;
+        } else if other.operator.is_some() && self.operator.is_none() {
+            return false;
+        }
         true
     }
 }
 
 impl ::std::cmp::PartialEq for GroundedClsMemb {
     fn eq(&self, other: &GroundedClsMemb) -> bool {
-        if self.term != self.term {
+        if self.term != other.term {
             panic!("simag: grounded terms with different names cannot be compared")
         }
-        if self.value.is_some() && other.value.is_some() {
-            let val_lhs = self.value.as_ref().unwrap();
-            let val_rhs = other.value.as_ref().unwrap();
-            match self.operator.as_ref().unwrap() {
-                &CompOperator::Equal => {
-                    if other.operator.as_ref().unwrap().is_equal() {
-                        if val_lhs == val_rhs {
-                            return true;
-                        } else {
-                            return false;
-                        }
-                    } else if other.operator.as_ref().unwrap().is_more() {
-                        if val_lhs > val_rhs {
-                            return true;
-                        } else {
-                            return false;
-                        }
+        if self.parent != other.parent {
+            panic!("simag: grounded terms with different classes cannot be compared")
+        }
+        let val_lhs = &self.value;
+        let val_rhs = &other.value;
+        let op_lhs;
+        let op_rhs;
+        if let Some(op) = other.operator {
+            op_rhs = op;
+            op_lhs = self.operator.unwrap();
+        } else {
+            return true;
+        }
+        match op_lhs {
+            CompOperator::Equal => {
+                if op_rhs.is_equal() {
+                    if val_lhs == val_rhs {
+                        return true;
                     } else {
-                        if val_lhs < val_rhs {
-                            return true;
-                        } else {
-                            return false;
-                        }
+                        return false;
                     }
-                }
-                &CompOperator::More => {
-                    if other.operator.as_ref().unwrap().is_equal() {
-                        if val_lhs < val_rhs {
-                            return true;
-                        } else {
-                            return false;
-                        }
+                } else if op_rhs.is_more() {
+                    if val_lhs > val_rhs {
+                        return true;
                     } else {
-                        panic!("simag: grounded terms operators in assertments \
-                                must be assignments")
+                        return false;
                     }
-                }
-                &CompOperator::Less => {
-                    if other.operator.as_ref().unwrap().is_equal() {
-                        if val_lhs > val_rhs {
-                            return true;
-                        } else {
-                            return false;
-                        }
+                } else {
+                    if val_lhs < val_rhs {
+                        return true;
                     } else {
-                        panic!("simag: grounded terms operators in assertments \
-                                must be assignments")
+                        return false;
                     }
                 }
             }
-        } else if self.value.is_none() && other.value.is_none() {
-            true
-        } else {
-            panic!("simag: at least one of the two grounded terms does not include a value")
+            CompOperator::More => {
+                if op_rhs.is_equal() {
+                    if val_lhs < val_rhs {
+                        return true;
+                    } else {
+                        return false;
+                    }
+                } else {
+                    panic!("simag: grounded terms operators in assertments \
+                            must be assignments")
+                }
+            }
+            CompOperator::Less => {
+                if op_rhs.is_equal() {
+                    if val_lhs > val_rhs {
+                        return true;
+                    } else {
+                        return false;
+                    }
+                } else {
+                    panic!("simag: grounded terms operators in assertments \
+                            must be assignments")
+                }
+            }
         }
     }
 }
@@ -417,7 +437,9 @@ impl GroundedFunc {
     }
 
     pub fn update(&self, data: Rc<GroundedFunc>) {
-        panic!("not implemented: updating existing GroundedFunc")
+        let data: &GroundedFunc = &*data;
+        *self.args[0].value.as_ref().unwrap().borrow_mut() =
+            *data.args[0].value.as_ref().unwrap().borrow();
     }
 }
 
@@ -509,11 +531,11 @@ impl FreeClsMemb {
         if self.parent.get_name() != other.parent.as_str() {
             panic!("simag: grounded terms from different classes cannot be compared")
         }
-        if self.value.is_some() && other.value.is_some() {
-            let val_free = self.value.as_ref().unwrap();
-            let val_grounded = other.value.as_ref().unwrap();
-            match other.operator.as_ref().unwrap() {
-                &CompOperator::Equal => {
+        if self.value.is_some() {
+            let val_free = self.value.unwrap();
+            let val_grounded = *other.value.as_ref().unwrap().borrow();
+            match other.operator.unwrap() {
+                CompOperator::Equal => {
                     if self.operator.as_ref().unwrap().is_equal() {
                         if val_free == val_grounded {
                             return true;
@@ -534,10 +556,12 @@ impl FreeClsMemb {
                         }
                     }
                 }
-                _ => panic!("simag: grounded terms operators in assertments must be assignments"),
+                _ => {
+                    panic!("simag: grounded terminal operators in assertments must be assignments")
+                }
             }
         } else {
-            panic!("simag: at least one of the two compared terms does not include a value")
+            true
         }
     }
 }
@@ -945,51 +969,40 @@ impl<'a> FuncDecl {
             FuncVariants::Relational => {}
             _ => panic!("simag: cannot compare non-relational functions"),
         }
-        for a in self.args.as_ref().unwrap() {
-            match a {
-                &Predicate::FreeClsMemb(ref compare) => {
-                    if assignments.is_none() {
-                        return None;
-                    }
-                    let assignments = assignments.as_ref().unwrap();
-                    if let Some(entity) = assignments.get(&compare.term) {
-                        if let Ok(grfunc) = GroundedFunc::from_free(&self, assignments) {
+        if self.is_grounded() {
+            let sbj = self.args.as_ref().unwrap();
+            let grfunc = self.clone().into_grounded();
+            agent.has_relationship(&grfunc, sbj[0].get_name())
+        } else {
+            if assignments.is_none() {
+                return None;
+            }
+            let assignments = assignments.as_ref().unwrap();
+            if let Ok(grfunc) = GroundedFunc::from_free(&self, assignments) {
+                for arg in self.get_args() {
+                    if let &Predicate::FreeClsMemb(ref arg) = arg {
+                        if let Some(entity) = assignments.get(&arg.term) {
                             if let Some(current) = entity.get_relationship(&grfunc) {
                                 if current != &grfunc {
                                     return Some(false);
+                                } else {
+                                    return Some(true);
                                 }
-                            } else {
-                                return None;
                             }
-                        } else {
-                            return None;
                         }
-                    } else {
-                        return None;
-                    }
-                }
-                &Predicate::GroundedClsMemb(ref compare) => {
-                    if let Some(current) =
-                           agent.get_entity_from_class(self.get_name(), compare.term.as_str()) {
-                        if current != compare {
-                            return Some(false);
-                        }
-                    } else {
-                        return None;
                     }
                 }
             }
+            None
         }
-        Some(true)
     }
 
     fn substitute(&self,
                   agent: &agent::Representation,
                   assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>,
                   context: &mut agent::ProofResult) {
-        let grfunc = GroundedFunc::from_free(&self, assignments.as_ref().unwrap());
-        if grfunc.is_ok() {
-            let grfunc = Rc::new(grfunc.unwrap());
+        if let Ok(grfunc) = GroundedFunc::from_free(&self, assignments.as_ref().unwrap()) {
+            let grfunc = Rc::new(grfunc);
             agent.up_relation(grfunc.clone());
             context.grounded.push((Grounded::Function(grfunc.clone()), UTC::now()))
         }
@@ -1109,6 +1122,8 @@ impl<'a> ClassDecl {
         }
     }
 
+    /// Compare each term of a class declaration if they are comparable, and returns
+    /// the result of such comparison (or none in case they are not comparable).
     fn equal_to_grounded(&self,
                          agent: &agent::Representation,
                          assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>)
@@ -1193,10 +1208,10 @@ impl<'a> ::std::iter::Iterator for DeclArgsIter<'a> {
     type Item = &'a Predicate;
     fn next(&mut self) -> Option<&'a Predicate> {
         if self.count < self.data_ref.len() {
+            let c = self.count;
             self.count += 1;
-            Some(&(self.data_ref[self.count]))
+            Some(&(self.data_ref[c]))
         } else {
-            self.count += 1;
             None
         }
     }
