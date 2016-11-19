@@ -699,7 +699,7 @@ impl LogicAtom {
         self.pred.substitute(agent, assignments, context)
     }
 
-    fn get_name(&self) -> &str {
+    fn get_name(&self) -> Rc<String> {
         self.pred.get_name()
     }
 
@@ -801,7 +801,7 @@ impl Particle {
             _ => panic!(),
         }
     }
-    
+
     #[inline]
     fn is_atom(&self) -> bool {
         match *self {
@@ -1218,13 +1218,9 @@ fn walk_ast(ast: &Next,
     }
 }
 
-fn correct_iexpr(sent: &LogSentence,
-                 lhs: &mut Vec<Rc<Particle>>)
-                 -> Result<(), ParseErrF> {
+fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), ParseErrF> {
 
-    fn has_icond_child(p: &Particle,
-                       lhs: &mut Vec<Rc<Particle>>)
-                       -> Result<(), ParseErrF> {
+    fn has_icond_child(p: &Particle, lhs: &mut Vec<Rc<Particle>>) -> Result<(), ParseErrF> {
         if let Some(n1_0) = p.get_next(0) {
             match &*n1_0 {
                 &Particle::IndConditional(_) => return Err(ParseErrF::IExprICondLHS),
@@ -1248,9 +1244,7 @@ fn correct_iexpr(sent: &LogSentence,
         Ok(())
     }
 
-    fn wrong_operator(p: &Particle,
-                      lhs: &mut Vec<Rc<Particle>>)
-                      -> Result<(), ParseErrF> {
+    fn wrong_operator(p: &Particle, lhs: &mut Vec<Rc<Particle>>) -> Result<(), ParseErrF> {
         if let Some(n1_0) = p.get_next(0) {
             // test that the lhs does not include any indicative conditional
             if n1_0.is_icond() {
@@ -1303,6 +1297,7 @@ fn correct_iexpr(sent: &LogSentence,
 mod test {
     use super::Particle;
     use lang::parser::*;
+    use std::rc::Rc;
 
     #[test]
     fn icond_exprs() {
@@ -1366,7 +1361,8 @@ mod test {
                     &Particle::Conjunction(ref op) => {
                         match &*(op.borrow().next[0]) {
                             &Particle::Atom(ref atm) => {
-                                assert_eq!(atm.borrow().get_name(), "american");
+                                assert_eq!(atm.borrow().get_name(),
+                                           Rc::new("american".to_string()));
                             }
                             _ => panic!(),
                         };
@@ -1374,13 +1370,15 @@ mod test {
                             &Particle::Conjunction(ref op) => {
                                 match &*(op.borrow().next[0]) {
                                     &Particle::Atom(ref atm) => {
-                                        assert_eq!(atm.borrow().get_name(), "weapon")
+                                        assert_eq!(atm.borrow().get_name(),
+                                                   Rc::new("weapon".to_string()))
                                     }
                                     _ => panic!(),
                                 };
                                 match &*(op.borrow().next[1]) {
                                     &Particle::Atom(ref atm) => {
-                                        assert_eq!(atm.borrow().get_name(), "sells");
+                                        assert_eq!(atm.borrow().get_name(),
+                                                   Rc::new("sells".to_string()));
                                     }
                                     _ => panic!(),
                                 };
@@ -1391,7 +1389,9 @@ mod test {
                     _ => panic!(),
                 }
                 match &*(p.borrow().next[1]) {
-                    &Particle::Atom(ref atm) => assert_eq!(atm.borrow().get_name(), "criminal"),
+                    &Particle::Atom(ref atm) => {
+                        assert_eq!(atm.borrow().get_name(), Rc::new("criminal".to_string()))
+                    }
                     _ => panic!(),
                 }
             }

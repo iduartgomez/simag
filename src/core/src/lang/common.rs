@@ -49,7 +49,7 @@ impl<'a> Predicate {
     }
 
     #[inline]
-    pub fn get_name(&self) -> &str {
+    pub fn get_name(&self) -> Rc<String> {
         match *self {
             Predicate::GroundedClsMemb(ref t) => t.get_name(),
             _ => panic!("simag: expected a grounded terminal, found a free terminal"),
@@ -94,17 +94,17 @@ pub enum Grounded {
 
 #[derive(Debug, Clone)]
 pub struct GroundedClsMemb {
-    term: String,
+    term: Rc<String>,
     value: Option<RefCell<f32>>,
     operator: Option<CompOperator>,
-    parent: String,
+    parent: Rc<String>,
     dates: RefCell<Vec<DateTime<UTC>>>,
 }
 
 impl GroundedClsMemb {
-    fn new(term: String,
+    fn new(term: Rc<String>,
            uval: Option<UVal>,
-           parent: String,
+           parent: Rc<String>,
            dates: Option<Vec<DateTime<UTC>>>,
            context: &Context)
            -> Result<GroundedClsMemb, ParseErrF> {
@@ -175,18 +175,13 @@ impl GroundedClsMemb {
     }
 
     #[inline]
-    pub fn get_name(&self) -> &str {
-        &self.term
+    pub fn get_name(&self) -> Rc<String> {
+        self.term.clone()
     }
 
     #[inline]
-    pub fn get_parent(&self) -> &str {
-        self.parent.as_ref()
-    }
-
-    #[inline]
-    pub fn get_parent_as_string_ref(&self) -> &String {
-        &self.parent
+    pub fn get_parent(&self) -> Rc<String> {
+        self.parent.clone()
     }
 
     pub fn update(&self, data: Rc<GroundedClsMemb>) {
@@ -194,7 +189,7 @@ impl GroundedClsMemb {
         *self.value.as_ref().unwrap().borrow_mut() = *data.value.as_ref().unwrap().borrow();
     }
 
-    pub fn from_free(free: &FreeClsMemb, assignment: &str) -> GroundedClsMemb {
+    pub fn from_free(free: &FreeClsMemb, assignment: Rc<String>) -> GroundedClsMemb {
         let val;
         let op;
         if free.value.is_some() {
@@ -205,7 +200,7 @@ impl GroundedClsMemb {
             op = None;
         }
         GroundedClsMemb {
-            term: String::from(assignment),
+            term: assignment,
             value: val,
             operator: op,
             parent: free.parent.to_string(),
@@ -300,7 +295,7 @@ impl ::std::cmp::PartialEq for GroundedClsMemb {
 
 #[derive(Debug, PartialEq)]
 pub struct GroundedFunc {
-    pub name: String,
+    pub name: Rc<String>,
     pub args: [GroundedClsMemb; 2],
     pub third: Option<GroundedClsMemb>,
 }
@@ -323,7 +318,7 @@ impl GroundedFunc {
             let n_a = match a {
                 &Predicate::FreeClsMemb(ref free) => {
                     if let Some(ref entity) = assignments.get(&free.term) {
-                        GroundedClsMemb::from_free(free, entity.name)
+                        GroundedClsMemb::from_free(free, entity.name.clone())
                     } else {
                         return Err(());
                     }
@@ -346,13 +341,8 @@ impl GroundedFunc {
     }
 
     #[inline]
-    pub fn get_name(&self) -> &str {
-        self.name.as_str()
-    }
-
-    #[inline]
-    pub fn get_parent_as_string_ref(&self) -> &String {
-        &self.name
+    pub fn get_name(&self) -> Rc<String> {
+        self.name.clone()
     }
 
     pub fn comparable_entity(&self,
@@ -368,18 +358,18 @@ impl GroundedFunc {
             if let Some(pos) = free.var_in_pos(&*var as *const Var) {
                 match pos {
                     0 => {
-                        if self.args[0].get_name() == entity_name {
+                        if &*self.args[0].get_name() == entity_name {
                             return true;
                         }
                     }
                     1 => {
-                        if self.args[1].get_name() == entity_name {
+                        if &*self.args[1].get_name() == entity_name {
                             return true;
                         }
                     }
                     2 => {
                         if let Some(ref term) = self.third {
-                            if term.get_name() == entity_name {
+                            if &*term.get_name() == entity_name {
                                 return true;
                             }
                         }
@@ -391,18 +381,18 @@ impl GroundedFunc {
             if let Some(pos) = free.term_in_pos(entity_name) {
                 match pos {
                     0 => {
-                        if self.args[0].get_name() == entity_name {
+                        if &*self.args[0].get_name() == entity_name {
                             return true;
                         }
                     }
                     1 => {
-                        if self.args[1].get_name() == entity_name {
+                        if &*self.args[1].get_name() == entity_name {
                             return true;
                         }
                     }
                     2 => {
                         if let Some(ref term) = self.third {
-                            if term.get_name() == entity_name {
+                            if &*term.get_name() == entity_name {
                                 return true;
                             }
                         }
@@ -528,7 +518,7 @@ impl FreeClsMemb {
     /// Compares a free term with a grounded term, assumes they are comparable
     /// (panics otherwise).
     fn equal_to_grounded(&self, other: &GroundedClsMemb) -> bool {
-        if self.parent.get_name() != other.parent.as_str() {
+        if self.parent.get_name() != other.parent {
             panic!("simag: grounded terms from different classes cannot be compared")
         }
         if self.value.is_some() {
@@ -576,18 +566,10 @@ pub enum Assert {
 
 impl Assert {
     #[inline]
-    pub fn get_name(&self) -> &str {
+    pub fn get_name(&self) -> Rc<String> {
         match self {
             &Assert::FuncDecl(ref f) => f.get_name(),
-            &Assert::ClassDecl(ref c) => c.get_name_as_str(),
-        }
-    }
-
-    #[inline]
-    pub fn get_name_as_string_ref(&self) -> &String {
-        match self {
-            &Assert::FuncDecl(ref f) => f.get_name_as_string_ref(),
-            &Assert::ClassDecl(ref c) => c.get_name_as_string_ref(),
+            &Assert::ClassDecl(ref c) => c.get_name(),
         }
     }
 
@@ -748,18 +730,10 @@ impl<'a> FuncDecl {
         true
     }
 
-    pub fn get_name(&self) -> &str {
+    pub fn get_name(&self) -> Rc<String> {
         match self.name {
-            Terminal::FreeTerm(ref var) => var.name.as_str(),
-            Terminal::GroundedTerm(ref name) => name,
-            Terminal::Keyword(name) => name,
-        }
-    }
-
-    pub fn get_name_as_string_ref(&self) -> &String {
-        match self.name {
-            Terminal::FreeTerm(ref var) => &(var.name),
-            Terminal::GroundedTerm(ref name) => &name,
+            Terminal::FreeTerm(ref var) => var.name.clone(),
+            Terminal::GroundedTerm(ref name) => name.clone(),
             Terminal::Keyword(_) => panic!(),
         }
     }
@@ -941,7 +915,7 @@ impl<'a> FuncDecl {
             for (i, a) in self.args.as_ref().unwrap().iter().enumerate() {
                 match a {
                     &Predicate::GroundedClsMemb(ref term) => {
-                        if term.term == var {
+                        if &*term.term == var {
                             return Some(i);
                         }
                     }
@@ -983,7 +957,7 @@ impl<'a> FuncDecl {
                     if let &Predicate::FreeClsMemb(ref arg) = arg {
                         if let Some(entity) = assignments.get(&arg.term) {
                             if let Some(current) = entity.get_relationship(&grfunc) {
-                                if current != &grfunc {
+                                if **current != grfunc {
                                     return Some(false);
                                 } else {
                                     return Some(true);
@@ -1017,18 +991,10 @@ pub struct ClassDecl {
 }
 
 impl<'a> ClassDecl {
-    pub fn get_name_as_str(&self) -> &str {
+    pub fn get_name(&self) -> Rc<String> {
         match self.name {
-            Terminal::FreeTerm(ref var) => &var.name,
-            Terminal::GroundedTerm(ref name) => name,
-            Terminal::Keyword(name) => name,
-        }
-    }
-
-    pub fn get_name_as_string_ref(&self) -> &String {
-        match self.name {
-            Terminal::FreeTerm(ref var) => &(var.name),
-            Terminal::GroundedTerm(ref name) => &name,
+            Terminal::FreeTerm(ref var) => var.name.clone(),
+            Terminal::GroundedTerm(ref name) => name.clone(),
             Terminal::Keyword(_) => panic!(),
         }
     }
@@ -1135,7 +1101,7 @@ impl<'a> ClassDecl {
                         return None;
                     }
                     if let Some(entity) = assignments.as_ref().unwrap().get(&free.term) {
-                        if let Some(grounded) = entity.get_class(&free.parent.get_name()) {
+                        if let Some(grounded) = entity.get_class(free.parent.get_name()) {
                             if !free.equal_to_grounded(grounded) {
                                 return Some(false);
                             }
@@ -1147,10 +1113,9 @@ impl<'a> ClassDecl {
                     }
                 }
                 &Predicate::GroundedClsMemb(ref compare) => {
-                    let entity =
-                        agent.get_entity_from_class(self.get_name_as_str(), compare.term.as_str());
+                    let entity = agent.get_entity_from_class(self.get_name(), compare.term.clone());
                     if let Some(current) = entity {
-                        if current != compare {
+                        if *current != *compare {
                             return Some(false);
                         }
                     } else {
@@ -1170,7 +1135,7 @@ impl<'a> ClassDecl {
             let grfact = match a {
                 &Predicate::FreeClsMemb(ref free) => {
                     if let Some(ref entity) = assignments.as_ref().unwrap().get(&free.term) {
-                        GroundedClsMemb::from_free(free, entity.name)
+                        GroundedClsMemb::from_free(free, entity.name.clone())
                     } else {
                         break;
                     }
@@ -1305,17 +1270,17 @@ impl<'a> OpArgTerm {
         }
     }
 
-    fn get_name(&self) -> &str {
+    fn get_name(&self) -> Rc<String> {
         match *self {
             OpArgTerm::Terminal(ref term) => term.get_name(),
-            OpArgTerm::String(ref s) => s.as_str(),
+            OpArgTerm::String(ref s) => Rc::new(s.clone()),
         }
     }
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct Var {
-    pub name: String,
+    pub name: Rc<String>,
     op_arg: Option<OpArg>,
 }
 
@@ -1329,9 +1294,9 @@ impl Var {
             }
             None => None,
         };
-        let name = unsafe { String::from(str::from_utf8_unchecked(name)) };
+        let name = unsafe { Rc::new(String::from(str::from_utf8_unchecked(name))) };
         if reserved(&name) {
-            return Err(ParseErrF::ReservedKW(name));
+            return Err(ParseErrF::ReservedKW(Rc::try_unwrap(name).unwrap()));
         }
         Ok(Var {
             name: name,
@@ -1342,7 +1307,7 @@ impl Var {
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct Skolem {
-    pub name: String,
+    pub name: Rc<String>,
     op_arg: Option<OpArg>,
 }
 
@@ -1358,9 +1323,9 @@ impl Skolem {
             }
             None => None,
         };
-        let name = unsafe { String::from(str::from_utf8_unchecked(name)) };
+        let name = unsafe { Rc::new(String::from(str::from_utf8_unchecked(name))) };
         if reserved(&name) {
-            return Err(ParseErrF::ReservedKW(name));
+            return Err(ParseErrF::ReservedKW(Rc::try_unwrap(name).unwrap()));
         }
         Ok(Skolem {
             name: name,
@@ -1372,16 +1337,16 @@ impl Skolem {
 #[derive(Debug, PartialEq, Clone, Eq, Hash)]
 pub enum Terminal {
     FreeTerm(Rc<Var>),
-    GroundedTerm(String),
+    GroundedTerm(Rc<String>),
     Keyword(&'static str),
 }
 
 impl<'a> Terminal {
     fn from(other: &TerminalBorrowed<'a>, context: &mut Context) -> Result<Terminal, ParseErrF> {
         let &TerminalBorrowed(slice) = other;
-        let name = unsafe { String::from(str::from_utf8_unchecked(slice)) };
+        let name = unsafe { Rc::new(String::from(str::from_utf8_unchecked(slice))) };
         if reserved(&name) {
-            return Err(ParseErrF::ReservedKW(name));
+            return Err(ParseErrF::ReservedKW(Rc::try_unwrap(name).unwrap()));
         }
         for v in &context.vars {
             if v.name == name {
@@ -1392,9 +1357,9 @@ impl<'a> Terminal {
     }
 
     fn from_slice(slice: &[u8], context: &mut Context) -> Result<Terminal, ParseErrF> {
-        let name = unsafe { String::from(str::from_utf8_unchecked(slice)) };
+        let name = unsafe { Rc::new(String::from(str::from_utf8_unchecked(slice))) };
         if reserved(&name) {
-            return Err(ParseErrF::ReservedKW(name));
+            return Err(ParseErrF::ReservedKW(Rc::try_unwrap(name).unwrap()));
         }
         for v in &context.vars {
             if v.name == name {
@@ -1417,14 +1382,14 @@ impl<'a> Terminal {
         }
     }
 
-    fn get_name(&self) -> &str {
+    fn get_name(&self) -> Rc<String> {
         match self {
-            &Terminal::GroundedTerm(ref name) => name,
+            &Terminal::GroundedTerm(ref name) => name.clone(),
             _ => panic!("simag: attempted to get a name from a non-grounded terminal"),
         }
     }
 
-    fn to_string(&self) -> String {
+    fn to_string(&self) -> Rc<String> {
         match self {
             &Terminal::GroundedTerm(ref name) => name.clone(),
             _ => panic!("simag: attempted to get a name from a non-grounded terminal"),
