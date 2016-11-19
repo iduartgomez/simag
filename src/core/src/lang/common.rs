@@ -1135,9 +1135,12 @@ impl<'a> ClassDecl {
                         return None;
                     }
                     if let Some(entity) = assignments.as_ref().unwrap().get(&free.term) {
-                        let grounded = entity.get_class(&free.parent.get_name());
-                        if !free.equal_to_grounded(grounded) {
-                            return Some(false);
+                        if let Some(grounded) = entity.get_class(&free.parent.get_name()) {
+                            if !free.equal_to_grounded(grounded) {
+                                return Some(false);
+                            }
+                        } else {
+                            return None;
                         }
                     } else {
                         return None;

@@ -968,7 +968,7 @@ impl<'a> Inference<'a> {
     fn infer_facts(&'a mut self) {
         fn query_cls<'a>(inf: &'a Inference<'a>, query: &'a str, actv_query: ActiveQuery<'a>) {
             let mut pass = InfTrial::new(inf, actv_query);
-            pass.get_rules(vec![query], HashSet::new(), HashSet::new(), 0);
+            pass.get_rules(vec![query]);
             {
                 let mut lock = inf.nodes.write().unwrap();
                 for nodes in lock.values_mut() {
@@ -979,9 +979,7 @@ impl<'a> Inference<'a> {
             // run the query, if there is no result and there is an update,
             // then loop again, else stop
             loop {
-                let mut chk = VecDeque::new();
-                let mut done = HashSet::new();
-                pass_ref.unify(query, &mut chk, &mut done);
+                pass_ref.unify(query, VecDeque::new(), HashSet::new());
                 if !pass.updated.borrow().contains(&true) || !*pass.feedback.borrow() {
                     break;
                 } else {
@@ -1120,7 +1118,7 @@ impl<'a> InfTrial<'a> {
         }
     }
 
-    fn unify(&'a self, parent: &'a str, chk: &mut VecDeque<&'a str>, done: &mut HashSet<&'a str>) {
+    fn unify(&'a self, parent: &'a str, mut chk: VecDeque<&'a str>, mut done: HashSet<&'a str>) {
         *self.valid.borrow_mut() = None;
         // for each node in the subtitution tree unifify variables
         // and try every possible substitution until (if) a solution is found
@@ -1215,15 +1213,14 @@ impl<'a> InfTrial<'a> {
                 }
             }
         }
+        println!("chk: {:?}; done: {:?}", chk, done);
+        println!("node_keys: {:?}", self.nodes.read().unwrap().keys().collect::<Vec<_>>());
         if !*self.feedback.borrow() {
             return;
         } else if chk.len() > 0 {
             done.insert(parent);
+            self.get_rules(Vec::from_iter(chk.iter().map(|x| *x)));
             let p = chk.pop_front().unwrap();
-            let has_key = self.nodes.read().unwrap().contains_key(p);
-            if !has_key {
-                self.get_rules(vec![p], HashSet::new(), HashSet::new(), 0);
-            }
             self.unify(p, chk, done)
         }
     }
@@ -1456,19 +1453,19 @@ impl<'a> InfTrial<'a> {
         Some(results)
     }
 
-    fn get_rules(&self,
-                 mut cls_ls: Vec<&'a str>,
-                 mut done: HashSet<&'a str>,
-                 rules: HashSet<&&'a LogSentence>,
-                 depth: usize) {
-        if depth == 10 {
-            return;
+    fn get_rules(&self, cls_ls: Vec<&'a str>) {
+        let mut rules = HashSet::new();
+        for vrules in self.nodes.read().unwrap().values() {
+            for r in vrules {
+                rules.insert(r.proof);
+            }
         }
-        if let Some(cls) = cls_ls.pop() {
-            done.insert(cls);
+        let rules = unsafe { &*(&rules as *const HashSet<&LogSentence>) };
+        for cls in cls_ls {
             if let Some(stored) = self.kb.classes.read().unwrap().get(cls) {
                 let lock = stored.beliefs.read().unwrap();
-                let a: HashSet<&&LogSentence> = HashSet::from_iter(lock.get(cls).unwrap());
+                let a: HashSet<&LogSentence> =
+                    HashSet::from_iter(lock.get(cls).unwrap().iter().map(|x| *x));
                 for sent in a.difference(&rules) {
                     let mut antecedents = vec![];
                     for p in sent.get_lhs_predicates() {
@@ -1483,18 +1480,7 @@ impl<'a> InfTrial<'a> {
                             ls.push(node.clone());
                         }
                     }
-                    let mut filtered: Vec<_> = antecedents.iter()
-                        .filter(|e| if !done.contains(*e) && !cls_ls.contains(e) {
-                            true
-                        } else {
-                            false
-                        })
-                        .map(|x| *x)
-                        .collect();
-                    cls_ls.append(&mut filtered);
                 }
-                let rules: HashSet<_> = rules.union(&a).map(|x| *x).collect();
-                self.get_rules(cls_ls, done, rules, depth + 1)
             }
         }
     }
@@ -1504,9 +1490,6 @@ impl<'a> InfTrial<'a> {
 struct ArgsProduct<'a> {
     indexes: RwLock<HashMap<Rc<lang::Var>, usize>>,
     input: &'a HashMap<Rc<lang::Var>, Vec<&'a VarAssignment<'a>>>,
-    skey: Option<Arc<Rc<lang::Var>>>,
-    sval: Option<Arc<Vec<&'a VarAssignment<'a>>>>,
-    counter: Mutex<Option<usize>>,
     done: RwLock<HashSet<Arc<ProofArgs<'a>>>>,
 }
 
@@ -1518,25 +1501,9 @@ impl<'a> ArgsProduct<'a> {
         for (k, _) in input.iter() {
             indexes.insert(k.clone(), 0_usize);
         }
-        let mut key = None;
-        let mut value = None;
-        for (k0, v0) in input.iter() {
-            key = Some(Arc::new(k0.clone()));
-            value = Some(Arc::new(v0.clone()));
-            break;
-        }
-        let counter;
-        if let Some(_) = value {
-            counter = Mutex::new(Some(0_usize));
-        } else {
-            counter = Mutex::new(None);
-        }
         ArgsProduct {
             indexes: RwLock::new(indexes),
             input: input,
-            skey: key,
-            sval: value,
-            counter: counter,
             done: RwLock::new(HashSet::new()),
         }
     }
@@ -1546,83 +1513,12 @@ impl<'a> ::std::iter::Iterator for ArgsProduct<'a> {
     type Item = Arc<ProofArgs<'a>>;
 
     fn next(&mut self) -> Option<Arc<ProofArgs<'a>>> {
-        fn completed_iter<'a>(iter: &ArgsProduct<'a>) -> bool {
-            let mut max = 0;
-            {
-                let mut lock = iter.indexes.write().unwrap();
-                for (k, v) in lock.iter_mut() {
-                    if *v < iter.input.get(k).unwrap().len() {
-                        *v += 1;
-                        break;
-                    } else {
-                        max += 1;
-                    }
-                }
-            }
-            if max == iter.indexes.read().unwrap().len() {
-                true
-            } else {
-                false
-            }
-        }
-
         loop {
             let mut row_0 = vec![];
-            {
-                let idx_0: usize;
-                let sval;
-                loop {
-                    if let Ok(mut guard) = self.counter.try_lock() {
-                        if let Some(ref mut n) = *guard {
-                            idx_0 = *n;
-                            sval = self.sval.as_ref().unwrap();
-                            if idx_0 < sval.len() - 1 {
-                                *n += 1;
-                            } else {
-                                *n = 0;
-                                if completed_iter(self) {
-                                    return None;
-                                }
-                            }
-                        } else {
-                            return None;
-                        }
-                        break;
-                    } else if self.counter.is_poisoned() {
-                        if let Err(poisoned) = self.counter.lock() {
-                            let mut guard = poisoned.into_inner();
-                            if let Some(ref mut n) = *guard {
-                                idx_0 = *n;
-                                sval = self.sval.as_ref().unwrap();
-                                if idx_0 < sval.len() {
-                                    *n += 1;
-                                } else {
-                                    *n = 0;
-                                    if completed_iter(self) {
-                                        return None;
-                                    }
-                                }
-                            } else {
-                                return None;
-                            }
-                        } else {
-                            return None;
-                        }
-                        break;
-                    } else {
-                        return None;
-                    }
-                }
-                let skey: &Rc<lang::Var> = self.skey.as_ref().unwrap();
-                let e: (Rc<lang::Var>, &VarAssignment) = (skey.clone(), &*sval[idx_0]);
+            for (k1, v1) in self.input.iter() {
+                let idx_1 = *(self.indexes.read().unwrap().get(k1).unwrap());
+                let e = (k1.clone(), &*v1[idx_1]);
                 row_0.push(e);
-                for (k1, v1) in self.input.iter() {
-                    if skey != k1 {
-                        let idx_1 = *(self.indexes.read().unwrap().get(k1).unwrap());
-                        let e = (k1.clone(), &*v1[idx_1]);
-                        row_0.push(e);
-                    }
-                }
             }
             let res = Arc::new(row_0);
             let exists = self.done.read().unwrap().contains(&res);
@@ -1630,6 +1526,32 @@ impl<'a> ::std::iter::Iterator for ArgsProduct<'a> {
                 self.done.write().unwrap().insert(res.clone());
                 return Some(res);
             }
+            if self.completed_iter() {
+                return None;
+            }
+        }
+    }
+}
+
+impl<'a> ArgsProduct<'a> {
+    fn completed_iter(&self) -> bool {
+        let mut max = 0;
+        {
+            let mut lock = self.indexes.write().unwrap();
+            for (k, v) in lock.iter_mut() {
+                let l = self.input.get(k).unwrap().len();
+                if *v < (l - 1) {
+                    *v += 1;
+                    break;
+                } else {
+                    max += 1;
+                }
+            }
+        }
+        if max == self.indexes.read().unwrap().len() {
+            true
+        } else {
+            false
         }
     }
 }
@@ -1674,15 +1596,17 @@ pub struct VarAssignment<'a> {
 
 impl<'a> VarAssignment<'a> {
     #[inline]
-    pub fn get_class(&self, name: &str) -> &GroundedClsMemb {
-        self.classes.get(name).unwrap()
+    pub fn get_class(&self, name: &str) -> Option<&&GroundedClsMemb> {
+        self.classes.get(name)
     }
 
     #[inline]
     pub fn get_relationship(&self, func: &GroundedFunc) -> Option<&GroundedFunc> {
-        for owned_f in self.funcs.get(func.get_name()).unwrap() {
-            if owned_f.comparable(func) {
-                return Some(owned_f);
+        if let Some(funcs) = self.funcs.get(func.get_name()) {
+            for owned_f in funcs {
+                if owned_f.comparable(func) {
+                    return Some(owned_f);
+                }
             }
         }
         None

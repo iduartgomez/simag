@@ -7,9 +7,9 @@
 //! by compounded expressions which will evaluate with the current knowledge
 //! when called and perform any subtitution in the knowledge base if pertinent.
 use std::collections::{HashMap, HashSet};
-use std::fmt;
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
+use std::fmt;
 use std::iter::FromIterator;
 
 use chrono::{UTC, DateTime};
@@ -795,18 +795,18 @@ impl Particle {
     }
 
     #[inline]
-    fn is_atom(&self) -> bool {
-        match *self {
-            Particle::Atom(_) => true,
-            _ => false,
-        }
-    }
-
-    #[inline]
     fn extract_assertion(&self) -> Rc<Assert> {
         match *self {
             Particle::Atom(ref atom) => atom.borrow().pred.clone(),
             _ => panic!(),
+        }
+    }
+    
+    #[inline]
+    fn is_atom(&self) -> bool {
+        match *self {
+            Particle::Atom(_) => true,
+            _ => false,
         }
     }
 
@@ -818,22 +818,16 @@ impl Particle {
         }
     }
 
-    fn get_disjunction(&self) -> Result<&mut LogicDisjunction, ParseErrF> {
+    fn is_disjunction(&self) -> Result<(), ParseErrF> {
         match *self {
-            Particle::Disjunction(ref p) => {
-                let r = unsafe { &mut *(&mut *p.borrow_mut() as *mut LogicDisjunction) };
-                Ok(r)
-            }
+            Particle::Disjunction(_) => Ok(()),
             _ => Err(ParseErrF::IConnectAfterOr),
         }
     }
 
-    fn get_conjunction(&self) -> Result<&mut LogicConjunction, ParseErrF> {
+    fn is_conjunction(&self) -> Result<(), ParseErrF> {
         match *self {
-            Particle::Conjunction(ref p) => {
-                let r = unsafe { &mut *(&mut *p.borrow_mut() as *mut LogicConjunction) };
-                Ok(r)
-            }
+            Particle::Conjunction(_) => Ok(()),
             _ => Err(ParseErrF::IConnectAfterOr),
         }
     }
@@ -1190,7 +1184,7 @@ fn walk_ast(ast: &Next,
                     for i in 1..len {
                         let ptr = walk_ast(&nodes[i], sent, context)?;
                         let a = ptr.clone();
-                        let is_conj = a.get_conjunction();
+                        let is_conj = a.is_conjunction();
                         if is_conj.is_err() {
                             return Err(is_conj.unwrap_err());
                         } else {
@@ -1203,7 +1197,7 @@ fn walk_ast(ast: &Next,
                     for i in 1..len {
                         let ptr = walk_ast(&nodes[i], sent, context)?;
                         let a = ptr.clone();
-                        let is_disj = a.get_disjunction();
+                        let is_disj = a.is_disjunction();
                         if is_disj.is_err() {
                             return Err(is_disj.unwrap_err());
                         } else {

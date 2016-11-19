@@ -33,7 +33,7 @@
 use std::str;
 use std::str::FromStr;
 use std::collections::VecDeque;
-// use std::thread;
+use std::thread;
 
 use nom::{IResult, ErrorKind};
 use nom::{is_digit, is_alphanumeric, eof};
@@ -51,31 +51,35 @@ const IMPL_OP: &'static [u8] = b"=>";
 pub struct Parser;
 impl Parser {
     /// Lexerless (mostly) recursive descent parser. Takes a string and outputs a correct ParseTree.
-    pub fn parse(input: String, tell: bool) -> Result<VecDeque<ParseTree>, ParseErrF> {
+    pub fn parse<'b>(mut input: String, tell: bool) -> Result<VecDeque<ParseTree>, ParseErrF> {
         // store is a vec where the sequence of characters after cleaning up comments
-        // will be stored; feed to an other fn to avoid lifetime issues (both original
-        // input and the store have to have the same lifetime)
-        let mut store = Vec::new();
-        let scopes = match Self::feed(input.as_bytes(), &mut store) {
+        // will be stored, both have to be extended to 'static lifetime so they can be
+        fn extend_lifetime<'b, T>(r: &'b mut T) -> &'static mut T {
+            unsafe { ::std::mem::transmute::<&'b mut T, &'static mut T>(r) }
+        }
+        let input = extend_lifetime(&mut input);
+        let mut store = vec![];
+        let store_ref = extend_lifetime(&mut store);
+        let scopes = match Self::feed(input.as_bytes(), store_ref) {
             Ok(scopes) => scopes,
             Err(err) => return Err(ParseErrF::from(err)),
         };
         // walk the AST output and, if correct, output a final parse tree
-        let mut parse_trees = VecDeque::new();
+        let mut parse_trees = vec![];
         for ast in scopes {
-            // let res = thread::spawn(move || {
-            // match ParseTree::process_ast(ast, tell) {
-            // Err(err) => parse_trees.push_back(ParseTree::ParseErr(err)),
-            // Ok(tree) => parse_trees.push_back(tree),
-            // }
-            // });
-            //
-            match ParseTree::process_ast(ast, tell) {
-                Err(err) => parse_trees.push_back(ParseTree::ParseErr(err)),
-                Ok(tree) => parse_trees.push_back(tree),
-            }
+            let res = thread::spawn(move || ParseTree::process_ast(ast, tell));
+            parse_trees.push(res);
         }
-        Ok(parse_trees)
+        let results: VecDeque<ParseTree> = parse_trees.drain(..)
+            .map(|res| {
+                let res = res.join().unwrap();
+                match res {
+                    Ok(ptr) => unsafe { *Box::from_raw(ptr as *mut ParseTree) },
+                    Err(err) => ParseTree::ParseErr(err),
+                }
+            })
+            .collect();
+        Ok(results)
     }
 
     /// First pass: will tokenize and output an AST
@@ -177,12 +181,16 @@ pub enum ParseTree {
 }
 
 impl ParseTree {
-    fn process_ast(input: Next, tell: bool) -> Result<ParseTree, ParseErrF> {
+    fn process_ast(input: Next, tell: bool) -> Result<usize, ParseErrF> {
+        // return type is a hack to avoid compiling error due to not being 'Send' compatible
+        // instead we return a raw pointer as usize and when unifying all the thread
+        // results convert back to box and deref to the stack
         let mut context = Context::new();
         context.in_assertion = true;
         context.is_tell = tell;
         if let Ok(Some(tree)) = input.is_assertion(&mut context) {
-            return Ok(tree);
+            let ptr = Box::into_raw(Box::new(tree)) as usize;
+            return Ok(ptr);
         }
         // it's an expression, make logic sentence from nested expressions
         let mut context = Context::new();
@@ -190,8 +198,14 @@ impl ParseTree {
         match LogSentence::new(&input, &mut context) {
             Ok(sent) => {
                 match context.stype {
-                    SentType::IExpr => Ok(ParseTree::IExpr(sent)),
-                    SentType::Rule => Ok(ParseTree::Rule(sent)),
+                    SentType::IExpr => {
+                        let ptr = Box::into_raw(Box::new(ParseTree::IExpr(sent))) as usize;
+                        Ok(ptr)
+                    }
+                    SentType::Rule => {
+                        let ptr = Box::into_raw(Box::new(ParseTree::Rule(sent))) as usize;
+                        Ok(ptr)
+                    }
                     SentType::Expr => Err(ParseErrF::ExprWithVars(format!("{}", sent))),
                 }
             }
