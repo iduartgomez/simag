@@ -33,6 +33,7 @@
 use std::str;
 use std::str::FromStr;
 use std::collections::VecDeque;
+// use std::thread;
 
 use nom::{IResult, ErrorKind};
 use nom::{is_digit, is_alphanumeric, eof};
@@ -62,6 +63,13 @@ impl Parser {
         // walk the AST output and, if correct, output a final parse tree
         let mut parse_trees = VecDeque::new();
         for ast in scopes {
+            // let res = thread::spawn(move || {
+            // match ParseTree::process_ast(ast, tell) {
+            // Err(err) => parse_trees.push_back(ParseTree::ParseErr(err)),
+            // Ok(tree) => parse_trees.push_back(tree),
+            // }
+            // });
+            //
             match ParseTree::process_ast(ast, tell) {
                 Err(err) => parse_trees.push_back(ParseTree::ParseErr(err)),
                 Ok(tree) => parse_trees.push_back(tree),
@@ -269,22 +277,6 @@ pub enum AssertBorrowed<'a> {
     FuncDecl(FuncDeclBorrowed<'a>),
     ClassDecl(ClassDeclBorrowed<'a>),
 }
-
-// impl<'a> AssertBorrowed<'a> {
-// fn into_owned(&self) -> Assert {
-// match &self {
-// &AssertBorrowed::ClassDecl(ref decl) => {
-// let cls = ClassDecl::from(decl, context)?;
-// Ok(Some(ParseTree::Assertion(vec![Assert::ClassDecl(cls)])))
-// }
-// &AssertBorrowed::FuncDecl(ref decl) => {
-// let func = FuncDecl::from(decl, context)?;
-// Ok(Some(ParseTree::Assertion(vec![Assert::FuncDecl(func)])))
-// }
-// }
-// }
-// }
-//
 
 #[derive(Debug)]
 pub enum VarDeclBorrowed<'a> {

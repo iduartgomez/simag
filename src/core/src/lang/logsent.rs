@@ -8,6 +8,9 @@
 //! when called and perform any subtitution in the knowledge base if pertinent.
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::rc::Rc;
+use std::cell::RefCell;
+use std::iter::FromIterator;
 
 use chrono::{UTC, DateTime};
 
@@ -27,13 +30,13 @@ use agent;
 ///    or a list of string.
 #[derive(Debug)]
 pub struct LogSentence {
-    particles: Vec<Box<Particle>>,
-    produced: Vec<*const LogSentence>,
-    vars: Option<Vec<Box<Var>>>,
-    skolem: Option<Vec<Box<Skolem>>>,
-    root: *const Particle,
-    predicates: (Vec<*const Assert>, Vec<*const Assert>),
-    pub var_req: Option<HashMap<*const Var, Vec<*const Assert>>>,
+    particles: Vec<Rc<Particle>>,
+    produced: Vec<Rc<LogSentence>>,
+    vars: Option<Vec<Rc<Var>>>,
+    skolem: Option<Vec<Rc<Skolem>>>,
+    root: Option<Rc<Particle>>,
+    predicates: (Vec<Rc<Assert>>, Vec<Rc<Assert>>),
+    pub var_req: Option<HashMap<Rc<Var>, Vec<Rc<Assert>>>>,
     pub created: DateTime<UTC>,
     id: Vec<u8>,
 }
@@ -45,77 +48,74 @@ impl<'a> LogSentence {
             produced: Vec::new(),
             skolem: None,
             vars: None,
-            root: ::std::ptr::null(),
+            root: None,
             predicates: (vec![], vec![]),
             var_req: None,
             created: UTC::now(),
             id: vec![],
         };
-        let r = walk_ast(ast, &mut sent, context);
-        if r.is_err() {
-            Err(r.unwrap_err())
-        } else {
-            link_sent_childs(&mut sent);
-            // classify the kind of sentence and check that are correct
-            if sent.vars.is_none() {
-                if !context.iexpr() {
-                    context.stype = SentType::Rule;
-                } else {
-                    return Err(ParseErrF::RuleInclICond(format!("{}", sent)));
-                }
-            } else if context.iexpr() {
-                let mut lhs = HashSet::new();
-                if let Err(err) = correct_iexpr(&sent, &mut lhs) {
-                    return Err(err);
-                }
-                let mut rhs = HashSet::new();
-                for p in &sent.particles {
-                    if p.is_atom() {
-                        rhs.insert(&**p as *const Particle);
-                    }
-                }
-                let mut rhs_v = vec![];
-                for p in rhs.difference(&lhs).map(|x| *x) {
-                    let p = unsafe { &*p as &Particle };
-                    match p {
-                        &Particle::Atom(ref p) => rhs_v.push(&p.pred as *const Assert),
-                        _ => {}
-                    }
-                }
-                let mut lhs_v = vec![];
-                for p in lhs.into_iter() {
-                    let p = unsafe { &*p as &Particle };
-                    match p {
-                        &Particle::Atom(ref p) => lhs_v.push(&p.pred as *const Assert),
-                        _ => {}
-                    }
-                }
-                sent.predicates = (lhs_v, rhs_v);
-                // add var requeriments
-                let req = sent.get_var_requeriments();
-                if req.len() > 0 {
-                    sent.var_req = Some(req);
+        let r = walk_ast(ast, &mut sent, context)?;
+        sent.root = Some(r);
+        // classify the kind of sentence and check that are correct
+        if sent.vars.is_none() {
+            if !context.iexpr() {
+                context.stype = SentType::Rule;
+            } else {
+                return Err(ParseErrF::RuleInclICond(format!("{}", sent)));
+            }
+        } else if context.iexpr() {
+            let mut lhs: Vec<Rc<Particle>> = vec![];
+            if let Err(err) = correct_iexpr(&sent, &mut lhs) {
+                return Err(err);
+            }
+            let lhs = HashSet::from_iter(lhs.iter().map(|x| x as *const Rc<Particle>));
+            let mut rhs: HashSet<*const Rc<Particle>> = HashSet::new();
+            for p in &sent.particles {
+                if p.is_atom() {
+                    rhs.insert(p as *const Rc<Particle>);
                 }
             }
-            sent.generate_uid();
-            Ok(sent)
+            let mut rhs_v: Vec<Rc<Assert>> = vec![];
+            for p in rhs.difference(&lhs).map(|x| *x) {
+                let p = unsafe { &**p };
+                match p {
+                    &Particle::Atom(ref p) => rhs_v.push(p.borrow().pred.clone()),
+                    _ => {}
+                }
+            }
+            let mut lhs_v: Vec<Rc<Assert>> = vec![];
+            for p in lhs.into_iter() {
+                let p = unsafe { &**p };
+                match p {
+                    &Particle::Atom(ref p) => lhs_v.push(p.borrow().pred.clone()),
+                    _ => {}
+                }
+            }
+            sent.predicates = (lhs_v, rhs_v);
+            // add var requeriments
+            let req = sent.get_var_requeriments();
+            if req.len() > 0 {
+                sent.var_req = Some(req);
+            }
         }
+        sent.generate_uid();
+        Ok(sent)
     }
 
     pub fn solve(&self,
                  agent: &agent::Representation,
-                 assignments: Option<HashMap<*const Var, &agent::VarAssignment>>,
+                 assignments: Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
                  context: &mut agent::ProofResult) {
-        let root = unsafe { &*(self.root) };
-        if let Some(res) = root.solve(agent, &assignments) {
+        let root = self.root.clone();
+        if let Some(res) = root.as_ref().unwrap().solve(agent, &assignments) {
             if res {
-                if root.is_icond() {
-                    root.substitute(agent, &assignments, context, &true)
+                if root.as_ref().unwrap().is_icond() {
+                    root.as_ref().unwrap().substitute(agent, &assignments, context, &true)
                 }
                 context.result = Some(true);
             } else {
-                if root.is_icond() {
-                    root.substitute(agent, &assignments, context, &false)
+                if root.as_ref().unwrap().is_icond() {
+                    root.as_ref().unwrap().substitute(agent, &assignments, context, &false)
                 }
                 context.result = Some(false);
             }
@@ -124,7 +124,7 @@ impl<'a> LogSentence {
         }
     }
 
-    pub fn extract_all_predicates(self) -> (Vec<Box<Var>>, Vec<Assert>) {
+    pub fn extract_all_predicates(self) -> (Vec<Rc<Var>>, Vec<Rc<Assert>>) {
         let LogSentence { vars, particles, .. } = self;
         let mut preds = vec![];
         for p in particles {
@@ -145,7 +145,7 @@ impl<'a> LogSentence {
     pub fn get_rhs_predicates(&self) -> Vec<&Assert> {
         let mut v = vec![];
         for p in &self.predicates.1 {
-            let p = unsafe { &**p as &Assert };
+            let p = &**p as &Assert;
             v.push(p);
         }
         v
@@ -154,7 +154,7 @@ impl<'a> LogSentence {
     pub fn get_lhs_predicates(&self) -> Vec<&Assert> {
         let mut v = vec![];
         for p in &self.predicates.0 {
-            let p = unsafe { &**p as &Assert };
+            let p = &**p as &Assert;
             v.push(p);
         }
         v
@@ -162,7 +162,7 @@ impl<'a> LogSentence {
 
     /// Returns the requeriments a variable must meet to fit the criteria in a sentence.
     /// This just takes into consideration the LHS variables.
-    fn get_var_requeriments(&self) -> HashMap<*const Var, Vec<*const Assert>> {
+    fn get_var_requeriments(&self) -> HashMap<Rc<Var>, Vec<Rc<Assert>>> {
         let mut requeriments = HashMap::new();
         if self.vars.is_none() {
             return requeriments;
@@ -170,31 +170,30 @@ impl<'a> LogSentence {
         for var in self.vars.as_ref().unwrap() {
             let mut var_req = Vec::new();
             for p in &self.predicates.0 {
-                let pred = unsafe { &**p as &Assert };
-                if pred.contains(var) {
-                    var_req.push(*p)
+                if p.contains(var) {
+                    var_req.push(p.clone())
                 }
             }
-            requeriments.insert(&**var as *const Var, var_req);
+            requeriments.insert(var.clone(), var_req);
         }
         requeriments
     }
 
-    fn add_var(&mut self, var: Box<Var>) {
+    fn add_var(&mut self, var: Rc<Var>) {
         if self.vars.is_none() {
             self.vars = Some(Vec::new());
         }
-        self.vars.as_mut().unwrap().push(var)
+        self.vars.as_mut().unwrap().push(var.clone())
     }
 
-    fn add_skolem(&mut self, skolem: Box<Skolem>) {
+    fn add_skolem(&mut self, skolem: Rc<Skolem>) {
         if self.skolem.is_none() {
             self.vars = Some(Vec::new());
         }
-        self.skolem.as_mut().unwrap().push(skolem)
+        self.skolem.as_mut().unwrap().push(skolem.clone())
     }
 
-    fn add_particle(&mut self, p: Box<Particle>) {
+    fn add_particle(&mut self, p: Rc<Particle>) {
         self.particles.push(p)
     }
 
@@ -207,7 +206,7 @@ impl<'a> LogSentence {
                 &Particle::Implication(_) => self.id.push(3),
                 &Particle::IndConditional(_) => self.id.push(4),
                 &Particle::Atom(ref p) => {
-                    let mut id_1 = p.get_id();
+                    let mut id_1 = p.borrow().get_id();
                     self.id.append(&mut id_1)
                 }
             }
@@ -235,8 +234,7 @@ impl ::std::hash::Hash for LogSentence {
 
 impl fmt::Display for LogSentence {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let root = unsafe { &*(self.root) };
-        let prelim: String = format!("Sentence({})", root);
+        let prelim: String = format!("Sentence({})", self.root.as_ref().unwrap());
         let mut breaks = Vec::new();
         let mut depth = 0_usize;
         use std::iter;
@@ -290,14 +288,14 @@ pub enum SentType {
 
 #[derive(Debug, Clone)]
 struct LogicIndCond {
-    parent: *const Particle,
-    next: Vec<*const Particle>,
+    parent: Option<Rc<Particle>>,
+    next: Vec<Rc<Particle>>,
 }
 
 impl LogicIndCond {
     fn new() -> LogicIndCond {
         LogicIndCond {
-            parent: ::std::ptr::null::<Particle>(),
+            parent: None,
             next: Vec::with_capacity(2),
         }
     }
@@ -305,9 +303,9 @@ impl LogicIndCond {
     #[inline]
     fn solve(&self,
              agent: &agent::Representation,
-             assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>)
+             assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
              -> Option<bool> {
-        let n0 = unsafe { &*(self.next[0]) };
+        let n0 = &*self.next[0];
         if let Some(res) = n0.solve(agent, assignments) {
             if res {
                 Some(true)
@@ -322,22 +320,20 @@ impl LogicIndCond {
     #[inline]
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>,
+                  assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
-        let n1 = unsafe { &*(self.next[1]) };
+        let n1 = &*self.next[1];
         n1.substitute(agent, assignments, context, rhs)
     }
 
-    fn get_next(&self, pos: usize) -> Option<&Particle> {
-        unsafe {
-            if pos == 0 && self.next.len() >= 1 {
-                Some(&*(self.next[0]))
-            } else if pos == 1 && self.next.len() == 2 {
-                Some(&*(self.next[1]))
-            } else {
-                None
-            }
+    fn get_next(&self, pos: usize) -> Option<Rc<Particle>> {
+        if pos == 0 && self.next.len() >= 1 {
+            Some(self.next[0].clone())
+        } else if pos == 1 && self.next.len() == 2 {
+            Some(self.next[1].clone())
+        } else {
+            None
         }
     }
 }
@@ -358,14 +354,14 @@ impl fmt::Display for LogicIndCond {
 
 #[derive(Debug, Clone)]
 struct LogicEquivalence {
-    parent: *const Particle,
-    next: Vec<*const Particle>,
+    parent: Option<Rc<Particle>>,
+    next: Vec<Rc<Particle>>,
 }
 
 impl LogicEquivalence {
     fn new() -> LogicEquivalence {
         LogicEquivalence {
-            parent: ::std::ptr::null::<Particle>(),
+            parent: None,
             next: Vec::with_capacity(2),
         }
     }
@@ -373,10 +369,10 @@ impl LogicEquivalence {
     #[inline]
     fn solve(&self,
              agent: &agent::Representation,
-             assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>)
+             assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
              -> Option<bool> {
-        let n0 = unsafe { &*(self.next[0]) };
-        let n1 = unsafe { &*(self.next[1]) };
+        let n0 = &*self.next[0];
+        let n1 = &*self.next[1];
         let n0_res;
         if let Some(res) = n0.solve(agent, assignments) {
             if res {
@@ -404,15 +400,13 @@ impl LogicEquivalence {
         }
     }
 
-    fn get_next(&self, pos: usize) -> Option<&Particle> {
-        unsafe {
-            if pos == 0 && self.next.len() >= 1 {
-                Some(&*(self.next[0]))
-            } else if pos == 1 && self.next.len() == 2 {
-                Some(&*(self.next[1]))
-            } else {
-                None
-            }
+    fn get_next(&self, pos: usize) -> Option<Rc<Particle>> {
+        if pos == 0 && self.next.len() >= 1 {
+            Some(self.next[0].clone())
+        } else if pos == 1 && self.next.len() == 2 {
+            Some(self.next[1].clone())
+        } else {
+            None
         }
     }
 }
@@ -433,14 +427,14 @@ impl fmt::Display for LogicEquivalence {
 
 #[derive(Debug, Clone)]
 struct LogicImplication {
-    parent: *const Particle,
-    next: Vec<*const Particle>,
+    parent: Option<Rc<Particle>>,
+    next: Vec<Rc<Particle>>,
 }
 
 impl LogicImplication {
     fn new() -> LogicImplication {
         LogicImplication {
-            parent: ::std::ptr::null::<Particle>(),
+            parent: None,
             next: Vec::with_capacity(2),
         }
     }
@@ -448,10 +442,10 @@ impl LogicImplication {
     #[inline]
     fn solve(&self,
              agent: &agent::Representation,
-             assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>)
+             assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
              -> Option<bool> {
-        let n0 = unsafe { &*(self.next[0]) };
-        let n1 = unsafe { &*(self.next[1]) };
+        let n0 = &*self.next[0];
+        let n1 = &*self.next[1];
         let n0_res;
         if let Some(res) = n0.solve(agent, assignments) {
             if res {
@@ -479,15 +473,13 @@ impl LogicImplication {
         }
     }
 
-    fn get_next(&self, pos: usize) -> Option<&Particle> {
-        unsafe {
-            if pos == 0 && self.next.len() >= 1 {
-                Some(&*(self.next[0]))
-            } else if pos == 1 && self.next.len() == 2 {
-                Some(&*(self.next[1]))
-            } else {
-                None
-            }
+    fn get_next(&self, pos: usize) -> Option<Rc<Particle>> {
+        if pos == 0 && self.next.len() >= 1 {
+            Some(self.next[0].clone())
+        } else if pos == 1 && self.next.len() == 2 {
+            Some(self.next[1].clone())
+        } else {
+            None
         }
     }
 }
@@ -508,14 +500,14 @@ impl fmt::Display for LogicImplication {
 
 #[derive(Debug, Clone)]
 struct LogicConjunction {
-    parent: *const Particle,
-    next: Vec<*const Particle>,
+    parent: Option<Rc<Particle>>,
+    next: Vec<Rc<Particle>>,
 }
 
 impl LogicConjunction {
     fn new() -> LogicConjunction {
         LogicConjunction {
-            parent: ::std::ptr::null::<Particle>(),
+            parent: None,
             next: Vec::with_capacity(2),
         }
     }
@@ -523,10 +515,10 @@ impl LogicConjunction {
     #[inline]
     fn solve(&self,
              agent: &agent::Representation,
-             assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>)
+             assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
              -> Option<bool> {
-        let n0 = unsafe { &*(self.next[0]) };
-        let n1 = unsafe { &*(self.next[1]) };
+        let n0 = &*self.next[0];
+        let n1 = &*self.next[1];
         if let Some(res) = n0.solve(agent, assignments) {
             if !res {
                 return Some(false);
@@ -547,24 +539,22 @@ impl LogicConjunction {
     #[inline]
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>,
+                  assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
-        let n1 = unsafe { &*(self.next[1]) };
+        let n1 = &*self.next[1];
         n1.substitute(agent, assignments, context, rhs);
-        let n0 = unsafe { &*(self.next[0]) };
+        let n0 = &*self.next[0];
         n0.substitute(agent, assignments, context, rhs);
     }
 
-    fn get_next(&self, pos: usize) -> Option<&Particle> {
-        unsafe {
-            if pos == 0 && self.next.len() >= 1 {
-                Some(&*(self.next[0]))
-            } else if pos == 1 && self.next.len() == 2 {
-                Some(&*(self.next[1]))
-            } else {
-                None
-            }
+    fn get_next(&self, pos: usize) -> Option<Rc<Particle>> {
+        if pos == 0 && self.next.len() >= 1 {
+            Some(self.next[0].clone())
+        } else if pos == 1 && self.next.len() == 2 {
+            Some(self.next[1].clone())
+        } else {
+            None
         }
     }
 }
@@ -585,14 +575,14 @@ impl fmt::Display for LogicConjunction {
 
 #[derive(Debug, Clone)]
 struct LogicDisjunction {
-    parent: *const Particle,
-    next: Vec<*const Particle>,
+    parent: Option<Rc<Particle>>,
+    next: Vec<Rc<Particle>>,
 }
 
 impl LogicDisjunction {
     fn new() -> LogicDisjunction {
         LogicDisjunction {
-            parent: ::std::ptr::null::<Particle>(),
+            parent: None,
             next: Vec::with_capacity(2),
         }
     }
@@ -600,10 +590,10 @@ impl LogicDisjunction {
     #[inline]
     fn solve(&self,
              agent: &agent::Representation,
-             assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>)
+             assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
              -> Option<bool> {
-        let n0 = unsafe { &*(self.next[0]) };
-        let n1 = unsafe { &*(self.next[1]) };
+        let n0 = &*self.next[0];
+        let n1 = &*self.next[1];
         let n0_res;
         if let Some(res) = n0.solve(agent, assignments) {
             if res {
@@ -634,27 +624,25 @@ impl LogicDisjunction {
     #[inline]
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>,
+                  assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
         if *rhs {
-            let n1 = unsafe { &*(self.next[1]) };
+            let n1 = &*self.next[1];
             n1.substitute(agent, assignments, context, rhs)
         } else {
-            let n0 = unsafe { &*(self.next[0]) };
+            let n0 = &*self.next[0];
             n0.substitute(agent, assignments, context, rhs)
         }
     }
 
-    fn get_next(&self, pos: usize) -> Option<&Particle> {
-        unsafe {
-            if pos == 0 && self.next.len() >= 1 {
-                Some(&*(self.next[0]))
-            } else if pos == 1 && self.next.len() == 2 {
-                Some(&*(self.next[1]))
-            } else {
-                None
-            }
+    fn get_next(&self, pos: usize) -> Option<Rc<Particle>> {
+        if pos == 0 && self.next.len() >= 1 {
+            Some(self.next[0].clone())
+        } else if pos == 1 && self.next.len() == 2 {
+            Some(self.next[1].clone())
+        } else {
+            None
         }
     }
 }
@@ -675,22 +663,22 @@ impl fmt::Display for LogicDisjunction {
 
 #[derive(Debug, Clone)]
 struct LogicAtom {
-    parent: *const Particle,
-    pred: Assert,
+    parent: Option<Rc<Particle>>,
+    pred: Rc<Assert>,
 }
 
 impl LogicAtom {
     fn new(term: Assert) -> LogicAtom {
         LogicAtom {
-            parent: ::std::ptr::null::<Particle>(),
-            pred: term,
+            parent: None,
+            pred: Rc::new(term),
         }
     }
 
     #[inline]
     fn solve(&self,
              agent: &agent::Representation,
-             assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>)
+             assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
              -> Option<bool> {
         if let Some(res) = self.pred.equal_to_grounded(agent, assignments) {
             if res {
@@ -706,7 +694,7 @@ impl LogicAtom {
     #[inline]
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>,
+                  assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
                   context: &mut agent::ProofResult) {
         self.pred.substitute(agent, assignments, context)
     }
@@ -729,93 +717,79 @@ impl fmt::Display for LogicAtom {
 
 #[derive(Debug)]
 enum Particle {
-    Atom(LogicAtom),
-    Conjunction(LogicConjunction),
-    Disjunction(LogicDisjunction),
-    Implication(LogicImplication),
-    Equivalence(LogicEquivalence),
-    IndConditional(LogicIndCond),
+    Atom(RefCell<LogicAtom>),
+    Conjunction(RefCell<LogicConjunction>),
+    Disjunction(RefCell<LogicDisjunction>),
+    Implication(RefCell<LogicImplication>),
+    Equivalence(RefCell<LogicEquivalence>),
+    IndConditional(RefCell<LogicIndCond>),
 }
 
 impl Particle {
     #[inline]
     fn solve(&self,
              agent: &agent::Representation,
-             assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>)
+             assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
              -> Option<bool> {
         match *self {
-            Particle::Conjunction(ref p) => p.solve(agent, assignments),
-            Particle::Disjunction(ref p) => p.solve(agent, assignments),
-            Particle::Implication(ref p) => p.solve(agent, assignments),
-            Particle::Equivalence(ref p) => p.solve(agent, assignments),
-            Particle::IndConditional(ref p) => p.solve(agent, assignments),
-            Particle::Atom(ref p) => p.solve(agent, assignments),
+            Particle::Conjunction(ref p) => p.borrow().solve(agent, assignments),
+            Particle::Disjunction(ref p) => p.borrow().solve(agent, assignments),
+            Particle::Implication(ref p) => p.borrow().solve(agent, assignments),
+            Particle::Equivalence(ref p) => p.borrow().solve(agent, assignments),
+            Particle::IndConditional(ref p) => p.borrow().solve(agent, assignments),
+            Particle::Atom(ref p) => p.borrow().solve(agent, assignments),
         }
     }
 
     #[inline]
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>,
+                  assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
         match *self {
-            Particle::IndConditional(ref p) => p.substitute(agent, assignments, context, rhs),
-            Particle::Disjunction(ref p) => p.substitute(agent, assignments, context, rhs),
-            Particle::Conjunction(ref p) => p.substitute(agent, assignments, context, rhs),
-            Particle::Atom(ref p) => p.substitute(agent, assignments, context),
+            Particle::IndConditional(ref p) => {
+                p.borrow().substitute(agent, assignments, context, rhs)
+            }
+            Particle::Disjunction(ref p) => p.borrow().substitute(agent, assignments, context, rhs),
+            Particle::Conjunction(ref p) => p.borrow().substitute(agent, assignments, context, rhs),
+            Particle::Atom(ref p) => p.borrow().substitute(agent, assignments, context),
             _ => panic!("simag: wrong operator on the rhs of the expression"),
         }
     }
 
     #[inline]
-    fn get_disjunction(&mut self) -> Result<&mut LogicDisjunction, ParseErrF> {
+    fn add_parent(&self, ptr: Rc<Particle>) {
         match *self {
-            Particle::Disjunction(ref mut p) => Ok(p),
-            _ => Err(ParseErrF::IConnectAfterOr),
-        }
-    }
-
-    #[inline]
-    fn get_conjunction(&mut self) -> Result<&mut LogicConjunction, ParseErrF> {
-        match *self {
-            Particle::Conjunction(ref mut p) => Ok(p),
-            _ => Err(ParseErrF::IConnectAfterOr),
-        }
-    }
-
-    #[inline]
-    fn add_parent(&mut self, ptr: *const Particle) {
-        match *self {
-            Particle::Conjunction(ref mut p) => {
-                p.parent = ptr;
+            Particle::Conjunction(ref p) => {
+                p.borrow_mut().parent = Some(ptr);
             }
-            Particle::Disjunction(ref mut p) => {
-                p.parent = ptr;
+            Particle::Disjunction(ref p) => {
+                p.borrow_mut().parent = Some(ptr);
             }
-            Particle::Implication(ref mut p) => {
-                p.parent = ptr;
+            Particle::Implication(ref p) => {
+                p.borrow_mut().parent = Some(ptr);
             }
-            Particle::Equivalence(ref mut p) => {
-                p.parent = ptr;
+            Particle::Equivalence(ref p) => {
+                p.borrow_mut().parent = Some(ptr);
             }
-            Particle::IndConditional(ref mut p) => {
-                p.parent = ptr;
+            Particle::IndConditional(ref p) => {
+                p.borrow_mut().parent = Some(ptr);
             }
-            Particle::Atom(ref mut p) => {
-                p.parent = ptr;
+            Particle::Atom(ref p) => {
+                p.borrow_mut().parent = Some(ptr);
             }
         }
     }
 
     #[inline]
-    fn get_next(&self, pos: usize) -> Option<&Particle> {
+    fn get_next(&self, pos: usize) -> Option<Rc<Particle>> {
         match *self {
-            Particle::Conjunction(ref p) => p.get_next(pos),
-            Particle::Disjunction(ref p) => p.get_next(pos),
-            Particle::Implication(ref p) => p.get_next(pos),
-            Particle::Equivalence(ref p) => p.get_next(pos),
-            Particle::IndConditional(ref p) => p.get_next(pos),
+            Particle::Conjunction(ref p) => p.borrow().get_next(pos),
+            Particle::Disjunction(ref p) => p.borrow().get_next(pos),
+            Particle::Implication(ref p) => p.borrow().get_next(pos),
+            Particle::Equivalence(ref p) => p.borrow().get_next(pos),
+            Particle::IndConditional(ref p) => p.borrow().get_next(pos),
             Particle::Atom(_) => None,
         }
     }
@@ -829,9 +803,9 @@ impl Particle {
     }
 
     #[inline]
-    fn extract_assertion(self) -> Assert {
-        match self {
-            Particle::Atom(atom) => atom.pred,
+    fn extract_assertion(&self) -> Rc<Assert> {
+        match *self {
+            Particle::Atom(ref atom) => atom.borrow().pred.clone(),
             _ => panic!(),
         }
     }
@@ -844,92 +818,112 @@ impl Particle {
         }
     }
 
-    fn add_rhs(&mut self, next: *mut Particle) {
+    fn get_disjunction(&self) -> Result<&mut LogicDisjunction, ParseErrF> {
         match *self {
-            Particle::Conjunction(ref mut p) => {
-                if p.next.len() == 2 {
-                    p.next.pop();
-                }
-                p.next.push(next)
+            Particle::Disjunction(ref p) => {
+                let r = unsafe { &mut *(&mut *p.borrow_mut() as *mut LogicDisjunction) };
+                Ok(r)
             }
-            Particle::Disjunction(ref mut p) => {
-                if p.next.len() == 2 {
-                    p.next.pop();
-                }
-                p.next.push(next)
+            _ => Err(ParseErrF::IConnectAfterOr),
+        }
+    }
+
+    fn get_conjunction(&self) -> Result<&mut LogicConjunction, ParseErrF> {
+        match *self {
+            Particle::Conjunction(ref p) => {
+                let r = unsafe { &mut *(&mut *p.borrow_mut() as *mut LogicConjunction) };
+                Ok(r)
             }
-            Particle::Implication(ref mut p) => {
-                if p.next.len() == 2 {
-                    p.next.pop();
+            _ => Err(ParseErrF::IConnectAfterOr),
+        }
+    }
+
+    fn add_rhs(&self, next: Rc<Particle>) {
+        match *self {
+            Particle::Conjunction(ref p) => {
+                if p.borrow().next.len() == 2 {
+                    p.borrow_mut().next.pop();
                 }
-                p.next.push(next)
+                p.borrow_mut().next.push(next)
             }
-            Particle::Equivalence(ref mut p) => {
-                if p.next.len() == 2 {
-                    p.next.pop();
+            Particle::Disjunction(ref p) => {
+                if p.borrow().next.len() == 2 {
+                    p.borrow_mut().next.pop();
                 }
-                p.next.push(next)
+                p.borrow_mut().next.push(next)
             }
-            Particle::IndConditional(ref mut p) => {
-                if p.next.len() == 2 {
-                    p.next.pop();
+            Particle::Implication(ref p) => {
+                if p.borrow().next.len() == 2 {
+                    p.borrow_mut().next.pop();
                 }
-                p.next.push(next)
+                p.borrow_mut().next.push(next)
+            }
+            Particle::Equivalence(ref p) => {
+                if p.borrow().next.len() == 2 {
+                    p.borrow_mut().next.pop();
+                }
+                p.borrow_mut().next.push(next)
+            }
+            Particle::IndConditional(ref p) => {
+                if p.borrow().next.len() == 2 {
+                    p.borrow_mut().next.pop();
+                }
+                p.borrow_mut().next.push(next)
             }
             _ => panic!("simag: expected an operator, found a predicate instead"),
         };
     }
 
-    fn add_lhs(&mut self, next: *mut Particle) {
+    fn add_lhs(&self, next: Rc<Particle>) {
         match *self {
-            Particle::Conjunction(ref mut p) => {
-                if p.next.len() == 1 {
-                    p.next.insert(0, next)
-                } else if p.next.len() == 0 {
-                    p.next.push(next)
+            Particle::Conjunction(ref p) => {
+                if p.borrow_mut().next.len() == 1 {
+                    p.borrow_mut().next.insert(0, next)
+                } else if p.borrow_mut().next.len() == 0 {
+                    p.borrow_mut().next.push(next)
                 } else {
-                    p.next.remove(0);
-                    p.next.insert(0, next)
+                    p.borrow_mut().next.remove(0);
+                    p.borrow_mut().next.insert(0, next)
                 }
             }
-            Particle::Disjunction(ref mut p) => {
-                if p.next.len() == 1 {
-                    p.next.insert(0, next)
-                } else if p.next.len() == 0 {
-                    p.next.push(next)
+            Particle::Disjunction(ref p) => {
+                if p.borrow_mut().next.len() == 1 {
+                    p.borrow_mut().next.insert(0, next)
+                } else if p.borrow_mut().next.len() == 0 {
+                    p.borrow_mut().next.push(next)
                 } else {
-                    p.next.remove(0);
-                    p.next.insert(0, next)
+                    p.borrow_mut().next.remove(0);
+                    p.borrow_mut().next.insert(0, next)
                 }
             }
-            Particle::Implication(ref mut p) => {
-                if p.next.len() == 1 {
-                    p.next.insert(0, next)
-                } else if p.next.len() == 0 {
-                    p.next.push(next)
+            Particle::Implication(ref p) => {
+                if p.borrow_mut().next.len() == 1 {
+                    p.borrow_mut().next.insert(0, next)
+                } else if p.borrow_mut().next.len() == 0 {
+                    p.borrow_mut().next.push(next)
                 } else {
-                    p.next.remove(0);
-                    p.next.insert(0, next)
+                    p.borrow_mut().next.remove(0);
+                    p.borrow_mut().next.insert(0, next)
                 }
             }
-            Particle::Equivalence(ref mut p) => {
-                if p.next.len() == 1 {
-                    p.next.insert(0, next)
-                } else if p.next.len() == 0 {
-                    p.next.push(next)
+            Particle::Equivalence(ref p) => {
+                if p.borrow_mut().next.len() == 1 {
+                    p.borrow_mut().next.insert(0, next)
+                } else if p.borrow_mut().next.len() == 0 {
+                    p.borrow_mut().next.push(next)
                 } else {
-                    p.next.remove(0);
-                    p.next.insert(0, next)
+                    p.borrow_mut().next.remove(0);
+                    p.borrow_mut().next.insert(0, next)
                 }
             }
-            Particle::IndConditional(ref mut p) => {
-                if p.next.len() == 1 {
-                    p.next.insert(0, next)
-                } else if p.next.len() == 0 {
-                    p.next.push(next)
+            Particle::IndConditional(ref p) => {
+                if p.borrow_mut().next.len() == 1 {
+                    p.borrow_mut().next.insert(0, next)
+                } else if p.borrow_mut().next.len() == 0 {
+                    p.borrow_mut().next.push(next)
                 } else {
-                    p.next.remove(0);
-                    p.next.insert(0, next)
+                    p.borrow_mut().next.remove(0);
+                    p.borrow_mut().next.insert(0, next)
                 }
             }
             _ => panic!("simag: expected an operator, found a predicate instead"),
@@ -940,12 +934,12 @@ impl Particle {
 impl fmt::Display for Particle {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Particle::Atom(ref p) => write!(f, "{}", p),
-            Particle::Conjunction(ref p) => write!(f, "{}", p),
-            Particle::Disjunction(ref p) => write!(f, "{}", p),
-            Particle::Equivalence(ref p) => write!(f, "{}", p),
-            Particle::Implication(ref p) => write!(f, "{}", p),
-            Particle::IndConditional(ref p) => write!(f, "{}", p),
+            Particle::Atom(ref p) => write!(f, "{}", *p.borrow()),
+            Particle::Conjunction(ref p) => write!(f, "{}", *p.borrow()),
+            Particle::Disjunction(ref p) => write!(f, "{}", *p.borrow()),
+            Particle::Equivalence(ref p) => write!(f, "{}", *p.borrow()),
+            Particle::Implication(ref p) => write!(f, "{}", *p.borrow()),
+            Particle::IndConditional(ref p) => write!(f, "{}", *p.borrow()),
         }
     }
 }
@@ -954,10 +948,10 @@ impl fmt::Display for Particle {
 
 pub struct Context {
     pub stype: SentType,
-    pub vars: Vec<*const Var>,
-    pub skols: Vec<*const Skolem>,
-    aliasing_vars: HashMap<*const Var, (usize, *const Var)>,
-    aliasing_skols: HashMap<*const Skolem, (usize, *const Skolem)>,
+    pub vars: Vec<Rc<Var>>,
+    pub skols: Vec<Rc<Skolem>>,
+    aliasing_vars: HashMap<Rc<Var>, (usize, Rc<Var>)>,
+    aliasing_skols: HashMap<Rc<Skolem>, (usize, Rc<Skolem>)>,
     from_chain: bool,
     in_rhs: bool,
     pub in_assertion: bool,
@@ -991,17 +985,17 @@ impl Context {
 fn walk_ast(ast: &Next,
             sent: &mut LogSentence,
             context: &mut Context)
-            -> Result<*mut Particle, ParseErrF> {
+            -> Result<Rc<Particle>, ParseErrF> {
     match *ast {
         Next::Assert(ref decl) => {
-            let mut particle = Box::new(match decl {
+            let particle = Rc::new(match decl {
                 &AssertBorrowed::ClassDecl(ref decl) => {
                     let cls = match ClassDecl::from(decl, context) {
                         Err(err) => return Err(err),
                         Ok(cls) => cls,
                     };
                     let atom = LogicAtom::new(Assert::ClassDecl(cls));
-                    Particle::Atom(atom)
+                    Particle::Atom(RefCell::new(atom))
                 }
                 &AssertBorrowed::FuncDecl(ref decl) => {
                     let func = match FuncDecl::from(decl, context) {
@@ -1009,23 +1003,22 @@ fn walk_ast(ast: &Next,
                         Ok(func) => func,
                     };
                     let atom = LogicAtom::new(Assert::FuncDecl(func));
-                    Particle::Atom(atom)
+                    Particle::Atom(RefCell::new(atom))
                 }
             });
-            let res = &mut *particle as *mut Particle;
-            sent.add_particle(particle);
+            sent.add_particle(particle.clone());
             context.from_chain = false;
-            Ok(res)
+            Ok(particle)
         }
         Next::ASTNode(ref ast) => {
             let mut v_cnt = 0;
             let mut s_cnt = 0;
-            let mut swap_vars: Vec<(usize, *const Var, *const Var)> = Vec::new();
-            let mut swap_skolem: Vec<(usize, *const Skolem, *const Skolem)> = Vec::new();
+            let mut swap_vars: Vec<(usize, Rc<Var>, Rc<Var>)> = Vec::new();
+            let mut swap_skolem: Vec<(usize, Rc<Skolem>, Rc<Skolem>)> = Vec::new();
 
             fn drop_local_vars(context: &mut Context, v_cnt: usize) {
                 let l = context.vars.len() - v_cnt;
-                let local_vars = context.vars.drain(l..).collect::<Vec<*const Var>>();
+                let local_vars = context.vars.drain(l..).collect::<Vec<Rc<Var>>>();
                 for v in local_vars {
                     if context.aliasing_vars.contains_key(&v) {
                         let (idx, aliased) = context.aliasing_vars.remove(&v).unwrap();
@@ -1036,7 +1029,7 @@ fn walk_ast(ast: &Next,
 
             fn drop_local_skolems(context: &mut Context, s_cnt: usize) {
                 let l = context.skols.len() - s_cnt;
-                let local_skolem = context.skols.drain(l..).collect::<Vec<*const Skolem>>();
+                let local_skolem = context.skols.drain(l..).collect::<Vec<Rc<Skolem>>>();
                 for v in local_skolem {
                     if context.aliasing_skols.contains_key(&v) {
                         let (idx, aliased) = context.aliasing_skols.remove(&v).unwrap();
@@ -1053,69 +1046,75 @@ fn walk_ast(ast: &Next,
                         VarDeclBorrowed::Var(ref v) => {
                             let var = match Var::from(v, context) {
                                 Err(err) => return Err(err),
-                                Ok(val) => Box::new(val),
+                                Ok(val) => Rc::new(val),
                             };
                             for (i, v) in context.vars.iter().enumerate() {
-                                let v_r: &Var = unsafe { &**v };
-                                if v_r.name == var.name {
-                                    swap_vars.push((i, *v, &*var as *const Var));
+                                if v.name == var.name {
+                                    swap_vars.push((i, v.clone(), var.clone()));
                                 }
                             }
-                            context.vars.push(&*var);
+                            context.vars.push(var.clone());
                             v_cnt += 1;
                             sent.add_var(var);
                         }
                         VarDeclBorrowed::Skolem(ref s) => {
                             let skolem = match Skolem::from(s, context) {
                                 Err(err) => return Err(err),
-                                Ok(val) => Box::new(val),
+                                Ok(val) => Rc::new(val),
                             };
                             for (i, v) in context.skols.iter().enumerate() {
-                                let v_r: &Skolem = unsafe { &**v };
-                                if v_r.name == skolem.name {
-                                    swap_skolem.push((i, *v, &*skolem as *const Skolem));
+                                if v.name == skolem.name {
+                                    swap_skolem.push((i, v.clone(), skolem.clone()));
                                 }
                             }
-                            context.skols.push(&*skolem);
+                            context.skols.push(skolem.clone());
                             s_cnt += 1;
-                            sent.add_skolem(skolem);
+                            sent.add_skolem(skolem.clone());
                         }
                     }
                 }
-                for &(i, aliased, var) in &swap_vars {
+                for &(i, ref aliased, ref var) in &swap_vars {
                     context.vars.remove(i);
-                    context.aliasing_vars.insert(var, (i, aliased));
+                    context.aliasing_vars.insert(var.clone(), (i, aliased.clone()));
                 }
-                for &(i, aliased, var) in &swap_skolem {
+                for &(i, ref aliased, ref var) in &swap_skolem {
                     context.skols.remove(i);
-                    context.aliasing_skols.insert(var, (i, aliased));
+                    context.aliasing_skols.insert(var.clone(), (i, aliased.clone()));
                 }
             }
             if ast.logic_op.is_some() {
-                let mut op = Box::new(match ast.logic_op.as_ref().unwrap() {
+                let op = Rc::new(match ast.logic_op.as_ref().unwrap() {
                     &LogicOperator::ICond => {
                         context.stype = SentType::IExpr;
-                        Particle::IndConditional(LogicIndCond::new())
+                        Particle::IndConditional(RefCell::new(LogicIndCond::new()))
                     }
-                    &LogicOperator::And => Particle::Conjunction(LogicConjunction::new()),
-                    &LogicOperator::Or => Particle::Disjunction(LogicDisjunction::new()),
-                    &LogicOperator::Implication => Particle::Implication(LogicImplication::new()),
-                    &LogicOperator::Biconditional => Particle::Equivalence(LogicEquivalence::new()),
+                    &LogicOperator::And => {
+                        Particle::Conjunction(RefCell::new(LogicConjunction::new()))
+                    }
+                    &LogicOperator::Or => {
+                        Particle::Disjunction(RefCell::new(LogicDisjunction::new()))
+                    }
+                    &LogicOperator::Implication => {
+                        Particle::Implication(RefCell::new(LogicImplication::new()))
+                    }
+                    &LogicOperator::Biconditional => {
+                        Particle::Equivalence(RefCell::new(LogicEquivalence::new()))
+                    }
                 });
-                let ptr = &mut *op as *mut Particle;
                 let next = match walk_ast(&ast.next, sent, context) {
                     Ok(opt) => opt,
                     Err(err) => return Err(err),
                 };
                 drop_local_vars(context, v_cnt);
                 drop_local_skolems(context, s_cnt);
+                next.add_parent(op.clone());
                 if context.in_rhs {
                     op.add_rhs(next);
                 } else {
                     op.add_lhs(next);
                 }
-                sent.add_particle(op);
-                Ok(ptr)
+                sent.add_particle(op.clone());
+                Ok(op)
             } else {
                 let res = walk_ast(&ast.next, sent, context);
                 drop_local_vars(context, v_cnt);
@@ -1133,7 +1132,7 @@ fn walk_ast(ast: &Next,
                     Err(err) => return Err(err),
 
                 };
-                let mut lhs_r: &mut Particle = unsafe { &mut *lhs_ptr };
+                let lhs_r = lhs_ptr.clone();
                 let lhs_is_atom = lhs_r.is_atom();
                 // walk rhs
                 context.in_rhs = true;
@@ -1141,25 +1140,29 @@ fn walk_ast(ast: &Next,
                     Ok(ptr) => ptr,
                     Err(err) => return Err(err),
                 };
-                let mut rhs_r: &mut Particle = unsafe { &mut *rhs_ptr };
+                let rhs_r = rhs_ptr.clone();
                 let rhs_is_atom = rhs_r.is_atom();
                 // lhs is connective and rhs isn't
                 let return_rhs;
                 if !lhs_is_atom && rhs_is_atom {
                     return_rhs = false;
-                    lhs_r.add_rhs(rhs_ptr);
+                    rhs_ptr.add_parent(lhs_ptr.clone());
+                    lhs_r.add_rhs(rhs_ptr.clone());
                 } else if lhs_is_atom && !rhs_is_atom {
                     return_rhs = true;
-                    rhs_r.add_lhs(lhs_ptr);
+                    lhs_ptr.add_parent(rhs_ptr.clone());
+                    rhs_r.add_lhs(lhs_ptr.clone());
                 } else {
                     if context.from_chain {
                         // rhs comes from a chain, parent is lhs op
                         return_rhs = false;
-                        lhs_r.add_rhs(rhs_ptr);
+                        rhs_ptr.add_parent(lhs_ptr.clone());
+                        lhs_r.add_rhs(rhs_ptr.clone());
                     } else {
                         // lhs comes from a chain, parent is rhs op
                         return_rhs = true;
-                        rhs_r.add_lhs(lhs_ptr);
+                        lhs_ptr.add_parent(rhs_ptr.clone());
+                        rhs_r.add_lhs(lhs_ptr.clone());
                     }
                 }
                 context.in_rhs = in_side;
@@ -1171,10 +1174,9 @@ fn walk_ast(ast: &Next,
                 }
             } else {
                 let len = nodes.len() - 1;
-                let first: *mut Particle = walk_ast(&nodes[0], sent, context)?;
+                let first = walk_ast(&nodes[0], sent, context)?;
                 let operator;
-                let r = unsafe { &*first };
-                match r {
+                match &*first.clone() {
                     &Particle::Conjunction(_) => {
                         operator = LogicOperator::And;
                     }
@@ -1183,37 +1185,37 @@ fn walk_ast(ast: &Next,
                     }
                     _ => return Err(ParseErrF::IConnectInChain),
                 }
-                let mut prev = first;
+                let mut prev = first.clone();
                 if operator.is_and() {
                     for i in 1..len {
                         let ptr = walk_ast(&nodes[i], sent, context)?;
-                        let a = unsafe { &mut *ptr };
+                        let a = ptr.clone();
                         let is_conj = a.get_conjunction();
                         if is_conj.is_err() {
                             return Err(is_conj.unwrap_err());
                         } else {
-                            let r = unsafe { &mut *prev };
-                            r.add_rhs(ptr);
+                            ptr.add_parent(prev.clone());
+                            prev.add_rhs(ptr.clone());
                             prev = ptr;
                         }
                     }
                 } else {
                     for i in 1..len {
                         let ptr = walk_ast(&nodes[i], sent, context)?;
-                        let a = unsafe { &mut *ptr };
+                        let a = ptr.clone();
                         let is_disj = a.get_disjunction();
                         if is_disj.is_err() {
                             return Err(is_disj.unwrap_err());
                         } else {
-                            let r = unsafe { &mut *prev };
-                            r.add_rhs(ptr);
+                            ptr.add_parent(prev.clone());
+                            prev.add_rhs(ptr.clone());
                             prev = ptr;
                         }
                     }
                 }
                 let last = walk_ast(&nodes[len], sent, context)?;
-                let r = unsafe { &mut *prev };
-                r.add_rhs(last);
+                last.add_parent(prev.clone());
+                prev.add_rhs(last);
                 context.from_chain = true;
                 Ok(first)
             }
@@ -1222,105 +1224,70 @@ fn walk_ast(ast: &Next,
     }
 }
 
-fn link_sent_childs(sent: &mut LogSentence) {
-    // add entry point of the sentence and parent to childs
-    let mut addresses: Vec<*const Particle> = Vec::new();
-    for p in &sent.particles {
-        if let Some(a) = p.get_next(0) {
-            addresses.push(&*a as *const Particle)
-        }
-        if let Some(a) = p.get_next(1) {
-            addresses.push(&*a as *const Particle)
-        }
-    }
-    let mut childs: HashMap<usize, (Option<usize>, Option<usize>)> = HashMap::new();
-    for a in &sent.particles {
-        if !addresses.contains(&(&**a as *const Particle)) {
-            sent.root = &**a as *const Particle;
-        }
-        let a_int = &**a as *const Particle as usize;
-        let c0 = match a.get_next(0) {
-            Some(a) => Some(&*a as *const Particle as usize),
-            None => None,
-        };
-        let c1 = match a.get_next(1) {
-            Some(a) => Some(&*a as *const Particle as usize),
-            None => None,
-        };
-        childs.insert(a_int, (c0, c1));
-    }
-    unsafe {
-        for (p, (n0, n1)) in childs {
-            if let Some(a) = n0 {
-                let a = &mut *(a as *mut Particle);
-                a.add_parent(p as *const Particle);
-            }
-            if let Some(a) = n1 {
-                let a = &mut *(a as *mut Particle);
-                a.add_parent(p as *const Particle);
-            }
-        }
-    }
-}
+fn correct_iexpr(sent: &LogSentence,
+                 lhs: &mut Vec<Rc<Particle>>)
+                 -> Result<(), ParseErrF> {
 
-fn correct_iexpr(sent: &LogSentence, lhs: &mut HashSet<*const Particle>) -> Result<(), ParseErrF> {
-
-    fn has_icond_child(p: &Particle, lhs: &mut HashSet<*const Particle>) -> Result<(), ParseErrF> {
+    fn has_icond_child(p: &Particle,
+                       lhs: &mut Vec<Rc<Particle>>)
+                       -> Result<(), ParseErrF> {
         if let Some(n1_0) = p.get_next(0) {
-            match n1_0 {
+            match &*n1_0 {
                 &Particle::IndConditional(_) => return Err(ParseErrF::IExprICondLHS),
                 &Particle::Atom(_) => {
-                    lhs.insert(n1_0 as *const Particle);
+                    lhs.push(n1_0.clone());
                 }
                 _ => {}
             }
-            has_icond_child(n1_0, lhs)?;
+            has_icond_child(&*n1_0, lhs)?;
         }
         if let Some(n1_1) = p.get_next(1) {
-            match n1_1 {
+            match &*n1_1 {
                 &Particle::IndConditional(_) => return Err(ParseErrF::IExprICondLHS),
                 &Particle::Atom(_) => {
-                    lhs.insert(n1_1 as *const Particle);
+                    lhs.push(n1_1.clone());
                 }
                 _ => {}
             }
-            has_icond_child(n1_1, lhs)?;
+            has_icond_child(&*n1_1, lhs)?;
         }
         Ok(())
     }
 
-    fn wrong_operator(p: &Particle, lhs: &mut HashSet<*const Particle>) -> Result<(), ParseErrF> {
+    fn wrong_operator(p: &Particle,
+                      lhs: &mut Vec<Rc<Particle>>)
+                      -> Result<(), ParseErrF> {
         if let Some(n1_0) = p.get_next(0) {
             // test that the lhs does not include any indicative conditional
             if n1_0.is_icond() {
                 return Err(ParseErrF::IExprICondLHS);
             } else if n1_0.is_atom() {
-                lhs.insert(n1_0 as *const Particle);
+                lhs.push(n1_0.clone());
             }
-            has_icond_child(n1_0, lhs)?;
+            has_icond_child(&*n1_0, lhs)?;
         }
         // test that the rh-most-s does include only icond or 'OR' connectives
         let mut is_wrong = Ok(());
         if let Some(n1_1) = p.get_next(1) {
-            match n1_1 {
+            match &*n1_1 {
                 &Particle::IndConditional(_) => {}
                 &Particle::Disjunction(_) => {}
                 &Particle::Conjunction(_) => {}
                 &Particle::Atom(_) => {}
                 _ => return Err(ParseErrF::IExprWrongOp),
             }
-            is_wrong = wrong_operator(n1_1, lhs);
+            is_wrong = wrong_operator(&*n1_1, lhs);
         }
         is_wrong
     }
 
-    let first: &Particle = unsafe { &*(sent.root) };
+    let first: &Particle = &*sent.root.as_ref().unwrap();
     match first {
         &Particle::IndConditional(_) => {}
         _ => return Err(ParseErrF::IExprNotIcond),
     }
     if let Some(n1_0) = first.get_next(0) {
-        match n1_0 {
+        match &*n1_0 {
             &Particle::IndConditional(_) => return Err(ParseErrF::IExprICondLHS),
             _ => {}
         }
@@ -1328,7 +1295,7 @@ fn correct_iexpr(sent: &LogSentence, lhs: &mut HashSet<*const Particle>) -> Resu
     for p in &sent.particles {
         match **p {
             Particle::Atom(ref atom) => {
-                if !atom.pred.parent_is_grounded() {
+                if !atom.borrow().pred.parent_is_grounded() {
                     return Err(ParseErrF::WrongPredicate);
                 }
             }
@@ -1394,49 +1361,47 @@ mod test {
             _ => panic!(),
         }
 
-        unsafe {
-            let sent = match tree.pop_front().unwrap() {
-                ParseTree::IExpr(sent) => sent,
-                _ => panic!(),
-            };
-            let root = &*(sent.root);
-            match root {
-                &Particle::IndConditional(ref p) => {
-                    match &*(p.next[0]) {
-                        &Particle::Conjunction(ref op) => {
-                            match &*(op.next[0]) {
-                                &Particle::Atom(ref atm) => {
-                                    assert_eq!(atm.get_name(), "american");
-                                }
-                                _ => panic!(),
-                            };
-                            match &*(op.next[1]) {
-                                &Particle::Conjunction(ref op) => {
-                                    match &*(op.next[0]) {
-                                        &Particle::Atom(ref atm) => {
-                                            assert_eq!(atm.get_name(), "weapon")
-                                        }
-                                        _ => panic!(),
-                                    };
-                                    match &*(op.next[1]) {
-                                        &Particle::Atom(ref atm) => {
-                                            assert_eq!(atm.get_name(), "sells");
-                                        }
-                                        _ => panic!(),
-                                    };
-                                }
-                                _ => panic!(),
+        let sent = match tree.pop_front().unwrap() {
+            ParseTree::IExpr(sent) => sent,
+            _ => panic!(),
+        };
+        let root = &**(sent.root.as_ref().unwrap());
+        match root {
+            &Particle::IndConditional(ref p) => {
+                match &*(p.borrow().next[0]) {
+                    &Particle::Conjunction(ref op) => {
+                        match &*(op.borrow().next[0]) {
+                            &Particle::Atom(ref atm) => {
+                                assert_eq!(atm.borrow().get_name(), "american");
                             }
+                            _ => panic!(),
+                        };
+                        match &*(op.borrow().next[1]) {
+                            &Particle::Conjunction(ref op) => {
+                                match &*(op.borrow().next[0]) {
+                                    &Particle::Atom(ref atm) => {
+                                        assert_eq!(atm.borrow().get_name(), "weapon")
+                                    }
+                                    _ => panic!(),
+                                };
+                                match &*(op.borrow().next[1]) {
+                                    &Particle::Atom(ref atm) => {
+                                        assert_eq!(atm.borrow().get_name(), "sells");
+                                    }
+                                    _ => panic!(),
+                                };
+                            }
+                            _ => panic!(),
                         }
-                        _ => panic!(),
                     }
-                    match &*(p.next[1]) {
-                        &Particle::Atom(ref atm) => assert_eq!(atm.get_name(), "criminal"),
-                        _ => panic!(),
-                    }
+                    _ => panic!(),
                 }
-                _ => panic!(),
-            };
+                match &*(p.borrow().next[1]) {
+                    &Particle::Atom(ref atm) => assert_eq!(atm.borrow().get_name(), "criminal"),
+                    _ => panic!(),
+                }
+            }
+            _ => panic!(),
         }
     }
 }

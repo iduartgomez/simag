@@ -610,7 +610,7 @@ impl<'a> Entity<'a> {
     /// set of relational functions the entity has.
     fn has_relationships<'b>(&'a self,
                              func_list: &Vec<&'b lang::FuncDecl>,
-                             var: Option<*const lang::Var>)
+                             var: Option<Rc<lang::Var>>)
                              -> Option<HashMap<&'b str, Vec<&GroundedFunc>>> {
         let mut matches: HashMap<&str, Vec<&GroundedFunc>> = HashMap::new();
         let lock = self.relations.read().unwrap();
@@ -618,7 +618,7 @@ impl<'a> Entity<'a> {
         for decl in func_list {
             if let Some(relation_type) = d.get(decl.get_name()) {
                 for rel in relation_type {
-                    if rel.comparable_entity(decl, &self.name, var) {
+                    if rel.comparable_entity(decl, &self.name, var.clone()) {
                         let name = rel.get_name();
                         if matches.contains_key(name) {
                             let v = matches.get_mut(name).unwrap();
@@ -800,7 +800,7 @@ impl<'a> Class<'a> {
     /// set of relational functions the entity has.
     fn has_relationships<'b>(&'a self,
                              func_list: &Vec<&'b lang::FuncDecl>,
-                             var: Option<*const lang::Var>)
+                             var: Option<Rc<lang::Var>>)
                              -> Option<HashMap<&'b str, Vec<&GroundedFunc>>> {
         let mut matches: HashMap<&str, Vec<&GroundedFunc>> = HashMap::new();
         let lock = self.relations.read().unwrap();
@@ -808,7 +808,7 @@ impl<'a> Class<'a> {
         for decl in func_list {
             if let Some(relation_type) = d.get(decl.get_name()) {
                 for rel in relation_type {
-                    if rel.comparable_entity(decl, &self.name, var) {
+                    if rel.comparable_entity(decl, &self.name, var.clone()) {
                         let name = rel.get_name();
                         if matches.contains_key(name) {
                             let v = matches.get_mut(name).unwrap();
@@ -1039,10 +1039,10 @@ impl<'a> Inference<'a> {
             }
         }
 
-        // cls_queries_free: HashMap<&'a lang::Var, Vec<&'a lang::FreeClsMemb>>,
+        // cls_queries_free: HashMap<&'a Rc<lang::Var>, Vec<&'a lang::FreeClsMemb>>,
         // cls_queries_grounded: HashMap<&'a str, Vec<&'a lang::GroundedClsMemb>>,
         // func_memb_query: Vec<&'a lang::GroundedClsMemb>,
-        // func_queries_free: HashMap<&'a lang::Var, Vec<&'a lang::FuncDecl>>,
+        // func_queries_free: HashMap<&'a Rc<lang::Var>, Vec<&'a lang::FuncDecl>>,
     }
 }
 
@@ -1083,7 +1083,7 @@ impl<'a> ActiveQuery<'a> {
     }
 }
 
-type ProofArgs<'a> = Vec<(*const lang::Var, &'a VarAssignment<'a>)>;
+type ProofArgs<'a> = Vec<(Rc<lang::Var>, &'a VarAssignment<'a>)>;
 
 #[derive(Debug)]
 pub struct ProofResult<'a> {
@@ -1154,7 +1154,7 @@ impl<'a> InfTrial<'a> {
                     }
                     continue;
                 }
-                let mut n_a: HashMap<*const lang::Var, Vec<&VarAssignment>> = HashMap::new();
+                let mut n_a: HashMap<Rc<lang::Var>, Vec<&VarAssignment>> = HashMap::new();
                 for (var, assigned) in assignments.drain() {
                     let mut n_av: Vec<&VarAssignment> = vec![];
                     for a in assigned {
@@ -1170,8 +1170,8 @@ impl<'a> InfTrial<'a> {
                 }
                 let n_a_ref = unsafe {
                     // extend lifetime of VarAssignment ref
-                    &*(&n_a as *const HashMap<*const lang::Var, Vec<&VarAssignment>>)
-                            as &HashMap<*const lang::Var, Vec<&VarAssignment>>
+                    &*(&n_a as *const HashMap<Rc<lang::Var>, Vec<&VarAssignment>>)
+                            as &HashMap<Rc<lang::Var>, Vec<&VarAssignment>>
                 };
                 // lazily iterate over all possible combinations of the substitutions
                 let mapped = ArgsProduct::product(n_a_ref);
@@ -1184,10 +1184,11 @@ impl<'a> InfTrial<'a> {
                         }
                     };
                     if !args_done {
-                        let mut n_args = HashMap::with_capacity(args.len());
+                        let mut n_args: HashMap<Rc<lang::Var>, &VarAssignment> =
+                            HashMap::with_capacity(args.len());
                         let mut pargs = vec![];
-                        for &(k, v) in args.iter() {
-                            n_args.insert(k, v);
+                        for &(ref k, v) in args.iter() {
+                            n_args.insert(k.clone(), v);
                             pargs.push(v.name)
                         }
                         let mut context = ProofResult::new(args.clone(), node.clone());
@@ -1325,19 +1326,18 @@ impl<'a> InfTrial<'a> {
         }
     }
 
-    fn entities_meet_sent_req(&self,
-                              req: &HashMap<*const lang::Var, Vec<*const lang::Assert>>)
-                              -> Option<HashMap<*const lang::Var, Vec<VarAssignment>>> {
+    fn entities_meet_sent_req(&'a self,
+                              req: &'a HashMap<Rc<lang::Var>, Vec<Rc<lang::Assert>>>)
+                              -> Option<HashMap<Rc<lang::Var>, Vec<VarAssignment>>> {
 
-        let mut results: HashMap<*const lang::Var, Vec<VarAssignment>> = HashMap::new();
+        let mut results: HashMap<Rc<lang::Var>, Vec<VarAssignment>> = HashMap::new();
         for (var, asserts) in req.iter() {
             let mut class_list = Vec::new();
             let mut relations_list = Vec::new();
             for a in asserts {
-                let a = unsafe { &**a };
-                match a {
-                    &lang::Assert::FuncDecl(ref f) => relations_list.push(f),
-                    &lang::Assert::ClassDecl(ref c) => class_list.push(c),
+                match **a {
+                    lang::Assert::FuncDecl(ref f) => relations_list.push(f),
+                    lang::Assert::ClassDecl(ref c) => class_list.push(c),
                 }
             }
             let lock = self.kb.entities.read().unwrap();
@@ -1357,7 +1357,8 @@ impl<'a> InfTrial<'a> {
                     }
                 }
                 if relations_list.len() > 0 {
-                    if let Some(relations) = entity.has_relationships(&relations_list, Some(*var)) {
+                    if let Some(relations) =
+                           entity.has_relationships(&relations_list, Some(var.clone())) {
                         if relations.len() == relations_list.len() {
                             gr_relations = relations;
                         } else {
@@ -1375,7 +1376,7 @@ impl<'a> InfTrial<'a> {
                         funcs: gr_relations,
                     })
                 } else {
-                    results.insert(*var,
+                    results.insert(var.clone(),
                                    vec![VarAssignment {
                                             name: id,
                                             classes: gr_memb,
@@ -1390,19 +1391,18 @@ impl<'a> InfTrial<'a> {
         Some(results)
     }
 
-    fn classes_meet_sent_req(&self,
-                             req: &HashMap<*const lang::Var, Vec<*const lang::Assert>>)
-                             -> Option<HashMap<*const lang::Var, Vec<VarAssignment>>> {
+    fn classes_meet_sent_req(&'a self,
+                             req: &'a HashMap<Rc<lang::Var>, Vec<Rc<lang::Assert>>>)
+                             -> Option<HashMap<Rc<lang::Var>, Vec<VarAssignment>>> {
 
-        let mut results: HashMap<*const lang::Var, Vec<VarAssignment>> = HashMap::new();
+        let mut results: HashMap<Rc<lang::Var>, Vec<VarAssignment>> = HashMap::new();
         for (var, asserts) in req.iter() {
             let mut class_list = Vec::new();
             let mut relations_list = Vec::new();
             for a in asserts {
-                let a = unsafe { &**a };
-                match a {
-                    &lang::Assert::FuncDecl(ref f) => relations_list.push(f),
-                    &lang::Assert::ClassDecl(ref c) => class_list.push(c),
+                match **a {
+                    lang::Assert::FuncDecl(ref f) => relations_list.push(f),
+                    lang::Assert::ClassDecl(ref c) => class_list.push(c),
                 }
             }
             let lock = self.kb.classes.read().unwrap();
@@ -1422,7 +1422,8 @@ impl<'a> InfTrial<'a> {
                     }
                 }
                 if relations_list.len() > 0 {
-                    if let Some(relations) = cls.has_relationships(&relations_list, Some(*var)) {
+                    if let Some(relations) =
+                           cls.has_relationships(&relations_list, Some(var.clone())) {
                         if relations.len() == relations_list.len() {
                             gr_relations = relations;
                         } else {
@@ -1440,7 +1441,7 @@ impl<'a> InfTrial<'a> {
                         funcs: gr_relations,
                     })
                 } else {
-                    results.insert(*var,
+                    results.insert(var.clone(),
                                    vec![VarAssignment {
                                             name: id,
                                             classes: gr_memb,
@@ -1501,26 +1502,26 @@ impl<'a> InfTrial<'a> {
 
 #[derive(Debug)]
 struct ArgsProduct<'a> {
-    indexes: RwLock<HashMap<*const lang::Var, usize>>,
-    input: &'a HashMap<*const lang::Var, Vec<&'a VarAssignment<'a>>>,
-    skey: Option<Arc<*const lang::Var>>,
+    indexes: RwLock<HashMap<Rc<lang::Var>, usize>>,
+    input: &'a HashMap<Rc<lang::Var>, Vec<&'a VarAssignment<'a>>>,
+    skey: Option<Arc<Rc<lang::Var>>>,
     sval: Option<Arc<Vec<&'a VarAssignment<'a>>>>,
     counter: Mutex<Option<usize>>,
     done: RwLock<HashSet<Arc<ProofArgs<'a>>>>,
 }
 
-type ArgsProductInput<'a> = HashMap<*const lang::Var, Vec<&'a VarAssignment<'a>>>;
+type ArgsProductInput<'a> = HashMap<Rc<lang::Var>, Vec<&'a VarAssignment<'a>>>;
 
 impl<'a> ArgsProduct<'a> {
     fn product(input: &'a ArgsProductInput<'a>) -> ArgsProduct<'a> {
         let mut indexes = HashMap::new();
         for (k, _) in input.iter() {
-            indexes.insert(*k, 0_usize);
+            indexes.insert(k.clone(), 0_usize);
         }
         let mut key = None;
         let mut value = None;
         for (k0, v0) in input.iter() {
-            key = Some(Arc::new(*k0));
+            key = Some(Arc::new(k0.clone()));
             value = Some(Arc::new(v0.clone()));
             break;
         }
@@ -1612,13 +1613,13 @@ impl<'a> ::std::iter::Iterator for ArgsProduct<'a> {
                         return None;
                     }
                 }
-                let skey: *const lang::Var = **self.skey.as_ref().unwrap();
-                let e: (*const lang::Var, &VarAssignment) = (skey, &*sval[idx_0]);
+                let skey: &Rc<lang::Var> = self.skey.as_ref().unwrap();
+                let e: (Rc<lang::Var>, &VarAssignment) = (skey.clone(), &*sval[idx_0]);
                 row_0.push(e);
                 for (k1, v1) in self.input.iter() {
-                    if skey != *k1 {
+                    if skey != k1 {
                         let idx_1 = *(self.indexes.read().unwrap().get(k1).unwrap());
-                        let e = (*k1, &*v1[idx_1]);
+                        let e = (k1.clone(), &*v1[idx_1]);
                         row_0.push(e);
                     }
                 }
@@ -1711,13 +1712,13 @@ enum QueryInput {
 
 #[derive(Debug)]
 struct QueryProcessed<'a> {
-    cls_queries_free: HashMap<&'a lang::Var, Vec<&'a lang::FreeClsMemb>>,
+    cls_queries_free: HashMap<Rc<lang::Var>, Vec<&'a lang::FreeClsMemb>>,
     cls_queries_grounded: HashMap<&'a str, Vec<&'a lang::GroundedClsMemb>>,
     cls_memb_query: Vec<&'a lang::GroundedClsMemb>,
-    func_queries_free: HashMap<&'a lang::Var, Vec<Rc<lang::FuncDecl>>>,
+    func_queries_free: HashMap<Rc<lang::Var>, Vec<Rc<lang::FuncDecl>>>,
     func_queries_grounded: Vec<lang::GroundedFunc>,
     func_memb_query: Vec<&'a lang::GroundedClsMemb>,
-    vars: Vec<Box<lang::Var>>,
+    vars: Vec<Rc<lang::Var>>,
     cls: Vec<Rc<lang::ClassDecl>>,
     func: Vec<Rc<lang::FuncDecl>>,
 }
@@ -1745,7 +1746,7 @@ impl<'a> QueryProcessed<'a> {
                     for a in cdecl.get_args() {
                         match a {
                             &lang::Predicate::FreeClsMemb(ref t) => {
-                                query.push_to_clsquery_free(t.get_var_ref(), t);
+                                query.push_to_clsquery_free(t.get_var(), t);
                             }
                             &lang::Predicate::GroundedClsMemb(ref t) => {
                                 query.push_to_clsquery_grounded(t.get_name(), t);
@@ -1781,7 +1782,7 @@ impl<'a> QueryProcessed<'a> {
                         false => {
                             for a in fdecl.get_args() {
                                 if let &lang::Predicate::FreeClsMemb(ref t) = a {
-                                    query.push_to_fnquery_free(t.get_var_ref(), fdecl.clone());
+                                    query.push_to_fnquery_free(t.get_var(), fdecl.clone());
                                 }
                             }
                         }
@@ -1840,14 +1841,14 @@ impl<'a> QueryProcessed<'a> {
                             let (mut vars, preds) = expr.extract_all_predicates();
                             self.vars.append(&mut vars);
                             for a in preds {
-                                if let Err(()) = match a {
-                                    lang::Assert::ClassDecl(cdecl) => {
-                                        self.cls.push(Rc::new(cdecl));
+                                if let Err(()) = match *a {
+                                    lang::Assert::ClassDecl(ref cdecl) => {
+                                        self.cls.push(Rc::new(cdecl.clone()));
                                         let cdecl = self.cls.last().unwrap().clone();
                                         assert_memb(&mut self, cdecl)
                                     }
-                                    lang::Assert::FuncDecl(fdecl) => {
-                                        self.func.push(Rc::new(fdecl));
+                                    lang::Assert::FuncDecl(ref fdecl) => {
+                                        self.func.push(Rc::new(fdecl.clone()));
                                         let fdecl = self.func.last().unwrap().clone();
                                         assert_rel(&mut self, fdecl)
                                     }
@@ -1870,7 +1871,7 @@ impl<'a> QueryProcessed<'a> {
     }
 
     #[inline]
-    fn push_to_clsquery_free(&mut self, term: &'a lang::Var, cls: &'a lang::FreeClsMemb) {
+    fn push_to_clsquery_free(&mut self, term: Rc<lang::Var>, cls: &'a lang::FreeClsMemb) {
         self.cls_queries_free.entry(term).or_insert(vec![]).push(cls);
     }
 
@@ -1880,7 +1881,7 @@ impl<'a> QueryProcessed<'a> {
     }
 
     #[inline]
-    fn push_to_fnquery_free(&mut self, term: &'a lang::Var, func: Rc<lang::FuncDecl>) {
+    fn push_to_fnquery_free(&mut self, term: Rc<lang::Var>, func: Rc<lang::FuncDecl>) {
         self.func_queries_free.entry(term).or_insert(vec![]).push(func);
     }
 

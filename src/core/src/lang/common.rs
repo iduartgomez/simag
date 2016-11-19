@@ -307,7 +307,7 @@ pub struct GroundedFunc {
 
 impl GroundedFunc {
     pub fn from_free(free: &FuncDecl,
-                     assignments: &HashMap<*const Var, &agent::VarAssignment>)
+                     assignments: &HashMap<Rc<Var>, &agent::VarAssignment>)
                      -> Result<GroundedFunc, ()> {
         if !free.variant.is_relational() || free.args.as_ref().unwrap().len() < 2 {
             return Err(());
@@ -358,14 +358,14 @@ impl GroundedFunc {
     pub fn comparable_entity(&self,
                              free: &FuncDecl,
                              entity_name: &str,
-                             var: Option<*const Var>)
+                             var: Option<Rc<Var>>)
                              -> bool {
         if free.get_name() != self.name {
             return false;
         }
         if var.is_some() {
             let var = var.unwrap();
-            if let Some(pos) = free.var_in_pos(var) {
+            if let Some(pos) = free.var_in_pos(&*var as *const Var) {
                 match pos {
                     0 => {
                         if self.args[0].get_name() == entity_name {
@@ -455,7 +455,7 @@ impl ::std::clone::Clone for GroundedFunc {
 
 #[derive(Debug, Clone)]
 pub struct FreeClsMemb {
-    term: *const Var,
+    term: Rc<Var>,
     value: Option<f32>,
     operator: Option<CompOperator>,
     parent: Terminal,
@@ -463,7 +463,7 @@ pub struct FreeClsMemb {
 }
 
 impl FreeClsMemb {
-    fn new(term: *const Var,
+    fn new(term: Rc<Var>,
            uval: Option<UVal>,
            parent: &Terminal,
            _dates: Option<Vec<DateTime<UTC>>>)
@@ -521,8 +521,8 @@ impl FreeClsMemb {
     }
 
     #[inline]
-    pub fn get_var_ref(&self) -> &Var {
-        unsafe { &*(self.term) }
+    pub fn get_var(&self) -> Rc<Var> {
+        self.term.clone()
     }
 
     /// Compares a free term with a grounded term, assumes they are comparable
@@ -622,7 +622,7 @@ impl Assert {
     #[inline]
     pub fn equal_to_grounded(&self,
                              agent: &agent::Representation,
-                             assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>)
+                             assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
                              -> Option<bool> {
         match self {
             &Assert::FuncDecl(ref f) => f.equal_to_grounded(agent, assignments),
@@ -649,7 +649,7 @@ impl Assert {
     #[inline]
     pub fn substitute(&self,
                       agent: &agent::Representation,
-                      assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>,
+                      assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
                       context: &mut agent::ProofResult) {
         match self {
             &Assert::FuncDecl(ref f) => f.substitute(agent, assignments, context),
@@ -750,7 +750,7 @@ impl<'a> FuncDecl {
 
     pub fn get_name(&self) -> &str {
         match self.name {
-            Terminal::FreeTerm(var) => unsafe { &(&*var).name },
+            Terminal::FreeTerm(ref var) => var.name.as_str(),
             Terminal::GroundedTerm(ref name) => name,
             Terminal::Keyword(name) => name,
         }
@@ -758,7 +758,7 @@ impl<'a> FuncDecl {
 
     pub fn get_name_as_string_ref(&self) -> &String {
         match self.name {
-            Terminal::FreeTerm(var) => unsafe { &(&*var).name },
+            Terminal::FreeTerm(ref var) => &(var.name),
             Terminal::GroundedTerm(ref name) => &name,
             Terminal::Keyword(_) => panic!(),
         }
@@ -902,7 +902,7 @@ impl<'a> FuncDecl {
             for a in self.args.as_ref().unwrap() {
                 match a {
                     &Predicate::FreeClsMemb(ref term) => {
-                        if term.term == &*var as *const Var {
+                        if &*term.term as *const Var == &*var as *const Var {
                             return true;
                         }
                     }
@@ -925,7 +925,7 @@ impl<'a> FuncDecl {
             for (i, a) in self.args.as_ref().unwrap().iter().enumerate() {
                 match a {
                     &Predicate::FreeClsMemb(ref term) => {
-                        if term.term == var {
+                        if &*term.term as *const Var == var {
                             return Some(i);
                         }
                     }
@@ -963,7 +963,7 @@ impl<'a> FuncDecl {
     /// assignments must be provided or will return None or panic in worst case.
     fn equal_to_grounded(&self,
                          agent: &agent::Representation,
-                         assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>)
+                         assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
                          -> Option<bool> {
         match self.variant {
             FuncVariants::Relational => {}
@@ -999,7 +999,7 @@ impl<'a> FuncDecl {
 
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>,
+                  assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
                   context: &mut agent::ProofResult) {
         if let Ok(grfunc) = GroundedFunc::from_free(&self, assignments.as_ref().unwrap()) {
             let grfunc = Rc::new(grfunc);
@@ -1019,7 +1019,7 @@ pub struct ClassDecl {
 impl<'a> ClassDecl {
     pub fn get_name_as_str(&self) -> &str {
         match self.name {
-            Terminal::FreeTerm(var) => unsafe { &(&*var).name },
+            Terminal::FreeTerm(ref var) => &var.name,
             Terminal::GroundedTerm(ref name) => name,
             Terminal::Keyword(name) => name,
         }
@@ -1027,7 +1027,7 @@ impl<'a> ClassDecl {
 
     pub fn get_name_as_string_ref(&self) -> &String {
         match self.name {
-            Terminal::FreeTerm(var) => unsafe { &(&*var).name },
+            Terminal::FreeTerm(ref var) => &(var.name),
             Terminal::GroundedTerm(ref name) => &name,
             Terminal::Keyword(_) => panic!(),
         }
@@ -1098,7 +1098,7 @@ impl<'a> ClassDecl {
         for a in &self.args {
             match a {
                 &Predicate::FreeClsMemb(ref term) => {
-                    if term.term == &*var as *const Var {
+                    if &*term.term as *const Var == &*var as *const Var {
                         return true;
                     }
                 }
@@ -1126,7 +1126,7 @@ impl<'a> ClassDecl {
     /// the result of such comparison (or none in case they are not comparable).
     fn equal_to_grounded(&self,
                          agent: &agent::Representation,
-                         assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>)
+                         assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
                          -> Option<bool> {
         for a in &self.args {
             match a {
@@ -1161,7 +1161,7 @@ impl<'a> ClassDecl {
 
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<HashMap<*const Var, &agent::VarAssignment>>,
+                  assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
                   context: &mut agent::ProofResult) {
         for a in &self.args {
             let grfact = match a {
@@ -1337,7 +1337,7 @@ impl Var {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct Skolem {
     pub name: String,
     op_arg: Option<OpArg>,
@@ -1368,7 +1368,7 @@ impl Skolem {
 
 #[derive(Debug, PartialEq, Clone, Eq, Hash)]
 pub enum Terminal {
-    FreeTerm(*const Var),
+    FreeTerm(Rc<Var>),
     GroundedTerm(String),
     Keyword(&'static str),
 }
@@ -1381,9 +1381,8 @@ impl<'a> Terminal {
             return Err(ParseErrF::ReservedKW(name));
         }
         for v in &context.vars {
-            let v_r: &Var = unsafe { &**v };
-            if v_r.name == name {
-                return Ok(Terminal::FreeTerm(*v));
+            if v.name == name {
+                return Ok(Terminal::FreeTerm(v.clone()));
             }
         }
         Ok(Terminal::GroundedTerm(name))
@@ -1395,9 +1394,8 @@ impl<'a> Terminal {
             return Err(ParseErrF::ReservedKW(name));
         }
         for v in &context.vars {
-            let v: &Var = unsafe { &**v };
             if v.name == name {
-                return Ok(Terminal::FreeTerm(v));
+                return Ok(Terminal::FreeTerm(v.clone()));
             }
         }
         Ok(Terminal::GroundedTerm(name))
@@ -1405,8 +1403,8 @@ impl<'a> Terminal {
 
     fn is_var(&self, v1: &Var) -> bool {
         match *self {
-            Terminal::FreeTerm(v0) => {
-                if (&*v1 as *const Var) == v0 {
+            Terminal::FreeTerm(ref v0) => {
+                if (&*v1 as *const Var) == (&**v0 as *const Var) {
                     true
                 } else {
                     false
