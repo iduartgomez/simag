@@ -345,63 +345,15 @@ impl GroundedFunc {
         self.name.clone()
     }
 
-    pub fn comparable_entity(&self,
-                             free: &FuncDecl,
-                             entity_name: &str,
-                             var: Option<Rc<Var>>)
-                             -> bool {
-        if free.get_name() != self.name {
-            return false;
+    #[inline]
+    pub fn get_args_names(&self) -> Vec<Rc<String>> {
+        let mut v = Vec::with_capacity(3);
+        v.push(self.args[0].get_name());
+        v.push(self.args[1].get_name());
+        if let Some(ref arg) = self.third {
+            v.push(arg.get_name());
         }
-        if var.is_some() {
-            let var = var.unwrap();
-            if let Some(pos) = free.var_in_pos(&*var as *const Var) {
-                match pos {
-                    0 => {
-                        if &*self.args[0].get_name() == entity_name {
-                            return true;
-                        }
-                    }
-                    1 => {
-                        if &*self.args[1].get_name() == entity_name {
-                            return true;
-                        }
-                    }
-                    2 => {
-                        if let Some(ref term) = self.third {
-                            if &*term.get_name() == entity_name {
-                                return true;
-                            }
-                        }
-                    }
-                    _ => return false,
-                }
-            }
-        } else {
-            if let Some(pos) = free.term_in_pos(entity_name) {
-                match pos {
-                    0 => {
-                        if &*self.args[0].get_name() == entity_name {
-                            return true;
-                        }
-                    }
-                    1 => {
-                        if &*self.args[1].get_name() == entity_name {
-                            return true;
-                        }
-                    }
-                    2 => {
-                        if let Some(ref term) = self.third {
-                            if &*term.get_name() == entity_name {
-                                return true;
-                            }
-                        }
-                    }
-                    _ => return false,
-                }
-            }
-        }
-        false
+        v
     }
 
     pub fn comparable(&self, other: &GroundedFunc) -> bool {
@@ -892,38 +844,6 @@ impl<'a> FuncDecl {
             }
         }
         false
-    }
-
-    pub fn var_in_pos(&self, var: *const Var) -> Option<usize> {
-        if self.args.is_some() {
-            for (i, a) in self.args.as_ref().unwrap().iter().enumerate() {
-                match a {
-                    &Predicate::FreeClsMemb(ref term) => {
-                        if &*term.term as *const Var == var {
-                            return Some(i);
-                        }
-                    }
-                    _ => continue,
-                }
-            }
-        }
-        None
-    }
-
-    pub fn term_in_pos(&self, var: &str) -> Option<usize> {
-        if self.args.is_some() {
-            for (i, a) in self.args.as_ref().unwrap().iter().enumerate() {
-                match a {
-                    &Predicate::GroundedClsMemb(ref term) => {
-                        if &*term.term == var {
-                            return Some(i);
-                        }
-                    }
-                    _ => continue,
-                }
-            }
-        }
-        None
     }
 
     fn parent_is_grounded(&self) -> bool {
