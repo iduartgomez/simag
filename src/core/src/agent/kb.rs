@@ -23,7 +23,7 @@ use std::iter::FromIterator;
 use std::hash::{Hash, Hasher};
 use std::cell::RefCell;
 use std::sync::{RwLock, Mutex, Arc};
-// use std::thread;
+use std::thread;
 use std::rc::Rc;
 
 use chrono::{UTC, DateTime};
@@ -116,7 +116,7 @@ impl Representation {
             let pres = QueryInput::ManyQueries(pres.unwrap());
             let mut inf = Inference::new(&self, pres, single_answer, false);
             {
-                let mut inf_r = unsafe { &mut *(&mut inf as *mut Inference) };
+                let mut inf_r = unsafe { &mut *(&mut inf as *mut Box<Inference>) };
                 inf_r.infer_facts();
             }
             inf.get_results()
@@ -132,7 +132,7 @@ impl Representation {
                      -> Answer {
         let mut inf = Inference::new(&self, source, single_answer, ignore_current);
         {
-            let mut inf_r = unsafe { &mut *(&mut inf as *mut Inference) };
+            let mut inf_r = unsafe { &mut *(&mut inf as *mut Box<Inference>) };
             inf_r.infer_facts();
         }
         inf.get_results()
@@ -796,9 +796,9 @@ impl<'a> Inference<'a> {
            query_input: QueryInput,
            single: bool,
            ignore_current: bool)
-           -> Inference<'a> {
+           -> Box<Inference<'a>> {
         let query = QueryProcessed::new().get_query(query_input);
-        Inference {
+        Box::new(Inference {
             query: query.unwrap(),
             kb: agent,
             ignore_current: ignore_current,
@@ -808,7 +808,7 @@ impl<'a> Inference<'a> {
             results: RwLock::new(HashMap::new()),
             repeat: Mutex::new(vec![]),
             assignments: Mutex::new(vec![]),
-        }
+        })
     }
 
     fn get_results(self) -> Answer {
@@ -863,6 +863,7 @@ impl<'a> Inference<'a> {
             }
         }
 
+        /*
         for (obj, preds) in self.query.cls_queries_grounded.iter() {
             for pred in preds {
                 let query = pred.get_parent();
@@ -887,29 +888,84 @@ impl<'a> Inference<'a> {
                 }
             }
         }
+        */
+
+        let inf_ptr = &*self as *const Inference as usize;
+        let mut all_threads = vec![];
+        for (obj, preds) in self.query.cls_queries_grounded.iter() {
+            let obj_r = obj as *const Rc<String> as usize;
+            for pred in preds {
+                let pred_r = *pred as *const GroundedClsMemb as usize;
+                let t = thread::spawn(move || {
+                    let inf: &Inference;
+                    let obj: Rc<String>;
+                    let pred: &GroundedClsMemb;
+                    unsafe {
+                        inf = &*(inf_ptr as *const Inference);
+                        obj = (*&*(obj_r as *const Rc<String>)).clone();
+                        pred = &*(pred_r as *const GroundedClsMemb);
+                    }
+                    let query = pred.get_parent();
+                    let mut result = None;
+                    if !inf.ignore_current {
+                        result = inf.kb.class_membership(pred);
+                    }
+                    if result.is_some() {
+                        let mut lock = inf.results.write().unwrap();
+                        let mut answ = lock.entry(query).or_insert(HashMap::new());
+                        answ.insert(obj.clone(), Some((result.unwrap(), None)));
+                    } else {
+                        {
+                            let mut lock = inf.results.write().unwrap();
+                            let mut answ = lock.entry(query.clone()).or_insert(HashMap::new());
+                            answ.insert(obj.clone(), None);
+                        }
+                        // if no result was found from the kb directly
+                        // make an inference from a grounded fact
+                        let actv_query = ActiveQuery::Class(obj.clone(), query.clone(), pred);
+                        query_cls(inf, query.clone(), actv_query);
+                    }
+                });
+                all_threads.push(t);
+            }
+        }
 
         for pred in self.query.func_queries_grounded.iter() {
-            let query = pred.name.clone();
-            let mut result = None;
-            for arg in pred.args.iter() {
-                let obj = arg.get_name();
-                if !self.ignore_current {
-                    result = self.kb.has_relationship(pred, obj.clone());
+            let pred_r = &**pred as *const GroundedFunc as usize;
+            let t = thread::spawn(move || {
+                let inf: &Inference;
+                let pred: &GroundedFunc;
+                unsafe {
+                    inf = &*(inf_ptr as *const Inference);
+                    pred = &*(pred_r as *const GroundedFunc);
                 }
-                if result.is_some() {
-                    let mut lock = self.results.write().unwrap();
-                    let mut answ = lock.entry(query.clone()).or_insert(HashMap::new());
-                    answ.insert(obj.clone(), Some((result.unwrap(), None)));
-                } else {
-                    {
-                        let mut lock = self.results.write().unwrap();
-                        let mut answ = lock.entry(query.clone()).or_insert(HashMap::new());
-                        answ.insert(obj.clone(), None);
+                let query = pred.name.clone();
+                let mut result = None;
+                for arg in pred.args.iter() {
+                    let obj = arg.get_name();
+                    if !inf.ignore_current {
+                        result = inf.kb.has_relationship(pred, obj.clone());
                     }
-                    let actv_query = ActiveQuery::Func(obj.clone(), query.clone(), pred);
-                    query_cls(self, query.clone(), actv_query);
+                    if result.is_some() {
+                        let mut lock = inf.results.write().unwrap();
+                        let mut answ = lock.entry(query.clone()).or_insert(HashMap::new());
+                        answ.insert(obj.clone(), Some((result.unwrap(), None)));
+                    } else {
+                        {
+                            let mut lock = inf.results.write().unwrap();
+                            let mut answ = lock.entry(query.clone()).or_insert(HashMap::new());
+                            answ.insert(obj.clone(), None);
+                        }
+                        let actv_query = ActiveQuery::Func(obj.clone(), query.clone(), pred);
+                        query_cls(inf, query.clone(), actv_query);
+                    }
                 }
-            }
+            });
+            all_threads.push(t);
+        }
+
+        for t in all_threads {
+            let _res = t.join();
         }
 
         // cls_queries_free: HashMap<&'a Rc<lang::Var>, Vec<&'a lang::FreeClsMemb>>,
@@ -1229,18 +1285,9 @@ impl<'a> InfTrial<'a> {
                 .map(|(k, _)| k.clone());
             if meet_func_req.len() > 0 && meet_cls_req.len() > 0 {
                 //i2 = func_filter.filter_map(|n0| cls_filter.find(|n1| *n1 == n0)).collect();
-                let mut v = vec![];
-                for (n1, c1) in i1.iter() {
-                    if *c1 == funcs_list.len() {
-                        for (n0, c0) in i0.iter() {
-                            if n0 == n1 && *c0 == class_list.len() {
-                                v.push(n0.clone())
-                            }
-                        }
-                    }
-
-                }
-                i2 = v;
+                let c0: HashSet<_> = func_filter.collect();
+                let c1: HashSet<_> = cls_filter.collect();
+                i2 = c0.intersection(&c1).map(|x| x.clone()).collect();
             } else if meet_func_req.len() > 0 {
                 i2 = func_filter.collect();
             } else {
@@ -1468,7 +1515,7 @@ struct QueryProcessed<'a> {
     cls_queries_grounded: HashMap<Rc<String>, Vec<&'a lang::GroundedClsMemb>>,
     cls_memb_query: Vec<&'a lang::GroundedClsMemb>,
     func_queries_free: HashMap<Rc<lang::Var>, Vec<Rc<lang::FuncDecl>>>,
-    func_queries_grounded: Vec<lang::GroundedFunc>,
+    func_queries_grounded: Vec<Box<lang::GroundedFunc>>,
     func_memb_query: Vec<&'a lang::GroundedClsMemb>,
     vars: Vec<Rc<lang::Var>>,
     cls: Vec<Rc<lang::ClassDecl>>,
@@ -1629,7 +1676,7 @@ impl<'a> QueryProcessed<'a> {
 
     #[inline]
     fn push_to_fnquery_grounded(&mut self, func: lang::GroundedFunc) {
-        self.func_queries_grounded.push(func)
+        self.func_queries_grounded.push(Box::new(func))
     }
 
     #[inline]
