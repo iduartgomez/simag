@@ -17,9 +17,7 @@
 //! There is an intensive use of reference counted data throught the module,
 //! to avoid unnecesary copies. The problem is that Rc is not ```Send``` compliant
 //! so we need to 'hack' the type checking system through unsafe code to cheat
-//! the compiler. It's **VERY IMPORTANT** though that when we add new ```Rc``` data
-//! to the representation it's done from it's own main thread to avoid any problems
-//! due to the underlying ```Rc``` type drop behaviour.
+//! the compiler.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::iter::FromIterator;
@@ -184,7 +182,6 @@ impl Representation {
             let parent = lock.get(&assert.get_parent()).unwrap();
             parent.add_member(decl);
         }
-        println!("ADDED: {:?}", assert);
     }
 
     pub fn up_relation(&self, assert: Rc<lang::GroundedFunc>) {
@@ -237,7 +234,6 @@ impl Representation {
             let parent = lock.get(&assert.name).unwrap();
             parent.add_grounded_relationship(assert.clone());
         }
-        println!("ADDED: {:?}", assert);
     }
 
     fn add_belief(&self, belief: Rc<LogSentence>) {
@@ -810,6 +806,7 @@ struct Inference<'a> {
     results: RwLock<HashMap<&'a str, HashMap<&'a str, Option<(bool, Option<Date>)>>>>,
     repeat: Mutex<Vec<(Rc<LogSentence>, PArgVal)>>,
     args: RwLock<Box<Vec<Rc<ProofArgs>>>>,
+    available_threads: Mutex<u32>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -837,6 +834,7 @@ impl<'a> Inference<'a> {
             results: RwLock::new(HashMap::new()),
             repeat: Mutex::new(vec![]),
             args: RwLock::new(Box::new(vec![])),
+            available_threads: Mutex::new(4_u32),
         })
     }
 
@@ -895,15 +893,15 @@ impl<'a> Inference<'a> {
         }
 
         let inf_ptr = &*self as *const Inference as usize;
-        let mut pool = Pool::new(4);
+        let mut pool = Pool::new(*self.available_threads.lock().unwrap());
 
-        //pool.scoped(|scope| {
+        pool.scoped(|scope| {
             for (obj, preds) in self.query.cls_queries_grounded.iter() {
                 let obj: &str = &**obj;
                 for pred in preds {
                     let pred_r = *pred as *const GroundedClsMemb as usize;
                     let query = unsafe { &*(&*pred.get_parent() as *const String) as &'static str };
-                    //scope.execute(move || {
+                    scope.execute(move || {
                         let inf: &Inference;
                         let pred: &GroundedClsMemb;
                         unsafe {
@@ -929,15 +927,15 @@ impl<'a> Inference<'a> {
                             let actv_query = ActiveQuery::Class(obj, &*query, pred);
                             query_cls(inf, pred.get_parent(), actv_query);
                         }
-                    //});
+                    });
                 }
             }
-        //});
+        });
 
-        //pool.scoped(|scope| {
+        pool.scoped(|scope| {
             for pred in self.query.func_queries_grounded.iter() {
                 let pred_r = &**pred as *const GroundedFunc as usize;
-                //scope.execute(move || {
+                scope.execute(move || {
                     let inf: &Inference;
                     let pred: &GroundedFunc;
                     let query: &str;
@@ -966,9 +964,9 @@ impl<'a> Inference<'a> {
                             query_cls(inf, pred.get_name(), actv_query);
                         }
                     }
-                //});
+                });
             }
-        //});
+        });
 
         // cls_queries_free: HashMap<&'a Rc<lang::Var>, Vec<&'a lang::FreeClsMemb>>,
         // cls_queries_grounded: HashMap<Rc<String>, Vec<&'a lang::GroundedClsMemb>>,
@@ -988,6 +986,7 @@ struct InfTrial<'a> {
     results: &'a RwLock<HashMap<&'a str, HashMap<&'a str, Option<(bool, Option<Date>)>>>>,
     repeat: &'a Mutex<Vec<(Rc<LogSentence>, PArgVal)>>,
     args: &'a RwLock<Box<Vec<Rc<ProofArgs>>>>,
+    available_threads: Mutex<u32>,
 }
 
 enum ActiveQuery<'a> {
@@ -1048,6 +1047,7 @@ impl<'a> InfTrial<'a> {
             results: &inf.results,
             repeat: &inf.repeat,
             args: &inf.args,
+            available_threads: Mutex::new(4_u32),
         }
     }
 
@@ -1099,8 +1099,8 @@ impl<'a> InfTrial<'a> {
         };
 
         let inf_ptr = &*self as *const InfTrial as usize;
-        let mut pool = Pool::new(4);
         loop {
+            let mut pool = Pool::new(*self.available_threads.lock().unwrap());
             {
                 *self.valid.lock().unwrap() = None;
             }
@@ -1128,7 +1128,7 @@ impl<'a> InfTrial<'a> {
                     let mapped = ArgsProduct::product(assignments.unwrap());
                     if mapped.is_some() {
                         let mapped = mapped.unwrap();
-                        //pool.scoped(|scope| {
+                        pool.scoped(|scope| {
                             let node_r = &**node as *const ProofNode as usize;
                             for args in mapped {
                                 {
@@ -1138,11 +1138,11 @@ impl<'a> InfTrial<'a> {
                                     }
                                 }
                                 let args_r = Box::into_raw(Box::new(args)) as usize;
-                                //scope.execute(move || {
+                                scope.execute(move || {
                                     scoped_exec(inf_ptr, node_r, args_r)
-                                //});
+                                });
                             }
-                        //});
+                        });
                     }
                     let lock = self.feedback.lock().unwrap();
                     if *lock {
@@ -1223,7 +1223,6 @@ impl<'a> InfTrial<'a> {
                             }
                             let mut d = self.results.write().unwrap();
                             let mut d = d.entry(query_pred).or_insert(HashMap::new());
-                            println!("ADDING RESULT: {:?}", gf);
                             if d.contains_key(query_obj) {
                                 let cond_ok;
                                 if let Some(&Some((_, Some(ref cdate)))) = d.get(query_obj) {
@@ -1263,7 +1262,6 @@ impl<'a> InfTrial<'a> {
                             }
                             let mut d = self.results.write().unwrap();
                             let mut d = d.entry(query_pred).or_insert(HashMap::new());
-                            println!("ADDING RESULT: {:?}", gt);
                             if d.contains_key(query_obj) {
                                 let cond_ok;
                                 if let Some(&Some((_, Some(ref cdate)))) = d.get(query_obj) {
@@ -1311,8 +1309,6 @@ impl<'a> InfTrial<'a> {
                     }
                 }
             }
-            println!("\ncls_req: {:?}", class_list);
-            println!("fn_req: {:?}", funcs_list.iter().map(|x| x.get_name()).collect::<Vec<_>>());
             // meet_cls_req: HashMap<Rc<String>, Vec<Rc<GroundedClsMemb>>>
             let meet_cls_req = self.kb.by_class(&class_list);
             // meet_func_req: HashMap<Rc<String>, HashMap<Rc<String>, Vec<Rc<GroundedFunc>>>>
@@ -1324,7 +1320,6 @@ impl<'a> InfTrial<'a> {
                     *cnt += 1;
                 }
             }
-            println!("cls_cand: {:?}", i0.iter().collect::<Vec<_>>());
             let mut i1: HashMap<Rc<String>, usize> = HashMap::new();
             for (_, v) in meet_func_req.iter() {
                 for name in v.iter().map(|(name, _)| name) {
@@ -1332,7 +1327,6 @@ impl<'a> InfTrial<'a> {
                     *cnt += 1;
                 }
             }
-            println!("func_cand: {:?}", i1.iter().collect::<Vec<_>>());
             let i2: Vec<_>;
             let cls_filter = i0.iter()
                 .filter(|&(_, cnt)| *cnt == class_list.len())
@@ -1342,14 +1336,12 @@ impl<'a> InfTrial<'a> {
                 .map(|(k, _)| k.clone());
             if meet_func_req.len() > 0 && meet_cls_req.len() > 0 {
                 let c1: HashSet<Rc<String>> = cls_filter.collect();
-                println!("collected class cand: {:?}", c1);
                 i2 = func_filter.filter_map(|n0| c1.get(&n0)).map(|x| x.clone()).collect();
             } else if meet_func_req.len() > 0 {
                 i2 = func_filter.collect();
             } else {
                 i2 = cls_filter.collect();
             }
-            println!("filtered: {:?}", i2);
             for name in i2 {
                 let mut gr_memb: HashMap<Rc<String>, Rc<GroundedClsMemb>> = HashMap::new();
                 let mut gr_relations: HashMap<Rc<String>, Vec<Rc<GroundedFunc>>> = HashMap::new();
@@ -1801,7 +1793,7 @@ impl<'a> QueryProcessed<'a> {
 mod test {
     use super::*;
 
-    //#[test]
+    // #[test]
     fn _temp() {
         let test_03 = String::from("
             ( professor[$Lucy,u=1] )

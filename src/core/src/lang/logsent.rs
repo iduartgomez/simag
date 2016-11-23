@@ -7,7 +7,6 @@
 //! by compounded expressions which will evaluate with the current knowledge
 //! when called and perform any subtitution in the knowledge base if pertinent.
 use std::collections::{HashMap, HashSet};
-use std::cell::RefCell;
 use std::rc::Rc;
 use std::fmt;
 use std::iter::FromIterator;
@@ -55,7 +54,7 @@ impl<'a> LogSentence {
             id: vec![],
         };
         let r = walk_ast(ast, &mut sent, context)?;
-        sent.root = Some(r);
+        sent.root = Some(Rc::new(r));
         // classify the kind of sentence and check that are correct
         if sent.vars.is_none() {
             if !context.iexpr() {
@@ -79,7 +78,7 @@ impl<'a> LogSentence {
             for p in rhs.difference(&lhs).map(|x| *x) {
                 let p = unsafe { &**p };
                 match p {
-                    &Particle::Atom(ref p) => rhs_v.push(p.borrow().pred.clone()),
+                    &Particle::Atom(ref p) => rhs_v.push(p.pred.clone()),
                     _ => {}
                 }
             }
@@ -87,7 +86,7 @@ impl<'a> LogSentence {
             for p in lhs.into_iter() {
                 let p = unsafe { &**p };
                 match p {
-                    &Particle::Atom(ref p) => lhs_v.push(p.borrow().pred.clone()),
+                    &Particle::Atom(ref p) => lhs_v.push(p.pred.clone()),
                     _ => {}
                 }
             }
@@ -206,7 +205,7 @@ impl<'a> LogSentence {
                 &Particle::Implication(_) => self.id.push(3),
                 &Particle::IndConditional(_) => self.id.push(4),
                 &Particle::Atom(ref p) => {
-                    let mut id_1 = p.borrow().get_id();
+                    let mut id_1 = p.get_id();
                     self.id.append(&mut id_1)
                 }
             }
@@ -289,14 +288,16 @@ pub enum SentType {
 #[derive(Debug, Clone)]
 struct LogicIndCond {
     parent: Option<Rc<Particle>>,
-    next: Vec<Rc<Particle>>,
+    next_rhs: Option<Rc<Particle>>,
+    next_lhs: Option<Rc<Particle>>,
 }
 
 impl LogicIndCond {
     fn new() -> LogicIndCond {
         LogicIndCond {
             parent: None,
-            next: Vec::with_capacity(2),
+            next_rhs: None,
+            next_lhs: None,
         }
     }
 
@@ -305,7 +306,7 @@ impl LogicIndCond {
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
              -> Option<bool> {
-        let n0 = &*self.next[0];
+        let n0 = self.next_lhs.as_ref().unwrap();
         if let Some(res) = n0.solve(agent, assignments) {
             if res {
                 Some(true)
@@ -323,31 +324,23 @@ impl LogicIndCond {
                   assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
-        let n1 = &*self.next[1];
+        let n1 = self.next_rhs.as_ref().unwrap();
         n1.substitute(agent, assignments, context, rhs)
     }
 
-    fn get_next(&self, pos: usize) -> Option<Rc<Particle>> {
-        if pos == 0 && self.next.len() >= 1 {
-            Some(self.next[0].clone())
-        } else if pos == 1 && self.next.len() == 2 {
-            Some(self.next[1].clone())
+    fn get_next(&self, pos: usize) -> Rc<Particle> {
+        if pos == 0 {
+            self.next_lhs.as_ref().unwrap().clone()
         } else {
-            None
+            self.next_rhs.as_ref().unwrap().clone()
         }
     }
 }
 
 impl fmt::Display for LogicIndCond {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let n0 = match self.get_next(0) {
-            Some(n0) => String::from(format!("{}", n0)),
-            None => String::from("none"),
-        };
-        let n1 = match self.get_next(1) {
-            Some(n1) => String::from(format!("{}", n1)),
-            None => String::from("none"),
-        };
+        let n0 = String::from(format!("{}", self.next_lhs.as_ref().unwrap()));
+        let n1 = String::from(format!("{}", self.next_rhs.as_ref().unwrap()));
         write!(f, "Conditional(n0: {}, n1: {})", n0, n1)
     }
 }
@@ -355,14 +348,16 @@ impl fmt::Display for LogicIndCond {
 #[derive(Debug, Clone)]
 struct LogicEquivalence {
     parent: Option<Rc<Particle>>,
-    next: Vec<Rc<Particle>>,
+    next_rhs: Option<Rc<Particle>>,
+    next_lhs: Option<Rc<Particle>>,
 }
 
 impl LogicEquivalence {
     fn new() -> LogicEquivalence {
         LogicEquivalence {
             parent: None,
-            next: Vec::with_capacity(2),
+            next_rhs: None,
+            next_lhs: None,
         }
     }
 
@@ -371,8 +366,8 @@ impl LogicEquivalence {
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
              -> Option<bool> {
-        let n0 = &*self.next[0];
-        let n1 = &*self.next[1];
+        let n0 = self.next_lhs.as_ref().unwrap();
+        let n1 = self.next_rhs.as_ref().unwrap();
         let n0_res;
         if let Some(res) = n0.solve(agent, assignments) {
             if res {
@@ -400,25 +395,23 @@ impl LogicEquivalence {
         }
     }
 
-    fn get_next(&self, pos: usize) -> Option<Rc<Particle>> {
-        if pos == 0 && self.next.len() >= 1 {
-            Some(self.next[0].clone())
-        } else if pos == 1 && self.next.len() == 2 {
-            Some(self.next[1].clone())
+    fn get_next(&self, pos: usize) -> Rc<Particle> {
+        if pos == 0 {
+            self.next_lhs.as_ref().unwrap().clone()
         } else {
-            None
+            self.next_rhs.as_ref().unwrap().clone()
         }
     }
 }
 
 impl fmt::Display for LogicEquivalence {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let n0 = match self.get_next(0) {
-            Some(n0) => String::from(format!("{}", n0)),
+        let n0 = match self.next_lhs {
+            Some(ref n0) => String::from(format!("{}", n0)),
             None => String::from("none"),
         };
-        let n1 = match self.get_next(1) {
-            Some(n1) => String::from(format!("{}", n1)),
+        let n1 = match self.next_rhs {
+            Some(ref n1) => String::from(format!("{}", n1)),
             None => String::from("none"),
         };
         write!(f, "Equivalence(n0: {}, n1: {})", n0, n1)
@@ -428,14 +421,16 @@ impl fmt::Display for LogicEquivalence {
 #[derive(Debug, Clone)]
 struct LogicImplication {
     parent: Option<Rc<Particle>>,
-    next: Vec<Rc<Particle>>,
+    next_rhs: Option<Rc<Particle>>,
+    next_lhs: Option<Rc<Particle>>,
 }
 
 impl LogicImplication {
     fn new() -> LogicImplication {
         LogicImplication {
             parent: None,
-            next: Vec::with_capacity(2),
+            next_rhs: None,
+            next_lhs: None,
         }
     }
 
@@ -444,8 +439,8 @@ impl LogicImplication {
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
              -> Option<bool> {
-        let n0 = &*self.next[0];
-        let n1 = &*self.next[1];
+        let n0 = self.next_lhs.as_ref().unwrap();
+        let n1 = self.next_rhs.as_ref().unwrap();
         let n0_res;
         if let Some(res) = n0.solve(agent, assignments) {
             if res {
@@ -473,27 +468,19 @@ impl LogicImplication {
         }
     }
 
-    fn get_next(&self, pos: usize) -> Option<Rc<Particle>> {
-        if pos == 0 && self.next.len() >= 1 {
-            Some(self.next[0].clone())
-        } else if pos == 1 && self.next.len() == 2 {
-            Some(self.next[1].clone())
+    fn get_next(&self, pos: usize) -> Rc<Particle> {
+        if pos == 0 {
+            self.next_lhs.as_ref().unwrap().clone()
         } else {
-            None
+            self.next_rhs.as_ref().unwrap().clone()
         }
     }
 }
 
 impl fmt::Display for LogicImplication {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let n0 = match self.get_next(0) {
-            Some(n0) => String::from(format!("{}", n0)),
-            None => String::from("none"),
-        };
-        let n1 = match self.get_next(1) {
-            Some(n1) => String::from(format!("{}", n1)),
-            None => String::from("none"),
-        };
+        let n0 = String::from(format!("{}", self.next_lhs.as_ref().unwrap()));
+        let n1 = String::from(format!("{}", self.next_rhs.as_ref().unwrap()));
         write!(f, "Implication(n0: {}, n1: {})", n0, n1)
     }
 }
@@ -501,14 +488,16 @@ impl fmt::Display for LogicImplication {
 #[derive(Debug, Clone)]
 struct LogicConjunction {
     parent: Option<Rc<Particle>>,
-    next: Vec<Rc<Particle>>,
+    next_rhs: Option<Rc<Particle>>,
+    next_lhs: Option<Rc<Particle>>,
 }
 
 impl LogicConjunction {
     fn new() -> LogicConjunction {
         LogicConjunction {
             parent: None,
-            next: Vec::with_capacity(2),
+            next_rhs: None,
+            next_lhs: None,
         }
     }
 
@@ -517,8 +506,8 @@ impl LogicConjunction {
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
              -> Option<bool> {
-        let n0 = &*self.next[0];
-        let n1 = &*self.next[1];
+        let n0 = self.next_lhs.as_ref().unwrap();
+        let n1 = self.next_rhs.as_ref().unwrap();
         if let Some(res) = n0.solve(agent, assignments) {
             if !res {
                 return Some(false);
@@ -542,33 +531,25 @@ impl LogicConjunction {
                   assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
-        let n1 = &*self.next[1];
+        let n1 = self.next_rhs.as_ref().unwrap();
         n1.substitute(agent, assignments, context, rhs);
-        let n0 = &*self.next[0];
+        let n0 = self.next_lhs.as_ref().unwrap();
         n0.substitute(agent, assignments, context, rhs);
     }
 
-    fn get_next(&self, pos: usize) -> Option<Rc<Particle>> {
-        if pos == 0 && self.next.len() >= 1 {
-            Some(self.next[0].clone())
-        } else if pos == 1 && self.next.len() == 2 {
-            Some(self.next[1].clone())
+    fn get_next(&self, pos: usize) -> Rc<Particle> {
+        if pos == 0 {
+            self.next_lhs.as_ref().unwrap().clone()
         } else {
-            None
+            self.next_rhs.as_ref().unwrap().clone()
         }
     }
 }
 
 impl fmt::Display for LogicConjunction {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let n0 = match self.get_next(0) {
-            Some(n0) => String::from(format!("{}", n0)),
-            None => String::from("none"),
-        };
-        let n1 = match self.get_next(1) {
-            Some(n1) => String::from(format!("{}", n1)),
-            None => String::from("none"),
-        };
+        let n0 = String::from(format!("{}", self.next_lhs.as_ref().unwrap()));
+        let n1 = String::from(format!("{}", self.next_rhs.as_ref().unwrap()));
         write!(f, "Conjunction(n0: {}, n1: {})", n0, n1)
     }
 }
@@ -576,14 +557,16 @@ impl fmt::Display for LogicConjunction {
 #[derive(Debug, Clone)]
 struct LogicDisjunction {
     parent: Option<Rc<Particle>>,
-    next: Vec<Rc<Particle>>,
+    next_rhs: Option<Rc<Particle>>,
+    next_lhs: Option<Rc<Particle>>,
 }
 
 impl LogicDisjunction {
     fn new() -> LogicDisjunction {
         LogicDisjunction {
             parent: None,
-            next: Vec::with_capacity(2),
+            next_rhs: None,
+            next_lhs: None,
         }
     }
 
@@ -592,8 +575,8 @@ impl LogicDisjunction {
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
              -> Option<bool> {
-        let n0 = &*self.next[0];
-        let n1 = &*self.next[1];
+        let n0 = self.next_lhs.as_ref().unwrap();
+        let n1 = self.next_rhs.as_ref().unwrap();
         let n0_res;
         if let Some(res) = n0.solve(agent, assignments) {
             if res {
@@ -628,35 +611,27 @@ impl LogicDisjunction {
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
         if *rhs {
-            let n1 = &*self.next[1];
+            let n1 = self.next_rhs.as_ref().unwrap();
             n1.substitute(agent, assignments, context, rhs)
         } else {
-            let n0 = &*self.next[0];
+            let n0 = self.next_lhs.as_ref().unwrap();
             n0.substitute(agent, assignments, context, rhs)
         }
     }
 
-    fn get_next(&self, pos: usize) -> Option<Rc<Particle>> {
-        if pos == 0 && self.next.len() >= 1 {
-            Some(self.next[0].clone())
-        } else if pos == 1 && self.next.len() == 2 {
-            Some(self.next[1].clone())
+    fn get_next(&self, pos: usize) -> Rc<Particle> {
+        if pos == 0 {
+            self.next_lhs.as_ref().unwrap().clone()
         } else {
-            None
+            self.next_rhs.as_ref().unwrap().clone()
         }
     }
 }
 
 impl fmt::Display for LogicDisjunction {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let n0 = match self.get_next(0) {
-            Some(n0) => String::from(format!("{}", n0)),
-            None => String::from("none"),
-        };
-        let n1 = match self.get_next(1) {
-            Some(n1) => String::from(format!("{}", n1)),
-            None => String::from("none"),
-        };
+        let n0 = String::from(format!("{}", self.next_lhs.as_ref().unwrap()));
+        let n1 = String::from(format!("{}", self.next_rhs.as_ref().unwrap()));
         write!(f, "Disjunction(n0: {}, n1: {})", n0, n1)
     }
 }
@@ -717,12 +692,12 @@ impl fmt::Display for LogicAtom {
 
 #[derive(Debug)]
 enum Particle {
-    Atom(RefCell<LogicAtom>),
-    Conjunction(RefCell<LogicConjunction>),
-    Disjunction(RefCell<LogicDisjunction>),
-    Implication(RefCell<LogicImplication>),
-    Equivalence(RefCell<LogicEquivalence>),
-    IndConditional(RefCell<LogicIndCond>),
+    Atom(LogicAtom),
+    Conjunction(LogicConjunction),
+    Disjunction(LogicDisjunction),
+    Implication(LogicImplication),
+    Equivalence(LogicEquivalence),
+    IndConditional(LogicIndCond),
 }
 
 impl Particle {
@@ -732,12 +707,12 @@ impl Particle {
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
              -> Option<bool> {
         match *self {
-            Particle::Conjunction(ref p) => p.borrow().solve(agent, assignments),
-            Particle::Disjunction(ref p) => p.borrow().solve(agent, assignments),
-            Particle::Implication(ref p) => p.borrow().solve(agent, assignments),
-            Particle::Equivalence(ref p) => p.borrow().solve(agent, assignments),
-            Particle::IndConditional(ref p) => p.borrow().solve(agent, assignments),
-            Particle::Atom(ref p) => p.borrow().solve(agent, assignments),
+            Particle::Conjunction(ref p) => p.solve(agent, assignments),
+            Particle::Disjunction(ref p) => p.solve(agent, assignments),
+            Particle::Implication(ref p) => p.solve(agent, assignments),
+            Particle::Equivalence(ref p) => p.solve(agent, assignments),
+            Particle::IndConditional(ref p) => p.solve(agent, assignments),
+            Particle::Atom(ref p) => p.solve(agent, assignments),
         }
     }
 
@@ -748,36 +723,34 @@ impl Particle {
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
         match *self {
-            Particle::IndConditional(ref p) => {
-                p.borrow().substitute(agent, assignments, context, rhs)
-            }
-            Particle::Disjunction(ref p) => p.borrow().substitute(agent, assignments, context, rhs),
-            Particle::Conjunction(ref p) => p.borrow().substitute(agent, assignments, context, rhs),
-            Particle::Atom(ref p) => p.borrow().substitute(agent, assignments, context),
+            Particle::IndConditional(ref p) => p.substitute(agent, assignments, context, rhs),
+            Particle::Disjunction(ref p) => p.substitute(agent, assignments, context, rhs),
+            Particle::Conjunction(ref p) => p.substitute(agent, assignments, context, rhs),
+            Particle::Atom(ref p) => p.substitute(agent, assignments, context),
             _ => panic!("simag: wrong operator on the rhs of the expression"),
         }
     }
 
     #[inline]
-    fn add_parent(&self, ptr: Rc<Particle>) {
-        match *self {
-            Particle::Conjunction(ref p) => {
-                p.borrow_mut().parent = Some(ptr);
+    fn add_parent(self, ptr: Rc<Particle>) {
+        match self {
+            Particle::Conjunction(mut p) => {
+                p.parent = Some(ptr);
             }
-            Particle::Disjunction(ref p) => {
-                p.borrow_mut().parent = Some(ptr);
+            Particle::Disjunction(mut p) => {
+                p.parent = Some(ptr);
             }
-            Particle::Implication(ref p) => {
-                p.borrow_mut().parent = Some(ptr);
+            Particle::Implication(mut p) => {
+                p.parent = Some(ptr);
             }
-            Particle::Equivalence(ref p) => {
-                p.borrow_mut().parent = Some(ptr);
+            Particle::Equivalence(mut p) => {
+                p.parent = Some(ptr);
             }
-            Particle::IndConditional(ref p) => {
-                p.borrow_mut().parent = Some(ptr);
+            Particle::IndConditional(mut p) => {
+                p.parent = Some(ptr);
             }
-            Particle::Atom(ref p) => {
-                p.borrow_mut().parent = Some(ptr);
+            Particle::Atom(mut p) => {
+                p.parent = Some(ptr);
             }
         }
     }
@@ -785,11 +758,11 @@ impl Particle {
     #[inline]
     fn get_next(&self, pos: usize) -> Option<Rc<Particle>> {
         match *self {
-            Particle::Conjunction(ref p) => p.borrow().get_next(pos),
-            Particle::Disjunction(ref p) => p.borrow().get_next(pos),
-            Particle::Implication(ref p) => p.borrow().get_next(pos),
-            Particle::Equivalence(ref p) => p.borrow().get_next(pos),
-            Particle::IndConditional(ref p) => p.borrow().get_next(pos),
+            Particle::Conjunction(ref p) => Some(p.get_next(pos)),
+            Particle::Disjunction(ref p) => Some(p.get_next(pos)),
+            Particle::Implication(ref p) => Some(p.get_next(pos)),
+            Particle::Equivalence(ref p) => Some(p.get_next(pos)),
+            Particle::IndConditional(ref p) => Some(p.get_next(pos)),
             Particle::Atom(_) => None,
         }
     }
@@ -797,7 +770,7 @@ impl Particle {
     #[inline]
     fn extract_assertion(&self) -> Rc<Assert> {
         match *self {
-            Particle::Atom(ref atom) => atom.borrow().pred.clone(),
+            Particle::Atom(ref atom) => atom.pred.clone(),
             _ => panic!(),
         }
     }
@@ -832,108 +805,68 @@ impl Particle {
         }
     }
 
-    fn add_rhs(&self, next: Rc<Particle>) {
-        match *self {
-            Particle::Conjunction(ref p) => {
-                if p.borrow().next.len() == 2 {
-                    p.borrow_mut().next.pop();
-                }
-                p.borrow_mut().next.push(next)
+    fn add_rhs(self, next: Rc<Particle>) -> Particle {
+        match self {
+            Particle::Conjunction(mut p) => {
+                p.next_rhs = Some(next);
+                Particle::Conjunction(p)
             }
-            Particle::Disjunction(ref p) => {
-                if p.borrow().next.len() == 2 {
-                    p.borrow_mut().next.pop();
-                }
-                p.borrow_mut().next.push(next)
+            Particle::Disjunction(mut p) => {
+                p.next_rhs = Some(next);
+                Particle::Disjunction(p)
             }
-            Particle::Implication(ref p) => {
-                if p.borrow().next.len() == 2 {
-                    p.borrow_mut().next.pop();
-                }
-                p.borrow_mut().next.push(next)
+            Particle::Implication(mut p) => {
+                p.next_rhs = Some(next);
+                Particle::Implication(p)
             }
-            Particle::Equivalence(ref p) => {
-                if p.borrow().next.len() == 2 {
-                    p.borrow_mut().next.pop();
-                }
-                p.borrow_mut().next.push(next)
+            Particle::Equivalence(mut p) => {
+                p.next_rhs = Some(next);
+                Particle::Equivalence(p)
             }
-            Particle::IndConditional(ref p) => {
-                if p.borrow().next.len() == 2 {
-                    p.borrow_mut().next.pop();
-                }
-                p.borrow_mut().next.push(next)
+            Particle::IndConditional(mut p) => {
+                p.next_rhs = Some(next);
+                Particle::IndConditional(p)
             }
             _ => panic!("simag: expected an operator, found a predicate instead"),
-        };
+        }
     }
 
-    fn add_lhs(&self, next: Rc<Particle>) {
-        match *self {
-            Particle::Conjunction(ref p) => {
-                if p.borrow_mut().next.len() == 1 {
-                    p.borrow_mut().next.insert(0, next)
-                } else if p.borrow_mut().next.len() == 0 {
-                    p.borrow_mut().next.push(next)
-                } else {
-                    p.borrow_mut().next.remove(0);
-                    p.borrow_mut().next.insert(0, next)
-                }
+    fn add_lhs(self, next: Rc<Particle>) -> Particle {
+        match self {
+            Particle::Conjunction(mut p) => {
+                p.next_lhs = Some(next);
+                Particle::Conjunction(p)
             }
-            Particle::Disjunction(ref p) => {
-                if p.borrow_mut().next.len() == 1 {
-                    p.borrow_mut().next.insert(0, next)
-                } else if p.borrow_mut().next.len() == 0 {
-                    p.borrow_mut().next.push(next)
-                } else {
-                    p.borrow_mut().next.remove(0);
-                    p.borrow_mut().next.insert(0, next)
-                }
+            Particle::Disjunction(mut p) => {
+                p.next_lhs = Some(next);
+                Particle::Disjunction(p)
             }
-            Particle::Implication(ref p) => {
-                if p.borrow_mut().next.len() == 1 {
-                    p.borrow_mut().next.insert(0, next)
-                } else if p.borrow_mut().next.len() == 0 {
-                    p.borrow_mut().next.push(next)
-                } else {
-                    p.borrow_mut().next.remove(0);
-                    p.borrow_mut().next.insert(0, next)
-                }
+            Particle::Implication(mut p) => {
+                p.next_lhs = Some(next);
+                Particle::Implication(p)
             }
-            Particle::Equivalence(ref p) => {
-                if p.borrow_mut().next.len() == 1 {
-                    p.borrow_mut().next.insert(0, next)
-                } else if p.borrow_mut().next.len() == 0 {
-                    p.borrow_mut().next.push(next)
-                } else {
-                    p.borrow_mut().next.remove(0);
-                    p.borrow_mut().next.insert(0, next)
-                }
+            Particle::Equivalence(mut p) => {
+                p.next_lhs = Some(next);
+                Particle::Equivalence(p)
             }
-            Particle::IndConditional(ref p) => {
-                if p.borrow_mut().next.len() == 1 {
-                    p.borrow_mut().next.insert(0, next)
-                } else if p.borrow_mut().next.len() == 0 {
-                    p.borrow_mut().next.push(next)
-                } else {
-                    p.borrow_mut().next.remove(0);
-                    p.borrow_mut().next.insert(0, next)
-                }
+            Particle::IndConditional(mut p) => {
+                p.next_lhs = Some(next);
+                Particle::IndConditional(p)
             }
             _ => panic!("simag: expected an operator, found a predicate instead"),
-        };
+        }
     }
 }
 
 impl fmt::Display for Particle {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Particle::Atom(ref p) => write!(f, "{}", *p.borrow()),
-            Particle::Conjunction(ref p) => write!(f, "{}", *p.borrow()),
-            Particle::Disjunction(ref p) => write!(f, "{}", *p.borrow()),
-            Particle::Equivalence(ref p) => write!(f, "{}", *p.borrow()),
-            Particle::Implication(ref p) => write!(f, "{}", *p.borrow()),
-            Particle::IndConditional(ref p) => write!(f, "{}", *p.borrow()),
+            Particle::Atom(ref p) => write!(f, "{}", p),
+            Particle::Conjunction(ref p) => write!(f, "{}", p),
+            Particle::Disjunction(ref p) => write!(f, "{}", p),
+            Particle::Equivalence(ref p) => write!(f, "{}", p),
+            Particle::Implication(ref p) => write!(f, "{}", p),
+            Particle::IndConditional(ref p) => write!(f, "{}", p),
         }
     }
 }
@@ -979,17 +912,17 @@ impl Context {
 fn walk_ast(ast: &Next,
             sent: &mut LogSentence,
             context: &mut Context)
-            -> Result<Rc<Particle>, ParseErrF> {
+            -> Result<Particle, ParseErrF> {
     match *ast {
         Next::Assert(ref decl) => {
-            let particle = Rc::new(match decl {
+            let particle = match decl {
                 &AssertBorrowed::ClassDecl(ref decl) => {
                     let cls = match ClassDecl::from(decl, context) {
                         Err(err) => return Err(err),
                         Ok(cls) => cls,
                     };
                     let atom = LogicAtom::new(Assert::ClassDecl(cls));
-                    Particle::Atom(RefCell::new(atom))
+                    Particle::Atom(atom)
                 }
                 &AssertBorrowed::FuncDecl(ref decl) => {
                     let func = match FuncDecl::from(decl, context) {
@@ -997,10 +930,9 @@ fn walk_ast(ast: &Next,
                         Ok(func) => func,
                     };
                     let atom = LogicAtom::new(Assert::FuncDecl(func));
-                    Particle::Atom(RefCell::new(atom))
+                    Particle::Atom(atom)
                 }
-            });
-            sent.add_particle(particle.clone());
+            };
             context.from_chain = false;
             Ok(particle)
         }
@@ -1077,38 +1009,33 @@ fn walk_ast(ast: &Next,
                 }
             }
             if ast.logic_op.is_some() {
-                let op = Rc::new(match ast.logic_op.as_ref().unwrap() {
+                let op = match ast.logic_op.as_ref().unwrap() {
                     &LogicOperator::ICond => {
                         context.stype = SentType::IExpr;
-                        Particle::IndConditional(RefCell::new(LogicIndCond::new()))
+                        Particle::IndConditional(LogicIndCond::new())
                     }
-                    &LogicOperator::And => {
-                        Particle::Conjunction(RefCell::new(LogicConjunction::new()))
-                    }
-                    &LogicOperator::Or => {
-                        Particle::Disjunction(RefCell::new(LogicDisjunction::new()))
-                    }
-                    &LogicOperator::Implication => {
-                        Particle::Implication(RefCell::new(LogicImplication::new()))
-                    }
-                    &LogicOperator::Biconditional => {
-                        Particle::Equivalence(RefCell::new(LogicEquivalence::new()))
-                    }
-                });
+                    &LogicOperator::And => Particle::Conjunction(LogicConjunction::new()),
+                    &LogicOperator::Or => Particle::Disjunction(LogicDisjunction::new()),
+                    &LogicOperator::Implication => Particle::Implication(LogicImplication::new()),
+                    &LogicOperator::Biconditional => Particle::Equivalence(LogicEquivalence::new()),
+                };
                 let next = match walk_ast(&ast.next, sent, context) {
                     Ok(opt) => opt,
                     Err(err) => return Err(err),
                 };
                 drop_local_vars(context, v_cnt);
                 drop_local_skolems(context, s_cnt);
-                next.add_parent(op.clone());
+                let next = Rc::new(next);
+                sent.add_particle(next.clone());
+                // next.add_parent(op);
+                let opf;
                 if context.in_rhs {
-                    op.add_rhs(next);
+                    opf = op.add_rhs(next);
                 } else {
-                    op.add_lhs(next);
+                    opf = op.add_lhs(next);
                 }
-                sent.add_particle(op.clone());
-                Ok(op)
+                context.from_chain = false;
+                Ok(opf)
             } else {
                 let res = walk_ast(&ast.next, sent, context);
                 drop_local_vars(context, v_cnt);
@@ -1121,97 +1048,99 @@ fn walk_ast(ast: &Next,
                 let in_side = context.in_rhs;
                 // walk lhs
                 context.in_rhs = false;
-                let lhs_ptr = match walk_ast(&nodes[0], sent, context) {
+                let lhs = match walk_ast(&nodes[0], sent, context) {
                     Ok(ptr) => ptr,
                     Err(err) => return Err(err),
 
                 };
-                let lhs_r = lhs_ptr.clone();
-                let lhs_is_atom = lhs_r.is_atom();
+                let lhs_is_atom = lhs.is_atom();
                 // walk rhs
                 context.in_rhs = true;
-                let rhs_ptr = match walk_ast(&nodes[1], sent, context) {
+                let rhs = match walk_ast(&nodes[1], sent, context) {
                     Ok(ptr) => ptr,
                     Err(err) => return Err(err),
                 };
-                let rhs_r = rhs_ptr.clone();
-                let rhs_is_atom = rhs_r.is_atom();
+                let rhs_is_atom = rhs.is_atom();
                 // lhs is connective and rhs isn't
-                let return_rhs;
+                context.in_rhs = in_side;
                 if !lhs_is_atom && rhs_is_atom {
-                    return_rhs = false;
-                    rhs_ptr.add_parent(lhs_ptr.clone());
-                    lhs_r.add_rhs(rhs_ptr.clone());
+                    context.from_chain = true;
+                    // rhs.add_parent(lhs_ptr.clone());
+                    let rhs = Rc::new(rhs);
+                    sent.add_particle(rhs.clone());
+                    Ok(lhs.add_rhs(rhs))
                 } else if lhs_is_atom && !rhs_is_atom {
-                    return_rhs = true;
-                    lhs_ptr.add_parent(rhs_ptr.clone());
-                    rhs_r.add_lhs(lhs_ptr.clone());
+                    context.from_chain = true;
+                    // lhs.add_parent(rhs_ptr.clone());
+                    let lhs = Rc::new(lhs);
+                    sent.add_particle(lhs.clone());
+                    Ok(rhs.add_lhs(lhs))
                 } else {
                     if context.from_chain {
+                        context.from_chain = true;
                         // rhs comes from a chain, parent is lhs op
-                        return_rhs = false;
-                        rhs_ptr.add_parent(lhs_ptr.clone());
-                        lhs_r.add_rhs(rhs_ptr.clone());
+                        // rhs.add_parent(lhs_ptr.clone());
+                        let rhs = Rc::new(rhs);
+                        sent.add_particle(rhs.clone());
+                        Ok(lhs.add_rhs(rhs))
                     } else {
+                        context.from_chain = true;
                         // lhs comes from a chain, parent is rhs op
-                        return_rhs = true;
-                        lhs_ptr.add_parent(rhs_ptr.clone());
-                        rhs_r.add_lhs(lhs_ptr.clone());
+                        // lhs.add_parent(rhs_ptr.clone());
+                        let lhs = Rc::new(lhs);
+                        sent.add_particle(lhs.clone());
+                        Ok(rhs.add_lhs(lhs))
                     }
                 }
-                context.in_rhs = in_side;
-                context.from_chain = true;
-                if return_rhs {
-                    Ok(rhs_ptr)
-                } else {
-                    Ok(lhs_ptr)
-                }
             } else {
+                let in_side = context.in_rhs;
+                context.in_rhs = false;
                 let len = nodes.len() - 1;
                 let first = walk_ast(&nodes[0], sent, context)?;
                 let operator;
-                match &*first.clone() {
-                    &Particle::Conjunction(_) => {
+                match first {
+                    Particle::Conjunction(_) => {
                         operator = LogicOperator::And;
                     }
-                    &Particle::Disjunction(_) => {
+                    Particle::Disjunction(_) => {
                         operator = LogicOperator::Or;
                     }
                     _ => return Err(ParseErrF::IConnectInChain),
                 }
-                let mut prev = first.clone();
+                let mut prev = walk_ast(&nodes[len], sent, context)?;
                 if operator.is_and() {
                     for i in 1..len {
-                        let ptr = walk_ast(&nodes[i], sent, context)?;
-                        let a = ptr.clone();
-                        let is_conj = a.is_conjunction();
-                        if is_conj.is_err() {
-                            return Err(is_conj.unwrap_err());
+                        let i = len - i;
+                        let p = walk_ast(&nodes[i], sent, context)?;
+                        if let Err(err) = p.is_conjunction() {
+                            return Err(err);
                         } else {
-                            ptr.add_parent(prev.clone());
-                            prev.add_rhs(ptr.clone());
-                            prev = ptr;
+                            // ptr.add_parent(prev.clone());
+                            let lr = Rc::new(prev);
+                            sent.add_particle(lr.clone());
+                            prev = p.add_rhs(lr);
                         }
                     }
                 } else {
                     for i in 1..len {
-                        let ptr = walk_ast(&nodes[i], sent, context)?;
-                        let a = ptr.clone();
-                        let is_disj = a.is_disjunction();
-                        if is_disj.is_err() {
-                            return Err(is_disj.unwrap_err());
+                        let i = len - i;
+                        let p = walk_ast(&nodes[i], sent, context)?;
+                        if let Err(err) = p.is_disjunction() {
+                            return Err(err);
                         } else {
-                            ptr.add_parent(prev.clone());
-                            prev.add_rhs(ptr.clone());
-                            prev = ptr;
+                            // ptr.add_parent(prev.clone());
+                            let lr = Rc::new(prev);
+                            sent.add_particle(lr.clone());
+                            prev = p.add_rhs(lr);
                         }
                     }
                 }
-                let last = walk_ast(&nodes[len], sent, context)?;
-                last.add_parent(prev.clone());
-                prev.add_rhs(last);
+                // last.add_parent(prev);
                 context.from_chain = true;
-                Ok(first)
+                context.in_rhs = in_side;
+                let prev = Rc::new(prev);
+                sent.add_particle(prev.clone());
+                Ok(first.add_rhs(prev))
             }
         }
         Next::None => Err(ParseErrF::WrongDef),
@@ -1283,7 +1212,7 @@ fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), 
     for p in &sent.particles {
         match **p {
             Particle::Atom(ref atom) => {
-                if !atom.borrow().pred.parent_is_grounded() {
+                if !atom.pred.parent_is_grounded() {
                     return Err(ParseErrF::WrongPredicate);
                 }
             }
@@ -1357,28 +1286,25 @@ mod test {
         let root = &**(sent.root.as_ref().unwrap());
         match root {
             &Particle::IndConditional(ref p) => {
-                match &*(p.borrow().next[0]) {
+                match &**p.next_lhs.as_ref().unwrap() {
                     &Particle::Conjunction(ref op) => {
-                        match &*(op.borrow().next[0]) {
+                        match &**op.next_lhs.as_ref().unwrap() {
                             &Particle::Atom(ref atm) => {
-                                assert_eq!(atm.borrow().get_name(),
-                                           Rc::new("american".to_string()));
+                                assert_eq!(atm.get_name(), Rc::new("american".to_string()));
                             }
                             _ => panic!(),
                         };
-                        match &*(op.borrow().next[1]) {
+                        match &**op.next_rhs.as_ref().unwrap() {
                             &Particle::Conjunction(ref op) => {
-                                match &*(op.borrow().next[0]) {
+                                match &**op.next_lhs.as_ref().unwrap() {
                                     &Particle::Atom(ref atm) => {
-                                        assert_eq!(atm.borrow().get_name(),
-                                                   Rc::new("weapon".to_string()))
+                                        assert_eq!(atm.get_name(), Rc::new("weapon".to_string()))
                                     }
                                     _ => panic!(),
                                 };
-                                match &*(op.borrow().next[1]) {
+                                match &**op.next_rhs.as_ref().unwrap() {
                                     &Particle::Atom(ref atm) => {
-                                        assert_eq!(atm.borrow().get_name(),
-                                                   Rc::new("sells".to_string()));
+                                        assert_eq!(atm.get_name(), Rc::new("sells".to_string()));
                                     }
                                     _ => panic!(),
                                 };
@@ -1388,9 +1314,9 @@ mod test {
                     }
                     _ => panic!(),
                 }
-                match &*(p.borrow().next[1]) {
+                match &**p.next_rhs.as_ref().unwrap() {
                     &Particle::Atom(ref atm) => {
-                        assert_eq!(atm.borrow().get_name(), Rc::new("criminal".to_string()))
+                        assert_eq!(atm.get_name(), Rc::new("criminal".to_string()))
                     }
                     _ => panic!(),
                 }

@@ -954,12 +954,18 @@ fn string(input: &[u8]) -> IResult<&[u8], &[u8]> {
 }
 
 // terminal = [a-zA-Z0-9_]+ ;
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 pub struct TerminalBorrowed<'a>(pub &'a [u8]);
 
 impl<'a> TerminalBorrowed<'a> {
     pub fn from_slice(i: &'a [u8]) -> TerminalBorrowed<'a> {
         TerminalBorrowed(i)
+    }
+}
+
+impl<'a> ::std::fmt::Debug for TerminalBorrowed<'a> {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+        write!(f, "Term({})", unsafe { str::from_utf8_unchecked(self.0) })
     }
 }
 

@@ -1,7 +1,7 @@
 use std::str;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::cell::RefCell;
+use std::sync::RwLock;
 
 use chrono::{UTC, DateTime};
 
@@ -92,16 +92,19 @@ pub enum Grounded {
     Terminal(Rc<GroundedClsMemb>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct GroundedClsMemb {
     term: Rc<String>,
-    value: Option<RefCell<f32>>,
+    value: Option<RwLock<f32>>,
     operator: Option<CompOperator>,
     parent: Rc<String>,
-    dates: RefCell<Vec<DateTime<UTC>>>,
+    dates: Rc<RwLock<Vec<DateTime<UTC>>>>,
 }
 
 impl GroundedClsMemb {
+    //! Internally the mutable parts are wrapped in RwLock types, as they can be accessed
+    //! from a multithreaded environment. This provides enough atomicity so the most
+    //! time it won't be blocking other reads.
     fn new(term: Rc<String>,
            uval: Option<UVal>,
            parent: Rc<String>,
@@ -112,7 +115,7 @@ impl GroundedClsMemb {
         let op;
         if let Some(uval) = uval {
             let UVal { val: val0, op: op0 } = uval;
-            val = Some(RefCell::new(match val0 {
+            val = Some(RwLock::new(match val0 {
                 Number::UnsignedInteger(val) => {
                     if val == 0 || val == 1 {
                         val as f32
@@ -153,7 +156,7 @@ impl GroundedClsMemb {
             value: val,
             operator: op,
             parent: parent,
-            dates: RefCell::new(dates_e),
+            dates: Rc::new(RwLock::new(dates_e)),
         })
     }
 
@@ -168,7 +171,7 @@ impl GroundedClsMemb {
             Some(CompOperator::More) => id.push(3),
         }
         if let Some(ref val) = self.value {
-            let mut id_2 = format!("{}", *val.borrow()).into_bytes();
+            let mut id_2 = format!("{}", *val.read().unwrap()).into_bytes();
             id.append(&mut id_2);
         }
         id
@@ -186,14 +189,15 @@ impl GroundedClsMemb {
 
     pub fn update(&self, data: Rc<GroundedClsMemb>) {
         let data: &GroundedClsMemb = &*data;
-        *self.value.as_ref().unwrap().borrow_mut() = *data.value.as_ref().unwrap().borrow();
+        *self.value.as_ref().unwrap().write().unwrap() =
+            *data.value.as_ref().unwrap().read().unwrap();
     }
 
     pub fn from_free(free: &FreeClsMemb, assignment: Rc<String>) -> GroundedClsMemb {
         let val;
         let op;
         if free.value.is_some() {
-            val = Some(RefCell::new(free.value.unwrap()));
+            val = Some(RwLock::new(free.value.unwrap()));
             op = Some(free.operator.unwrap());
         } else {
             val = None;
@@ -204,7 +208,7 @@ impl GroundedClsMemb {
             value: val,
             operator: op,
             parent: free.parent.to_string(),
-            dates: RefCell::new(vec![UTC::now()]),
+            dates: Rc::new(RwLock::new(vec![UTC::now()])),
         }
     }
 
@@ -233,8 +237,6 @@ impl ::std::cmp::PartialEq for GroundedClsMemb {
         if self.parent != other.parent {
             panic!("simag: grounded terms with different classes cannot be compared")
         }
-        let val_lhs = &self.value;
-        let val_rhs = &other.value;
         let op_lhs;
         let op_rhs;
         if let Some(op) = other.operator {
@@ -243,6 +245,8 @@ impl ::std::cmp::PartialEq for GroundedClsMemb {
         } else {
             return true;
         }
+        let val_lhs = &*self.value.as_ref().unwrap().read().unwrap();
+        let val_rhs = &*other.value.as_ref().unwrap().read().unwrap();
         match op_lhs {
             CompOperator::Equal => {
                 if op_rhs.is_equal() {
@@ -289,6 +293,24 @@ impl ::std::cmp::PartialEq for GroundedClsMemb {
                             must be assignments")
                 }
             }
+        }
+    }
+}
+
+impl ::std::clone::Clone for GroundedClsMemb {
+    fn clone(&self) -> GroundedClsMemb {
+        let value;
+        if let Some(ref lock) = self.value {
+            value = Some(RwLock::new(*lock.read().unwrap()));
+        } else {
+            value = None;
+        }
+        GroundedClsMemb {
+            term: self.term.clone(),
+            value: value,
+            operator: self.operator.clone(),
+            parent: self.parent.clone(),
+            dates: self.dates.clone(),
         }
     }
 }
@@ -380,8 +402,8 @@ impl GroundedFunc {
 
     pub fn update(&self, data: Rc<GroundedFunc>) {
         let data: &GroundedFunc = &*data;
-        *self.args[0].value.as_ref().unwrap().borrow_mut() =
-            *data.args[0].value.as_ref().unwrap().borrow();
+        *self.args[0].value.as_ref().unwrap().write().unwrap() =
+            *data.args[0].value.as_ref().unwrap().read().unwrap();
     }
 }
 
@@ -475,7 +497,7 @@ impl FreeClsMemb {
         }
         if self.value.is_some() {
             let val_free = self.value.unwrap();
-            let val_grounded = *other.value.as_ref().unwrap().borrow();
+            let val_grounded = *other.value.as_ref().unwrap().read().unwrap();
             match other.operator.unwrap() {
                 CompOperator::Equal => {
                     if self.operator.as_ref().unwrap().is_equal() {
