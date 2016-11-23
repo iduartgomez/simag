@@ -3,30 +3,32 @@
 //! serve as representations of the different objects and the relationships
 //! between them.
 //!
-//! ## Main
-//! **Representation**: Main type, stores all the representations and
-//! relationships for a given agent in a concrete time.
+//! ## Safety
+//! There is some unsafe code on this module, the unsafe code performs to taks:
+//!     * Assure the compiler that data being referenced will live long enough,
+//!       this is, increasing the lifetime bounds.
+//!     * Bypass the ```Send``` trait type check when multithreading.
 //!
-//! **Entity**: Represents a singular entity, which is the unique
-//! member of it's own set.
+//! Both of those are safe because a Representation owns, uniquely, all its
+//! knowledge by the duration of it's own lifetime (data is never dropped, while
+//! the representation is alive), thereby is safe to point to the data being
+//! referenced from the representation or the query (for the duration of the query).
 //!
-//! **Classes**: The sets in which the agent can classify objects.
-//! Also stores the types of relations an object can have (class of relations).
-//!
-//! ## Support types, methods and functions
-//! **Inference**: Encapsulates the whole inference process, where the inference
-//! is operated to solving the query (including query parsing, data fetching
-//! and unification).
+//! There is an intensive use of reference counted data throught the module,
+//! to avoid unnecesary copies. The problem is that Rc is not ```Send``` compliant
+//! so we need to 'hack' the type checking system through unsafe code to cheat
+//! the compiler. It's **VERY IMPORTANT** though that when we add new ```Rc``` data
+//! to the representation it's done from it's own main thread to avoid any problems
+//! due to the underlying ```Rc``` type drop behaviour.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::iter::FromIterator;
 use std::hash::{Hash, Hasher};
-use std::cell::RefCell;
-use std::sync::{RwLock, Mutex, Arc};
-use std::thread;
+use std::sync::{RwLock, Mutex};
 use std::rc::Rc;
 
 use chrono::{UTC, DateTime};
+use scoped_threadpool::Pool;
 
 use lang;
 use lang::{ParseTree, ParseErrF, GroundedClsMemb, GroundedFunc, LogSentence};
@@ -47,8 +49,9 @@ pub struct Representation {
 ///
 /// Attributes:
 ///     entities -> Unique members (entities) of their own set/class.
-///     | Entities are denoted with a $ symbol followed by a name.
-///     classes -> Sets of objects that share a common property.
+///     | Entities are denoted with a $ symbol followed by an id.
+///     classes -> Sets of objects (entities or subclasses) that share a common property.
+///     | This includes 'classes of relationships' and other 'functions'.
 impl Representation {
     pub fn new() -> Representation {
         Representation {
@@ -145,19 +148,20 @@ impl Representation {
             self.classes.write().unwrap().insert(class.name.clone(), class);
         }
         let decl;
+        let is_new: bool;
         match (&assert.get_name()).starts_with("$") {
             true => {
                 let entity_exists = self.entities.read().unwrap().contains_key(&assert.get_name());
                 if entity_exists {
                     let lock = self.entities.read().unwrap();
                     let entity = lock.get(&assert.get_name()).unwrap();
-                    entity.add_class_membership(assert.clone());
+                    is_new = entity.add_class_membership(assert.clone());
                     decl = ClassMember::Entity(assert.clone());
                 } else {
                     let entity = Box::new(Entity::new(assert.get_name()));
-                    entity.add_class_membership(assert.clone());
-                    decl = ClassMember::Entity(assert.clone());
+                    is_new = entity.add_class_membership(assert.clone());
                     self.entities.write().unwrap().insert(entity.name.clone(), entity);
+                    decl = ClassMember::Entity(assert.clone());
                 }
             }
             false => {
@@ -165,34 +169,40 @@ impl Representation {
                 if class_exists {
                     let lock = self.classes.read().unwrap();
                     let class = lock.get(&assert.get_name()).unwrap();
-                    class.add_class_membership(assert.clone());
+                    is_new = class.add_class_membership(assert.clone());
                     decl = ClassMember::Class(assert.clone());
                 } else {
                     let class = Box::new(Class::new(assert.get_name(), ClassKind::Membership));
-                    class.add_class_membership(assert.clone());
-                    decl = ClassMember::Class(assert.clone());
+                    is_new = class.add_class_membership(assert.clone());
                     self.classes.write().unwrap().insert(class.name.clone(), class);
+                    decl = ClassMember::Class(assert.clone());
                 }
             }
         }
-        let lock = self.classes.read().unwrap();
-        let parent = lock.get(&assert.get_parent()).unwrap();
-        parent.add_member(decl);
+        if is_new {
+            let lock = self.classes.read().unwrap();
+            let parent = lock.get(&assert.get_parent()).unwrap();
+            parent.add_member(decl);
+        }
+        println!("ADDED: {:?}", assert);
     }
 
     pub fn up_relation(&self, assert: Rc<lang::GroundedFunc>) {
+        // it doesn't matter this is overwritten, as if it exists, it exists for all
+        let is_new = Rc::new(::std::cell::RefCell::new(true));
         let process_arg = |a: &GroundedClsMemb| {
             let subject = a.get_name();
+            let is_new1;
             match (&subject).starts_with("$") {
                 true => {
                     let entity_exists = self.entities.read().unwrap().contains_key(&subject);
                     if entity_exists {
                         let lock = self.entities.read().unwrap();
                         let entity = lock.get(&subject).unwrap();
-                        entity.add_relationship(assert.clone());
+                        is_new1 = entity.add_relationship(assert.clone());
                     } else {
                         let entity = Box::new(Entity::new(subject));
-                        entity.add_relationship(assert.clone());
+                        is_new1 = entity.add_relationship(assert.clone());
                         self.entities.write().unwrap().insert(entity.name.clone(), entity);
                     }
                 }
@@ -201,14 +211,16 @@ impl Representation {
                     if class_exists {
                         let lock = self.classes.read().unwrap();
                         let class = lock.get(&subject).unwrap();
-                        class.add_relationship(assert.clone());
+                        is_new1 = class.add_relationship(assert.clone());
                     } else {
                         let class = Box::new(Class::new(subject, ClassKind::Membership));
-                        class.add_relationship(assert.clone());
+                        is_new1 = class.add_relationship(assert.clone());
                         self.classes.write().unwrap().insert(class.name.clone(), class);
                     }
                 }
             }
+            let new_check = is_new.clone();
+            *new_check.borrow_mut() = is_new1;
         };
         let relation_exists = self.classes.read().unwrap().contains_key(&assert.name);
         if !relation_exists {
@@ -220,9 +232,12 @@ impl Representation {
         if assert.third.is_some() {
             process_arg(assert.third.as_ref().unwrap())
         }
-        let lock = self.classes.read().unwrap();
-        let parent = lock.get(&assert.name).unwrap();
-        parent.add_grounded_relationship(assert.clone());
+        if *is_new.borrow() {
+            let lock = self.classes.read().unwrap();
+            let parent = lock.get(&assert.name).unwrap();
+            parent.add_grounded_relationship(assert.clone());
+        }
+        println!("ADDED: {:?}", assert);
     }
 
     fn add_belief(&self, belief: Rc<LogSentence>) {
@@ -567,17 +582,19 @@ impl Entity {
         }
     }
 
-    fn add_class_membership(&self, grounded: Rc<GroundedClsMemb>) {
+    fn add_class_membership(&self, grounded: Rc<GroundedClsMemb>) -> bool {
         let mut lock = self.classes.write().unwrap();
         let name = grounded.get_parent();
         let stmt_exists = lock.contains_key(&name);
         match stmt_exists {
             true => {
                 let current = lock.get(&name).unwrap();
-                current.update(grounded)
+                current.update(grounded);
+                false
             }
             false => {
                 lock.insert(name, grounded);
+                true
             }
         }
     }
@@ -594,7 +611,7 @@ impl Entity {
         None
     }
 
-    fn add_relationship(&self, func: Rc<GroundedFunc>) {
+    fn add_relationship(&self, func: Rc<GroundedFunc>) -> bool {
         let mut lock = self.relations.write().unwrap();
         let name = func.get_name();
         let stmt_exists = lock.contains_key(&name);
@@ -610,11 +627,15 @@ impl Entity {
                     }
                 }
                 if !found_rel {
-                    funcs_type.push(func.clone())
+                    funcs_type.push(func.clone());
+                    true
+                } else {
+                    false
                 }
             }
             false => {
                 lock.insert(name, vec![func.clone()]);
+                true
             }
         }
     }
@@ -689,17 +710,19 @@ impl Class {
     }
 
     /// Set a superclass of this class
-    fn add_class_membership(&self, grounded: Rc<GroundedClsMemb>) {
+    fn add_class_membership(&self, grounded: Rc<GroundedClsMemb>) -> bool {
         let mut lock = self.classes.write().unwrap();
         let name = grounded.get_parent();
         let stmt_exists = lock.contains_key(&name);
         match stmt_exists {
             true => {
                 let current = lock.get_mut(&name).unwrap();
-                current.update(grounded)
+                current.update(grounded);
+                false
             }
             false => {
                 lock.insert(name, grounded);
+                true
             }
         }
     }
@@ -722,7 +745,7 @@ impl Class {
     }
 
     /// Add a relationship this class has with other classes/entities
-    fn add_relationship(&self, func: Rc<GroundedFunc>) {
+    fn add_relationship(&self, func: Rc<GroundedFunc>) -> bool {
         let mut lock = self.relations.write().unwrap();
         let name = func.get_name();
         let stmt_exists = lock.contains_key(&name);
@@ -738,11 +761,15 @@ impl Class {
                     }
                 }
                 if !found_rel {
-                    funcs_type.push(func.clone())
+                    funcs_type.push(func.clone());
+                    true
+                } else {
+                    false
                 }
             }
             false => {
-                lock.insert(func.get_name(), vec![func.clone()]);
+                lock.insert(name, vec![func.clone()]);
+                true
             }
         }
     }
@@ -771,22 +798,24 @@ impl Class {
     }
 }
 
+type PArgVal = Vec<usize>;
+
 struct Inference<'a> {
     query: QueryProcessed<'a>,
     kb: &'a Representation,
     ignore_current: bool,
     single: bool,
-    nodes: RwLock<HashMap<Rc<String>, Vec<Arc<ProofNode>>>>,
-    queue: RwLock<HashMap<Arc<ProofNode>, HashSet<Arc<ProofArgs<'a>>>>>,
-    results: RwLock<HashMap<Rc<String>, HashMap<Rc<String>, Option<(bool, Option<Date>)>>>>,
-    repeat: Mutex<Vec<(Rc<LogSentence>, Arc<ProofArgs<'a>>)>>,
-    assignments: Mutex<Vec<Box<VarAssignment>>>,
+    nodes: RwLock<HashMap<Rc<String>, Vec<Box<ProofNode>>>>,
+    queue: RwLock<HashMap<*const ProofNode, HashSet<PArgVal>>>,
+    results: RwLock<HashMap<&'a str, HashMap<&'a str, Option<(bool, Option<Date>)>>>>,
+    repeat: Mutex<Vec<(Rc<LogSentence>, PArgVal)>>,
+    args: RwLock<Box<Vec<Rc<ProofArgs>>>>,
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Answer {
+pub enum Answer<'a> {
     Single(Option<bool>),
-    Multiple(HashMap<Rc<String>, HashMap<Rc<String>, Option<(bool, Option<Date>)>>>),
+    Multiple(HashMap<&'a str, HashMap<&'a str, Option<(bool, Option<Date>)>>>),
     QueryErr,
     ParseErr(ParseErrF),
 }
@@ -807,11 +836,11 @@ impl<'a> Inference<'a> {
             queue: RwLock::new(HashMap::new()),
             results: RwLock::new(HashMap::new()),
             repeat: Mutex::new(vec![]),
-            assignments: Mutex::new(vec![]),
+            args: RwLock::new(Box::new(vec![])),
         })
     }
 
-    fn get_results(self) -> Answer {
+    fn get_results(self) -> Answer<'a> {
         if self.single {
             let results = self.results.into_inner().unwrap();
             if results.len() == 0 {
@@ -842,7 +871,7 @@ impl<'a> Inference<'a> {
     /// addition to the KB.
     fn infer_facts(&'a mut self) {
         fn query_cls<'a>(inf: &'a Inference<'a>, query: Rc<String>, actv_query: ActiveQuery<'a>) {
-            let mut pass = InfTrial::new(inf, actv_query);
+            let mut pass = Box::new(InfTrial::new(inf, actv_query));
             pass.get_rules(vec![query.clone()]);
             {
                 let mut lock = inf.nodes.write().unwrap();
@@ -850,123 +879,96 @@ impl<'a> Inference<'a> {
                     nodes.sort_by(|a, b| a.proof.created.cmp(&b.proof.created));
                 }
             }
-            let ref mut pass_ref = unsafe { &*(&pass as *const InfTrial) as &InfTrial };
             // run the query, if there is no result and there is an update,
             // then loop again, else stop
             loop {
-                pass_ref.unify(query.clone(), VecDeque::new(), HashSet::new());
-                if !pass.updated.borrow().contains(&true) || !*pass.feedback.borrow() {
-                    break;
-                } else {
-                    pass.updated = RefCell::new(vec![]);
-                }
-            }
-        }
-
-        /*
-        for (obj, preds) in self.query.cls_queries_grounded.iter() {
-            for pred in preds {
-                let query = pred.get_parent();
-                let mut result = None;
-                if !self.ignore_current {
-                    result = self.kb.class_membership(pred);
-                }
-                if result.is_some() {
-                    let mut lock = self.results.write().unwrap();
-                    let mut answ = lock.entry(query).or_insert(HashMap::new());
-                    answ.insert(obj.clone(), Some((result.unwrap(), None)));
-                } else {
-                    {
-                        let mut lock = self.results.write().unwrap();
-                        let mut answ = lock.entry(query.clone()).or_insert(HashMap::new());
-                        answ.insert(obj.clone(), None);
+                pass.unify(query.clone(), VecDeque::new(), HashSet::new());
+                {
+                    let lock0 = pass.updated.lock().unwrap();
+                    let lock1 = pass.feedback.lock().unwrap();
+                    if !lock0.contains(&true) || !*lock1 {
+                        break;
                     }
-                    // if no result was found from the kb directly
-                    // make an inference from a grounded fact
-                    let actv_query = ActiveQuery::Class(obj.clone(), query.clone(), pred);
-                    query_cls(self, query.clone(), actv_query);
                 }
+                pass.updated = Mutex::new(vec![]);
             }
         }
-        */
 
         let inf_ptr = &*self as *const Inference as usize;
-        let mut all_threads = vec![];
-        for (obj, preds) in self.query.cls_queries_grounded.iter() {
-            let obj_r = obj as *const Rc<String> as usize;
-            for pred in preds {
-                let pred_r = *pred as *const GroundedClsMemb as usize;
-                let t = thread::spawn(move || {
+        let mut pool = Pool::new(4);
+
+        //pool.scoped(|scope| {
+            for (obj, preds) in self.query.cls_queries_grounded.iter() {
+                let obj: &str = &**obj;
+                for pred in preds {
+                    let pred_r = *pred as *const GroundedClsMemb as usize;
+                    let query = unsafe { &*(&*pred.get_parent() as *const String) as &'static str };
+                    //scope.execute(move || {
+                        let inf: &Inference;
+                        let pred: &GroundedClsMemb;
+                        unsafe {
+                            inf = &*(inf_ptr as *const Inference);
+                            pred = &*(pred_r as *const GroundedClsMemb);
+                        }
+                        let mut result = None;
+                        if !inf.ignore_current {
+                            result = inf.kb.class_membership(pred);
+                        }
+                        if result.is_some() {
+                            let mut lock = inf.results.write().unwrap();
+                            let mut answ = lock.entry(&*query).or_insert(HashMap::new());
+                            answ.insert(obj.clone(), Some((result.unwrap(), None)));
+                        } else {
+                            {
+                                let mut lock = inf.results.write().unwrap();
+                                let mut answ = lock.entry(&*query).or_insert(HashMap::new());
+                                answ.insert(obj.clone(), None);
+                            }
+                            // if no result was found from the kb directly
+                            // make an inference from a grounded fact
+                            let actv_query = ActiveQuery::Class(obj, &*query, pred);
+                            query_cls(inf, pred.get_parent(), actv_query);
+                        }
+                    //});
+                }
+            }
+        //});
+
+        //pool.scoped(|scope| {
+            for pred in self.query.func_queries_grounded.iter() {
+                let pred_r = &**pred as *const GroundedFunc as usize;
+                //scope.execute(move || {
                     let inf: &Inference;
-                    let obj: Rc<String>;
-                    let pred: &GroundedClsMemb;
+                    let pred: &GroundedFunc;
+                    let query: &str;
                     unsafe {
                         inf = &*(inf_ptr as *const Inference);
-                        obj = (*&*(obj_r as *const Rc<String>)).clone();
-                        pred = &*(pred_r as *const GroundedClsMemb);
+                        pred = &*(pred_r as *const GroundedFunc);
+                        query = &*(&*pred.name as *const String) as &'static str;
                     }
-                    let query = pred.get_parent();
                     let mut result = None;
-                    if !inf.ignore_current {
-                        result = inf.kb.class_membership(pred);
-                    }
-                    if result.is_some() {
-                        let mut lock = inf.results.write().unwrap();
-                        let mut answ = lock.entry(query).or_insert(HashMap::new());
-                        answ.insert(obj.clone(), Some((result.unwrap(), None)));
-                    } else {
-                        {
-                            let mut lock = inf.results.write().unwrap();
-                            let mut answ = lock.entry(query.clone()).or_insert(HashMap::new());
-                            answ.insert(obj.clone(), None);
+                    for arg in pred.args.iter() {
+                        let obj = unsafe { &*(&*arg.get_name() as *const String) as &'static str };
+                        if !inf.ignore_current {
+                            result = inf.kb.has_relationship(pred, arg.get_name());
                         }
-                        // if no result was found from the kb directly
-                        // make an inference from a grounded fact
-                        let actv_query = ActiveQuery::Class(obj.clone(), query.clone(), pred);
-                        query_cls(inf, query.clone(), actv_query);
+                        if result.is_some() {
+                            let mut lock = inf.results.write().unwrap();
+                            let mut answ = lock.entry(&*query).or_insert(HashMap::new());
+                            answ.insert(&*obj, Some((result.unwrap(), None)));
+                        } else {
+                            {
+                                let mut lock = inf.results.write().unwrap();
+                                let mut answ = lock.entry(&*query).or_insert(HashMap::new());
+                                answ.insert(&*obj, None);
+                            }
+                            let actv_query = ActiveQuery::Func(&*obj, &*query, pred);
+                            query_cls(inf, pred.get_name(), actv_query);
+                        }
                     }
-                });
-                all_threads.push(t);
+                //});
             }
-        }
-
-        for pred in self.query.func_queries_grounded.iter() {
-            let pred_r = &**pred as *const GroundedFunc as usize;
-            let t = thread::spawn(move || {
-                let inf: &Inference;
-                let pred: &GroundedFunc;
-                unsafe {
-                    inf = &*(inf_ptr as *const Inference);
-                    pred = &*(pred_r as *const GroundedFunc);
-                }
-                let query = pred.name.clone();
-                let mut result = None;
-                for arg in pred.args.iter() {
-                    let obj = arg.get_name();
-                    if !inf.ignore_current {
-                        result = inf.kb.has_relationship(pred, obj.clone());
-                    }
-                    if result.is_some() {
-                        let mut lock = inf.results.write().unwrap();
-                        let mut answ = lock.entry(query.clone()).or_insert(HashMap::new());
-                        answ.insert(obj.clone(), Some((result.unwrap(), None)));
-                    } else {
-                        {
-                            let mut lock = inf.results.write().unwrap();
-                            let mut answ = lock.entry(query.clone()).or_insert(HashMap::new());
-                            answ.insert(obj.clone(), None);
-                        }
-                        let actv_query = ActiveQuery::Func(obj.clone(), query.clone(), pred);
-                        query_cls(inf, query.clone(), actv_query);
-                    }
-                }
-            });
-            all_threads.push(t);
-        }
-
-        for t in all_threads {
-            let _res = t.join();
-        }
+        //});
 
         // cls_queries_free: HashMap<&'a Rc<lang::Var>, Vec<&'a lang::FreeClsMemb>>,
         // cls_queries_grounded: HashMap<Rc<String>, Vec<&'a lang::GroundedClsMemb>>,
@@ -978,20 +980,20 @@ impl<'a> Inference<'a> {
 struct InfTrial<'a> {
     kb: &'a Representation,
     actv: ActiveQuery<'a>,
-    updated: RefCell<Vec<bool>>,
-    feedback: RefCell<bool>,
-    nodes: &'a RwLock<HashMap<Rc<String>, Vec<Arc<ProofNode>>>>,
-    queue: &'a RwLock<HashMap<Arc<ProofNode>, HashSet<Arc<ProofArgs<'a>>>>>,
-    results: &'a RwLock<HashMap<Rc<String>, HashMap<Rc<String>, Option<(bool, Option<Date>)>>>>,
-    repeat: &'a Mutex<Vec<(Rc<LogSentence>, Arc<ProofArgs<'a>>)>>,
-    assignments: &'a Mutex<Vec<Box<VarAssignment>>>,
-    valid: RefCell<Option<(Arc<ProofNode>, Arc<ProofArgs<'a>>)>>,
+    updated: Mutex<Vec<bool>>,
+    feedback: Mutex<bool>,
+    valid: Mutex<Option<(*const ProofNode, Rc<ProofArgs>)>>,
+    nodes: &'a RwLock<HashMap<Rc<String>, Vec<Box<ProofNode>>>>,
+    queue: &'a RwLock<HashMap<*const ProofNode, HashSet<PArgVal>>>,
+    results: &'a RwLock<HashMap<&'a str, HashMap<&'a str, Option<(bool, Option<Date>)>>>>,
+    repeat: &'a Mutex<Vec<(Rc<LogSentence>, PArgVal)>>,
+    args: &'a RwLock<Box<Vec<Rc<ProofArgs>>>>,
 }
 
 enum ActiveQuery<'a> {
     // `(obj_name, pred_name, fn/cls decl)`
-    Class(Rc<String>, Rc<String>, &'a GroundedClsMemb),
-    Func(Rc<String>, Rc<String>, &'a GroundedFunc),
+    Class(&'a str, &'a str, &'a GroundedClsMemb),
+    Func(&'a str, &'a str, &'a GroundedFunc),
 }
 
 impl<'a> ActiveQuery<'a> {
@@ -1012,22 +1014,22 @@ impl<'a> ActiveQuery<'a> {
     }
 }
 
-type ProofArgs<'a> = Vec<(Rc<lang::Var>, &'a VarAssignment)>;
+type ProofArgs = Vec<(Rc<lang::Var>, Rc<VarAssignment>)>;
 
 #[derive(Debug)]
-pub struct ProofResult<'a> {
+pub struct ProofResult {
     pub result: Option<bool>,
-    args: Arc<ProofArgs<'a>>,
-    node: Arc<ProofNode>,
+    args: Rc<ProofArgs>,
+    node: *const ProofNode,
     pub grounded: Vec<(lang::Grounded, Date)>,
 }
 
-impl<'a> ProofResult<'a> {
-    fn new(args: Arc<ProofArgs<'a>>, node: Arc<ProofNode>) -> ProofResult {
+impl ProofResult {
+    fn new(args: Rc<ProofArgs>, node: &ProofNode) -> ProofResult {
         ProofResult {
             result: None,
             args: args,
-            node: node,
+            node: node as *const ProofNode,
             grounded: vec![],
         }
     }
@@ -1038,23 +1040,70 @@ impl<'a> InfTrial<'a> {
         InfTrial {
             kb: inf.kb,
             actv: actv_query,
-            updated: RefCell::new(vec![]),
-            feedback: RefCell::new(true),
+            updated: Mutex::new(vec![]),
+            feedback: Mutex::new(true),
+            valid: Mutex::new(None),
             nodes: &inf.nodes,
             queue: &inf.queue,
             results: &inf.results,
             repeat: &inf.repeat,
-            assignments: &inf.assignments,
-            valid: RefCell::new(None),
+            args: &inf.args,
         }
     }
 
-    fn unify(&'a self,
+    fn unify(&self,
              mut parent: Rc<String>,
              mut chk: VecDeque<Rc<String>>,
              mut done: HashSet<Rc<String>>) {
+
+        fn scoped_exec(inf_ptr: usize, node_r: usize, args_r: usize) {
+            let inf: &InfTrial;
+            let node: &ProofNode;
+            let args: Rc<ProofArgs>;
+            unsafe {
+                inf = &*(inf_ptr as *const InfTrial);
+                node = &*(node_r as *const ProofNode);
+                args = Rc::new(*Box::from_raw(args_r as *mut ProofArgs));
+            }
+            let arg_hash = arg_hash_val(&args);
+            let node_r = node as *const ProofNode;
+            let args_done = {
+                if let Some(queued) = inf.queue.read().unwrap().get(&(node_r)) {
+                    queued.contains(&arg_hash)
+                } else {
+                    false
+                }
+            };
+            if !args_done {
+                let mut n_args: HashMap<Rc<lang::Var>, &VarAssignment> =
+                    HashMap::with_capacity(args.len());
+                for &(ref k, ref v) in args.iter() {
+                    n_args.insert(k.clone(), &*v);
+                }
+                let mut context = ProofResult::new(args.clone(), &node);
+                node.proof.solve(inf.kb, Some(n_args), &mut context);
+                if context.result.is_some() {
+                    {
+                        let mut lock0 = inf.updated.lock().unwrap();
+                        lock0.push(true);
+                        let mut lock1 = inf.queue.write().unwrap();
+                        lock1.entry(node_r)
+                            .or_insert(HashSet::new())
+                            .insert(arg_hash);
+                        let mut lock3 = inf.args.write().unwrap();
+                        lock3.push(args.clone());
+                    }
+                    inf.add_result(context);
+                }
+            }
+        };
+
+        let inf_ptr = &*self as *const InfTrial as usize;
+        let mut pool = Pool::new(4);
         loop {
-            *self.valid.borrow_mut() = None;
+            {
+                *self.valid.lock().unwrap() = None;
+            }
             // for each node in the subtitution tree unifify variables
             // and try every possible substitution until (if) a solution is found
             // the proofs are tried in order of addition to the KB
@@ -1075,62 +1124,62 @@ impl<'a> InfTrial<'a> {
                         }
                         continue;
                     }
-                    let mut n_a: HashMap<Rc<lang::Var>, Vec<&VarAssignment>> = HashMap::new();
-                    let mut assignments = assignments.unwrap();
-                    for (var, assigned) in assignments.drain() {
-                        let mut n_av: Vec<&VarAssignment> = vec![];
-                        for a in assigned {
-                            let mut lock = self.assignments.lock().unwrap();
-                            let mut lock =
-                                unsafe { &mut *(&mut *lock as *mut Vec<Box<VarAssignment>>) };
-                            lock.push(Box::new(a));
-                            n_av.push(&*lock.last().unwrap());
-                        }
-                        n_a.insert(var, n_av);
-                    }
-                    let n_a =
-                        unsafe { &*(&n_a as *const HashMap<Rc<lang::Var>, Vec<&VarAssignment>>) };
                     // lazily iterate over all possible combinations of the substitutions
-                    let mapped = ArgsProduct::product(&n_a);
-                    for args in mapped {
-                        let args_done = {
-                            if let Some(queued) = self.queue.read().unwrap().get(node) {
-                                queued.contains(&args)
-                            } else {
-                                false
+                    let mapped = ArgsProduct::product(assignments.unwrap());
+                    if mapped.is_some() {
+                        let mapped = mapped.unwrap();
+                        //pool.scoped(|scope| {
+                            let node_r = &**node as *const ProofNode as usize;
+                            for args in mapped {
+                                {
+                                    let lock = self.valid.lock().unwrap();
+                                    if lock.is_some() {
+                                        break;
+                                    }
+                                }
+                                let args_r = Box::into_raw(Box::new(args)) as usize;
+                                //scope.execute(move || {
+                                    scoped_exec(inf_ptr, node_r, args_r)
+                                //});
                             }
+                        //});
+                    }
+                    let lock = self.feedback.lock().unwrap();
+                    if *lock {
+                        for e in node.antecedents.clone() {
+                            if !done.contains(&e) && !chk.contains(&e) {
+                                chk.push_back(e);
+                            }
+                        }
+                    }
+                    /*
+                    {
+                        let ref lock0 = *self.valid.lock().unwrap();
+                        let inner = unsafe {
+                            &*(&*lock0.borrow() as *const Option<(Rc<ProofNode>, ProofArgs)>)
                         };
-                        if !args_done {
-                            let mut n_args: HashMap<Rc<lang::Var>, &VarAssignment> =
-                                HashMap::with_capacity(args.len());
-                            for &(ref k, ref v) in args.iter() {
-                                n_args.insert(k.clone(), &*v);
+                        match inner {
+                            &Some((ref node, ref assigned)) => {
+                                // the result may be replaced in the KB by other proof which is less
+                                // current, to ensure that the valid result stays in the KB after
+                                // all proofs are done, repeat the valid one with proper arguments
+                                let mut lock1 = self.repeat.lock().unwrap();
+                                lock1.push((node.proof.clone(), assigned.clone()))
                             }
-                            let mut context = ProofResult::new(args.clone(), node.clone());
-                            node.proof.solve(self.kb, Some(n_args), &mut context);
-                            if context.result.is_some() {
-                                self.updated.borrow_mut().push(true);
-                                let mut lock = self.queue.write().unwrap();
-                                lock.entry(node.clone()).or_insert(HashSet::new()).insert(args);
-                                self.add_result(context);
-                                break;
+                            &None => {
+                                for e in node.antecedents.clone() {
+                                    if !done.contains(&e) && !chk.contains(&e) {
+                                        chk.push_back(e);
+                                    }
+                                }
                             }
                         }
                     }
-                    for e in node.antecedents.clone() {
-                        if !done.contains(&e) && !chk.contains(&e) {
-                            chk.push_back(e);
-                        }
-                    }
-                    if let Some((ref node, ref assigned)) = *self.valid.borrow() {
-                        // the result may be replaced in the KB by other proof which is less
-                        // current, to ensure that the valid result stays in the KB after
-                        // all proofs are done, repeat the valid one with proper arguments
-                        self.repeat.lock().unwrap().push((node.proof.clone(), assigned.clone()))
-                    }
+                    */
                 }
             }
-            if !*self.feedback.borrow() {
+            let lock = self.feedback.lock().unwrap();
+            if !*lock {
                 return;
             } else if chk.len() > 0 {
                 done.insert(parent);
@@ -1143,7 +1192,7 @@ impl<'a> InfTrial<'a> {
         }
     }
 
-    fn add_result(&self, mut context: ProofResult<'a>) {
+    fn add_result(&self, mut context: ProofResult) {
         // add category/function to the object dictionary
         // and to results dict if is the result for the query
         let (query_obj, query_pred, is_func) = match self.actv {
@@ -1173,7 +1222,8 @@ impl<'a> InfTrial<'a> {
                                 val = false;
                             }
                             let mut d = self.results.write().unwrap();
-                            let mut d = d.entry(query_pred.clone()).or_insert(HashMap::new());
+                            let mut d = d.entry(query_pred).or_insert(HashMap::new());
+                            println!("ADDING RESULT: {:?}", gf);
                             if d.contains_key(query_obj) {
                                 let cond_ok;
                                 if let Some(&Some((_, Some(ref cdate)))) = d.get(query_obj) {
@@ -1186,16 +1236,17 @@ impl<'a> InfTrial<'a> {
                                     cond_ok = true;
                                 }
                                 if cond_ok {
-                                    d.insert(query_obj.clone(), Some((val, Some(date))));
-                                    *(self.valid.borrow_mut()) = Some((context.node.clone(),
-                                                                       context.args.clone()));
+                                    d.insert(query_obj, Some((val, Some(date))));
+                                    let mut lock = self.valid.lock().unwrap();
+                                    *lock = Some((context.node, context.args.clone()));
                                 }
                             } else {
-                                d.insert(query_obj.clone(), Some((val, Some(date))));
-                                *(self.valid.borrow_mut()) = Some((context.node.clone(),
-                                                                   context.args.clone()));
+                                d.insert(query_obj, Some((val, Some(date))));
+                                let mut lock = self.valid.lock().unwrap();
+                                *lock = Some((context.node, context.args.clone()));
                             }
-                            *self.feedback.borrow_mut() = false;
+                            let mut lock = self.feedback.lock().unwrap();
+                            *lock = false;
                         }
                     }
                 }
@@ -1211,7 +1262,8 @@ impl<'a> InfTrial<'a> {
                                 val = false;
                             }
                             let mut d = self.results.write().unwrap();
-                            let mut d = d.entry(query_pred.clone()).or_insert(HashMap::new());
+                            let mut d = d.entry(query_pred).or_insert(HashMap::new());
+                            println!("ADDING RESULT: {:?}", gt);
                             if d.contains_key(query_obj) {
                                 let cond_ok;
                                 if let Some(&Some((_, Some(ref cdate)))) = d.get(query_obj) {
@@ -1224,16 +1276,17 @@ impl<'a> InfTrial<'a> {
                                     cond_ok = true;
                                 }
                                 if cond_ok {
-                                    d.insert(query_obj.clone(), Some((val, Some(date))));
-                                    *(self.valid.borrow_mut()) = Some((context.node.clone(),
-                                                                       context.args.clone()));
+                                    let mut lock = self.valid.lock().unwrap();
+                                    d.insert(query_obj, Some((val, Some(date))));
+                                    *lock = Some((context.node.clone(), context.args.clone()));
                                 }
                             } else {
-                                d.insert(query_obj.clone(), Some((val, Some(date))));
-                                *(self.valid.borrow_mut()) = Some((context.node.clone(),
-                                                                   context.args.clone()));
+                                d.insert(query_obj, Some((val, Some(date))));
+                                let mut lock = self.valid.lock().unwrap();
+                                *lock = Some((context.node.clone(), context.args.clone()));
                             }
-                            *self.feedback.borrow_mut() = false;
+                            let mut lock = self.feedback.lock().unwrap();
+                            *lock = false;
                         }
                     }
                 }
@@ -1243,8 +1296,8 @@ impl<'a> InfTrial<'a> {
 
     fn meet_sent_req(&self,
                      req: &HashMap<Rc<lang::Var>, Vec<Rc<lang::Assert>>>)
-                     -> Option<HashMap<Rc<lang::Var>, Vec<VarAssignment>>> {
-        let mut results: HashMap<Rc<lang::Var>, Vec<VarAssignment>> = HashMap::new();
+                     -> Option<HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>>> {
+        let mut results: HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>> = HashMap::new();
         for (var, asserts) in req.iter() {
             let mut class_list = Vec::new();
             let mut funcs_list = Vec::new();
@@ -1258,6 +1311,8 @@ impl<'a> InfTrial<'a> {
                     }
                 }
             }
+            println!("\ncls_req: {:?}", class_list);
+            println!("fn_req: {:?}", funcs_list.iter().map(|x| x.get_name()).collect::<Vec<_>>());
             // meet_cls_req: HashMap<Rc<String>, Vec<Rc<GroundedClsMemb>>>
             let meet_cls_req = self.kb.by_class(&class_list);
             // meet_func_req: HashMap<Rc<String>, HashMap<Rc<String>, Vec<Rc<GroundedFunc>>>>
@@ -1269,6 +1324,7 @@ impl<'a> InfTrial<'a> {
                     *cnt += 1;
                 }
             }
+            println!("cls_cand: {:?}", i0.iter().collect::<Vec<_>>());
             let mut i1: HashMap<Rc<String>, usize> = HashMap::new();
             for (_, v) in meet_func_req.iter() {
                 for name in v.iter().map(|(name, _)| name) {
@@ -1276,6 +1332,7 @@ impl<'a> InfTrial<'a> {
                     *cnt += 1;
                 }
             }
+            println!("func_cand: {:?}", i1.iter().collect::<Vec<_>>());
             let i2: Vec<_>;
             let cls_filter = i0.iter()
                 .filter(|&(_, cnt)| *cnt == class_list.len())
@@ -1284,15 +1341,15 @@ impl<'a> InfTrial<'a> {
                 .filter(|&(_, cnt)| *cnt == funcs_list.len())
                 .map(|(k, _)| k.clone());
             if meet_func_req.len() > 0 && meet_cls_req.len() > 0 {
-                //i2 = func_filter.filter_map(|n0| cls_filter.find(|n1| *n1 == n0)).collect();
-                let c0: HashSet<_> = func_filter.collect();
-                let c1: HashSet<_> = cls_filter.collect();
-                i2 = c0.intersection(&c1).map(|x| x.clone()).collect();
+                let c1: HashSet<Rc<String>> = cls_filter.collect();
+                println!("collected class cand: {:?}", c1);
+                i2 = func_filter.filter_map(|n0| c1.get(&n0)).map(|x| x.clone()).collect();
             } else if meet_func_req.len() > 0 {
                 i2 = func_filter.collect();
             } else {
                 i2 = cls_filter.collect();
             }
+            println!("filtered: {:?}", i2);
             for name in i2 {
                 let mut gr_memb: HashMap<Rc<String>, Rc<GroundedClsMemb>> = HashMap::new();
                 let mut gr_relations: HashMap<Rc<String>, Vec<Rc<GroundedFunc>>> = HashMap::new();
@@ -1309,18 +1366,18 @@ impl<'a> InfTrial<'a> {
                 }
                 if results.contains_key(var) {
                     let v = results.get_mut(var).unwrap();
-                    v.push(VarAssignment {
+                    v.push(Rc::new(VarAssignment {
                         name: name.clone(),
                         classes: gr_memb,
                         funcs: gr_relations,
-                    })
+                    }))
                 } else {
                     results.insert(var.clone(),
-                                   vec![VarAssignment {
+                                   vec![Rc::new(VarAssignment {
                                             name: name.clone(),
                                             classes: gr_memb,
                                             funcs: gr_relations,
-                                        }]);
+                                        })]);
                 }
             }
             if !results.contains_key(var) {
@@ -1347,7 +1404,7 @@ impl<'a> InfTrial<'a> {
                     for p in sent.get_lhs_predicates() {
                         antecedents.push(p.get_name())
                     }
-                    let node = Arc::new(ProofNode::new(sent.clone(), antecedents.clone()));
+                    let node = Box::new(ProofNode::new(sent.clone(), antecedents.clone()));
                     for pred in sent.get_rhs_predicates() {
                         let name = pred.get_name();
                         let mut lock = self.nodes.write().unwrap();
@@ -1365,75 +1422,120 @@ impl<'a> InfTrial<'a> {
 }
 
 #[derive(Debug)]
-struct ArgsProduct<'a> {
-    indexes: RwLock<HashMap<Rc<lang::Var>, usize>>,
-    input: &'a HashMap<Rc<lang::Var>, Vec<&'a VarAssignment>>,
-    done: RwLock<HashSet<Arc<ProofArgs<'a>>>>,
+struct ArgsProduct {
+    indexes: HashMap<Rc<lang::Var>, (usize, bool)>,
+    input: ArgsProductInput,
+    curr: Rc<lang::Var>,
 }
 
-type ArgsProductInput<'a> = HashMap<Rc<lang::Var>, Vec<&'a VarAssignment>>;
+type ArgsProductInput = HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>>;
 
-impl<'a> ArgsProduct<'a> {
-    fn product(input: &'a ArgsProductInput<'a>) -> ArgsProduct<'a> {
+impl ArgsProduct {
+    fn product(input: ArgsProductInput) -> Option<ArgsProduct> {
         let mut indexes = HashMap::new();
+        let mut curr = None;
+        let mut first = true;
         for (k, _) in input.iter() {
-            indexes.insert(k.clone(), 0_usize);
+            if first {
+                curr = Some(k.clone());
+                first = false;
+            }
+            indexes.insert(k.clone(), (0_usize, false));
         }
-        ArgsProduct {
-            indexes: RwLock::new(indexes),
-            input: input,
-            done: RwLock::new(HashSet::new()),
+        if curr.is_some() {
+            Some(ArgsProduct {
+                indexes: indexes,
+                input: input,
+                curr: curr.unwrap(),
+            })
+        } else {
+            None
         }
     }
 }
 
-impl<'a> ::std::iter::Iterator for ArgsProduct<'a> {
-    type Item = Arc<ProofArgs<'a>>;
+impl ::std::iter::Iterator for ArgsProduct {
+    type Item = ProofArgs;
 
-    fn next(&mut self) -> Option<Arc<ProofArgs<'a>>> {
-        loop {
-            let mut row_0 = vec![];
-            for (k1, v1) in self.input.iter() {
-                let idx_1 = *(self.indexes.read().unwrap().get(k1).unwrap());
-                let e = (k1.clone(), &*v1[idx_1]);
-                row_0.push(e);
-            }
-            let res = Arc::new(row_0);
-            let exists = self.done.read().unwrap().contains(&res);
-            if !exists {
-                self.done.write().unwrap().insert(res.clone());
-                return Some(res);
-            } else if self.completed_iter() {
-                return None;
-            }
+    fn next(&mut self) -> Option<ProofArgs> {
+        let mut row_0 = vec![];
+        for (k1, v1) in self.input.iter() {
+            let idx_1 = self.indexes.get(k1).unwrap();
+            let e = (k1.clone(), v1[idx_1.0].clone());
+            row_0.push(e);
+        }
+        if self.completed_iter() {
+            None
+        } else {
+            Some(row_0)
         }
     }
 }
 
-impl<'a> ArgsProduct<'a> {
-    fn completed_iter(&self) -> bool {
+impl ArgsProduct {
+    fn completed_iter(&mut self) -> bool {
         let mut max = 0;
-        {
-            let mut lock = self.indexes.write().unwrap();
-            for (k, v) in lock.iter_mut() {
-                let l = self.input.get(k).unwrap().len();
-                if *v < (l - 1) {
-                    *v += 1;
-                    break;
-                } else {
-                    max += 1;
-                }
+        for v in self.indexes.values() {
+            if v.1 {
+                max += 1;
             }
         }
-        if max == self.indexes.read().unwrap().len() {
+        if max == self.indexes.len() {
             true
         } else {
+            let p;
+            {
+                let l = self.input.get(&self.curr).unwrap().len();
+                let curr = self.indexes.get(&self.curr).unwrap();
+                if curr.0 < l - 1 {
+                    p = true;
+                } else {
+                    p = false;
+                }
+            }
+            if p {
+                let mut i = 0;
+                for (j, (k, v)) in self.indexes.iter_mut().enumerate() {
+                    i = j;
+                    let l = self.input.get(k).unwrap().len();
+                    if (*k != self.curr) && (v.0 < l - 1) {
+                        v.0 += 1;
+                        break;
+                    }
+                }
+                let lidx = self.indexes.len() - 1;
+                let mut curr = self.indexes.get_mut(&self.curr).unwrap();
+                let l = self.input.get(&self.curr).unwrap().len();
+                if (i == lidx) && (curr.0 < l) {
+                    curr.0 += 1;
+                }
+            } else {
+                for k in self.indexes.keys() {
+                    if *k != self.curr {
+                        self.curr = k.clone();
+                        break;
+                    }
+                }
+                let mut curr = self.indexes.get_mut(&self.curr).unwrap();
+                curr.1 = true;
+                curr.0 = 0;
+            }
             false
         }
     }
 }
 
-#[derive(Debug)]
+fn arg_hash_val(input: &ProofArgs) -> Vec<usize> {
+    // ProofArgs: Vec<(Rc<lang::Var>, Rc<VarAssignment>)>;
+    let mut v = vec![];
+    for &(ref var, ref assigned) in input {
+        v.push(&**var as *const lang::Var as usize);
+        v.push(&*assigned.name as *const String as usize);
+    }
+    v
+}
+
+#[derive(Debug, Clone)]
 struct ProofNode {
     proof: Rc<LogSentence>,
     antecedents: Vec<Rc<String>>,
@@ -1490,7 +1592,7 @@ impl VarAssignment {
 
 impl ::std::cmp::PartialEq for VarAssignment {
     fn eq(&self, other: &VarAssignment) -> bool {
-        self.name == other.name
+        *self.name == *other.name
     }
 }
 
@@ -1498,7 +1600,7 @@ impl ::std::cmp::Eq for VarAssignment {}
 
 impl Hash for VarAssignment {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.name.hash(state);
+        (*self.name).hash(state);
     }
 }
 
@@ -1699,9 +1801,26 @@ impl<'a> QueryProcessed<'a> {
 mod test {
     use super::*;
 
+    //#[test]
+    fn _temp() {
+        let test_03 = String::from("
+            ( professor[$Lucy,u=1] )
+            ( dean[$John,u=1] )
+            ( fn::criticize[$John,u=1;$Lucy] )
+            ( (let x) ( dean[x,u=1] |> professor[x,u=1] ) )
+            ( (let x) ( professor[x,u=1] |> person[x,u=1] ) )
+            ( (let x, y)
+              (( person[x,u=1] && person[y,u=1] && dean[y,u=1] && fn::criticize[y,u=1;x] )
+                 |> fn::friend[x,u=0;y] ))
+        ");
+        let q03_01 = "(fn::friend[$Lucy,u=0;$John])".to_string();
+        let rep = Representation::new();
+        rep.tell(test_03).unwrap();
+        assert_eq!(rep.ask(q03_01, true), Answer::Single(Some(true)));
+    }
+
     #[test]
-    fn ask_pred() {
-        /*
+    fn _ask_pred() {
         let test_01 = String::from("
             ( professor[$Lucy,u=1] )
         ");
@@ -1724,7 +1843,6 @@ mod test {
         rep.tell(test_02).unwrap();
         assert_eq!(rep.ask(q02_01, true), Answer::Single(Some(false)));
         assert_eq!(rep.ask(q02_02, true), Answer::Single(Some(true)));
-        */
 
         let test_03 = String::from("
             ( fn::owns[$M1,u=1;$Nono] )
@@ -1739,7 +1857,7 @@ mod test {
             (( let x ) ( missile[x,u=1] |> weapon[x,u=1] ) )
             (( let x ) ( fn::enemy[x,u=1;$America] |> hostile[x,u=1] ) )
         ");
-        let q03_01 = "(criminal[$West,u=1])".to_string();
+        let q03_01 = "(criminal[$West,u=1]) && hostile[$Nono,u=1] && weapon[$M1,u=1]".to_string();
         let rep = Representation::new();
         rep.tell(test_03).unwrap();
         assert_eq!(rep.ask(q03_01, true), Answer::Single(Some(true)));
@@ -1786,7 +1904,7 @@ mod test {
     }
 
     #[test]
-    fn ask_func() {
+    fn _ask_func() {
         let test_01 = String::from("
             ( professor[$Lucy,u=1] )
             ( dean[$John,u=1] )
@@ -1798,6 +1916,16 @@ mod test {
         assert_eq!(rep.ask(q01_01, true), Answer::Single(Some(true)));
 
         let test_02 = String::from("
+            ( animal[cow,u=1] )
+            ( female[cow,u=1] )
+            ( (animal[cow,u=1] && female[cow,u=1]) |> fn::produce[milk,u=1;cow] )
+        ");
+        let q02_01 = "(fn::produce[milk,u=1;cow])".to_string();
+        let rep = Representation::new();
+        rep.tell(test_02).unwrap();
+        assert_eq!(rep.ask(q02_01, true), Answer::Single(Some(true)));
+
+        let test_03 = String::from("
             ( professor[$Lucy,u=1] )
             ( dean[$John,u=1] )
             ( fn::criticize[$John,u=1;$Lucy] )
@@ -1807,20 +1935,10 @@ mod test {
               (( person[x,u=1] && person[y,u=1] && dean[y,u=1] && fn::criticize[y,u=1;x] )
                  |> fn::friend[x,u=0;y] ))
         ");
-        let q02_01 = "(fn::friend[$Lucy,u=0;$John])".to_string();
+        let q03_01 = "(fn::friend[$Lucy,u=0;$John])".to_string();
         let rep = Representation::new();
-        rep.tell(test_02).unwrap();
-        assert_eq!(rep.ask(q02_01, true), Answer::Single(Some(true)));
-
-        let test_04 = String::from("
-            ( animal[cow,u=1] )
-            ( female[cow,u=1] )
-            ( (animal[cow,u=1] && female[cow,u=1]) |> fn::produce[milk,u=1;cow] )
-        ");
-        let q04_01 = "(fn::produce[milk,u=1;cow])".to_string();
-        let rep = Representation::new();
-        rep.tell(test_04).unwrap();
-        assert_eq!(rep.ask(q04_01, true), Answer::Single(Some(true)));
+        rep.tell(test_03).unwrap();
+        assert_eq!(rep.ask(q03_01, true), Answer::Single(Some(true)));
 
         let _test_05 = String::from("
             (( let x, y, t1: time=\"2015.01.01\", t2: time=\"2015.02.01\" )

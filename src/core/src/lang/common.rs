@@ -684,7 +684,7 @@ impl<'a> FuncDecl {
 
     pub fn get_name(&self) -> Rc<String> {
         match self.name {
-            Terminal::FreeTerm(ref var) => var.name.clone(),
+            Terminal::FreeTerm(ref var) => Rc::new(var.name.clone()),
             Terminal::GroundedTerm(ref name) => name.clone(),
             Terminal::Keyword(_) => panic!(),
         }
@@ -913,7 +913,7 @@ pub struct ClassDecl {
 impl<'a> ClassDecl {
     pub fn get_name(&self) -> Rc<String> {
         match self.name {
-            Terminal::FreeTerm(ref var) => var.name.clone(),
+            Terminal::FreeTerm(ref var) => Rc::new(var.name.clone()),
             Terminal::GroundedTerm(ref name) => name.clone(),
             Terminal::Keyword(_) => panic!(),
         }
@@ -1198,9 +1198,9 @@ impl<'a> OpArgTerm {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug)]
 pub struct Var {
-    pub name: Rc<String>,
+    pub name: String,
     op_arg: Option<OpArg>,
 }
 
@@ -1214,9 +1214,9 @@ impl Var {
             }
             None => None,
         };
-        let name = unsafe { Rc::new(String::from(str::from_utf8_unchecked(name))) };
+        let name = unsafe { String::from(str::from_utf8_unchecked(name)) };
         if reserved(&name) {
-            return Err(ParseErrF::ReservedKW(Rc::try_unwrap(name).unwrap()));
+            return Err(ParseErrF::ReservedKW(name));
         }
         Ok(Var {
             name: name,
@@ -1225,9 +1225,26 @@ impl Var {
     }
 }
 
+impl ::std::cmp::PartialEq for Var {
+    fn eq(&self, other: &Var) -> bool {
+        let s_address = &*self as *const Var as usize;
+        let o_address = &*other as *const Var as usize;
+        s_address == o_address
+    }
+}
+
+impl ::std::cmp::Eq for Var {}
+
+impl ::std::hash::Hash for Var {
+    fn hash<H: ::std::hash::Hasher>(&self, state: &mut H) {
+        let address = &*self as *const Var as usize;
+        address.hash(state);
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct Skolem {
-    pub name: Rc<String>,
+    pub name: String,
     op_arg: Option<OpArg>,
 }
 
@@ -1243,9 +1260,9 @@ impl Skolem {
             }
             None => None,
         };
-        let name = unsafe { Rc::new(String::from(str::from_utf8_unchecked(name))) };
+        let name = unsafe { String::from(str::from_utf8_unchecked(name)) };
         if reserved(&name) {
-            return Err(ParseErrF::ReservedKW(Rc::try_unwrap(name).unwrap()));
+            return Err(ParseErrF::ReservedKW(name));
         }
         Ok(Skolem {
             name: name,
@@ -1264,29 +1281,29 @@ pub enum Terminal {
 impl<'a> Terminal {
     fn from(other: &TerminalBorrowed<'a>, context: &mut Context) -> Result<Terminal, ParseErrF> {
         let &TerminalBorrowed(slice) = other;
-        let name = unsafe { Rc::new(String::from(str::from_utf8_unchecked(slice))) };
+        let name = unsafe { String::from(str::from_utf8_unchecked(slice)) };
         if reserved(&name) {
-            return Err(ParseErrF::ReservedKW(Rc::try_unwrap(name).unwrap()));
+            return Err(ParseErrF::ReservedKW(name));
         }
         for v in &context.vars {
             if v.name == name {
                 return Ok(Terminal::FreeTerm(v.clone()));
             }
         }
-        Ok(Terminal::GroundedTerm(name))
+        Ok(Terminal::GroundedTerm(Rc::new(name)))
     }
 
     fn from_slice(slice: &[u8], context: &mut Context) -> Result<Terminal, ParseErrF> {
-        let name = unsafe { Rc::new(String::from(str::from_utf8_unchecked(slice))) };
+        let name = unsafe { String::from(str::from_utf8_unchecked(slice)) };
         if reserved(&name) {
-            return Err(ParseErrF::ReservedKW(Rc::try_unwrap(name).unwrap()));
+            return Err(ParseErrF::ReservedKW(name));
         }
         for v in &context.vars {
             if v.name == name {
                 return Ok(Terminal::FreeTerm(v.clone()));
             }
         }
-        Ok(Terminal::GroundedTerm(name))
+        Ok(Terminal::GroundedTerm(Rc::new(name)))
     }
 
     fn is_var(&self, v1: &Var) -> bool {
