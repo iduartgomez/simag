@@ -54,7 +54,7 @@ impl<'a> LogSentence {
             id: vec![],
         };
         let r = walk_ast(ast, &mut sent, context)?;
-        sent.root = Some(Rc::new(r));
+        sent.root = Some(Rc::new(r.into_final(context)));
         // classify the kind of sentence and check that are correct
         if sent.vars.is_none() {
             if !context.iexpr() {
@@ -287,17 +287,15 @@ pub enum SentType {
 
 #[derive(Debug, Clone)]
 struct LogicIndCond {
-    parent: Option<Rc<Particle>>,
-    next_rhs: Option<Rc<Particle>>,
-    next_lhs: Option<Rc<Particle>>,
+    next_rhs: Rc<Particle>,
+    next_lhs: Rc<Particle>,
 }
 
 impl LogicIndCond {
-    fn new() -> LogicIndCond {
+    fn new(lhs: Rc<Particle>, rhs: Rc<Particle>) -> LogicIndCond {
         LogicIndCond {
-            parent: None,
-            next_rhs: None,
-            next_lhs: None,
+            next_rhs: rhs,
+            next_lhs: lhs,
         }
     }
 
@@ -306,8 +304,7 @@ impl LogicIndCond {
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
              -> Option<bool> {
-        let n0 = self.next_lhs.as_ref().unwrap();
-        if let Some(res) = n0.solve(agent, assignments) {
+        if let Some(res) = self.next_lhs.solve(agent, assignments) {
             if res {
                 Some(true)
             } else {
@@ -324,40 +321,37 @@ impl LogicIndCond {
                   assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
-        let n1 = self.next_rhs.as_ref().unwrap();
-        n1.substitute(agent, assignments, context, rhs)
+        self.next_rhs.substitute(agent, assignments, context, rhs)
     }
 
     fn get_next(&self, pos: usize) -> Rc<Particle> {
         if pos == 0 {
-            self.next_lhs.as_ref().unwrap().clone()
+            self.next_lhs.clone()
         } else {
-            self.next_rhs.as_ref().unwrap().clone()
+            self.next_rhs.clone()
         }
     }
 }
 
 impl fmt::Display for LogicIndCond {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let n0 = String::from(format!("{}", self.next_lhs.as_ref().unwrap()));
-        let n1 = String::from(format!("{}", self.next_rhs.as_ref().unwrap()));
+        let n0 = String::from(format!("{}", self.next_lhs));
+        let n1 = String::from(format!("{}", self.next_rhs));
         write!(f, "Conditional(n0: {}, n1: {})", n0, n1)
     }
 }
 
 #[derive(Debug, Clone)]
 struct LogicEquivalence {
-    parent: Option<Rc<Particle>>,
-    next_rhs: Option<Rc<Particle>>,
-    next_lhs: Option<Rc<Particle>>,
+    next_rhs: Rc<Particle>,
+    next_lhs: Rc<Particle>,
 }
 
 impl LogicEquivalence {
-    fn new() -> LogicEquivalence {
+    fn new(lhs: Rc<Particle>, rhs: Rc<Particle>) -> LogicEquivalence {
         LogicEquivalence {
-            parent: None,
-            next_rhs: None,
-            next_lhs: None,
+            next_rhs: rhs,
+            next_lhs: lhs,
         }
     }
 
@@ -366,10 +360,8 @@ impl LogicEquivalence {
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
              -> Option<bool> {
-        let n0 = self.next_lhs.as_ref().unwrap();
-        let n1 = self.next_rhs.as_ref().unwrap();
         let n0_res;
-        if let Some(res) = n0.solve(agent, assignments) {
+        if let Some(res) = self.next_lhs.solve(agent, assignments) {
             if res {
                 n0_res = true;
             } else {
@@ -379,7 +371,7 @@ impl LogicEquivalence {
             return None;
         }
         let n1_res;
-        if let Some(res) = n1.solve(agent, assignments) {
+        if let Some(res) = self.next_rhs.solve(agent, assignments) {
             if res {
                 n1_res = true;
             } else {
@@ -397,40 +389,32 @@ impl LogicEquivalence {
 
     fn get_next(&self, pos: usize) -> Rc<Particle> {
         if pos == 0 {
-            self.next_lhs.as_ref().unwrap().clone()
+            self.next_lhs.clone()
         } else {
-            self.next_rhs.as_ref().unwrap().clone()
+            self.next_rhs.clone()
         }
     }
 }
 
 impl fmt::Display for LogicEquivalence {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let n0 = match self.next_lhs {
-            Some(ref n0) => String::from(format!("{}", n0)),
-            None => String::from("none"),
-        };
-        let n1 = match self.next_rhs {
-            Some(ref n1) => String::from(format!("{}", n1)),
-            None => String::from("none"),
-        };
+        let n0 = String::from(format!("{}", self.next_lhs));
+        let n1 = String::from(format!("{}", self.next_rhs));
         write!(f, "Equivalence(n0: {}, n1: {})", n0, n1)
     }
 }
 
 #[derive(Debug, Clone)]
 struct LogicImplication {
-    parent: Option<Rc<Particle>>,
-    next_rhs: Option<Rc<Particle>>,
-    next_lhs: Option<Rc<Particle>>,
+    next_rhs: Rc<Particle>,
+    next_lhs: Rc<Particle>,
 }
 
 impl LogicImplication {
-    fn new() -> LogicImplication {
+    fn new(lhs: Rc<Particle>, rhs: Rc<Particle>) -> LogicImplication {
         LogicImplication {
-            parent: None,
-            next_rhs: None,
-            next_lhs: None,
+            next_rhs: rhs,
+            next_lhs: lhs,
         }
     }
 
@@ -439,10 +423,8 @@ impl LogicImplication {
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
              -> Option<bool> {
-        let n0 = self.next_lhs.as_ref().unwrap();
-        let n1 = self.next_rhs.as_ref().unwrap();
         let n0_res;
-        if let Some(res) = n0.solve(agent, assignments) {
+        if let Some(res) = self.next_lhs.solve(agent, assignments) {
             if res {
                 n0_res = true;
             } else {
@@ -452,7 +434,7 @@ impl LogicImplication {
             return None;
         }
         let n1_res;
-        if let Some(res) = n1.solve(agent, assignments) {
+        if let Some(res) = self.next_rhs.solve(agent, assignments) {
             if res {
                 n1_res = true;
             } else {
@@ -470,34 +452,32 @@ impl LogicImplication {
 
     fn get_next(&self, pos: usize) -> Rc<Particle> {
         if pos == 0 {
-            self.next_lhs.as_ref().unwrap().clone()
+            self.next_lhs.clone()
         } else {
-            self.next_rhs.as_ref().unwrap().clone()
+            self.next_rhs.clone()
         }
     }
 }
 
 impl fmt::Display for LogicImplication {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let n0 = String::from(format!("{}", self.next_lhs.as_ref().unwrap()));
-        let n1 = String::from(format!("{}", self.next_rhs.as_ref().unwrap()));
+        let n0 = String::from(format!("{}", self.next_lhs));
+        let n1 = String::from(format!("{}", self.next_rhs));
         write!(f, "Implication(n0: {}, n1: {})", n0, n1)
     }
 }
 
 #[derive(Debug, Clone)]
 struct LogicConjunction {
-    parent: Option<Rc<Particle>>,
-    next_rhs: Option<Rc<Particle>>,
-    next_lhs: Option<Rc<Particle>>,
+    next_rhs: Rc<Particle>,
+    next_lhs: Rc<Particle>,
 }
 
 impl LogicConjunction {
-    fn new() -> LogicConjunction {
+    fn new(lhs: Rc<Particle>, rhs: Rc<Particle>) -> LogicConjunction {
         LogicConjunction {
-            parent: None,
-            next_rhs: None,
-            next_lhs: None,
+            next_rhs: rhs,
+            next_lhs: lhs,
         }
     }
 
@@ -506,16 +486,14 @@ impl LogicConjunction {
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
              -> Option<bool> {
-        let n0 = self.next_lhs.as_ref().unwrap();
-        let n1 = self.next_rhs.as_ref().unwrap();
-        if let Some(res) = n0.solve(agent, assignments) {
+        if let Some(res) = self.next_lhs.solve(agent, assignments) {
             if !res {
                 return Some(false);
             }
         } else {
             return None;
         }
-        if let Some(res) = n1.solve(agent, assignments) {
+        if let Some(res) = self.next_rhs.solve(agent, assignments) {
             if !res {
                 return Some(false);
             }
@@ -531,42 +509,38 @@ impl LogicConjunction {
                   assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
-        let n1 = self.next_rhs.as_ref().unwrap();
-        n1.substitute(agent, assignments, context, rhs);
-        let n0 = self.next_lhs.as_ref().unwrap();
-        n0.substitute(agent, assignments, context, rhs);
+        self.next_rhs.substitute(agent, assignments, context, rhs);
+        self.next_lhs.substitute(agent, assignments, context, rhs);
     }
 
     fn get_next(&self, pos: usize) -> Rc<Particle> {
         if pos == 0 {
-            self.next_lhs.as_ref().unwrap().clone()
+            self.next_lhs.clone()
         } else {
-            self.next_rhs.as_ref().unwrap().clone()
+            self.next_rhs.clone()
         }
     }
 }
 
 impl fmt::Display for LogicConjunction {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let n0 = String::from(format!("{}", self.next_lhs.as_ref().unwrap()));
-        let n1 = String::from(format!("{}", self.next_rhs.as_ref().unwrap()));
+        let n0 = String::from(format!("{}", self.next_lhs));
+        let n1 = String::from(format!("{}", self.next_rhs));
         write!(f, "Conjunction(n0: {}, n1: {})", n0, n1)
     }
 }
 
 #[derive(Debug, Clone)]
 struct LogicDisjunction {
-    parent: Option<Rc<Particle>>,
-    next_rhs: Option<Rc<Particle>>,
-    next_lhs: Option<Rc<Particle>>,
+    next_rhs: Rc<Particle>,
+    next_lhs: Rc<Particle>,
 }
 
 impl LogicDisjunction {
-    fn new() -> LogicDisjunction {
+    fn new(lhs: Rc<Particle>, rhs: Rc<Particle>) -> LogicDisjunction {
         LogicDisjunction {
-            parent: None,
-            next_rhs: None,
-            next_lhs: None,
+            next_rhs: rhs,
+            next_lhs: lhs,
         }
     }
 
@@ -575,10 +549,8 @@ impl LogicDisjunction {
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
              -> Option<bool> {
-        let n0 = self.next_lhs.as_ref().unwrap();
-        let n1 = self.next_rhs.as_ref().unwrap();
         let n0_res;
-        if let Some(res) = n0.solve(agent, assignments) {
+        if let Some(res) = self.next_lhs.solve(agent, assignments) {
             if res {
                 n0_res = true;
             } else {
@@ -588,7 +560,7 @@ impl LogicDisjunction {
             return None;
         }
         let n1_res;
-        if let Some(res) = n1.solve(agent, assignments) {
+        if let Some(res) = self.next_rhs.solve(agent, assignments) {
             if res {
                 n1_res = true;
             } else {
@@ -611,43 +583,37 @@ impl LogicDisjunction {
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
         if *rhs {
-            let n1 = self.next_rhs.as_ref().unwrap();
-            n1.substitute(agent, assignments, context, rhs)
+            self.next_rhs.substitute(agent, assignments, context, rhs)
         } else {
-            let n0 = self.next_lhs.as_ref().unwrap();
-            n0.substitute(agent, assignments, context, rhs)
+            self.next_lhs.substitute(agent, assignments, context, rhs)
         }
     }
 
     fn get_next(&self, pos: usize) -> Rc<Particle> {
         if pos == 0 {
-            self.next_lhs.as_ref().unwrap().clone()
+            self.next_lhs.clone()
         } else {
-            self.next_rhs.as_ref().unwrap().clone()
+            self.next_rhs.clone()
         }
     }
 }
 
 impl fmt::Display for LogicDisjunction {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let n0 = String::from(format!("{}", self.next_lhs.as_ref().unwrap()));
-        let n1 = String::from(format!("{}", self.next_rhs.as_ref().unwrap()));
+        let n0 = String::from(format!("{}", self.next_lhs));
+        let n1 = String::from(format!("{}", self.next_rhs));
         write!(f, "Disjunction(n0: {}, n1: {})", n0, n1)
     }
 }
 
 #[derive(Debug, Clone)]
 struct LogicAtom {
-    parent: Option<Rc<Particle>>,
     pred: Rc<Assert>,
 }
 
 impl LogicAtom {
     fn new(term: Assert) -> LogicAtom {
-        LogicAtom {
-            parent: None,
-            pred: Rc::new(term),
-        }
+        LogicAtom { pred: Rc::new(term) }
     }
 
     #[inline]
@@ -732,30 +698,6 @@ impl Particle {
     }
 
     #[inline]
-    fn add_parent(self, ptr: Rc<Particle>) {
-        match self {
-            Particle::Conjunction(mut p) => {
-                p.parent = Some(ptr);
-            }
-            Particle::Disjunction(mut p) => {
-                p.parent = Some(ptr);
-            }
-            Particle::Implication(mut p) => {
-                p.parent = Some(ptr);
-            }
-            Particle::Equivalence(mut p) => {
-                p.parent = Some(ptr);
-            }
-            Particle::IndConditional(mut p) => {
-                p.parent = Some(ptr);
-            }
-            Particle::Atom(mut p) => {
-                p.parent = Some(ptr);
-            }
-        }
-    }
-
-    #[inline]
     fn get_next(&self, pos: usize) -> Option<Rc<Particle>> {
         match *self {
             Particle::Conjunction(ref p) => Some(p.get_next(pos)),
@@ -788,72 +730,6 @@ impl Particle {
         match *self {
             Particle::IndConditional(_) => true,
             _ => false,
-        }
-    }
-
-    fn is_disjunction(&self) -> Result<(), ParseErrF> {
-        match *self {
-            Particle::Disjunction(_) => Ok(()),
-            _ => Err(ParseErrF::IConnectAfterOr),
-        }
-    }
-
-    fn is_conjunction(&self) -> Result<(), ParseErrF> {
-        match *self {
-            Particle::Conjunction(_) => Ok(()),
-            _ => Err(ParseErrF::IConnectAfterOr),
-        }
-    }
-
-    fn add_rhs(self, next: Rc<Particle>) -> Particle {
-        match self {
-            Particle::Conjunction(mut p) => {
-                p.next_rhs = Some(next);
-                Particle::Conjunction(p)
-            }
-            Particle::Disjunction(mut p) => {
-                p.next_rhs = Some(next);
-                Particle::Disjunction(p)
-            }
-            Particle::Implication(mut p) => {
-                p.next_rhs = Some(next);
-                Particle::Implication(p)
-            }
-            Particle::Equivalence(mut p) => {
-                p.next_rhs = Some(next);
-                Particle::Equivalence(p)
-            }
-            Particle::IndConditional(mut p) => {
-                p.next_rhs = Some(next);
-                Particle::IndConditional(p)
-            }
-            _ => panic!("simag: expected an operator, found a predicate instead"),
-        }
-    }
-
-    fn add_lhs(self, next: Rc<Particle>) -> Particle {
-        match self {
-            Particle::Conjunction(mut p) => {
-                p.next_lhs = Some(next);
-                Particle::Conjunction(p)
-            }
-            Particle::Disjunction(mut p) => {
-                p.next_lhs = Some(next);
-                Particle::Disjunction(p)
-            }
-            Particle::Implication(mut p) => {
-                p.next_lhs = Some(next);
-                Particle::Implication(p)
-            }
-            Particle::Equivalence(mut p) => {
-                p.next_lhs = Some(next);
-                Particle::Equivalence(p)
-            }
-            Particle::IndConditional(mut p) => {
-                p.next_lhs = Some(next);
-                Particle::IndConditional(p)
-            }
-            _ => panic!("simag: expected an operator, found a predicate instead"),
         }
     }
 }
@@ -909,10 +785,84 @@ impl Context {
     }
 }
 
+struct PIntermediate {
+    cond: Option<LogicOperator>,
+    lhs: Option<Rc<Particle>>,
+    rhs: Option<Rc<Particle>>,
+    pred: Option<Assert>,
+}
+
+impl PIntermediate {
+    fn new(op: Option<LogicOperator>, pred: Option<Assert>) -> PIntermediate {
+        PIntermediate {
+            cond: op,
+            lhs: None,
+            rhs: None,
+            pred: pred,
+        }
+    }
+
+    fn add_rhs(&mut self, p: Rc<Particle>) {
+        self.rhs = Some(p);
+    }
+
+    fn add_lhs(&mut self, p: Rc<Particle>) {
+        self.lhs = Some(p);
+    }
+
+    fn into_final(self, context: &mut Context) -> Particle {
+        if self.pred.is_some() {
+            Particle::Atom(LogicAtom::new(self.pred.unwrap()))
+        } else {
+            let PIntermediate { cond, rhs, lhs, .. } = self;
+            match cond.unwrap() {
+                LogicOperator::ICond => {
+                    context.stype = SentType::IExpr;
+                    Particle::IndConditional(LogicIndCond::new(lhs.unwrap(), rhs.unwrap()))
+                }
+                LogicOperator::And => {
+                    Particle::Conjunction(LogicConjunction::new(lhs.unwrap(), rhs.unwrap()))
+                }
+                LogicOperator::Or => {
+                    Particle::Disjunction(LogicDisjunction::new(lhs.unwrap(), rhs.unwrap()))
+                }
+                LogicOperator::Implication => {
+                    Particle::Implication(LogicImplication::new(lhs.unwrap(), rhs.unwrap()))
+                }
+                LogicOperator::Biconditional => {
+                    Particle::Equivalence(LogicEquivalence::new(lhs.unwrap(), rhs.unwrap()))
+                }
+            }
+        }
+    }
+
+    fn is_conjunction(&self) -> bool {
+        match self.cond {
+            Some(LogicOperator::And) => true,
+            _ => false,
+        }
+    }
+
+    fn is_disjunction(&self) -> bool {
+        match self.cond {
+            Some(LogicOperator::Or) => true,
+            _ => false,
+        }
+    }
+
+    fn is_atom(&self) -> bool {
+        if let Some(_) = self.pred {
+            true
+        } else {
+            false
+        }
+    }
+}
+
 fn walk_ast(ast: &Next,
             sent: &mut LogSentence,
             context: &mut Context)
-            -> Result<Particle, ParseErrF> {
+            -> Result<PIntermediate, ParseErrF> {
     match *ast {
         Next::Assert(ref decl) => {
             let particle = match decl {
@@ -921,16 +871,14 @@ fn walk_ast(ast: &Next,
                         Err(err) => return Err(err),
                         Ok(cls) => cls,
                     };
-                    let atom = LogicAtom::new(Assert::ClassDecl(cls));
-                    Particle::Atom(atom)
+                    PIntermediate::new(None, Some(Assert::ClassDecl(cls)))
                 }
                 &AssertBorrowed::FuncDecl(ref decl) => {
                     let func = match FuncDecl::from(decl, context) {
                         Err(err) => return Err(err),
                         Ok(func) => func,
                     };
-                    let atom = LogicAtom::new(Assert::FuncDecl(func));
-                    Particle::Atom(atom)
+                    PIntermediate::new(None, Some(Assert::FuncDecl(func)))
                 }
             };
             context.from_chain = false;
@@ -1009,33 +957,22 @@ fn walk_ast(ast: &Next,
                 }
             }
             if ast.logic_op.is_some() {
-                let op = match ast.logic_op.as_ref().unwrap() {
-                    &LogicOperator::ICond => {
-                        context.stype = SentType::IExpr;
-                        Particle::IndConditional(LogicIndCond::new())
-                    }
-                    &LogicOperator::And => Particle::Conjunction(LogicConjunction::new()),
-                    &LogicOperator::Or => Particle::Disjunction(LogicDisjunction::new()),
-                    &LogicOperator::Implication => Particle::Implication(LogicImplication::new()),
-                    &LogicOperator::Biconditional => Particle::Equivalence(LogicEquivalence::new()),
-                };
+                let mut op = PIntermediate::new(ast.logic_op.clone(), None);
                 let next = match walk_ast(&ast.next, sent, context) {
                     Ok(opt) => opt,
                     Err(err) => return Err(err),
                 };
                 drop_local_vars(context, v_cnt);
                 drop_local_skolems(context, s_cnt);
-                let next = Rc::new(next);
+                let next = Rc::new(next.into_final(context));
                 sent.add_particle(next.clone());
-                // next.add_parent(op);
-                let opf;
                 if context.in_rhs {
-                    opf = op.add_rhs(next);
+                    op.add_rhs(next);
                 } else {
-                    opf = op.add_lhs(next);
+                    op.add_lhs(next);
                 }
                 context.from_chain = false;
-                Ok(opf)
+                Ok(op)
             } else {
                 let res = walk_ast(&ast.next, sent, context);
                 drop_local_vars(context, v_cnt);
@@ -1048,7 +985,7 @@ fn walk_ast(ast: &Next,
                 let in_side = context.in_rhs;
                 // walk lhs
                 context.in_rhs = false;
-                let lhs = match walk_ast(&nodes[0], sent, context) {
+                let mut lhs = match walk_ast(&nodes[0], sent, context) {
                     Ok(ptr) => ptr,
                     Err(err) => return Err(err),
 
@@ -1056,7 +993,7 @@ fn walk_ast(ast: &Next,
                 let lhs_is_atom = lhs.is_atom();
                 // walk rhs
                 context.in_rhs = true;
-                let rhs = match walk_ast(&nodes[1], sent, context) {
+                let mut rhs = match walk_ast(&nodes[1], sent, context) {
                     Ok(ptr) => ptr,
                     Err(err) => return Err(err),
                 };
@@ -1065,82 +1002,80 @@ fn walk_ast(ast: &Next,
                 context.in_rhs = in_side;
                 if !lhs_is_atom && rhs_is_atom {
                     context.from_chain = true;
-                    // rhs.add_parent(lhs_ptr.clone());
-                    let rhs = Rc::new(rhs);
+                    let rhs = Rc::new(rhs.into_final(context));
                     sent.add_particle(rhs.clone());
-                    Ok(lhs.add_rhs(rhs))
+                    lhs.add_rhs(rhs);
+                    Ok(lhs)
                 } else if lhs_is_atom && !rhs_is_atom {
                     context.from_chain = true;
-                    // lhs.add_parent(rhs_ptr.clone());
-                    let lhs = Rc::new(lhs);
+                    let lhs = Rc::new(lhs.into_final(context));
                     sent.add_particle(lhs.clone());
-                    Ok(rhs.add_lhs(lhs))
+                    rhs.add_lhs(lhs);
+                    Ok(rhs)
                 } else {
                     if context.from_chain {
                         context.from_chain = true;
                         // rhs comes from a chain, parent is lhs op
-                        // rhs.add_parent(lhs_ptr.clone());
-                        let rhs = Rc::new(rhs);
+                        let rhs = Rc::new(rhs.into_final(context));
                         sent.add_particle(rhs.clone());
-                        Ok(lhs.add_rhs(rhs))
+                        lhs.add_rhs(rhs);
+                        Ok(lhs)
                     } else {
                         context.from_chain = true;
                         // lhs comes from a chain, parent is rhs op
-                        // lhs.add_parent(rhs_ptr.clone());
-                        let lhs = Rc::new(lhs);
+                        let lhs = Rc::new(lhs.into_final(context));
                         sent.add_particle(lhs.clone());
-                        Ok(rhs.add_lhs(lhs))
+                        rhs.add_lhs(lhs);
+                        Ok(rhs)
                     }
                 }
             } else {
                 let in_side = context.in_rhs;
                 context.in_rhs = false;
                 let len = nodes.len() - 1;
-                let first = walk_ast(&nodes[0], sent, context)?;
+                let mut first = walk_ast(&nodes[0], sent, context)?;
                 let operator;
-                match first {
-                    Particle::Conjunction(_) => {
-                        operator = LogicOperator::And;
-                    }
-                    Particle::Disjunction(_) => {
-                        operator = LogicOperator::Or;
-                    }
-                    _ => return Err(ParseErrF::IConnectInChain),
+                if first.is_conjunction() {
+                    operator = LogicOperator::And;
+                } else if first.is_disjunction() {
+                    operator = LogicOperator::Or;
+                } else {
+                    return Err(ParseErrF::IConnectInChain);
                 }
                 let mut prev = walk_ast(&nodes[len], sent, context)?;
                 if operator.is_and() {
                     for i in 1..len {
                         let i = len - i;
-                        let p = walk_ast(&nodes[i], sent, context)?;
-                        if let Err(err) = p.is_conjunction() {
-                            return Err(err);
+                        let mut p = walk_ast(&nodes[i], sent, context)?;
+                        if !p.is_conjunction() {
+                            return Err(ParseErrF::IConnectAfterOr);
                         } else {
-                            // ptr.add_parent(prev.clone());
-                            let lr = Rc::new(prev);
+                            let lr = Rc::new(prev.into_final(context));
                             sent.add_particle(lr.clone());
-                            prev = p.add_rhs(lr);
+                            p.add_rhs(lr);
+                            prev = p;
                         }
                     }
                 } else {
                     for i in 1..len {
                         let i = len - i;
-                        let p = walk_ast(&nodes[i], sent, context)?;
-                        if let Err(err) = p.is_disjunction() {
-                            return Err(err);
+                        let mut p = walk_ast(&nodes[i], sent, context)?;
+                        if !p.is_disjunction() {
+                            return Err(ParseErrF::IConnectAfterOr);
                         } else {
-                            // ptr.add_parent(prev.clone());
-                            let lr = Rc::new(prev);
+                            let lr = Rc::new(prev.into_final(context));
                             sent.add_particle(lr.clone());
-                            prev = p.add_rhs(lr);
+                            p.add_rhs(lr);
+                            prev = p;
                         }
                     }
                 }
-                // last.add_parent(prev);
                 context.from_chain = true;
                 context.in_rhs = in_side;
-                let prev = Rc::new(prev);
+                let prev = Rc::new(prev.into_final(context));
                 sent.add_particle(prev.clone());
-                Ok(first.add_rhs(prev))
+                first.add_rhs(prev);
+                Ok(first)
             }
         }
         Next::None => Err(ParseErrF::WrongDef),
@@ -1286,23 +1221,23 @@ mod test {
         let root = &**(sent.root.as_ref().unwrap());
         match root {
             &Particle::IndConditional(ref p) => {
-                match &**p.next_lhs.as_ref().unwrap() {
+                match &*p.next_lhs {
                     &Particle::Conjunction(ref op) => {
-                        match &**op.next_lhs.as_ref().unwrap() {
+                        match &*op.next_lhs {
                             &Particle::Atom(ref atm) => {
                                 assert_eq!(atm.get_name(), Rc::new("american".to_string()));
                             }
                             _ => panic!(),
                         };
-                        match &**op.next_rhs.as_ref().unwrap() {
+                        match &*op.next_rhs {
                             &Particle::Conjunction(ref op) => {
-                                match &**op.next_lhs.as_ref().unwrap() {
+                                match &*op.next_lhs {
                                     &Particle::Atom(ref atm) => {
                                         assert_eq!(atm.get_name(), Rc::new("weapon".to_string()))
                                     }
                                     _ => panic!(),
                                 };
-                                match &**op.next_rhs.as_ref().unwrap() {
+                                match &*op.next_rhs {
                                     &Particle::Atom(ref atm) => {
                                         assert_eq!(atm.get_name(), Rc::new("sells".to_string()));
                                     }
@@ -1314,7 +1249,7 @@ mod test {
                     }
                     _ => panic!(),
                 }
-                match &**p.next_rhs.as_ref().unwrap() {
+                match &*p.next_rhs {
                     &Particle::Atom(ref atm) => {
                         assert_eq!(atm.get_name(), Rc::new("criminal".to_string()))
                     }

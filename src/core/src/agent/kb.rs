@@ -1138,9 +1138,7 @@ impl<'a> InfTrial<'a> {
                                     }
                                 }
                                 let args_r = Box::into_raw(Box::new(args)) as usize;
-                                scope.execute(move || {
-                                    scoped_exec(inf_ptr, node_r, args_r)
-                                });
+                                scope.execute(move || scoped_exec(inf_ptr, node_r, args_r));
                             }
                         });
                     }
