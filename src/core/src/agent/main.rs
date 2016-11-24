@@ -10,8 +10,8 @@ impl Agent {
         Agent { representation: kb::Representation::new() }
     }
 
-    pub fn ask(&self, source: String, single_answer: bool) -> kb::Answer {
-        self.representation.ask(source, single_answer)
+    pub fn ask(&self, source: String) -> kb::Answer {
+        self.representation.ask(source)
     }
 
     pub fn tell(&self, source: String) -> Result<(), Vec<ParseErrF>> {

@@ -53,8 +53,10 @@ impl<'a> LogSentence {
             created: UTC::now(),
             id: vec![],
         };
-        let r = walk_ast(ast, &mut sent, context)?;
-        sent.root = Some(Rc::new(r.into_final(context)));
+        let root = walk_ast(ast, &mut sent, context)?;
+        let root = Rc::new(root.into_final(context));
+        sent.particles.push(root.clone());
+        sent.root = Some(root);
         // classify the kind of sentence and check that are correct
         if sent.vars.is_none() {
             if !context.iexpr() {

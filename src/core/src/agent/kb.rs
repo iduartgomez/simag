@@ -96,7 +96,7 @@ impl Representation {
                         }
                     }
                     ParseTree::IExpr(iexpr) => self.add_belief(Rc::new(iexpr)),
-                    ParseTree::Rule(rule) => self.add_rule(Rc::new(rule)),
+                    ParseTree::Expr(rule) => self.add_rule(Rc::new(rule)),
                     ParseTree::ParseErr(err) => errors.push(err),
                 }
             }
@@ -111,11 +111,14 @@ impl Representation {
     }
 
     /// Asks the KB if some fact is true and returns the answer to the query.
-    pub fn ask(&self, source: String, single_answer: bool) -> Answer {
+    pub fn ask(&self, source: String) -> Answer {
         let pres = lang::logic_parser(source, false);
         if pres.is_ok() {
             let pres = QueryInput::ManyQueries(pres.unwrap());
-            let mut inf = Inference::new(&self, pres, single_answer, false);
+            let mut inf = match Inference::new(&self, pres, false) {
+                Ok(inf) => inf,
+                Err(()) => return Answer::QueryErr,
+            };
             {
                 let mut inf_r = unsafe { &mut *(&mut inf as *mut Box<Inference>) };
                 inf_r.infer_facts();
@@ -126,12 +129,11 @@ impl Representation {
         }
     }
 
-    fn ask_processed(&self,
-                     source: QueryInput,
-                     single_answer: bool,
-                     ignore_current: bool)
-                     -> Answer {
-        let mut inf = Inference::new(&self, source, single_answer, ignore_current);
+    fn ask_processed(&self, source: QueryInput, ignore_current: bool) -> Answer {
+        let mut inf = match Inference::new(&self, source, ignore_current) {
+            Ok(inf) => inf,
+            Err(()) => return Answer::QueryErr,
+        };
         {
             let mut inf_r = unsafe { &mut *(&mut inf as *mut Box<Inference>) };
             inf_r.infer_facts();
@@ -357,12 +359,10 @@ impl Representation {
         for query in belief.get_rhs_predicates() {
             match query {
                 &lang::Assert::ClassDecl(ref cls_decl) => {
-                    self.ask_processed(QueryInput::AskClassMember(cls_decl.clone()), true, true);
+                    self.ask_processed(QueryInput::AskClassMember(cls_decl.clone()), true);
                 }
                 &lang::Assert::FuncDecl(ref func_decl) => {
-                    self.ask_processed(QueryInput::AskRelationalFunc(func_decl.clone()),
-                                       true,
-                                       true);
+                    self.ask_processed(QueryInput::AskRelationalFunc(func_decl.clone()), true);
                 }
             }
         }
@@ -507,6 +507,26 @@ impl Representation {
         None
     }
 
+    fn get_class_membership(&self, subject: &lang::FreeClsOwner) -> Vec<Rc<GroundedClsMemb>> {
+        let ref name = subject.term;
+        match name.starts_with("$") {
+            true => {
+                if let Some(entity) = self.entities.read().unwrap().get(name) {
+                    entity.get_class_membership(subject)
+                } else {
+                    vec![]
+                }
+            }
+            false => {
+                if let Some(class) = self.classes.read().unwrap().get(name) {
+                    class.get_class_membership(subject)
+                } else {
+                    vec![]
+                }
+            }
+        }
+    }
+
     pub fn has_relationship(&self, pred: &GroundedFunc, subject: Rc<String>) -> Option<bool> {
         match subject.starts_with("$") {
             true => {
@@ -576,6 +596,12 @@ impl Entity {
             Some(r) => Some(r.clone()),
             None => None,
         }
+    }
+
+    fn get_class_membership(&self, compare: &lang::FreeClsOwner) -> Vec<Rc<GroundedClsMemb>> {
+        let lock = self.classes.read().unwrap();
+        let v: Vec<_> = lock.values().filter(|x| compare.filter_grounded(&**x)).cloned().collect();
+        v
     }
 
     fn add_class_membership(&self, grounded: Rc<GroundedClsMemb>) -> bool {
@@ -705,6 +731,12 @@ impl Class {
         }
     }
 
+    fn get_class_membership(&self, compare: &lang::FreeClsOwner) -> Vec<Rc<GroundedClsMemb>> {
+        let lock = self.classes.read().unwrap();
+        let v: Vec<_> = lock.values().filter(|x| compare.filter_grounded(&**x)).cloned().collect();
+        v
+    }
+
     /// Set a superclass of this class
     fn add_class_membership(&self, grounded: Rc<GroundedClsMemb>) -> bool {
         let mut lock = self.classes.write().unwrap();
@@ -795,69 +827,143 @@ impl Class {
 }
 
 type PArgVal = Vec<usize>;
-
 struct Inference<'a> {
     query: QueryProcessed<'a>,
     kb: &'a Representation,
     ignore_current: bool,
-    single: bool,
     nodes: RwLock<HashMap<Rc<String>, Vec<Box<ProofNode>>>>,
     queue: RwLock<HashMap<*const ProofNode, HashSet<PArgVal>>>,
-    results: RwLock<HashMap<&'a str, HashMap<&'a str, Option<(bool, Option<Date>)>>>>,
+    results: InfResults<'a>,
     repeat: Mutex<Vec<(Rc<LogSentence>, PArgVal)>>,
     args: RwLock<Box<Vec<Rc<ProofArgs>>>>,
     available_threads: Mutex<u32>,
 }
 
-#[derive(Debug, PartialEq)]
+type ObjName<'a> = &'a str;
+type QueryPredicate<'a> = &'a str;
+type QueryResult<'a> = HashMap<QueryPredicate<'a>,
+                               HashMap<ObjName<'a>, Option<(bool, Option<Date>)>>>;
+
+#[derive(Debug)]
+pub struct InfResults<'a> {
+    grounded_queries: RwLock<QueryResult<'a>>,
+    membership: RwLock<HashMap<Rc<lang::Var>, HashMap<ObjName<'a>, Vec<Rc<GroundedClsMemb>>>>>,
+}
+
+impl<'a> InfResults<'a> {
+    fn new() -> InfResults<'a> {
+        InfResults {
+            grounded_queries: RwLock::new(HashMap::new()),
+            membership: RwLock::new(HashMap::new()),
+        }
+    }
+
+    fn add_memberships(&self,
+                       var: Rc<lang::Var>,
+                       name: &'a str,
+                       member_of: Vec<Rc<GroundedClsMemb>>) {
+        let mut lock = self.membership.write().unwrap();
+        lock.entry(var)
+            .or_insert(HashMap::new())
+            .insert(name, member_of);
+    }
+
+    fn add_grounded(&self, obj: &'a str, pred: &'a str, res: Option<(bool, Option<Date>)>) {
+        let mut lock = self.grounded_queries.write().unwrap();
+        lock.entry(pred).or_insert(HashMap::new()).insert(obj, res);
+    }
+
+    pub fn get_results_single(self) -> Option<bool> {
+        let results = self.grounded_queries.into_inner().unwrap();
+        if results.len() == 0 {
+            return None;
+        }
+        for r0 in results.values() {
+            for r1 in r0.values() {
+                if let &Some((false, _)) = r1 {
+                    return Some(false);
+                }
+                if let &None = r1 {
+                    return None;
+                }
+            }
+        }
+        Some(true)
+    }
+
+    pub fn get_results_multiple(self) -> QueryResult<'a> {
+        self.grounded_queries.into_inner().unwrap()
+    }
+
+    pub fn get_memberships(&'a self) -> HashMap<ObjName, Vec<&'a GroundedClsMemb>> {
+        let lock = self.membership.read().unwrap();
+        let mut res = HashMap::new();
+        for preds in lock.values() {
+            for members in preds.values() {
+                for gr in members {
+                    let gr = unsafe { &*(&**gr as *const GroundedClsMemb) as &'a GroundedClsMemb };
+                    let name = unsafe { &*(&*gr.get_name() as *const String) as &'a str };
+                    res.entry(name).or_insert(vec![]).push(gr);
+                }
+            }
+        }
+        res
+    }
+}
+
+#[derive(Debug)]
 pub enum Answer<'a> {
-    Single(Option<bool>),
-    Multiple(HashMap<&'a str, HashMap<&'a str, Option<(bool, Option<Date>)>>>),
+    Results(InfResults<'a>),
     QueryErr,
     ParseErr(ParseErrF),
+}
+
+impl<'a> Answer<'a> {
+    pub fn get_results_single(self) -> Option<bool> {
+        match self {
+            Answer::Results(result) => result.get_results_single(),
+            _ => panic!("simag: tried to unwrap a result from an error"),
+        }
+    }
+
+    pub fn get_results_multiple(self) -> QueryResult<'a> {
+        println!("RESULT:\n{:?}", self);
+        match self {
+            Answer::Results(result) => result.get_results_multiple(),
+            _ => panic!("simag: tried to unwrap a result from an error"),
+        }
+    }
+
+    pub fn get_memberships(&'a self) -> HashMap<ObjName, Vec<&'a GroundedClsMemb>> {
+        match *self {
+            Answer::Results(ref result) => result.get_memberships(),
+            _ => panic!("simag: tried to unwrap a result from an error"),
+        }
+    }
 }
 
 impl<'a> Inference<'a> {
     fn new(agent: &'a Representation,
            query_input: QueryInput,
-           single: bool,
            ignore_current: bool)
-           -> Box<Inference<'a>> {
-        let query = QueryProcessed::new().get_query(query_input);
-        Box::new(Inference {
-            query: query.unwrap(),
+           -> Result<Box<Inference<'a>>, ()> {
+        let query = QueryProcessed::new().get_query(query_input)?;
+        println!("QUERY:\n{:?}\n", query);
+        Ok(Box::new(Inference {
+            query: query,
             kb: agent,
             ignore_current: ignore_current,
-            single: single,
             nodes: RwLock::new(HashMap::new()),
             queue: RwLock::new(HashMap::new()),
-            results: RwLock::new(HashMap::new()),
+            results: InfResults::new(),
             repeat: Mutex::new(vec![]),
             args: RwLock::new(Box::new(vec![])),
             available_threads: Mutex::new(4_u32),
-        })
+        }))
     }
 
     fn get_results(self) -> Answer<'a> {
-        if self.single {
-            let results = self.results.into_inner().unwrap();
-            if results.len() == 0 {
-                return Answer::Single(None);
-            }
-            for r0 in results.values() {
-                for r1 in r0.values() {
-                    if let &Some((false, _)) = r1 {
-                        return Answer::Single(Some(false));
-                    }
-                    if let &None = r1 {
-                        return Answer::Single(None);
-                    }
-                }
-            }
-            Answer::Single(Some(true))
-        } else {
-            Answer::Multiple(self.results.into_inner().unwrap())
-        }
+        Answer::Results(self.results)
     }
 
     /// Inference function from first-order logic sentences.
@@ -913,15 +1019,9 @@ impl<'a> Inference<'a> {
                             result = inf.kb.class_membership(pred);
                         }
                         if result.is_some() {
-                            let mut lock = inf.results.write().unwrap();
-                            let mut answ = lock.entry(&*query).or_insert(HashMap::new());
-                            answ.insert(obj.clone(), Some((result.unwrap(), None)));
+                            inf.results.add_grounded(obj, query, Some((result.unwrap(), None)));
                         } else {
-                            {
-                                let mut lock = inf.results.write().unwrap();
-                                let mut answ = lock.entry(&*query).or_insert(HashMap::new());
-                                answ.insert(obj.clone(), None);
-                            }
+                            inf.results.add_grounded(obj, query, None);
                             // if no result was found from the kb directly
                             // make an inference from a grounded fact
                             let actv_query = ActiveQuery::Class(obj, &*query, pred);
@@ -951,15 +1051,9 @@ impl<'a> Inference<'a> {
                             result = inf.kb.has_relationship(pred, arg.get_name());
                         }
                         if result.is_some() {
-                            let mut lock = inf.results.write().unwrap();
-                            let mut answ = lock.entry(&*query).or_insert(HashMap::new());
-                            answ.insert(&*obj, Some((result.unwrap(), None)));
+                            inf.results.add_grounded(&*obj, query, Some((result.unwrap(), None)));
                         } else {
-                            {
-                                let mut lock = inf.results.write().unwrap();
-                                let mut answ = lock.entry(&*query).or_insert(HashMap::new());
-                                answ.insert(&*obj, None);
-                            }
+                            inf.results.add_grounded(&*obj, query, None);
                             let actv_query = ActiveQuery::Func(&*obj, &*query, pred);
                             query_cls(inf, pred.get_name(), actv_query);
                         }
@@ -968,10 +1062,19 @@ impl<'a> Inference<'a> {
             }
         });
 
-        // cls_queries_free: HashMap<&'a Rc<lang::Var>, Vec<&'a lang::FreeClsMemb>>,
-        // cls_queries_grounded: HashMap<Rc<String>, Vec<&'a lang::GroundedClsMemb>>,
-        // func_memb_query: Vec<&'a lang::GroundedClsMemb>,
-        // func_queries_free: HashMap<&'a Rc<lang::Var>, Vec<&'a lang::FuncDecl>>,
+        // cls_memb_query: HashMap<Rc<lang::Var>, Vec<&'a lang::FreeClsOwner>>
+        for (var, objs) in self.query.cls_memb_query.iter() {
+            for obj in objs {
+                let name = unsafe { &*(&*obj.term as *const String) as &'a str };
+                let member_of = self.kb.get_class_membership(obj);
+                self.results.add_memberships(var.clone(), name, member_of);
+            }
+        }
+
+        // func_memb_query: HashMap<Rc<lang::Var>, Vec<&'a lang::FreeClsOwner>>,
+        for (var, objs) in self.query.func_memb_query.iter() {
+
+        }
     }
 }
 
@@ -983,7 +1086,7 @@ struct InfTrial<'a> {
     valid: Mutex<Option<(*const ProofNode, Rc<ProofArgs>)>>,
     nodes: &'a RwLock<HashMap<Rc<String>, Vec<Box<ProofNode>>>>,
     queue: &'a RwLock<HashMap<*const ProofNode, HashSet<PArgVal>>>,
-    results: &'a RwLock<HashMap<&'a str, HashMap<&'a str, Option<(bool, Option<Date>)>>>>,
+    results: &'a InfResults<'a>,
     repeat: &'a Mutex<Vec<(Rc<LogSentence>, PArgVal)>>,
     args: &'a RwLock<Box<Vec<Rc<ProofArgs>>>>,
     available_threads: Mutex<u32>,
@@ -1198,12 +1301,7 @@ impl<'a> InfTrial<'a> {
             ActiveQuery::Func(ref obj, ref query_pred, _) => (obj, query_pred, true),
         };
         if let Some(false) = context.result {
-            self.results
-                .write()
-                .unwrap()
-                .entry(query_obj.clone())
-                .or_insert(HashMap::new())
-                .insert(query_pred.clone(), Some((false, None)));
+            self.results.add_grounded(query_obj, query_pred, Some((false, None)));
             return;
         }
         for subst in context.grounded.drain(..) {
@@ -1219,7 +1317,7 @@ impl<'a> InfTrial<'a> {
                             } else {
                                 val = false;
                             }
-                            let mut d = self.results.write().unwrap();
+                            let mut d = self.results.grounded_queries.write().unwrap();
                             let mut d = d.entry(query_pred).or_insert(HashMap::new());
                             if d.contains_key(query_obj) {
                                 let cond_ok;
@@ -1258,7 +1356,7 @@ impl<'a> InfTrial<'a> {
                             } else {
                                 val = false;
                             }
-                            let mut d = self.results.write().unwrap();
+                            let mut d = self.results.grounded_queries.write().unwrap();
                             let mut d = d.entry(query_pred).or_insert(HashMap::new());
                             if d.contains_key(query_obj) {
                                 let cond_ok;
@@ -1605,10 +1703,10 @@ enum QueryInput {
 struct QueryProcessed<'a> {
     cls_queries_free: HashMap<Rc<lang::Var>, Vec<&'a lang::FreeClsMemb>>,
     cls_queries_grounded: HashMap<Rc<String>, Vec<&'a lang::GroundedClsMemb>>,
-    cls_memb_query: Vec<&'a lang::GroundedClsMemb>,
+    cls_memb_query: HashMap<Rc<lang::Var>, Vec<&'a lang::FreeClsOwner>>,
     func_queries_free: HashMap<Rc<lang::Var>, Vec<Rc<lang::FuncDecl>>>,
     func_queries_grounded: Vec<Box<lang::GroundedFunc>>,
-    func_memb_query: Vec<&'a lang::GroundedClsMemb>,
+    func_memb_query: HashMap<Rc<lang::Var>, Vec<&'a lang::FreeClsOwner>>,
     vars: Vec<Rc<lang::Var>>,
     cls: Vec<Rc<lang::ClassDecl>>,
     func: Vec<Rc<lang::FuncDecl>>,
@@ -1619,10 +1717,10 @@ impl<'a> QueryProcessed<'a> {
         QueryProcessed {
             cls_queries_free: HashMap::new(),
             cls_queries_grounded: HashMap::new(),
-            cls_memb_query: vec![],
+            cls_memb_query: HashMap::new(),
             func_queries_free: HashMap::new(),
             func_queries_grounded: vec![],
-            func_memb_query: vec![],
+            func_memb_query: HashMap::new(),
             vars: vec![],
             cls: vec![],
             func: vec![],
@@ -1642,18 +1740,17 @@ impl<'a> QueryProcessed<'a> {
                             &lang::Predicate::GroundedClsMemb(ref t) => {
                                 query.push_to_clsquery_grounded(t.get_name(), t);
                             }
+                            _ => return Err(()), // not happening ever
                         }
                     }
                 }
                 &lang::Terminal::FreeTerm(_) => {
                     for a in cdecl.get_args() {
                         match a {
-                            &lang::Predicate::FreeClsMemb(_) => {
-                                return Err(());
-                            }
-                            &lang::Predicate::GroundedClsMemb(ref t) => {
+                            &lang::Predicate::FreeClsOwner(ref t) => {
                                 query.ask_class_memb(t);
                             }
+                            _ => return Err(()), // not happening ever
                         }
                     }
                 }
@@ -1682,16 +1779,14 @@ impl<'a> QueryProcessed<'a> {
                 &lang::Terminal::FreeTerm(_) => {
                     for a in fdecl.get_args() {
                         match a {
-                            &lang::Predicate::FreeClsMemb(_) => {
-                                return Err(());
-                            }
-                            &lang::Predicate::GroundedClsMemb(ref t) => {
+                            &lang::Predicate::FreeClsOwner(ref t) => {
                                 query.ask_relationships(t);
                             }
+                            _ => return Err(()), // not happening ever
                         }
                     }
                 }
-                _ => return Err(()),
+                _ => return Err(()), // keyword: incomprenhensible
             }
             Ok(())
         }
@@ -1728,7 +1823,7 @@ impl<'a> QueryProcessed<'a> {
                                 }
                             }
                         }
-                        lang::ParseTree::IExpr(expr) => {
+                        lang::ParseTree::Expr(expr) => {
                             let (mut vars, preds) = expr.extract_all_predicates();
                             self.vars.append(&mut vars);
                             for a in preds {
@@ -1748,7 +1843,7 @@ impl<'a> QueryProcessed<'a> {
                                 }
                             }
                         }
-                        _ => return Err(()),
+                        _ => return Err(()), // an iexpr: incomprehensible
                     }
                 }
             }
@@ -1777,40 +1872,42 @@ impl<'a> QueryProcessed<'a> {
     }
 
     #[inline]
-    fn ask_class_memb(&mut self, term: &'a lang::GroundedClsMemb) {
-        self.cls_memb_query.push(term);
+    fn ask_class_memb(&mut self, term: &'a lang::FreeClsOwner) {
+        self.cls_memb_query.entry(term.parent.clone()).or_insert(vec![]).push(term);
     }
 
     #[inline]
-    fn ask_relationships(&mut self, term: &'a lang::GroundedClsMemb) {
-        self.func_memb_query.push(term);
+    fn ask_relationships(&mut self, term: &'a lang::FreeClsOwner) {
+        self.func_memb_query.entry(term.parent.clone()).or_insert(vec![]).push(term);
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::collections::HashSet;
 
-    // #[test]
+    #[test]
     fn _temp() {
-        let test_03 = String::from("
-            ( professor[$Lucy,u=1] )
-            ( dean[$John,u=1] )
-            ( fn::criticize[$John,u=1;$Lucy] )
-            ( (let x) ( dean[x,u=1] |> professor[x,u=1] ) )
-            ( (let x) ( professor[x,u=1] |> person[x,u=1] ) )
-            ( (let x, y)
-              (( person[x,u=1] && person[y,u=1] && dean[y,u=1] && fn::criticize[y,u=1;x] )
-                 |> fn::friend[x,u=0;y] ))
+        let test_08 = String::from("
+            # retrieve all relations between objects
+            (fn::loves[$Vicky,u=1;$Lucy])
+            (fn::hates[$Vicky,u=1;cats])
+            (fn::hates[$Vicky,u=0;dogs])
         ");
-        let q03_01 = "(fn::friend[$Lucy,u=0;$John])".to_string();
+        let q08_01 = "((let x) (fn::x[$Vicky,u>0;$Lucy]))".to_string();
+        let q08_02 = "((let x, y) (fn::x[$Vicky,u>0;y]))".to_string();
         let rep = Representation::new();
-        rep.tell(test_03).unwrap();
-        assert_eq!(rep.ask(q03_01, true), Answer::Single(Some(true)));
+        rep.tell(test_08).unwrap();
+        let mut results = HashSet::new();
+        results.insert("loves");
+        results.insert("hates");
+        rep.ask(q08_01);
+        rep.ask(q08_02);
     }
 
     #[test]
-    fn _ask_pred() {
+    fn ask_pred() {
         let test_01 = String::from("
             ( professor[$Lucy,u=1] )
         ");
@@ -1818,8 +1915,8 @@ mod test {
         let q01_02 = "(professor[$Lucy,u=1])".to_string();
         let rep = Representation::new();
         rep.tell(test_01).unwrap();
-        assert_eq!(rep.ask(q01_01, true), Answer::Single(None));
-        assert_eq!(rep.ask(q01_02, true), Answer::Single(Some(true)));
+        assert_eq!(rep.ask(q01_01).get_results_single(), None);
+        assert_eq!(rep.ask(q01_02).get_results_single(), Some(true));
 
         let test_02 = String::from("
             ( professor[$Lucy,u=1] )
@@ -1831,8 +1928,8 @@ mod test {
         let q02_02 = "(person[$John,u=1])".to_string();
         let rep = Representation::new();
         rep.tell(test_02).unwrap();
-        assert_eq!(rep.ask(q02_01, true), Answer::Single(Some(false)));
-        assert_eq!(rep.ask(q02_02, true), Answer::Single(Some(true)));
+        assert_eq!(rep.ask(q02_01).get_results_single(), Some(false));
+        assert_eq!(rep.ask(q02_02).get_results_single(), Some(true));
 
         let test_03 = String::from("
             ( fn::owns[$M1,u=1;$Nono] )
@@ -1850,7 +1947,7 @@ mod test {
         let q03_01 = "(criminal[$West,u=1]) && hostile[$Nono,u=1] && weapon[$M1,u=1]".to_string();
         let rep = Representation::new();
         rep.tell(test_03).unwrap();
-        assert_eq!(rep.ask(q03_01, true), Answer::Single(Some(true)));
+        assert_eq!(rep.ask(q03_01).get_results_single(), Some(true));
 
         let _test_04 = String::from("
             (( let x, y, t1:time, t2:time=\"*now\" )
@@ -1872,29 +1969,38 @@ mod test {
         ");
         let _q05_01 = "(fat(t='*now')[$Pancho,u=1])".to_string();
 
-        let _test_06 = String::from("
+        let test_06 = String::from("
             # query for all 'professor'
-        	( \
-                                     professor[$Lucy,u=1] )
+            ( professor[$Lucy,u=1] )
         	( dean[$John,u=1] )
-        	\
-                                     ((let x) (dean[x,u=1] |> professor[x,u=1]))
+        	((let x) (dean[x,u=1] |> professor[x,u=1]))
         ");
         let _q06_01 = "((let x) (professor[x,u=1]))".to_string();
+        // {'$Lucy': {'professor': True}, '$John': {'professor': True}}
+        let rep = Representation::new();
+        rep.tell(test_06).unwrap();
 
-        let _test_07 = String::from("
+        let test_07 = String::from("
             # query for all classes '$Lucy' is member of
-        	\
-                                     (professor[$Lucy,u=1])
-        	((let x) (professor[x,u=1] \
-                                     |> person[x,u=1]))
+            (professor[$Lucy,u=1])
+        	((let x) (professor[x,u=1] |> person[x,u=1]))
         	(ugly[$Lucy,u=0.2])
         ");
-        let _q07_01 = "((let x) (x[$Lucy,u>0.5]))".to_string();
+        let q07_01 = "((let x) (x[$Lucy,u>0.5]))".to_string();
+        let rep = Representation::new();
+        rep.tell(test_07).unwrap();
+        let mut results = HashSet::new();
+        results.insert("professor");
+        results.insert("person");
+        let answ = rep.ask(q07_01);
+        for a in answ.get_memberships().get("$Lucy").unwrap() {
+            assert!(results.contains(&**a.get_parent()));
+            assert!(&**a.get_parent() != "ugly");
+        }
     }
 
     #[test]
-    fn _ask_func() {
+    fn ask_func() {
         let test_01 = String::from("
             ( professor[$Lucy,u=1] )
             ( dean[$John,u=1] )
@@ -1903,7 +2009,7 @@ mod test {
         let q01_01 = "(fn::criticize[$John,u=1;$Lucy])".to_string();
         let rep = Representation::new();
         rep.tell(test_01).unwrap();
-        assert_eq!(rep.ask(q01_01, true), Answer::Single(Some(true)));
+        assert_eq!(rep.ask(q01_01).get_results_single(), Some(true));
 
         let test_02 = String::from("
             ( animal[cow,u=1] )
@@ -1913,7 +2019,7 @@ mod test {
         let q02_01 = "(fn::produce[milk,u=1;cow])".to_string();
         let rep = Representation::new();
         rep.tell(test_02).unwrap();
-        assert_eq!(rep.ask(q02_01, true), Answer::Single(Some(true)));
+        assert_eq!(rep.ask(q02_01).get_results_single(), Some(true));
 
         let test_03 = String::from("
             ( professor[$Lucy,u=1] )
@@ -1928,7 +2034,7 @@ mod test {
         let q03_01 = "(fn::friend[$Lucy,u=0;$John])".to_string();
         let rep = Representation::new();
         rep.tell(test_03).unwrap();
-        assert_eq!(rep.ask(q03_01, true), Answer::Single(Some(true)));
+        assert_eq!(rep.ask(q03_01).get_results_single(), Some(true));
 
         let _test_05 = String::from("
             (( let x, y, t1: time=\"2015.01.01\", t2: time=\"2015.02.01\" )

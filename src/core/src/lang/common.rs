@@ -15,6 +15,7 @@ use agent;
 pub enum Predicate {
     FreeClsMemb(FreeClsMemb),
     GroundedClsMemb(GroundedClsMemb),
+    FreeClsOwner(FreeClsOwner),
 }
 
 impl<'a> Predicate {
@@ -22,21 +23,40 @@ impl<'a> Predicate {
             context: &'a mut Context,
             func_name: &'a Terminal)
             -> Result<Predicate, ParseErrF> {
-        match Terminal::from(&a.term, context) {
-            Ok(Terminal::FreeTerm(ft)) => {
-                let t = FreeClsMemb::new(ft, a.uval, func_name, None);
-                if t.is_err() {
-                    return Err(t.unwrap_err());
+        if func_name.is_grounded() {
+            match Terminal::from(&a.term, context) {
+                Ok(Terminal::FreeTerm(ft)) => {
+                    let t = FreeClsMemb::new(ft, a.uval, func_name, None);
+                    if t.is_err() {
+                        return Err(t.unwrap_err());
+                    }
+                    Ok(Predicate::FreeClsMemb(t.unwrap()))
                 }
-                Ok(Predicate::FreeClsMemb(t.unwrap()))
+                Ok(Terminal::GroundedTerm(gt)) => {
+                    let t = GroundedClsMemb::new(gt,
+                                                 a.uval.clone(),
+                                                 func_name.to_string(),
+                                                 None,
+                                                 context)
+                        ?;
+                    Ok(Predicate::GroundedClsMemb(t))
+                }
+                Ok(Terminal::Keyword(kw)) => return Err(ParseErrF::ReservedKW(String::from(kw))),
+                Err(err) => Err(err),
             }
-            Ok(Terminal::GroundedTerm(gt)) => {
-                let t =
-                    GroundedClsMemb::new(gt, a.uval.clone(), func_name.to_string(), None, context)?;
-                Ok(Predicate::GroundedClsMemb(t))
+        } else {
+            if context.is_tell {
+                return Err(ParseErrF::ClassIsVar);
             }
-            Ok(Terminal::Keyword(kw)) => return Err(ParseErrF::ReservedKW(String::from(kw))),
-            Err(err) => Err(err),
+            match Terminal::from(&a.term, context) {
+                Ok(Terminal::FreeTerm(_)) => return Err(ParseErrF::BothAreVars),
+                Ok(Terminal::GroundedTerm(gt)) => {
+                    let t = FreeClsOwner::new(gt, a.uval.clone(), func_name, None)?;
+                    Ok(Predicate::FreeClsOwner(t))
+                }
+                Ok(Terminal::Keyword(kw)) => return Err(ParseErrF::ReservedKW(String::from(kw))),
+                Err(err) => Err(err),
+            }
         }
     }
 
@@ -44,7 +64,7 @@ impl<'a> Predicate {
     pub fn is_var(&self) -> bool {
         match *self {
             Predicate::FreeClsMemb(_) => true,
-            Predicate::GroundedClsMemb(_) => false,
+            _ => false,
         }
     }
 
@@ -61,6 +81,7 @@ impl<'a> Predicate {
         match *self {
             Predicate::FreeClsMemb(ref t) => t.get_id(),
             Predicate::GroundedClsMemb(ref t) => t.get_id(),
+            Predicate::FreeClsOwner(ref t) => t.get_id(),
         }
     }
 
@@ -74,6 +95,13 @@ impl<'a> Predicate {
                 }
             }
             Predicate::FreeClsMemb(ref t) => {
+                if t.value.is_some() {
+                    true
+                } else {
+                    false
+                }
+            }
+            Predicate::FreeClsOwner(ref t) => {
                 if t.value.is_some() {
                     true
                 } else {
@@ -346,6 +374,7 @@ impl GroundedFunc {
                     }
                 }
                 &Predicate::GroundedClsMemb(ref term) => term.clone(),
+                _ => return Err(()),
             };
             if i == 0 {
                 first = Some(n_a)
@@ -423,48 +452,21 @@ pub struct FreeClsMemb {
     value: Option<f32>,
     operator: Option<CompOperator>,
     parent: Terminal,
-    dates: Option<Vec<i32>>,
+    dates: Option<Vec<DateTime<UTC>>>,
 }
-
 impl FreeClsMemb {
     fn new(term: Rc<Var>,
            uval: Option<UVal>,
            parent: &Terminal,
-           _dates: Option<Vec<DateTime<UTC>>>)
+           dates: Option<Vec<DateTime<UTC>>>)
            -> Result<FreeClsMemb, ParseErrF> {
-        let val;
-        let op;
-        if uval.is_some() {
-            let uval = uval.unwrap();
-            val = match uval.val {
-                Number::UnsignedInteger(val) => {
-                    if val == 0 || val == 1 {
-                        Some(val as f32)
-                    } else {
-                        return Err(ParseErrF::IUVal(val as f32));
-                    }
-                }
-                Number::UnsignedFloat(val) => {
-                    if val >= 0. && val <= 1. {
-                        Some(val)
-                    } else {
-                        return Err(ParseErrF::IUVal(val as f32));
-                    }
-                }
-                Number::SignedFloat(val) => return Err(ParseErrF::IUVal(val as f32)),
-                Number::SignedInteger(val) => return Err(ParseErrF::IUVal(val as f32)),
-            };
-            op = Some(uval.op);
-        } else {
-            val = None;
-            op = None;
-        }
+        let (val, op) = match_uval(uval)?;
         Ok(FreeClsMemb {
             term: term,
             value: val,
             operator: op,
             parent: parent.clone(),
-            dates: None,
+            dates: dates,
         })
     }
 
@@ -527,6 +529,109 @@ impl FreeClsMemb {
         } else {
             true
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FreeClsOwner {
+    pub term: Rc<String>,
+    value: Option<f32>,
+    operator: Option<CompOperator>,
+    pub parent: Rc<Var>,
+    dates: Option<Vec<DateTime<UTC>>>,
+}
+
+impl FreeClsOwner {
+    fn new(term: Rc<String>,
+           uval: Option<UVal>,
+           parent: &Terminal,
+           dates: Option<Vec<DateTime<UTC>>>)
+           -> Result<FreeClsOwner, ParseErrF> {
+        let (val, op) = match_uval(uval)?;
+        Ok(FreeClsOwner {
+            term: term,
+            value: val,
+            operator: op,
+            parent: parent.get_var(),
+            dates: dates,
+        })
+    }
+
+    fn get_id(&self) -> Vec<u8> {
+        let mut id: Vec<u8> = vec![];
+        let mut id_1 = Vec::from(self.term.as_bytes());
+        id.append(&mut id_1);
+        match self.operator {
+            None => id.push(0),
+            Some(CompOperator::Equal) => id.push(1),
+            Some(CompOperator::Less) => id.push(2),
+            Some(CompOperator::More) => id.push(3),
+        }
+        if let Some(ref val) = self.value {
+            let mut id_2 = format!("{}", *val).into_bytes();
+            id.append(&mut id_2);
+        }
+        id
+    }
+
+    #[inline]
+    pub fn filter_grounded(&self, other: &GroundedClsMemb) -> bool {
+        if self.operator.is_some() {
+            let val = self.value.as_ref().unwrap();
+            match *self.operator.as_ref().unwrap() {
+                CompOperator::Equal => {
+                    if *other.value.as_ref().unwrap().read().unwrap() == *val {
+                        true
+                    } else {
+                        false
+                    }
+                }
+                CompOperator::Less => {
+                    if *other.value.as_ref().unwrap().read().unwrap() < *val {
+                        true
+                    } else {
+                        false
+                    }
+                }
+                CompOperator::More => {
+                    if *other.value.as_ref().unwrap().read().unwrap() > *val {
+                        true
+                    } else {
+                        false
+                    }
+                }
+            }
+        } else {
+            true
+        }
+    }
+}
+
+type UValDestruct = (Option<f32>, Option<CompOperator>);
+fn match_uval(uval: Option<UVal>) -> Result<UValDestruct, ParseErrF> {
+    if let Some(uval) = uval {
+        let val = match uval.val {
+            Number::UnsignedInteger(val) => {
+                if val == 0 || val == 1 {
+                    Some(val as f32)
+                } else {
+                    return Err(ParseErrF::IUVal(val as f32));
+                }
+            }
+            Number::UnsignedFloat(val) => {
+                if val >= 0. && val <= 1. {
+                    Some(val)
+                } else {
+                    return Err(ParseErrF::IUVal(val as f32));
+                }
+            }
+            Number::SignedFloat(val) => return Err(ParseErrF::IUVal(val as f32)),
+            Number::SignedInteger(val) => return Err(ParseErrF::IUVal(val as f32)),
+        };
+        let op = Some(uval.op);
+        Ok((val, op))
+    } else {
+        Ok((None, None))
     }
 }
 
@@ -987,8 +1092,10 @@ impl<'a> ClassDecl {
 
     fn get_id(&self) -> Vec<u8> {
         let mut id = vec![];
-        let mut id_1 = Vec::from(self.name.get_name().as_bytes());
-        id.append(&mut id_1);
+        if self.name.is_grounded() {
+            let mut id_1 = Vec::from(self.name.get_name().as_bytes());
+            id.append(&mut id_1);
+        }
         for a in self.args.iter() {
             let mut id_2 = a.get_id();
             id.append(&mut id_2)
@@ -1064,6 +1171,7 @@ impl<'a> ClassDecl {
                         return None;
                     }
                 }
+                _ => return None, // this path won't be taken in any program
             }
         }
         Some(true)
@@ -1083,6 +1191,7 @@ impl<'a> ClassDecl {
                     }
                 }
                 &Predicate::GroundedClsMemb(ref grounded) => grounded.clone(),
+                _ => return, // this path won't be taken in any program
             };
             let grfact = Rc::new(grfact);
             context.grounded.push((Grounded::Terminal(grfact.clone()), UTC::now()));
@@ -1352,6 +1461,20 @@ impl<'a> Terminal {
         match self {
             &Terminal::GroundedTerm(ref name) => name.clone(),
             _ => panic!("simag: attempted to get a name from a non-grounded terminal"),
+        }
+    }
+
+    fn is_grounded(&self) -> bool {
+        match self {
+            &Terminal::FreeTerm(_) => false,
+            _ => true,
+        }
+    }
+
+    fn get_var(&self) -> Rc<Var> {
+        match self {
+            &Terminal::FreeTerm(ref var) => var.clone(),
+            _ => panic!("simag: attempted to get a variable address in a grounded terminal"),
         }
     }
 }

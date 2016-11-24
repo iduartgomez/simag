@@ -72,8 +72,8 @@ impl Parser {
         }
         let results: VecDeque<ParseTree> = parse_trees.drain(..)
             .map(|res| {
-                let res = res.join().unwrap();
-                match res {
+                let res = res.join();
+                match res.unwrap() {
                     Ok(ptr) => unsafe { *Box::from_raw(ptr as *mut ParseTree) },
                     Err(err) => ParseTree::ParseErr(err),
                 }
@@ -151,6 +151,8 @@ pub enum ParseErrF {
     IExprNotIcond,
     RuleInclICond(String),
     ExprWithVars(String),
+    BothAreVars,
+    ClassIsVar,
     RFuncWrongArgs,
     WrongArgNumb,
     WrongPredicate,
@@ -176,7 +178,7 @@ impl<'a> From<ParseErrB<'a>> for ParseErrF {
 pub enum ParseTree {
     Assertion(Vec<Assert>),
     IExpr(LogSentence),
-    Rule(LogSentence),
+    Expr(LogSentence),
     ParseErr(ParseErrF),
 }
 
@@ -203,10 +205,16 @@ impl ParseTree {
                         Ok(ptr)
                     }
                     SentType::Rule => {
-                        let ptr = Box::into_raw(Box::new(ParseTree::Rule(sent))) as usize;
+                        let ptr = Box::into_raw(Box::new(ParseTree::Expr(sent))) as usize;
                         Ok(ptr)
                     }
-                    SentType::Expr => Err(ParseErrF::ExprWithVars(format!("{}", sent))),
+                    SentType::Expr if context.is_tell => {
+                        Err(ParseErrF::ExprWithVars(format!("{}", sent)))
+                    }
+                    SentType::Expr => {
+                        let ptr = Box::into_raw(Box::new(ParseTree::Expr(sent))) as usize;
+                        Ok(ptr)
+                    }
                 }
             }
             Err(err) => Err(err),
