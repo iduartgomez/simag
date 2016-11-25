@@ -21,21 +21,19 @@ pub enum Predicate {
 impl<'a> Predicate {
     fn from(a: &'a ArgBorrowed<'a>,
             context: &'a mut Context,
-            func_name: &'a Terminal)
+            name: &'a Terminal,
+            is_func: bool)
             -> Result<Predicate, ParseErrF> {
-        if func_name.is_grounded() {
+        if name.is_grounded() {
             match Terminal::from(&a.term, context) {
                 Ok(Terminal::FreeTerm(ft)) => {
-                    let t = FreeClsMemb::new(ft, a.uval, func_name, None);
-                    if t.is_err() {
-                        return Err(t.unwrap_err());
-                    }
-                    Ok(Predicate::FreeClsMemb(t.unwrap()))
+                    let t = FreeClsMemb::new(ft, a.uval, name, None)?;
+                    Ok(Predicate::FreeClsMemb(t))
                 }
                 Ok(Terminal::GroundedTerm(gt)) => {
                     let t = GroundedClsMemb::new(gt,
                                                  a.uval.clone(),
-                                                 func_name.to_string(),
+                                                 name.to_string(),
                                                  None,
                                                  context)
                         ?;
@@ -49,9 +47,13 @@ impl<'a> Predicate {
                 return Err(ParseErrF::ClassIsVar);
             }
             match Terminal::from(&a.term, context) {
-                Ok(Terminal::FreeTerm(_)) => return Err(ParseErrF::BothAreVars),
+                Ok(Terminal::FreeTerm(_)) if !is_func => return Err(ParseErrF::BothAreVars),
+                Ok(Terminal::FreeTerm(ft)) => {
+                    let t = FreeClsMemb::new(ft, a.uval, name, None)?;
+                    Ok(Predicate::FreeClsMemb(t))
+                }
                 Ok(Terminal::GroundedTerm(gt)) => {
-                    let t = FreeClsOwner::new(gt, a.uval.clone(), func_name, None)?;
+                    let t = FreeClsOwner::new(gt, a.uval.clone(), name, None)?;
                     Ok(Predicate::FreeClsOwner(t))
                 }
                 Ok(Terminal::Keyword(kw)) => return Err(ParseErrF::ReservedKW(String::from(kw))),
@@ -69,9 +71,43 @@ impl<'a> Predicate {
     }
 
     #[inline]
+    pub fn get_uval(&self) -> (Option<CompOperator>, Option<f32>) {
+        match *self {
+            Predicate::GroundedClsMemb(ref t) => {
+                if t.value.is_some() {
+                    let val = t.value.as_ref().unwrap().read().unwrap().clone();
+                    let op = *t.operator.as_ref().unwrap();
+                    return (Some(op), Some(val))
+                } else {
+                    return (None, None)
+                }
+            }
+            Predicate::FreeClsMemb(ref t) => {
+                if t.value.is_some() {
+                    let val = *t.value.as_ref().unwrap();
+                    let op = *t.operator.as_ref().unwrap();
+                    return (Some(op), Some(val))
+                } else {
+                    return (None, None)
+                }
+            }
+            Predicate::FreeClsOwner(ref t) => {
+                if t.value.is_some() {
+                    let val = *t.value.as_ref().unwrap();
+                    let op = *t.operator.as_ref().unwrap();
+                    return (Some(op), Some(val))
+                } else {
+                    return (None, None)
+                }
+            }
+        }
+    }
+
+    #[inline]
     pub fn get_name(&self) -> Rc<String> {
         match *self {
             Predicate::GroundedClsMemb(ref t) => t.get_name(),
+            Predicate::FreeClsOwner(ref t) => t.term.clone(),
             _ => panic!("simag: expected a grounded terminal, found a free terminal"),
         }
     }
@@ -85,7 +121,7 @@ impl<'a> Predicate {
         }
     }
 
-    fn has_uval(&self) -> bool {
+    pub fn has_uval(&self) -> bool {
         match *self {
             Predicate::GroundedClsMemb(ref t) => {
                 if t.value.is_some() {
@@ -350,6 +386,8 @@ pub struct GroundedFunc {
     pub third: Option<GroundedClsMemb>,
 }
 
+impl ::std::cmp::Eq for GroundedFunc {}
+
 impl GroundedFunc {
     pub fn from_free(free: &FuncDecl,
                      assignments: &HashMap<Rc<Var>, &agent::VarAssignment>)
@@ -394,6 +432,22 @@ impl GroundedFunc {
     #[inline]
     pub fn get_name(&self) -> Rc<String> {
         self.name.clone()
+    }
+
+    #[inline]
+    pub fn get_value(&self) -> f32 {
+        *self.args[0].value.as_ref().unwrap().read().unwrap()
+    }
+
+    #[inline]
+    pub fn name_in_pos(&self, name: &str, pos: &usize) -> bool {
+        if (*pos < 2) && (&**self.args[*pos].get_name() == name) {
+            true
+        } else if self.third.is_some() && &**self.third.as_ref().unwrap().get_name() == name {
+            true
+        } else {
+            false
+        }
     }
 
     #[inline]
@@ -702,8 +756,8 @@ impl Assert {
     #[inline]
     pub fn contains(&self, var: &Var) -> bool {
         match self {
-            &Assert::FuncDecl(ref f) => f.contains(var),
-            &Assert::ClassDecl(ref c) => c.contains(var),
+            &Assert::FuncDecl(ref f) => f.contains_var(var),
+            &Assert::ClassDecl(ref c) => c.contains_var(var),
         }
     }
 
@@ -831,8 +885,10 @@ impl<'a> FuncDecl {
 
     fn get_id(&self) -> Vec<u8> {
         let mut id = vec![];
-        let mut id_1 = Vec::from(self.name.get_name().as_bytes());
-        id.append(&mut id_1);
+        if self.name.is_grounded() {
+            let mut id_1 = Vec::from(self.name.get_name().as_bytes());
+            id.append(&mut id_1);
+        }
         if let Some(ref args) = self.args {
             for a in args {
                 let mut id_2 = a.get_id();
@@ -888,16 +944,20 @@ impl<'a> FuncDecl {
             if oargs.len() > 3 || oargs.len() < 2 {
                 return Err(ParseErrF::WrongArgNumb);
             }
+            let mut vars = 0;
             for (i, a) in oargs.iter().enumerate() {
-                let pred = Predicate::from(a, context, &name);
-                if pred.is_err() {
-                    return Err(pred.unwrap_err());
-                }
-                let pred = pred.unwrap();
+                let pred = Predicate::from(a, context, &name, true)?;
                 if pred.has_uval() && (i == 1 || i == 2) {
                     return Err(ParseErrF::RFuncWrongArgs);
                 }
+                if pred.is_var() {
+                    vars += 1;
+                }
                 args.push(pred);
+            }
+            if (oargs.len() == vars) && name.is_var() {
+                // it's a free fn query, but at least one of the arguments must be grounded
+                return Err(ParseErrF::BothAreVars)
             }
         } else {
             return Err(ParseErrF::WrongArgNumb);
@@ -950,7 +1010,7 @@ impl<'a> FuncDecl {
         })
     }
 
-    fn contains(&self, var: &Var) -> bool {
+    fn contains_var(&self, var: &Var) -> bool {
         if self.args.is_some() {
             for a in self.args.as_ref().unwrap() {
                 match a {
@@ -965,7 +1025,7 @@ impl<'a> FuncDecl {
         }
         if self.op_args.is_some() {
             for a in self.op_args.as_ref().unwrap() {
-                if a.contains(var) {
+                if a.contains_var(var) {
                     return true;
                 }
             }
@@ -1057,11 +1117,8 @@ impl<'a> ClassDecl {
         let args = {
             let mut v0 = Vec::with_capacity(other.args.len());
             for a in &other.args {
-                let pred = Predicate::from(a, context, &class_name);
-                if pred.is_err() {
-                    return Err(pred.unwrap_err());
-                }
-                v0.push(pred.unwrap());
+                let pred = Predicate::from(a, context, &class_name, false)?;
+                v0.push(pred);
             }
             v0
         };
@@ -1109,7 +1166,7 @@ impl<'a> ClassDecl {
         id
     }
 
-    fn contains(&self, var: &Var) -> bool {
+    fn contains_var(&self, var: &Var) -> bool {
         for a in &self.args {
             match a {
                 &Predicate::FreeClsMemb(ref term) => {
@@ -1122,7 +1179,7 @@ impl<'a> ClassDecl {
         }
         if self.op_args.is_some() {
             for a in self.op_args.as_ref().unwrap() {
-                if a.contains(var) {
+                if a.contains_var(var) {
                     return true;
                 }
             }
@@ -1246,31 +1303,25 @@ impl<'a> OpArg {
     pub fn from(other: &OpArgBorrowed<'a>, context: &mut Context) -> Result<OpArg, ParseErrF> {
         let comp = match other.comp {
             Some((op, ref tors)) => {
-                let t = OpArgTerm::from(&tors, context);
-                if t.is_err() {
-                    return Err(t.unwrap_err());
-                }
-                Some((op, t.unwrap()))
+                let t = OpArgTerm::from(&tors, context)?;
+                Some((op, t))
             }
             None => None,
         };
-        let t = OpArgTerm::from(&other.term, context);
-        if t.is_err() {
-            return Err(t.unwrap_err());
-        }
+        let t = OpArgTerm::from(&other.term, context)?;
         Ok(OpArg {
-            term: t.unwrap(),
+            term: t,
             comp: comp,
         })
     }
 
     #[inline]
-    fn contains(&self, var: &Var) -> bool {
-        if self.term.is_var(var) {
+    fn contains_var(&self, var: &Var) -> bool {
+        if self.term.var_equality(var) {
             return true;
         }
         if let Some((_, ref term)) = self.comp {
-            if term.is_var(var) {
+            if term.var_equality(var) {
                 return true;
             }
         }
@@ -1314,9 +1365,9 @@ impl<'a> OpArgTerm {
     }
 
     #[inline]
-    fn is_var(&self, var: &Var) -> bool {
+    fn var_equality(&self, var: &Var) -> bool {
         match *self {
-            OpArgTerm::Terminal(ref term) => term.is_var(var),
+            OpArgTerm::Terminal(ref term) => term.var_equality(var),
             OpArgTerm::String(_) => false,
         }
     }
@@ -1437,7 +1488,7 @@ impl<'a> Terminal {
         Ok(Terminal::GroundedTerm(Rc::new(name)))
     }
 
-    fn is_var(&self, v1: &Var) -> bool {
+    fn var_equality(&self, v1: &Var) -> bool {
         match *self {
             Terminal::FreeTerm(ref v0) => {
                 if (&*v1 as *const Var) == (&**v0 as *const Var) {
@@ -1446,6 +1497,13 @@ impl<'a> Terminal {
                     false
                 }
             }
+            _ => false,
+        }
+    }
+
+    fn is_var(&self) -> bool {
+        match *self {
+            Terminal::FreeTerm(_) => true,
             _ => false,
         }
     }
@@ -1471,7 +1529,7 @@ impl<'a> Terminal {
         }
     }
 
-    fn get_var(&self) -> Rc<Var> {
+    pub fn get_var(&self) -> Rc<Var> {
         match self {
             &Terminal::FreeTerm(ref var) => var.clone(),
             _ => panic!("simag: attempted to get a variable address in a grounded terminal"),

@@ -554,6 +554,36 @@ impl Representation {
         }
         None
     }
+
+    fn get_relationships(&self,
+                         func: &lang::FuncDecl)
+                         -> HashMap<Rc<String>, Vec<Rc<GroundedFunc>>> {
+        let mut res = HashMap::new();
+        for (pos, arg) in func.get_args().enumerate() {
+            if !arg.is_var() {
+                let name = arg.get_name();
+                match name.starts_with("$") {
+                    true => {
+                        if let Some(entity) = self.entities.read().unwrap().get(&name) {
+                            let mut v = entity.get_relationships(pos, arg);
+                            for (rel, mut funcs) in v.drain() {
+                                res.entry(rel).or_insert(vec![]).append(&mut funcs);
+                            }
+                        }
+                    }
+                    false => {
+                        if let Some(class) = self.classes.read().unwrap().get(&name) {
+                            let mut v = class.get_relationships(pos, arg);
+                            for (rel, mut funcs) in v.drain() {
+                                res.entry(rel).or_insert(vec![]).append(&mut funcs);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        res
+    }
 }
 
 /// An entity is the unique member of it's own class.
@@ -631,6 +661,41 @@ impl Entity {
             }
         }
         None
+    }
+
+    fn get_relationships(&self,
+                         pos: usize,
+                         compare: &lang::Predicate)
+                         -> HashMap<Rc<String>, Vec<Rc<GroundedFunc>>> {
+        let mut res = HashMap::new();
+        let self_name = &**self.name;
+        let (op, val) = compare.get_uval();
+        let lock = self.relations.read().unwrap();
+        for (rel_name, functions) in lock.iter() {
+            for f in functions {
+                if f.name_in_pos(self_name, &pos) {
+                    match op {
+                        None => res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone()),
+                        Some(lang::CompOperator::Equal) => {
+                            if *val.as_ref().unwrap() == f.get_value() {
+                                res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
+                            }
+                        }
+                        Some(lang::CompOperator::More) => {
+                            if *val.as_ref().unwrap() < f.get_value() {
+                                res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
+                            }
+                        }
+                        Some(lang::CompOperator::Less) => {
+                            if *val.as_ref().unwrap() > f.get_value() {
+                                res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        res
     }
 
     fn add_relationship(&self, func: Rc<GroundedFunc>) -> bool {
@@ -772,6 +837,41 @@ impl Class {
         None
     }
 
+    fn get_relationships(&self,
+                         pos: usize,
+                         compare: &lang::Predicate)
+                         -> HashMap<Rc<String>, Vec<Rc<GroundedFunc>>> {
+        let mut res = HashMap::new();
+        let self_name = &**self.name;
+        let (op, val) = compare.get_uval();
+        let lock = self.relations.read().unwrap();
+        for (rel_name, functions) in lock.iter() {
+            for f in functions {
+                if f.name_in_pos(self_name, &pos) {
+                    match op {
+                        None => res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone()),
+                        Some(lang::CompOperator::Equal) => {
+                            if *val.as_ref().unwrap() == f.get_value() {
+                                res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
+                            }
+                        }
+                        Some(lang::CompOperator::More) => {
+                            if *val.as_ref().unwrap() < f.get_value() {
+                                res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
+                            }
+                        }
+                        Some(lang::CompOperator::Less) => {
+                            if *val.as_ref().unwrap() > f.get_value() {
+                                res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        res
+    }
+
     /// Add a relationship this class has with other classes/entities
     fn add_relationship(&self, func: Rc<GroundedFunc>) -> bool {
         let mut lock = self.relations.write().unwrap();
@@ -826,7 +926,8 @@ impl Class {
     }
 }
 
-type PArgVal = Vec<usize>;
+// Inference type infrastructure:
+
 struct Inference<'a> {
     query: QueryProcessed<'a>,
     kb: &'a Representation,
@@ -839,15 +940,20 @@ struct Inference<'a> {
     available_threads: Mutex<u32>,
 }
 
+type PArgVal = Vec<usize>;
 type ObjName<'a> = &'a str;
 type QueryPredicate<'a> = &'a str;
 type QueryResult<'a> = HashMap<QueryPredicate<'a>,
                                HashMap<ObjName<'a>, Option<(bool, Option<Date>)>>>;
 
+/// A succesful query will return an InfResult which contains all the answer data.
+/// The data can be manipulated and filtered throught various methods returning
+/// whatever is requested by the consumer.
 #[derive(Debug)]
 pub struct InfResults<'a> {
     grounded_queries: RwLock<QueryResult<'a>>,
     membership: RwLock<HashMap<Rc<lang::Var>, HashMap<ObjName<'a>, Vec<Rc<GroundedClsMemb>>>>>,
+    relationships: RwLock<HashMap<Rc<lang::Var>, HashMap<ObjName<'a>, Vec<Rc<GroundedFunc>>>>>,
 }
 
 impl<'a> InfResults<'a> {
@@ -855,6 +961,7 @@ impl<'a> InfResults<'a> {
         InfResults {
             grounded_queries: RwLock::new(HashMap::new()),
             membership: RwLock::new(HashMap::new()),
+            relationships: RwLock::new(HashMap::new()),
         }
     }
 
@@ -868,13 +975,31 @@ impl<'a> InfResults<'a> {
             .insert(name, member_of);
     }
 
+    fn add_relationships(&self,
+                         var: Rc<lang::Var>,
+                         relationships: HashMap<Rc<String>, Vec<Rc<GroundedFunc>>>) {
+        let mut lock = self.relationships.write().unwrap();
+        for funcs in relationships.values() {
+            for func in funcs {
+                for obj in func.get_args_names() {
+                    let name = unsafe { &*(&*obj as *const String) as &'a str };
+                    lock.entry(var.clone())
+                        .or_insert(HashMap::new())
+                        .entry(name)
+                        .or_insert(vec![])
+                        .push(func.clone());
+                }
+            }
+        }
+    }
+
     fn add_grounded(&self, obj: &'a str, pred: &'a str, res: Option<(bool, Option<Date>)>) {
         let mut lock = self.grounded_queries.write().unwrap();
         lock.entry(pred).or_insert(HashMap::new()).insert(obj, res);
     }
 
-    pub fn get_results_single(self) -> Option<bool> {
-        let results = self.grounded_queries.into_inner().unwrap();
+    pub fn get_results_single(&self) -> Option<bool> {
+        let results = self.grounded_queries.read().unwrap();
         if results.len() == 0 {
             return None;
         }
@@ -909,8 +1034,32 @@ impl<'a> InfResults<'a> {
         }
         res
     }
+
+    pub fn get_relationships(&'a self) -> HashMap<ObjName, Vec<&'a GroundedFunc>> {
+        let lock = self.relationships.read().unwrap();
+        let mut res = HashMap::new();
+        for relations in lock.values() {
+            for relation_ls in relations.values() {
+                for grfunc in relation_ls {
+                    for name in grfunc.get_args_names() {
+                        let name = unsafe { &*(&*name as *const String) as &'a str };
+                        res.entry(name)
+                            .or_insert(HashSet::new())
+                            .insert(&**grfunc as *const GroundedFunc);
+                    }
+                }
+            }
+        }
+        HashMap::from_iter(res.iter().map(|(k, l)| {
+            (*k, l.iter().map(|v| unsafe { &**v as &'a GroundedFunc }).collect::<Vec<_>>())
+        }))
+    }
 }
 
+/// Carries the inference results payload or the error type in case the query
+/// failed. A query can fail because it's either incomprehensible, in which case
+/// it will return a QueryErr variant, or because parsing of the ask request failed
+/// in which case it will return a ParseErr variant and it's payload.
 #[derive(Debug)]
 pub enum Answer<'a> {
     Results(InfResults<'a>),
@@ -927,7 +1076,6 @@ impl<'a> Answer<'a> {
     }
 
     pub fn get_results_multiple(self) -> QueryResult<'a> {
-        println!("RESULT:\n{:?}", self);
         match self {
             Answer::Results(result) => result.get_results_multiple(),
             _ => panic!("simag: tried to unwrap a result from an error"),
@@ -940,6 +1088,20 @@ impl<'a> Answer<'a> {
             _ => panic!("simag: tried to unwrap a result from an error"),
         }
     }
+
+    pub fn get_relationships(&'a self) -> HashMap<ObjName, Vec<&'a GroundedFunc>> {
+        match *self {
+            Answer::Results(ref result) => result.get_relationships(),
+            _ => panic!("simag: tried to unwrap a result from an error"),
+        }
+    }
+
+    pub fn is_err(&self) -> bool {
+        match *self {
+            Answer::Results(_) => false,
+            _ => true,
+        }
+    }
 }
 
 impl<'a> Inference<'a> {
@@ -948,7 +1110,6 @@ impl<'a> Inference<'a> {
            ignore_current: bool)
            -> Result<Box<Inference<'a>>, ()> {
         let query = QueryProcessed::new().get_query(query_input)?;
-        println!("QUERY:\n{:?}\n", query);
         Ok(Box::new(Inference {
             query: query,
             kb: agent,
@@ -1062,7 +1223,6 @@ impl<'a> Inference<'a> {
             }
         });
 
-        // cls_memb_query: HashMap<Rc<lang::Var>, Vec<&'a lang::FreeClsOwner>>
         for (var, objs) in self.query.cls_memb_query.iter() {
             for obj in objs {
                 let name = unsafe { &*(&*obj.term as *const String) as &'a str };
@@ -1071,9 +1231,12 @@ impl<'a> Inference<'a> {
             }
         }
 
-        // func_memb_query: HashMap<Rc<lang::Var>, Vec<&'a lang::FreeClsOwner>>,
-        for (var, objs) in self.query.func_memb_query.iter() {
-
+        for (var, funcs) in self.query.func_memb_query.iter() {
+            for func in funcs {
+                // let name = unsafe { &*(&*obj.get_name() as *const String) as &'a str };
+                let relationships = self.kb.get_relationships(func);
+                self.results.add_relationships(var.clone(), relationships);
+            }
         }
     }
 }
@@ -1706,7 +1869,7 @@ struct QueryProcessed<'a> {
     cls_memb_query: HashMap<Rc<lang::Var>, Vec<&'a lang::FreeClsOwner>>,
     func_queries_free: HashMap<Rc<lang::Var>, Vec<Rc<lang::FuncDecl>>>,
     func_queries_grounded: Vec<Box<lang::GroundedFunc>>,
-    func_memb_query: HashMap<Rc<lang::Var>, Vec<&'a lang::FreeClsOwner>>,
+    func_memb_query: HashMap<Rc<lang::Var>, Vec<Rc<lang::FuncDecl>>>,
     vars: Vec<Rc<lang::Var>>,
     cls: Vec<Rc<lang::ClassDecl>>,
     func: Vec<Rc<lang::FuncDecl>>,
@@ -1776,16 +1939,7 @@ impl<'a> QueryProcessed<'a> {
                         }
                     }
                 }
-                &lang::Terminal::FreeTerm(_) => {
-                    for a in fdecl.get_args() {
-                        match a {
-                            &lang::Predicate::FreeClsOwner(ref t) => {
-                                query.ask_relationships(t);
-                            }
-                            _ => return Err(()), // not happening ever
-                        }
-                    }
-                }
+                &lang::Terminal::FreeTerm(_) => query.ask_relationships(fdecl.clone()),
                 _ => return Err(()), // keyword: incomprenhensible
             }
             Ok(())
@@ -1877,8 +2031,8 @@ impl<'a> QueryProcessed<'a> {
     }
 
     #[inline]
-    fn ask_relationships(&mut self, term: &'a lang::FreeClsOwner) {
-        self.func_memb_query.entry(term.parent.clone()).or_insert(vec![]).push(term);
+    fn ask_relationships(&mut self, term: Rc<lang::FuncDecl>) {
+        self.func_memb_query.entry(term.get_parent().get_var()).or_insert(vec![]).push(term);
     }
 }
 
@@ -1888,26 +2042,8 @@ mod test {
     use std::collections::HashSet;
 
     #[test]
-    fn _temp() {
-        let test_08 = String::from("
-            # retrieve all relations between objects
-            (fn::loves[$Vicky,u=1;$Lucy])
-            (fn::hates[$Vicky,u=1;cats])
-            (fn::hates[$Vicky,u=0;dogs])
-        ");
-        let q08_01 = "((let x) (fn::x[$Vicky,u>0;$Lucy]))".to_string();
-        let q08_02 = "((let x, y) (fn::x[$Vicky,u>0;y]))".to_string();
-        let rep = Representation::new();
-        rep.tell(test_08).unwrap();
-        let mut results = HashSet::new();
-        results.insert("loves");
-        results.insert("hates");
-        rep.ask(q08_01);
-        rep.ask(q08_02);
-    }
-
-    #[test]
     fn ask_pred() {
+        /*
         let test_01 = String::from("
             ( professor[$Lucy,u=1] )
         ");
@@ -1976,9 +2112,9 @@ mod test {
         	((let x) (dean[x,u=1] |> professor[x,u=1]))
         ");
         let _q06_01 = "((let x) (professor[x,u=1]))".to_string();
-        // {'$Lucy': {'professor': True}, '$John': {'professor': True}}
         let rep = Representation::new();
         rep.tell(test_06).unwrap();
+        */
 
         let test_07 = String::from("
             # query for all classes '$Lucy' is member of
@@ -1993,10 +2129,14 @@ mod test {
         results.insert("professor");
         results.insert("person");
         let answ = rep.ask(q07_01);
-        for a in answ.get_memberships().get("$Lucy").unwrap() {
+        let a07_01 = answ.get_memberships();
+        let mut cnt = 0;
+        for a in a07_01.get("$Lucy").unwrap() {
+            cnt += 1;
             assert!(results.contains(&**a.get_parent()));
             assert!(&**a.get_parent() != "ugly");
         }
+        assert_eq!(cnt, 2)
     }
 
     #[test]
@@ -2069,10 +2209,37 @@ mod test {
         ");
         let _q07_01 = "((let x) (fn::produce[milk,u>0;x]))".to_string();
 
-        let _test_08 = String::from("
+        let test_08 = String::from("
             # retrieve all relations between objects
             (fn::loves[$Vicky,u=1;$Lucy])
+            (fn::worships[$Vicky,u=1;cats])
+            (fn::hates[$Vicky,u=0;dogs])
         ");
-        let _q08_01 = "((let x) (fn::x[$Vicky,u>0;$Lucy]))".to_string();
+
+        let q08_01 = "((let x) (fn::x[$Vicky,u>0;$Lucy]))".to_string();
+        let rep = Representation::new();
+        rep.tell(test_08).unwrap();
+        let mut results = HashSet::new();
+        results.insert("loves");
+        results.insert("worships");
+        let answ = rep.ask(q08_01);
+        let a08_01 = answ.get_relationships();
+        let mut cnt = 0;
+        for a in a08_01.get("$Vicky").unwrap() {
+            cnt += 1;
+            assert!(results.contains(&**a.get_name()));
+            assert!(&**a.get_name() != "hates");
+        }
+        assert_eq!(cnt, 2);
+
+        let q08_02 = "((let x, y) (fn::x[$Vicky,u=0;y]))".to_string();
+        let answ = rep.ask(q08_02);
+        let a08_02 = answ.get_relationships();
+        let mut cnt = 0;
+        for a in a08_02.get("$Vicky").unwrap() {
+            cnt += 1;
+            assert!(&**a.get_name() == "hates");
+        }
+        assert_eq!(cnt, 1);
     }
 }

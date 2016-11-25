@@ -4,7 +4,7 @@ mod common;
 
 use std::collections::VecDeque;
 
-pub use self::parser::{ParseErrF, ParseTree};
+pub use self::parser::{ParseErrF, ParseTree, CompOperator};
 pub use self::logsent::LogSentence;
 pub use self::common::*;
 
