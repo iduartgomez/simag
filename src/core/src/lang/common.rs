@@ -31,12 +31,8 @@ impl<'a> Predicate {
                     Ok(Predicate::FreeClsMemb(t))
                 }
                 Ok(Terminal::GroundedTerm(gt)) => {
-                    let t = GroundedClsMemb::new(gt,
-                                                 a.uval.clone(),
-                                                 name.to_string(),
-                                                 None,
-                                                 context)
-                        ?;
+                    let t =
+                        GroundedClsMemb::new(gt, a.uval.clone(), name.to_string(), None, context)?;
                     Ok(Predicate::GroundedClsMemb(t))
                 }
                 Ok(Terminal::Keyword(kw)) => return Err(ParseErrF::ReservedKW(String::from(kw))),
@@ -77,27 +73,27 @@ impl<'a> Predicate {
                 if t.value.is_some() {
                     let val = t.value.as_ref().unwrap().read().unwrap().clone();
                     let op = *t.operator.as_ref().unwrap();
-                    return (Some(op), Some(val))
+                    return (Some(op), Some(val));
                 } else {
-                    return (None, None)
+                    return (None, None);
                 }
             }
             Predicate::FreeClsMemb(ref t) => {
                 if t.value.is_some() {
                     let val = *t.value.as_ref().unwrap();
                     let op = *t.operator.as_ref().unwrap();
-                    return (Some(op), Some(val))
+                    return (Some(op), Some(val));
                 } else {
-                    return (None, None)
+                    return (None, None);
                 }
             }
             Predicate::FreeClsOwner(ref t) => {
                 if t.value.is_some() {
                     let val = *t.value.as_ref().unwrap();
                     let op = *t.operator.as_ref().unwrap();
-                    return (Some(op), Some(val))
+                    return (Some(op), Some(val));
                 } else {
-                    return (None, None)
+                    return (None, None);
                 }
             }
         }
@@ -541,13 +537,18 @@ impl FreeClsMemb {
     }
 
     #[inline]
+    pub fn get_parent(&self) -> Rc<String> {
+        self.parent.get_name()
+    }
+
+    #[inline]
     pub fn get_var(&self) -> Rc<Var> {
         self.term.clone()
     }
 
     /// Compares a free term with a grounded term, assumes they are comparable
     /// (panics otherwise).
-    fn equal_to_grounded(&self, other: &GroundedClsMemb) -> bool {
+    pub fn equal_to_grounded(&self, other: &GroundedClsMemb) -> bool {
         if self.parent.get_name() != other.parent {
             panic!("simag: grounded terms from different classes cannot be compared")
         }
@@ -872,6 +873,12 @@ impl<'a> FuncDecl {
     }
 
     #[inline]
+    pub fn get_uval(&self) -> (CompOperator, f32) {
+        let (op, val) = self.args.as_ref().unwrap().get(0).unwrap().get_uval();
+        (op.unwrap(), val.unwrap())
+    }
+
+    #[inline]
     pub fn get_parent(&self) -> &Terminal {
         &self.name
     }
@@ -957,7 +964,7 @@ impl<'a> FuncDecl {
             }
             if (oargs.len() == vars) && name.is_var() {
                 // it's a free fn query, but at least one of the arguments must be grounded
-                return Err(ParseErrF::BothAreVars)
+                return Err(ParseErrF::BothAreVars);
             }
         } else {
             return Err(ParseErrF::WrongArgNumb);

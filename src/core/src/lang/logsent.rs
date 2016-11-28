@@ -9,7 +9,6 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::fmt;
-use std::iter::FromIterator;
 
 use chrono::{UTC, DateTime};
 
@@ -69,29 +68,22 @@ impl<'a> LogSentence {
             if let Err(err) = correct_iexpr(&sent, &mut lhs) {
                 return Err(err);
             }
-            let lhs = HashSet::from_iter(lhs.iter().map(|x| x as *const Rc<Particle>));
-            let mut rhs: HashSet<*const Rc<Particle>> = HashSet::new();
-            for p in &sent.particles {
-                if p.is_atom() {
-                    rhs.insert(p as *const Rc<Particle>);
-                }
-            }
-            let mut rhs_v: Vec<Rc<Assert>> = vec![];
-            for p in rhs.difference(&lhs).map(|x| *x) {
-                let p = unsafe { &**p };
-                match p {
-                    &Particle::Atom(ref p) => rhs_v.push(p.pred.clone()),
-                    _ => {}
-                }
-            }
-            let mut lhs_v: Vec<Rc<Assert>> = vec![];
-            for p in lhs.into_iter() {
-                let p = unsafe { &**p };
-                match p {
-                    &Particle::Atom(ref p) => lhs_v.push(p.pred.clone()),
-                    _ => {}
-                }
-            }
+            let lhs: HashSet<_> = lhs.iter().map(|x| &**x as *const Particle).collect();
+            let rhs: HashSet<_> = sent.particles
+                .iter()
+                .filter(|x| x.is_atom())
+                .map(|x| &**x as *const Particle)
+                .collect();
+            let rhs_v: Vec<_> = rhs.difference(&lhs)
+                .map(|p| unsafe { &**p })
+                .filter(|p| p.is_atom())
+                .map(|p| p.pred_ref())
+                .collect();
+            let lhs_v: Vec<_> = lhs.iter()
+                .map(|p| unsafe { &**p })
+                .filter(|p| p.is_atom())
+                .map(|p| p.pred_ref())
+                .collect();
             sent.predicates = (lhs_v, rhs_v);
             // add var requeriments
             let req = sent.get_var_requeriments();
@@ -724,6 +716,13 @@ impl Particle {
         match *self {
             Particle::Atom(_) => true,
             _ => false,
+        }
+    }
+
+    fn pred_ref(&self) -> Rc<Assert> {
+        match *self {
+            Particle::Atom(ref p) => p.pred.clone(),
+            _ => panic!()
         }
     }
 

@@ -88,7 +88,7 @@ impl Parser {
         let p1 = match remove_comments(input) {
             IResult::Done(_, done) => done,
             IResult::Error(nom::Err::Position(_, p)) => return Err(ParseErrB::UnclosedComment(p)),
-            _ => return Err(ParseErrB::SyntaxError0),
+            _ => return Err(ParseErrB::SyntaxErrorU),
         };
         for v in p1 {
             for b in v {
@@ -111,10 +111,10 @@ impl Parser {
                         (ErrorKind::Custom(11), p) => return Err(ParseErrB::NotScope(p)),
                         (ErrorKind::Custom(12), p) => return Err(ParseErrB::UnbalDelim(p)),
                         (ErrorKind::Custom(15), p) => return Err(ParseErrB::IllegalChain(p)),
-                        (_, p) => return Err(ParseErrB::SyntaxError1(p)),
+                        (_, p) => return Err(ParseErrB::SyntaxErrorPos(p)),
                     }
                 }
-                _ => return Err(ParseErrB::SyntaxError0),
+                _ => return Err(ParseErrB::SyntaxErrorU),
             }
         } else {
             let (_, scopes) = scopes.unwrap();
@@ -126,8 +126,8 @@ impl Parser {
 #[derive(Debug)]
 enum ParseErrB<'a> {
     SyntaxError(Box<ParseErrB<'a>>),
-    SyntaxError0,
-    SyntaxError1(&'a [u8]),
+    SyntaxErrorU,
+    SyntaxErrorPos(&'a [u8]),
     NotScope(&'a [u8]),
     UnbalDelim(&'a [u8]),
     ExpectOpenDelim(&'a [u8]),
@@ -374,11 +374,32 @@ fn scope<'a>(input: &'a [u8]) -> IResult<&'a [u8], Next<'a>> {
     let subnodes: IResult<&[u8], Vec<ASTNode>> = many1!(rest, expand_side);
     match subnodes {
         IResult::Done(r, mut d) => {
-            // lhs node, check there is nothing on the rhs or fail
+            // lhs node
             if is_endnode == false {
                 let subnodes_r: IResult<&[u8], Vec<ASTNode>> = many1!(rest_r, expand_side);
                 if subnodes_r.is_done() {
                     return IResult::Error(nom::Err::Position(ErrorKind::Custom(15), rest_r));
+                } else {
+                    // chek if the rhs is a multi decl or legal end node
+                    let out1 = logic_operator(rest_r);
+                    if out1.is_done() {
+                        let (i2, op) = out1.unwrap();
+                        let mut lhs = vec![];
+                        for e in d {
+                            lhs.push(Next::ASTNode(Box::new(e)))
+                        }
+                        let lhs = Next::ASTNode(Box::new(ASTNode {
+                            next: Next::Chain(lhs),
+                            logic_op: Some(LogicOperator::from_bytes(op)),
+                            vars: None,
+                        }));
+                        let (r, rhs) = match scope(i2) {
+                            IResult::Done(r, next) => (r, next),
+                            IResult::Error(err) => return IResult::Error(err),
+                            IResult::Incomplete(err) => return IResult::Incomplete(err),
+                        };
+                        return IResult::Done(r, Next::Chain(vec![lhs, rhs]));
+                    }
                 }
             }
             if d.len() > 1 {
@@ -397,8 +418,7 @@ fn scope<'a>(input: &'a [u8]) -> IResult<&'a [u8], Next<'a>> {
                 let decl = d.pop().unwrap();
                 let rest_l = remove_multispace(rest_l);
                 if rest_l.len() > 0 {
-                    let rhs = scope(rest_l);
-                    match rhs {
+                    match scope(rest_l) {
                         IResult::Done(r, next) => {
                             let d = Next::Chain(vec![Next::ASTNode(Box::new(decl)), next]);
                             return IResult::Done(r, d);
@@ -538,11 +558,17 @@ fn take_rest_scope(offset: usize,
     // if there were vars, offset input slice to ignore them
     let rest_r;
     let rest_l;
-    let rest;
+    let mut rest;
     if offset > 0 {
         rest = &input[offset..cd];
-        if ((nod > pcd) && (pcd > offset)) || ((nod > offset) && (offset > pcd)) {
-            return Err(nom::Err::Position(ErrorKind::Custom(15), input));
+        if (nod > pcd) && (pcd > offset) {
+            rest = &input[offset..];
+            rest_r = &input[pcd + 1..];
+            rest_l = &input[offset..pcd + 1];
+        } else if (nod > offset) && (offset > pcd) {
+            rest = &input[0..];
+            rest_r = &input[pcd + 1..];
+            rest_l = &input[0..pcd + 1];
         } else if is_endnode {
             rest_r = &input[offset..cd];
             rest_l = &input[0..0];
@@ -564,7 +590,9 @@ fn take_rest_scope(offset: usize,
         }
     } else {
         if nod > pcd {
-            return Err(nom::Err::Position(ErrorKind::Custom(15), input));
+            rest = &input[0..];
+            rest_r = &input[pcd + 1..];
+            rest_l = &input[0..pcd + 1];
         } else if is_endnode {
             rest = &input[0..cd];
             rest_r = &input[0..cd];
