@@ -1,24 +1,4 @@
-//! Main knowledge-base logic module, in this module reside the different
-//! types that transform and store the data for the individual agents and
-//! serve as representations of the different objects and the relationships
-//! between them.
-//!
-//! ## Safety
-//! There is some unsafe code on this module, the unsafe code performs to taks:
-//!     * Assure the compiler that data being referenced will live long enough,
-//!       this is, increasing the lifetime bounds.
-//!     * Bypass the ```Send``` trait type check when multithreading.
-//!
-//! Both of those are safe because a Representation owns, uniquely, all its
-//! knowledge by the duration of it's own lifetime (data is never dropped, while
-//! the representation is alive), thereby is safe to point to the data being
-//! referenced from the representation or the query (for the duration of the query).
-//!
-//! There is an intensive use of reference counted data throught the module,
-//! to avoid unnecesary copies. The problem is that Rc is not ```Send``` compliant
-//! so we need to 'hack' the type checking system through unsafe code to cheat
-//! the compiler.
-
+//! Inference infrastructure
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::iter::FromIterator;
 use std::hash::{Hash, Hasher};
@@ -30,1008 +10,17 @@ use scoped_threadpool::Pool;
 
 use lang;
 use lang::{ParseTree, ParseErrF, GroundedClsMemb, GroundedFunc, LogSentence};
+use super::repr::*;
 
 type Date = DateTime<UTC>;
 
-pub struct Representation {
-    entities: RwLock<HashMap<Rc<String>, Box<Entity>>>,
-    classes: RwLock<HashMap<Rc<String>, Box<Class>>>,
-}
-
-/// This type is a container for internal agent's representations.
-/// An agent can have any number of such representations at any moment,
-/// all of which are contained in this object.
-///
-/// The class includes methods to encode and decode the representations
-/// to/from data streams or idioms.
-///
-/// Attributes:
-///     entities -> Unique members (entities) of their own set/class.
-///     | Entities are denoted with a $ symbol followed by an id.
-///     classes -> Sets of objects (entities or subclasses) that share a common property.
-///     | This includes 'classes of relationships' and other 'functions'.
-impl Representation {
-    pub fn new() -> Representation {
-        Representation {
-            entities: RwLock::new(HashMap::new()),
-            classes: RwLock::new(HashMap::new()),
-        }
-    }
-
-    /// Parses a sentence (or several of them) into an usable formula
-    /// and stores it into the internal representation along with the
-    /// corresponding classes. In case the sentence is a predicate,
-    /// the objects get declared as members of their classes.
-    ///
-    /// Accepts first-order logic sentences sentences, both atomic
-    /// sentences ('Lucy is a professor') and complex sentences compossed
-    /// of different atoms and operators ('If someone is a professor,
-    /// then it's a person'). Examples:
-    ///
-    /// `>>> r.tell("(professor[$Lucy,u=1])")`
-    /// will include the individual '$Lucy' in the professor category)
-    /// `>>> r.tell("((let x) professor[x,u=1] |> person[x,u=1])")`
-    /// all the individuals which are professors will be added to the
-    /// person category, and the formula will be stored in the professor
-    /// class for future use.
-    ///
-    /// For more examples check the LogSentence type docs.
-    pub fn tell(&self, source: String) -> Result<(), Vec<ParseErrF>> {
-        let pres = lang::logic_parser(source, true);
-        if pres.is_ok() {
-            let mut pres: VecDeque<ParseTree> = pres.unwrap();
-            let mut errors = Vec::new();
-            for _ in 0..pres.len() {
-                match pres.pop_front().unwrap() {
-                    ParseTree::Assertion(assertions) => {
-                        for assertion in assertions {
-                            if assertion.is_class() {
-                                for a in assertion.unwrap_cls().into_iter() {
-                                    self.up_membership(Rc::new(a))
-                                }
-                            } else {
-                                let a = Rc::new(assertion.unwrap_fn().into_grounded());
-                                self.up_relation(a)
-                            }
-                        }
-                    }
-                    ParseTree::IExpr(iexpr) => self.add_belief(Rc::new(iexpr)),
-                    ParseTree::Expr(rule) => self.add_rule(Rc::new(rule)),
-                    ParseTree::ParseErr(err) => errors.push(err),
-                }
-            }
-            if errors.len() > 0 {
-                Err(errors)
-            } else {
-                Ok(())
-            }
-        } else {
-            Err(vec![pres.unwrap_err()])
-        }
-    }
-
-    /// Asks the KB if some fact is true and returns the answer to the query.
-    pub fn ask(&self, source: String) -> Answer {
-        let pres = lang::logic_parser(source, false);
-        if pres.is_ok() {
-            let pres = QueryInput::ManyQueries(pres.unwrap());
-            let mut inf = match Inference::new(&self, pres, false) {
-                Ok(inf) => inf,
-                Err(()) => return Answer::QueryErr,
-            };
-            {
-                let mut inf_r = unsafe { &mut *(&mut inf as *mut Box<Inference>) };
-                inf_r.infer_facts();
-            }
-            inf.get_results()
-        } else {
-            Answer::ParseErr(pres.unwrap_err())
-        }
-    }
-
-    fn ask_processed(&self, source: QueryInput, ignore_current: bool) -> Answer {
-        let mut inf = match Inference::new(&self, source, ignore_current) {
-            Ok(inf) => inf,
-            Err(()) => return Answer::QueryErr,
-        };
-        {
-            let mut inf_r = unsafe { &mut *(&mut inf as *mut Box<Inference>) };
-            inf_r.infer_facts();
-        }
-        inf.get_results()
-    }
-
-    pub fn up_membership(&self, assert: Rc<lang::GroundedClsMemb>) {
-        let parent_exists = self.classes.read().unwrap().contains_key(&assert.get_parent());
-        if !parent_exists {
-            let class = Box::new(Class::new(assert.get_parent(), ClassKind::Membership));
-            self.classes.write().unwrap().insert(class.name.clone(), class);
-        }
-        let decl;
-        let is_new: bool;
-        match (&assert.get_name()).starts_with("$") {
-            true => {
-                let entity_exists = self.entities.read().unwrap().contains_key(&assert.get_name());
-                if entity_exists {
-                    let lock = self.entities.read().unwrap();
-                    let entity = lock.get(&assert.get_name()).unwrap();
-                    is_new = entity.add_class_membership(assert.clone());
-                    decl = ClassMember::Entity(assert.clone());
-                } else {
-                    let entity = Box::new(Entity::new(assert.get_name()));
-                    is_new = entity.add_class_membership(assert.clone());
-                    self.entities.write().unwrap().insert(entity.name.clone(), entity);
-                    decl = ClassMember::Entity(assert.clone());
-                }
-            }
-            false => {
-                let class_exists = self.classes.read().unwrap().contains_key(&assert.get_name());
-                if class_exists {
-                    let lock = self.classes.read().unwrap();
-                    let class = lock.get(&assert.get_name()).unwrap();
-                    is_new = class.add_class_membership(assert.clone());
-                    decl = ClassMember::Class(assert.clone());
-                } else {
-                    let class = Box::new(Class::new(assert.get_name(), ClassKind::Membership));
-                    is_new = class.add_class_membership(assert.clone());
-                    self.classes.write().unwrap().insert(class.name.clone(), class);
-                    decl = ClassMember::Class(assert.clone());
-                }
-            }
-        }
-        if is_new {
-            let lock = self.classes.read().unwrap();
-            let parent = lock.get(&assert.get_parent()).unwrap();
-            parent.add_member(decl);
-        }
-    }
-
-    pub fn up_relation(&self, assert: Rc<lang::GroundedFunc>) {
-        // it doesn't matter this is overwritten, as if it exists, it exists for all
-        let is_new = Rc::new(::std::cell::RefCell::new(true));
-        let process_arg = |a: &GroundedClsMemb| {
-            let subject = a.get_name();
-            let is_new1;
-            match (&subject).starts_with("$") {
-                true => {
-                    let entity_exists = self.entities.read().unwrap().contains_key(&subject);
-                    if entity_exists {
-                        let lock = self.entities.read().unwrap();
-                        let entity = lock.get(&subject).unwrap();
-                        is_new1 = entity.add_relationship(assert.clone());
-                    } else {
-                        let entity = Box::new(Entity::new(subject));
-                        is_new1 = entity.add_relationship(assert.clone());
-                        self.entities.write().unwrap().insert(entity.name.clone(), entity);
-                    }
-                }
-                false => {
-                    let class_exists = self.classes.read().unwrap().contains_key(&subject);
-                    if class_exists {
-                        let lock = self.classes.read().unwrap();
-                        let class = lock.get(&subject).unwrap();
-                        is_new1 = class.add_relationship(assert.clone());
-                    } else {
-                        let class = Box::new(Class::new(subject, ClassKind::Membership));
-                        is_new1 = class.add_relationship(assert.clone());
-                        self.classes.write().unwrap().insert(class.name.clone(), class);
-                    }
-                }
-            }
-            let new_check = is_new.clone();
-            *new_check.borrow_mut() = is_new1;
-        };
-        let relation_exists = self.classes.read().unwrap().contains_key(&assert.name);
-        if !relation_exists {
-            let relationship = Box::new(Class::new(assert.name.clone(), ClassKind::Relationship));
-            self.classes.write().unwrap().insert(relationship.name.clone(), relationship);
-        }
-        process_arg(&assert.args[0]);
-        process_arg(&assert.args[1]);
-        if assert.third.is_some() {
-            process_arg(assert.third.as_ref().unwrap())
-        }
-        if *is_new.borrow() {
-            let lock = self.classes.read().unwrap();
-            let parent = lock.get(&assert.name).unwrap();
-            parent.add_grounded_relationship(assert.clone());
-        }
-    }
-
-    fn add_belief(&self, belief: Rc<LogSentence>) {
-        fn update(subject: Rc<String>,
-                  name: Rc<String>,
-                  is_entity: bool,
-                  belief: Rc<LogSentence>,
-                  repr: &Representation) {
-            if is_entity {
-                let entity_exists = repr.entities.read().unwrap().contains_key(&subject);
-                if entity_exists {
-                    let lock = repr.entities.read().unwrap();
-                    let entity = lock.get(&subject).unwrap();
-                    entity.add_belief(belief.clone(), subject);
-                } else {
-                    let entity = Box::new(Entity::new(subject.clone()));
-                    entity.add_belief(belief.clone(), name);
-                    repr.entities
-                        .write()
-                        .unwrap()
-                        .insert(subject.clone(), entity);
-                }
-            } else {
-                let class_exists = repr.classes.read().unwrap().contains_key(&subject);
-                if class_exists {
-                    let lock = repr.classes.read().unwrap();
-                    let class = lock.get(&subject).unwrap();
-                    class.add_belief(belief.clone(), name);
-                } else {
-                    let class = Box::new(Class::new(subject.clone(), ClassKind::Membership));
-                    class.add_belief(belief.clone(), name);
-                    repr.classes
-                        .write()
-                        .unwrap()
-                        .insert(subject.clone(), class);
-                }
-            }
-        };
-
-        for p in belief.get_all_predicates() {
-            match p {
-                &lang::Assert::ClassDecl(ref cls_decl) => {
-                    let class_exists = self.classes
-                        .read()
-                        .unwrap()
-                        .contains_key(&cls_decl.get_name());
-                    if class_exists {
-                        self.classes
-                            .read()
-                            .unwrap()
-                            .get(&cls_decl.get_name())
-                            .unwrap()
-                            .add_belief(belief.clone(), cls_decl.get_name())
-                    } else {
-                        let class = Box::new(Class::new(cls_decl.get_name(),
-                                                        ClassKind::Membership));
-                        class.add_belief(belief.clone(), cls_decl.get_name());
-                        self.classes.write().unwrap().insert(class.name.clone(), class);
-                    }
-                    for arg in cls_decl.get_args() {
-                        if !arg.is_var() {
-                            let subject = arg.get_name();
-                            match subject.starts_with("$") {
-                                true => {
-                                    update(subject,
-                                           cls_decl.get_name(),
-                                           true,
-                                           belief.clone(),
-                                           &self)
-                                }
-                                false => {
-                                    update(subject,
-                                           cls_decl.get_name(),
-                                           false,
-                                           belief.clone(),
-                                           &self)
-                                }
-                            }
-                        }
-                    }
-                }
-                &lang::Assert::FuncDecl(ref fn_decl) => {
-                    let class_exists = self.classes
-                        .read()
-                        .unwrap()
-                        .contains_key(&fn_decl.get_name());
-                    if class_exists {
-                        self.classes
-                            .read()
-                            .unwrap()
-                            .get(&fn_decl.get_name())
-                            .unwrap()
-                            .add_belief(belief.clone(), fn_decl.get_name())
-                    } else {
-                        let class = Box::new(Class::new(fn_decl.get_name(),
-                                                        ClassKind::Relationship));
-                        class.add_belief(belief.clone(), fn_decl.get_name());
-                        self.classes.write().unwrap().insert(class.name.clone(), class);
-                    }
-                    for arg in fn_decl.get_args() {
-                        if !arg.is_var() {
-                            let subject = arg.get_name();
-                            match subject.starts_with("$") {
-                                true => {
-                                    update(subject, fn_decl.get_name(), true, belief.clone(), &self)
-                                }
-                                false => {
-                                    update(subject,
-                                           fn_decl.get_name(),
-                                           false,
-                                           belief.clone(),
-                                           &self)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        let iter_candidates = |cls_decl: &lang::ClassDecl,
-                               candidates: &HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>>| {
-            for a in cls_decl.get_args() {
-                match *a {
-                    lang::Predicate::FreeClsMemb(ref free) => {
-                        if let Some(ls) = candidates.get(&free.get_var()) {
-                            for entity in ls {
-                                let grfact =
-                                    Rc::new(GroundedClsMemb::from_free(free, entity.name.clone()));
-                                self.ask_processed(QueryInput::AskClassMember(grfact.clone()),
-                                                   true);
-                            }
-                        }
-                    }
-                    _ => continue,
-                }
-            }
-        };
-
-        if let Some(candidates) = meet_sent_req(self, belief.var_req.as_ref().unwrap()) {
-            println!("\ncand: {:?}", candidates);
-            for (var, assignments) in candidates.iter() {
-                let i = belief.get_rhs_predicates();
-                let preds = i.iter().filter(|x| x.contains(&**var));
-                for pred in preds {
-                    println!("assign: {:?}", pred);
-                    match **pred {
-                        lang::Assert::ClassDecl(ref cls_decl) => {
-                            iter_candidates(cls_decl, &candidates)
-                        }
-                        lang::Assert::FuncDecl(ref func_decl) => {
-                            self.ask_processed(QueryInput::AskRelationalFunc(func_decl.clone()),
-                                               true);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fn add_rule(&self, rule: Rc<LogSentence>) {
-        let mut n = Vec::new();
-        let preds = rule.get_all_predicates();
-        for p in preds {
-            let name = p.get_name();
-            n.push(name.clone());
-            let class_exists = self.classes.read().unwrap().contains_key(&name);
-            if class_exists {
-                let lock = self.classes.read().unwrap();
-                let class = lock.get(&name).unwrap();
-                class.add_rule(rule.clone());
-            } else {
-                let nc = match p {
-                    &lang::Assert::ClassDecl(_) => {
-                        Box::new(Class::new(name.clone(), ClassKind::Membership))
-                    }
-                    &lang::Assert::FuncDecl(_) => {
-                        Box::new(Class::new(name.clone(), ClassKind::Relationship))
-                    }
-                };
-                nc.add_rule(rule.clone());
-                self.classes.write().unwrap().insert(name, nc);
-            }
-        }
-        let obj_dic = self.by_class(&n);
-        for _e in obj_dic {
-            panic!("not implemented: rule.call(self, e)")
-        }
-    }
-
-    /// Takes a vector of class names and returns a hash map with those classes as keys
-    /// and the memberships to those classes.
-    fn by_class(&self, classes: &Vec<Rc<String>>) -> HashMap<Rc<String>, Vec<Rc<GroundedClsMemb>>> {
-        let mut dict = HashMap::new();
-        let lock = self.classes.read().unwrap();
-        for cls in classes {
-            let cls_ref = lock.get(cls);
-            if cls_ref.is_none() {
-                continue;
-            }
-            let mut v = vec![];
-            for e in &**cls_ref.unwrap().members.read().unwrap() {
-                match *e {
-                    ClassMember::Class(ref m) => v.push(m.clone()),
-                    ClassMember::Entity(ref m) => v.push(m.clone()),
-                    _ => {}
-                }
-            }
-            dict.insert(cls.clone(), v);
-        }
-        dict
-    }
-
-    /// Takes a vector of relation declarations and returns a hash map with those relation
-    /// names as keys and a hash map of the objects which have one relation of that kind
-    /// as value (with a list of the grounded functions for each object).
-    fn by_relationship(&self,
-                       funcs: &Vec<&lang::FuncDecl>)
-                       -> HashMap<Rc<String>, HashMap<Rc<String>, Vec<Rc<GroundedFunc>>>> {
-        let mut dict = HashMap::new();
-        let lock = self.classes.read().unwrap();
-        for func in funcs {
-            let func_ref = lock.get(&func.get_name());
-            if func_ref.is_none() {
-                continue;
-            }
-            let mut m = HashMap::new();
-            for e in &**func_ref.unwrap().members.read().unwrap() {
-                match *e {
-                    ClassMember::Func(ref f) => {
-                        for name in f.get_args_names() {
-                            let e: &mut Vec<_> = m.entry(name).or_insert(Vec::new());
-                            e.push(f.clone())
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            dict.insert(func.get_name(), m);
-        }
-        dict
-    }
-
-    pub fn get_entity_from_class(&self,
-                                 class: Rc<String>,
-                                 subject: Rc<String>)
-                                 -> Option<Rc<GroundedClsMemb>> {
-        match subject.starts_with("$") {
-            true => {
-                let entity_exists = self.entities.read().unwrap().contains_key(&subject);
-                if entity_exists {
-                    let lock = self.entities.read().unwrap();
-                    match lock.get(&subject).unwrap().belongs_to_class(class) {
-                        Some(r) => Some(r.clone()),
-                        None => None,
-                    }
-                } else {
-                    None
-                }
-            }
-            false => {
-                let class_exists = self.classes.read().unwrap().contains_key(&subject);
-                if class_exists {
-                    let lock = self.classes.read().unwrap();
-                    match lock.get(&subject).unwrap().belongs_to_class(class) {
-                        Some(r) => Some(r.clone()),
-                        None => None,
-                    }
-                } else {
-                    None
-                }
-            }
-        }
-    }
-
-    fn class_membership(&self, pred: &GroundedClsMemb) -> Option<bool> {
-        let subject = pred.get_name();
-        match subject.starts_with("$") {
-            true => {
-                if let Some(entity) = self.entities.read().unwrap().get(&subject) {
-                    if let Some(current) = entity.belongs_to_class(pred.get_parent()) {
-                        if *current == *pred {
-                            return Some(true);
-                        } else {
-                            return Some(false);
-                        }
-                    }
-                }
-            }
-            false => {
-                if let Some(class) = self.classes.read().unwrap().get(&subject) {
-                    if let Some(current) = class.belongs_to_class(pred.get_parent()) {
-                        if *current == *pred {
-                            return Some(true);
-                        } else {
-                            return Some(false);
-                        }
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    fn get_class_membership(&self, subject: &lang::FreeClsOwner) -> Vec<Rc<GroundedClsMemb>> {
-        let ref name = subject.term;
-        match name.starts_with("$") {
-            true => {
-                if let Some(entity) = self.entities.read().unwrap().get(name) {
-                    entity.get_class_membership(subject)
-                } else {
-                    vec![]
-                }
-            }
-            false => {
-                if let Some(class) = self.classes.read().unwrap().get(name) {
-                    class.get_class_membership(subject)
-                } else {
-                    vec![]
-                }
-            }
-        }
-    }
-
-    pub fn has_relationship(&self, pred: &GroundedFunc, subject: Rc<String>) -> Option<bool> {
-        match subject.starts_with("$") {
-            true => {
-                if let Some(entity) = self.entities.read().unwrap().get(&subject) {
-                    if let Some(current) = entity.has_relationship(pred) {
-                        if *current == *pred {
-                            return Some(true);
-                        } else {
-                            return Some(false);
-                        }
-                    }
-                }
-            }
-            false => {
-                if let Some(class) = self.classes.read().unwrap().get(&subject) {
-                    if let Some(current) = class.has_relationship(pred) {
-                        if *current == *pred {
-                            return Some(true);
-                        } else {
-                            return Some(false);
-                        }
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    fn get_relationships(&self,
-                         func: &lang::FuncDecl)
-                         -> HashMap<Rc<String>, Vec<Rc<GroundedFunc>>> {
-        let mut res = HashMap::new();
-        for (pos, arg) in func.get_args().enumerate() {
-            if !arg.is_var() {
-                let name = arg.get_name();
-                match name.starts_with("$") {
-                    true => {
-                        if let Some(entity) = self.entities.read().unwrap().get(&name) {
-                            let mut v = entity.get_relationships(pos, arg);
-                            for (rel, mut funcs) in v.drain() {
-                                res.entry(rel).or_insert(vec![]).append(&mut funcs);
-                            }
-                        }
-                    }
-                    false => {
-                        if let Some(class) = self.classes.read().unwrap().get(&name) {
-                            let mut v = class.get_relationships(pos, arg);
-                            for (rel, mut funcs) in v.drain() {
-                                res.entry(rel).or_insert(vec![]).append(&mut funcs);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        res
-    }
-}
-
-/// An entity is the unique member of it's own class.
-/// Represents an object which can pertain to multiple classes or sets.
-/// It's an abstraction owned by an agent, the internal representation
-/// of the object, not the object itself.
-///
-/// An entity inherits the properties of the classes it belongs to,
-/// and has some implicit attributes which are unique to itself.
-///
-/// Membership to a class is denoted (following fuzzy sets) by a real number
-/// between 0 and 1. If the number is one, the object will always belong to
-/// the set, if it's zero, it will never belong to the set.
-///
-/// For example, an object can belong to the set 'cold' with a degree of
-/// 0.9 (in natural language then it would be 'very cold') or 0.1
-/// (then it would be 'a bit cold', the subjective adjectives are defined
-/// in the class itself).
-#[derive(Debug)]
-pub struct Entity {
-    pub name: Rc<String>,
-    classes: RwLock<HashMap<Rc<String>, Rc<GroundedClsMemb>>>,
-    relations: RwLock<HashMap<Rc<String>, Vec<Rc<GroundedFunc>>>>,
-    beliefs: RwLock<HashMap<Rc<String>, Vec<Rc<LogSentence>>>>,
-}
-
-impl Entity {
-    fn new(name: Rc<String>) -> Entity {
-        Entity {
-            name: name,
-            classes: RwLock::new(HashMap::new()),
-            relations: RwLock::new(HashMap::new()),
-            beliefs: RwLock::new(HashMap::new()),
-        }
-    }
-
-    fn belongs_to_class(&self, class_name: Rc<String>) -> Option<Rc<GroundedClsMemb>> {
-        let lock = self.classes.read().unwrap();
-        match lock.get(&class_name) {
-            Some(r) => Some(r.clone()),
-            None => None,
-        }
-    }
-
-    fn get_class_membership(&self, compare: &lang::FreeClsOwner) -> Vec<Rc<GroundedClsMemb>> {
-        let lock = self.classes.read().unwrap();
-        let v: Vec<_> = lock.values().filter(|x| compare.filter_grounded(&**x)).cloned().collect();
-        v
-    }
-
-    fn add_class_membership(&self, grounded: Rc<GroundedClsMemb>) -> bool {
-        let mut lock = self.classes.write().unwrap();
-        let name = grounded.get_parent();
-        let stmt_exists = lock.contains_key(&name);
-        match stmt_exists {
-            true => {
-                let current = lock.get(&name).unwrap();
-                current.update(grounded);
-                false
-            }
-            false => {
-                lock.insert(name, grounded);
-                true
-            }
-        }
-    }
-
-    fn has_relationship(&self, func: &GroundedFunc) -> Option<Rc<GroundedFunc>> {
-        let lock = self.relations.read().unwrap();
-        if let Some(relation_type) = lock.get(&func.get_name()) {
-            for rel in relation_type {
-                if rel.comparable(func) {
-                    return Some(rel.clone());
-                }
-            }
-        }
-        None
-    }
-
-    fn get_relationships(&self,
-                         pos: usize,
-                         compare: &lang::Predicate)
-                         -> HashMap<Rc<String>, Vec<Rc<GroundedFunc>>> {
-        let mut res = HashMap::new();
-        let self_name = &**self.name;
-        let (op, val) = compare.get_uval();
-        let lock = self.relations.read().unwrap();
-        for (rel_name, functions) in lock.iter() {
-            for f in functions {
-                if f.name_in_pos(self_name, &pos) {
-                    match op {
-                        None => res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone()),
-                        Some(lang::CompOperator::Equal) => {
-                            if *val.as_ref().unwrap() == f.get_value() {
-                                res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
-                            }
-                        }
-                        Some(lang::CompOperator::More) => {
-                            if *val.as_ref().unwrap() < f.get_value() {
-                                res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
-                            }
-                        }
-                        Some(lang::CompOperator::Less) => {
-                            if *val.as_ref().unwrap() > f.get_value() {
-                                res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        res
-    }
-
-    fn add_relationship(&self, func: Rc<GroundedFunc>) -> bool {
-        let mut lock = self.relations.write().unwrap();
-        let name = func.get_name();
-        let stmt_exists = lock.contains_key(&name);
-        match stmt_exists {
-            true => {
-                let funcs_type = lock.get_mut(&name).unwrap();
-                let mut found_rel = false;
-                for f in funcs_type.iter_mut() {
-                    if f.comparable(&*func) {
-                        f.update(func.clone());
-                        found_rel = true;
-                        break;
-                    }
-                }
-                if !found_rel {
-                    funcs_type.push(func.clone());
-                    true
-                } else {
-                    false
-                }
-            }
-            false => {
-                lock.insert(name, vec![func.clone()]);
-                true
-            }
-        }
-    }
-
-    fn add_belief(&self, belief: Rc<LogSentence>, parent: Rc<String>) {
-        let sent_exists = self.beliefs.read().unwrap().contains_key(&parent);
-        match sent_exists {
-            true => {
-                if let Some(ls) = self.beliefs.write().unwrap().get_mut(&parent) {
-                    ls.push(belief)
-                }
-            }
-            false => {
-                self.beliefs.write().unwrap().insert(parent, vec![belief]);
-            }
-        }
-    }
-}
-
-/// A class is a set of entities that share some properties.
-/// It can be a subset of others supersets, and viceversa.
-///
-/// Membership is not binary, but fuzzy, being the extreme cases (0, 1)
-/// the classic binary membership. Likewise, membership to a class can be
-/// temporal. For more info check `Entity` type documentation.
-///
-/// All the attributes of a class are inherited by their members
-/// (to a fuzzy degree).
-#[derive(Debug)]
-pub struct Class {
-    pub name: Rc<String>,
-    classes: RwLock<HashMap<Rc<String>, Rc<GroundedClsMemb>>>,
-    relations: RwLock<HashMap<Rc<String>, Vec<Rc<GroundedFunc>>>>,
-    beliefs: RwLock<HashMap<Rc<String>, Vec<Rc<LogSentence>>>>,
-    rules: RwLock<Vec<Rc<LogSentence>>>,
-    kind: ClassKind,
-    members: RwLock<Vec<ClassMember>>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ClassKind {
-    Relationship,
-    Membership,
-}
-
-#[derive(Debug, Clone)]
-enum ClassMember {
-    Entity(Rc<GroundedClsMemb>),
-    Class(Rc<GroundedClsMemb>),
-    Func(Rc<GroundedFunc>),
-}
-
-impl ClassMember {
-    fn unwrap_memb(&self) -> Rc<GroundedClsMemb> {
-        match *self {
-            ClassMember::Entity(ref obj) => obj.clone(),
-            ClassMember::Class(ref obj) => obj.clone(),
-            _ => panic!(),
-        }
-    }
-
-    fn unwrap_fn(&self) -> Rc<GroundedFunc> {
-        match *self {
-            ClassMember::Func(ref f) => f.clone(),
-            _ => panic!(),
-        }
-    }
-}
-
-impl Class {
-    fn new(name: Rc<String>, kind: ClassKind) -> Class {
-        Class {
-            name: name,
-            classes: RwLock::new(HashMap::new()),
-            relations: RwLock::new(HashMap::new()),
-            beliefs: RwLock::new(HashMap::new()),
-            rules: RwLock::new(Vec::new()),
-            kind: kind,
-            members: RwLock::new(Vec::new()),
-        }
-    }
-
-    fn belongs_to_class(&self, class_name: Rc<String>) -> Option<Rc<GroundedClsMemb>> {
-        let lock = self.classes.read().unwrap();
-        match lock.get(&class_name) {
-            Some(r) => Some(r.clone()),
-            None => None,
-        }
-    }
-
-    fn get_class_membership(&self, compare: &lang::FreeClsOwner) -> Vec<Rc<GroundedClsMemb>> {
-        let lock = self.classes.read().unwrap();
-        let v: Vec<_> = lock.values().filter(|x| compare.filter_grounded(&**x)).cloned().collect();
-        v
-    }
-
-    /// Set a superclass of this class
-    fn add_class_membership(&self, grounded: Rc<GroundedClsMemb>) -> bool {
-        let mut lock = self.classes.write().unwrap();
-        let name = grounded.get_parent();
-        let stmt_exists = lock.contains_key(&name);
-        match stmt_exists {
-            true => {
-                let current = lock.get_mut(&name).unwrap();
-                current.update(grounded);
-                false
-            }
-            false => {
-                lock.insert(name, grounded);
-                true
-            }
-        }
-    }
-
-    /// Add members of this class, being them other classes or entities.
-    fn add_member(&self, member: ClassMember) {
-        self.members.write().unwrap().push(member);
-    }
-
-    fn get_members(&self, comp: &lang::FreeClsMemb) -> Vec<Rc<GroundedClsMemb>> {
-        let lock = self.members.read().unwrap();
-        lock.iter()
-            .map(|x| x.unwrap_memb())
-            .filter(|m| comp.equal_to_grounded(m))
-            .collect::<Vec<_>>()
-    }
-
-    fn has_relationship(&self, func: &GroundedFunc) -> Option<Rc<GroundedFunc>> {
-        let lock = self.relations.read().unwrap();
-        if let Some(relation_type) = lock.get(&func.get_name()) {
-            for rel in relation_type {
-                if rel.comparable(func) {
-                    return Some(rel.clone());
-                }
-            }
-        }
-        None
-    }
-
-    fn get_relationships(&self,
-                         pos: usize,
-                         compare: &lang::Predicate)
-                         -> HashMap<Rc<String>, Vec<Rc<GroundedFunc>>> {
-        let mut res = HashMap::new();
-        let self_name = &**self.name;
-        let (op, val) = compare.get_uval();
-        let lock = self.relations.read().unwrap();
-        for (rel_name, functions) in lock.iter() {
-            for f in functions {
-                if f.name_in_pos(self_name, &pos) {
-                    match op {
-                        None => res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone()),
-                        Some(lang::CompOperator::Equal) => {
-                            if *val.as_ref().unwrap() == f.get_value() {
-                                res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
-                            }
-                        }
-                        Some(lang::CompOperator::More) => {
-                            if *val.as_ref().unwrap() < f.get_value() {
-                                res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
-                            }
-                        }
-                        Some(lang::CompOperator::Less) => {
-                            if *val.as_ref().unwrap() > f.get_value() {
-                                res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        res
-    }
-
-    fn get_funcs(&self, func: &lang::FuncDecl) -> Vec<Rc<GroundedFunc>> {
-        let mut res = vec![];
-        let lock = self.members.read().unwrap();
-        for curr_func in lock.iter() {
-            let curr_func = curr_func.unwrap_fn();
-            let mut process = true;
-            for (i, arg) in func.get_args().enumerate() {
-                if !arg.is_var() && (arg.get_name() != curr_func.get_args_names()[i]) {
-                    process = false;
-                    break;
-                }
-                if i == 0 {
-                    match func.get_uval() {
-                        (lang::CompOperator::Equal, val) => {
-                            if val != curr_func.get_value() {
-                                process = false;
-                            }
-                        }
-                        (lang::CompOperator::More, val) => {
-                            if val > curr_func.get_value() {
-                                process = false;
-                            }
-                        }
-                        (lang::CompOperator::Less, val) => {
-                            if val < curr_func.get_value() {
-                                process = false;
-                            }
-                        }
-                    }
-                }
-            }
-            if process {
-                res.push(curr_func.clone());
-            }
-        }
-        res
-    }
-
-    /// Add a relationship this class has with other classes/entities
-    fn add_relationship(&self, func: Rc<GroundedFunc>) -> bool {
-        let mut lock = self.relations.write().unwrap();
-        let name = func.get_name();
-        let stmt_exists = lock.contains_key(&name);
-        match stmt_exists {
-            true => {
-                let funcs_type = lock.get_mut(&name).unwrap();
-                let mut found_rel = false;
-                for f in funcs_type.iter_mut() {
-                    if f.comparable(&*func) {
-                        f.update(func.clone());
-                        found_rel = true;
-                        break;
-                    }
-                }
-                if !found_rel {
-                    funcs_type.push(func.clone());
-                    true
-                } else {
-                    false
-                }
-            }
-            false => {
-                lock.insert(name, vec![func.clone()]);
-                true
-            }
-        }
-    }
-
-    /// Add a grounded relationship of this kind of relationship
-    fn add_grounded_relationship(&self, func: Rc<GroundedFunc>) {
-        self.members.write().unwrap().push(ClassMember::Func(func));
-    }
-
-    fn add_belief(&self, belief: Rc<LogSentence>, parent: Rc<String>) {
-        let sent_exists = self.beliefs.read().unwrap().contains_key(&parent);
-        match sent_exists {
-            true => {
-                if let Some(ls) = self.beliefs.write().unwrap().get_mut(&parent) {
-                    ls.push(belief)
-                }
-            }
-            false => {
-                self.beliefs.write().unwrap().insert(parent, vec![belief]);
-            }
-        }
-    }
-
-    fn add_rule(&self, rule: Rc<LogSentence>) {
-        self.rules.write().unwrap().push(rule);
-    }
-}
-
-// Inference type infrastructure:
-
-struct Inference<'a> {
+pub struct Inference<'a> {
     query: QueryProcessed<'a>,
     kb: &'a Representation,
     ignore_current: bool,
     nodes: RwLock<HashMap<Rc<String>, Vec<Box<ProofNode>>>>,
     queue: RwLock<HashMap<*const ProofNode, HashSet<PArgVal>>>,
     results: InfResults<'a>,
-    repeat: Mutex<Vec<(Rc<LogSentence>, PArgVal)>>,
     args: RwLock<Box<Vec<Rc<ProofArgs>>>>,
     available_threads: Mutex<u32>,
 }
@@ -1196,7 +185,7 @@ impl<'a> Answer<'a> {
 }
 
 impl<'a> Inference<'a> {
-    fn new(agent: &'a Representation,
+    pub fn new(agent: &'a Representation,
            query_input: QueryInput,
            ignore_current: bool)
            -> Result<Box<Inference<'a>>, ()> {
@@ -1208,13 +197,12 @@ impl<'a> Inference<'a> {
             nodes: RwLock::new(HashMap::new()),
             queue: RwLock::new(HashMap::new()),
             results: InfResults::new(),
-            repeat: Mutex::new(vec![]),
             args: RwLock::new(Box::new(vec![])),
             available_threads: Mutex::new(4_u32),
         }))
     }
 
-    fn get_results(self) -> Answer<'a> {
+    pub fn get_results(self) -> Answer<'a> {
         Answer::Results(self.results)
     }
 
@@ -1225,7 +213,7 @@ impl<'a> Inference<'a> {
     /// var substitution) and returns the answer to the query. If new
     /// knowledge is produced then it's passed to an other procedure for
     /// addition to the KB.
-    fn infer_facts(&'a mut self) {
+    pub fn infer_facts(&'a mut self) {
         fn query_cls<'a>(inf: &'a Inference<'a>, query: Rc<String>, actv_query: ActiveQuery<'a>) {
             let mut pass = Box::new(InfTrial::new(inf, actv_query));
             pass.get_rules(vec![query.clone()]);
@@ -1397,7 +385,6 @@ struct InfTrial<'a> {
     nodes: &'a RwLock<HashMap<Rc<String>, Vec<Box<ProofNode>>>>,
     queue: &'a RwLock<HashMap<*const ProofNode, HashSet<PArgVal>>>,
     results: &'a InfResults<'a>,
-    repeat: &'a Mutex<Vec<(Rc<LogSentence>, PArgVal)>>,
     args: &'a RwLock<Box<Vec<Rc<ProofArgs>>>>,
     available_threads: Mutex<u32>,
 }
@@ -1448,7 +435,7 @@ impl ProofResult {
 }
 
 impl<'a> InfTrial<'a> {
-    fn new(inf: &'a Inference<'a>, actv_query: ActiveQuery<'a>) -> InfTrial<'a> {
+    pub fn new(inf: &'a Inference<'a>, actv_query: ActiveQuery<'a>) -> InfTrial<'a> {
         InfTrial {
             kb: inf.kb,
             actv: actv_query,
@@ -1458,7 +445,6 @@ impl<'a> InfTrial<'a> {
             nodes: &inf.nodes,
             queue: &inf.queue,
             results: &inf.results,
-            repeat: &inf.repeat,
             args: &inf.args,
             available_threads: Mutex::new(4_u32),
         }
@@ -1563,30 +549,6 @@ impl<'a> InfTrial<'a> {
                             }
                         }
                     }
-                    /*
-                    {
-                        let ref lock0 = *self.valid.lock().unwrap();
-                        let inner = unsafe {
-                            &*(&*lock0.borrow() as *const Option<(Rc<ProofNode>, ProofArgs)>)
-                        };
-                        match inner {
-                            &Some((ref node, ref assigned)) => {
-                                // the result may be replaced in the KB by other proof which is less
-                                // current, to ensure that the valid result stays in the KB after
-                                // all proofs are done, repeat the valid one with proper arguments
-                                let mut lock1 = self.repeat.lock().unwrap();
-                                lock1.push((node.proof.clone(), assigned.clone()))
-                            }
-                            &None => {
-                                for e in node.antecedents.clone() {
-                                    if !done.contains(&e) && !chk.contains(&e) {
-                                        chk.push_back(e);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    */
                 }
             }
             let lock = self.feedback.lock().unwrap();
@@ -1732,7 +694,7 @@ impl<'a> InfTrial<'a> {
     }
 }
 
-fn meet_sent_req(rep: &Representation,
+pub fn meet_sent_req(rep: &Representation,
                  req: &HashMap<Rc<lang::Var>, Vec<Rc<lang::Assert>>>)
                  -> Option<HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>>> {
     let mut results: HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>> = HashMap::new();
@@ -1820,16 +782,16 @@ fn meet_sent_req(rep: &Representation,
 }
 
 #[derive(Debug)]
-struct ArgsProduct {
+pub struct ArgsProduct {
     indexes: HashMap<Rc<lang::Var>, (usize, bool)>,
     input: ArgsProductInput,
     curr: Rc<lang::Var>,
 }
 
-type ArgsProductInput = HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>>;
+pub type ArgsProductInput = HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>>;
 
 impl ArgsProduct {
-    fn product(input: ArgsProductInput) -> Option<ArgsProduct> {
+    pub fn product(input: ArgsProductInput) -> Option<ArgsProduct> {
         let mut indexes = HashMap::new();
         let mut curr = None;
         let mut first = true;
@@ -2003,8 +965,8 @@ impl Hash for VarAssignment {
 }
 
 #[derive(Debug)]
-enum QueryInput {
-    AskRelationalFunc(lang::FuncDecl),
+pub enum QueryInput {
+    AskRelationalFunc(Rc<GroundedFunc>),
     AskClassMember(Rc<GroundedClsMemb>),
     ManyQueries(VecDeque<ParseTree>),
 }
@@ -2015,7 +977,7 @@ struct QueryProcessed<'a> {
     cls_queries_grounded: HashMap<Rc<String>, Vec<&'a lang::GroundedClsMemb>>,
     cls_memb_query: HashMap<Rc<lang::Var>, Vec<&'a lang::FreeClsOwner>>,
     func_queries_free: HashMap<Rc<lang::Var>, Vec<Rc<lang::FuncDecl>>>,
-    func_queries_grounded: Vec<Box<lang::GroundedFunc>>,
+    func_queries_grounded: Vec<Rc<lang::GroundedFunc>>,
     func_memb_query: HashMap<Rc<lang::Var>, Vec<Rc<lang::FuncDecl>>>,
     vars: Vec<Rc<lang::Var>>,
     cls: Vec<Rc<lang::ClassDecl>>,
@@ -2098,9 +1060,7 @@ impl<'a> QueryProcessed<'a> {
                 self.push_to_clsquery_grounded(cdecl.get_name(), cdecl);
             }
             QueryInput::AskRelationalFunc(fdecl) => {
-                self.func.push(Rc::new(fdecl));
-                let fdecl = self.func.last().unwrap().clone();
-                assert_rel(&mut self, fdecl)?;
+                self.func_queries_grounded.push(fdecl);
             }
             QueryInput::ManyQueries(trees) => {
                 for parsetree in trees {
@@ -2163,7 +1123,7 @@ impl<'a> QueryProcessed<'a> {
 
     #[inline]
     fn push_to_fnquery_grounded(&mut self, func: lang::GroundedFunc) {
-        self.func_queries_grounded.push(Box::new(func))
+        self.func_queries_grounded.push(Rc::new(func))
     }
 
     #[inline]
@@ -2184,7 +1144,7 @@ impl<'a> QueryProcessed<'a> {
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use agent::kb::repr::Representation;
     use std::collections::HashSet;
 
     #[test]
@@ -2199,8 +1159,13 @@ mod test {
         ");
         let q07_01 = "((let x) (fn::produce[milk,u>0;x]))".to_string();
         let rep = Representation::new();
-        rep.tell(test_07);
-        let _answ = rep.ask(q07_01);
+        rep.tell(test_07).unwrap();
+        let answ = rep.ask(q07_01);
+        let a07_01 = answ.get_relationships();
+        println!("\nANSWER:\n{:?}", a07_01);
+        assert!(a07_01.contains_key("$Lulu"));
+        assert!(a07_01.contains_key("$Lucy"));
+        assert!(a07_01.contains_key("$Vicky"));
     }
 
     // #[test]
