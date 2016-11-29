@@ -1160,7 +1160,7 @@ mod test {
         assert!(a07_01.contains_key("$Vicky"));
     }
 
-    #[test]
+    // #[test]
     fn ask_pred() {
         let test_01 = String::from("
             ( professor[$Lucy,u=1] )
@@ -1260,7 +1260,7 @@ mod test {
         assert_eq!(cnt, 2)
     }
 
-    #[test]
+    // #[test]
     fn ask_func() {
         let test_01 = String::from("
             ( professor[$Lucy,u=1] )

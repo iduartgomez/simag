@@ -1,4 +1,4 @@
-#![allow(needless_bool)]
+// #![allow(needless_bool)]
 
 use std::str;
 use std::collections::HashMap;
@@ -121,27 +121,9 @@ impl<'a> Predicate {
 
     pub fn has_uval(&self) -> bool {
         match *self {
-            Predicate::GroundedClsMemb(ref t) => {
-                if t.value.is_some() {
-                    true
-                } else {
-                    false
-                }
-            }
-            Predicate::FreeClsMemb(ref t) => {
-                if t.value.is_some() {
-                    true
-                } else {
-                    false
-                }
-            }
-            Predicate::FreeClsOwner(ref t) => {
-                if t.value.is_some() {
-                    true
-                } else {
-                    false
-                }
-            }
+            Predicate::GroundedClsMemb(ref t) => t.value.is_some(),
+            Predicate::FreeClsMemb(ref t) => t.value.is_some(),
+            Predicate::FreeClsOwner(ref t) => t.value.is_some(),
         }
     }
 }
@@ -314,30 +296,16 @@ impl ::std::cmp::PartialEq for GroundedClsMemb {
         match op_lhs {
             CompOperator::Equal => {
                 if op_rhs.is_equal() {
-                    if val_lhs == val_rhs {
-                        true
-                    } else {
-                        false
-                    }
+                    val_lhs == val_rhs
                 } else if op_rhs.is_more() {
-                    if val_lhs > val_rhs {
-                        true
-                    } else {
-                        false
-                    }
-                } else if val_lhs < val_rhs {
-                    true
+                    val_lhs > val_rhs
                 } else {
-                    false
+                    val_lhs < val_rhs
                 }
             }
             CompOperator::More => {
                 if op_rhs.is_equal() {
-                    if val_lhs < val_rhs {
-                        true
-                    } else {
-                        false
-                    }
+                    val_lhs < val_rhs
                 } else {
                     panic!("simag: grounded terms operators in assertments \
                             must be assignments")
@@ -345,11 +313,7 @@ impl ::std::cmp::PartialEq for GroundedClsMemb {
             }
             CompOperator::Less => {
                 if op_rhs.is_equal() {
-                    if val_lhs > val_rhs {
-                        true
-                    } else {
-                        false
-                    }
+                    val_lhs > val_rhs
                 } else {
                     panic!("simag: grounded terms operators in assertments \
                             must be assignments")
@@ -469,16 +433,12 @@ impl GroundedFunc {
         if !self.args[1].comparable(&other.args[1]) {
             return false;
         }
-        if self.third.is_some() && other.third.is_some() {
-            if !self.third.as_ref().unwrap().comparable(other.third.as_ref().unwrap()) {
-                return false;
-            }
-        } else if self.third.is_none() && other.third.is_none() {
-            return true;
+        if self.third.is_some() && other.third.is_some() &&
+           !self.third.as_ref().unwrap().comparable(other.third.as_ref().unwrap()) {
+            false
         } else {
-            return false;
+            self.third.is_none() && other.third.is_none()
         }
-        true
     }
 
     pub fn update(&self, data: Rc<GroundedFunc>) {
@@ -560,21 +520,11 @@ impl FreeClsMemb {
             match other.operator.unwrap() {
                 CompOperator::Equal => {
                     if self.operator.as_ref().unwrap().is_equal() {
-                        if val_free.approx_eq_ulps(&val_grounded, 2) {
-                            true
-                        } else {
-                            false
-                        }
+                        val_free.approx_eq_ulps(&val_grounded, 2)
                     } else if self.operator.as_ref().unwrap().is_more() {
-                        if val_grounded > val_free {
-                            true
-                        } else {
-                            false
-                        }
-                    } else if val_grounded < val_free {
-                        true
+                        val_grounded > val_free
                     } else {
-                        false
+                        val_grounded < val_free
                     }
                 }
                 _ => {
@@ -635,25 +585,13 @@ impl FreeClsOwner {
             let val = self.value.as_ref().unwrap();
             match *self.operator.as_ref().unwrap() {
                 CompOperator::Equal => {
-                    if val.approx_eq_ulps(&*other.value.as_ref().unwrap().read().unwrap(), 2) {
-                        true
-                    } else {
-                        false
-                    }
+                    val.approx_eq_ulps(&*other.value.as_ref().unwrap().read().unwrap(), 2)
                 }
                 CompOperator::Less => {
-                    if *other.value.as_ref().unwrap().read().unwrap() < *val {
-                        true
-                    } else {
-                        false
-                    }
+                    *other.value.as_ref().unwrap().read().unwrap() < *val
                 }
                 CompOperator::More => {
-                    if *other.value.as_ref().unwrap().read().unwrap() > *val {
-                        true
-                    } else {
-                        false
-                    }
+                    *other.value.as_ref().unwrap().read().unwrap() > *val
                 }
             }
         } else {
