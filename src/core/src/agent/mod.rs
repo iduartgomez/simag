@@ -1,5 +1,5 @@
 mod kb;
 mod main;
 
-pub use self::kb::{Representation, Entity, Class, VarAssignment, ProofResult};
+pub use self::kb::{Class, Entity, ProofResult, Representation, VarAssignment};
 pub use self::main::Agent;

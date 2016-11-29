@@ -35,8 +35,8 @@ use std::str::FromStr;
 use std::collections::VecDeque;
 use std::thread;
 
-use nom::{IResult, ErrorKind};
-use nom::{is_digit, is_alphanumeric, eof};
+use nom::{ErrorKind, IResult};
+use nom::{eof, is_alphanumeric, is_digit};
 use nom;
 
 use lang::logsent::*;
@@ -1144,7 +1144,7 @@ fn is_multispace(chr: u8) -> bool {
 
 #[cfg(test)]
 mod test {
-    use super::{class_decl, func_decl, ParseErrB};
+    use super::{ParseErrB, class_decl, func_decl};
     use super::*;
     use std::str;
 

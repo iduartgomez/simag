@@ -5,14 +5,14 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::iter::FromIterator;
 use std::hash::{Hash, Hasher};
-use std::sync::{RwLock, Mutex};
+use std::sync::{Mutex, RwLock};
 use std::rc::Rc;
 
-use chrono::{UTC, DateTime};
+use chrono::{DateTime, UTC};
 use scoped_threadpool::Pool;
 
 use lang;
-use lang::{ParseTree, ParseErrF, GroundedClsMemb, GroundedFunc, LogSentence};
+use lang::{GroundedClsMemb, GroundedFunc, LogSentence, ParseErrF, ParseTree};
 use super::repr::*;
 
 type Date = DateTime<UTC>;
@@ -519,38 +519,40 @@ impl<'a> InfTrial<'a> {
                     // recursively try unifying all possible argument with the
                     // operating logic sentence:
                     // get all the entities/classes from the kb that meet the proof requeriments
-                    let assignments = meet_sent_req(self.kb, node.proof.var_req.as_ref().unwrap());
-                    if assignments.is_none() {
-                        for e in node.antecedents.clone() {
-                            if !done.contains(&e) && !chk.contains(&e) {
-                                chk.push_back(e);
-                            }
-                        }
-                        continue;
-                    }
-                    // lazily iterate over all possible combinations of the substitutions
-                    let mapped = ArgsProduct::product(assignments.unwrap());
-                    if mapped.is_some() {
-                        let mapped = mapped.unwrap();
-                        pool.scoped(|scope| {
-                            let node_r = &**node as *const ProofNode as usize;
-                            for args in mapped {
-                                {
-                                    let lock = self.valid.lock().unwrap();
-                                    if lock.is_some() {
-                                        break;
-                                    }
+                    for var_req in node.proof.get_lhs_predicates().to_sent_args() {
+                        let assignments = meet_sent_req(self.kb, &var_req);
+                        if assignments.is_none() {
+                            for e in node.antecedents.clone() {
+                                if !done.contains(&e) && !chk.contains(&e) {
+                                    chk.push_back(e);
                                 }
-                                let args_r = Box::into_raw(Box::new(args)) as usize;
-                                scope.execute(move || scoped_exec(inf_ptr, node_r, args_r));
                             }
-                        });
-                    }
-                    let lock = self.feedback.lock().unwrap();
-                    if *lock {
-                        for e in node.antecedents.clone() {
-                            if !done.contains(&e) && !chk.contains(&e) {
-                                chk.push_back(e);
+                            continue;
+                        }
+                        // lazily iterate over all possible combinations of the substitutions
+                        let mapped = ArgsProduct::product(assignments.unwrap());
+                        if mapped.is_some() {
+                            let mapped = mapped.unwrap();
+                            pool.scoped(|scope| {
+                                let node_r = &**node as *const ProofNode as usize;
+                                for args in mapped {
+                                    {
+                                        let lock = self.valid.lock().unwrap();
+                                        if lock.is_some() {
+                                            break;
+                                        }
+                                    }
+                                    let args_r = Box::into_raw(Box::new(args)) as usize;
+                                    scope.execute(move || scoped_exec(inf_ptr, node_r, args_r));
+                                }
+                            });
+                        }
+                        let lock = self.feedback.lock().unwrap();
+                        if *lock {
+                            for e in node.antecedents.clone() {
+                                if !done.contains(&e) && !chk.contains(&e) {
+                                    chk.push_back(e);
+                                }
                             }
                         }
                     }
@@ -670,7 +672,7 @@ impl<'a> InfTrial<'a> {
                     HashSet::from_iter(lock.get(&cls).unwrap().iter().cloned());
                 for sent in a.difference(&rules) {
                     let mut antecedents = vec![];
-                    for p in sent.get_lhs_predicates() {
+                    for p in sent.get_all_lhs_predicates() {
                         antecedents.push(p.get_name())
                     }
                     let node = Box::new(ProofNode::new(sent.clone(), antecedents.clone()));
@@ -692,7 +694,7 @@ impl<'a> InfTrial<'a> {
 }
 
 pub fn meet_sent_req(rep: &Representation,
-                     req: &HashMap<Rc<lang::Var>, Vec<Rc<lang::Assert>>>)
+                     req: &HashMap<Rc<lang::Var>, Vec<&lang::Assert>>)
                      -> Option<HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>>> {
     let mut results: HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>> = HashMap::new();
     for (var, asserts) in req.iter() {

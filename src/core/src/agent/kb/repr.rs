@@ -4,10 +4,10 @@ use std::sync::RwLock;
 use std::rc::Rc;
 
 use float_cmp::ApproxEqUlps;
-use chrono::{UTC, DateTime};
+use chrono::{DateTime, UTC};
 
 use lang;
-use lang::{ParseTree, ParseErrF, GroundedClsMemb, GroundedFunc, LogSentence};
+use lang::{GroundedClsMemb, GroundedFunc, LogSentence, ParseErrF, ParseTree};
 use super::*;
 
 type Date = DateTime<UTC>;
@@ -344,16 +344,18 @@ impl Representation {
             }
         };
 
-        if let Some(candidates) = meet_sent_req(self, belief.var_req.as_ref().unwrap()) {
-            for var in candidates.keys() {
-                let it = belief.get_rhs_predicates();
-                for pred in it.iter().filter(|x| x.contains(&**var)) {
-                    match **pred {
-                        lang::Assert::ClassDecl(ref cls_decl) => {
-                            iter_cls_candidates(cls_decl, &candidates)
-                        }
-                        lang::Assert::FuncDecl(ref func_decl) => {
-                            iter_func_candidates(func_decl, &candidates)
+        for var_req in belief.get_lhs_predicates().to_sent_args() {
+            if let Some(candidates) = meet_sent_req(self, &var_req) {
+                for var in candidates.keys() {
+                    let it = belief.get_rhs_predicates();
+                    for pred in it.iter().filter(|x| x.contains(&**var)) {
+                        match **pred {
+                            lang::Assert::ClassDecl(ref cls_decl) => {
+                                iter_cls_candidates(cls_decl, &candidates)
+                            }
+                            lang::Assert::FuncDecl(ref func_decl) => {
+                                iter_func_candidates(func_decl, &candidates)
+                            }
                         }
                     }
                 }
@@ -743,7 +745,8 @@ enum ClassMember {
 impl ClassMember {
     fn unwrap_memb(&self) -> Rc<GroundedClsMemb> {
         match *self {
-            ClassMember::Entity(ref obj) | ClassMember::Class(ref obj) => obj.clone(),
+            ClassMember::Entity(ref obj) |
+            ClassMember::Class(ref obj) => obj.clone(),
             _ => panic!(),
         }
     }

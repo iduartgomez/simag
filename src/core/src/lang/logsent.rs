@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::fmt;
 
-use chrono::{UTC, DateTime};
+use chrono::{DateTime, UTC};
 
 use lang::parser::*;
 use lang::common::*;
@@ -34,7 +34,6 @@ pub struct LogSentence {
     skolem: Option<Vec<Rc<Skolem>>>,
     root: Option<Rc<Particle>>,
     predicates: (Vec<Rc<Assert>>, Vec<Rc<Assert>>),
-    pub var_req: Option<HashMap<Rc<Var>, Vec<Rc<Assert>>>>,
     pub created: DateTime<UTC>,
     id: Vec<u8>,
 }
@@ -48,7 +47,6 @@ impl<'a> LogSentence {
             vars: None,
             root: None,
             predicates: (vec![], vec![]),
-            var_req: None,
             created: UTC::now(),
             id: vec![],
         };
@@ -85,11 +83,6 @@ impl<'a> LogSentence {
                 .map(|p| p.pred_ref())
                 .collect();
             sent.predicates = (lhs_v, rhs_v);
-            // add var requeriments
-            let req = sent.get_var_requeriments();
-            if !req.is_empty() {
-                sent.var_req = Some(req);
-            }
         }
         sent.generate_uid();
         Ok(sent)
@@ -122,14 +115,14 @@ impl<'a> LogSentence {
         let mut preds = vec![];
         for p in particles {
             if p.is_atom() {
-                preds.push(p.extract_assertion())
+                preds.push(p.pred_ref())
             }
         }
         (vars.unwrap(), preds)
     }
 
     pub fn get_all_predicates(&self) -> Vec<&Assert> {
-        let mut v = self.get_lhs_predicates();
+        let mut v = self.get_all_lhs_predicates();
         let mut v_rhs = self.get_rhs_predicates();
         v.append(&mut v_rhs);
         v
@@ -144,7 +137,7 @@ impl<'a> LogSentence {
         v
     }
 
-    pub fn get_lhs_predicates(&self) -> Vec<&Assert> {
+    pub fn get_all_lhs_predicates(&self) -> Vec<&Assert> {
         let mut v = vec![];
         for p in &self.predicates.0 {
             let p = &**p as &Assert;
@@ -153,23 +146,8 @@ impl<'a> LogSentence {
         v
     }
 
-    /// Returns the requeriments a variable must meet to fit the criteria in a sentence.
-    /// This just takes into consideration the LHS variables.
-    fn get_var_requeriments(&self) -> HashMap<Rc<Var>, Vec<Rc<Assert>>> {
-        let mut requeriments = HashMap::new();
-        if self.vars.is_none() {
-            return requeriments;
-        }
-        for var in self.vars.as_ref().unwrap() {
-            let mut var_req = Vec::new();
-            for p in &self.predicates.0 {
-                if p.contains(var) {
-                    var_req.push(p.clone())
-                }
-            }
-            requeriments.insert(var.clone(), var_req);
-        }
-        requeriments
+    pub fn get_lhs_predicates(&self) -> LhsPreds {
+        LhsPreds::new(self.root.as_ref().unwrap().get_next(0).unwrap(), self)
     }
 
     fn add_var(&mut self, var: Rc<Var>) {
@@ -208,6 +186,138 @@ impl<'a> LogSentence {
 
     pub fn get_id(&self) -> &[u8] {
         &self.id
+    }
+}
+
+pub struct LhsPreds<'a> {
+    preds: Vec<Vec<Rc<Assert>>>,
+    index: Vec<(usize, bool)>,
+    curr: usize,
+    sent: &'a LogSentence,
+}
+
+impl<'a> LhsPreds<'a> {
+    fn new(lhs_root: Rc<Particle>, sent: &'a LogSentence) -> LhsPreds<'a> {
+        // visit each node and find the OR statements
+        let mut f = vec![];
+        let mut l = vec![];
+        LhsPreds::dig(lhs_root, &mut f, &mut l);
+        if !l.is_empty() {
+            f.push(l);
+        }
+        println!("\nPERMUTAR: {:?}\n", f.iter().map(|x| x.len()).collect::<Vec<_>>());
+        let idx = vec![(0, false); f.len()];
+        LhsPreds {
+            preds: f,
+            index: idx,
+            curr: 0,
+            sent: sent,
+        }
+    }
+
+    fn dig(prev: Rc<Particle>, f: &mut Vec<Vec<Rc<Assert>>>, curr: &mut Vec<Rc<Assert>>) {
+        // break up all the assertments into groups of one or more members
+        // depending on whether they are childs of an OR node or not
+        if let Some(lhs) = prev.get_next(0) {
+            if prev.is_disjunction() {
+                LhsPreds::dig(lhs, f, curr);
+                LhsPreds::dig(prev.get_next(1).unwrap(), f, curr);
+            } else {
+                let mut nlhs = vec![];
+                let mut nrhs = vec![];
+                LhsPreds::dig(lhs, f, &mut nlhs);
+                LhsPreds::dig(prev.get_next(1).unwrap(), f, &mut nrhs);
+                if !nrhs.is_empty() {
+                    f.push(nrhs);
+                }
+                if !nlhs.is_empty() {
+                    f.push(nlhs);
+                }
+            }
+        } else {
+            curr.push(prev.pred_ref())
+        }
+    }
+
+    /// Iterates the permutations of the sentence variable requeriments.
+    /// This just takes into consideration the LHS variables.
+    pub fn to_sent_args(self) -> SentVarReq<'a> {
+        SentVarReq { iter: self }
+    }
+}
+
+impl<'a> ::std::iter::Iterator for LhsPreds<'a> {
+    type Item = Vec<&'a Assert>;
+    fn next(&mut self) -> Option<Vec<&'a Assert>> {
+        let mut max = 0;
+        for v in &self.index {
+            if v.1 {
+                max += 1;
+            }
+        }
+        if max == self.index.len() {
+            return None;
+        }
+
+        let mut row = vec![];
+        let preds: &[Vec<Rc<Assert>>] = unsafe { &*(&*self.preds as *const [_]) as &'a [_] };
+        for (i, v) in preds.iter().enumerate() {
+            let idx = self.index[i].0;
+            row.push(&*v[idx]);
+        }
+        if self.index[self.curr].0 < self.preds[self.curr].len() {
+            let mut max = true;
+            for (pos, &mut (ref mut i, _)) in self.index.iter_mut().enumerate() {
+                if (pos != self.curr) && (*i < self.preds[pos].len() - 1) {
+                    *i += 1;
+                    max = false;
+                    break;
+                }
+            }
+            if max && self.index[self.curr].0 < self.preds[self.curr].len() - 1 {
+                self.index[self.curr].0 += 1;
+            } else if max && self.curr != self.index.len() - 1 {
+                for e in &mut self.index {
+                    e.0 = 0;
+                }
+                self.index[self.curr].1 = true;
+                self.curr += 1;
+            } else {
+                self.index[self.curr].1 = true;
+            }
+        }
+        Some(row)
+    }
+}
+
+pub struct SentVarReq<'a> {
+    iter: LhsPreds<'a>,
+}
+
+impl<'a> ::std::iter::Iterator for SentVarReq<'a> {
+    type Item = HashMap<Rc<Var>, Vec<&'a Assert>>;
+    /// Iterates the permutations of the sentence variable requeriments.
+    /// This just takes into consideration the LHS variables.
+    fn next(&mut self) -> Option<HashMap<Rc<Var>, Vec<&'a Assert>>> {
+        if let Some(picks) = self.iter.next() {
+            let mut requeriments = HashMap::new();
+            if self.iter.sent.vars.is_none() {
+                return None;
+            }
+            for var in self.iter.sent.vars.as_ref().unwrap() {
+                let mut var_req = Vec::new();
+                for a in &picks {
+                    if a.contains(var) {
+                        var_req.push(*a)
+                    }
+                }
+                requeriments.insert(var.clone(), var_req);
+            }
+            println!("\nREQ: {:?}\n", requeriments);
+            Some(requeriments)
+        } else {
+            None
+        }
     }
 }
 
@@ -702,9 +812,9 @@ impl Particle {
     }
 
     #[inline]
-    fn extract_assertion(&self) -> Rc<Assert> {
+    fn pred_ref(&self) -> Rc<Assert> {
         match *self {
-            Particle::Atom(ref atom) => atom.pred.clone(),
+            Particle::Atom(ref p) => p.pred.clone(),
             _ => panic!(),
         }
     }
@@ -717,17 +827,18 @@ impl Particle {
         }
     }
 
-    fn pred_ref(&self) -> Rc<Assert> {
-        match *self {
-            Particle::Atom(ref p) => p.pred.clone(),
-            _ => panic!(),
-        }
-    }
-
     #[inline]
     fn is_icond(&self) -> bool {
         match *self {
             Particle::IndConditional(_) => true,
+            _ => false,
+        }
+    }
+
+    #[inline]
+    fn is_disjunction(&self) -> bool {
+        match *self {
+            Particle::Disjunction(_) => true,
             _ => false,
         }
     }

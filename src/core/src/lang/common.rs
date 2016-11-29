@@ -1,11 +1,9 @@
-// #![allow(needless_bool)]
-
 use std::str;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::RwLock;
 
-use chrono::{UTC, DateTime};
+use chrono::{DateTime, UTC};
 use float_cmp::ApproxEqUlps;
 
 use lang::parser::*;
@@ -587,12 +585,8 @@ impl FreeClsOwner {
                 CompOperator::Equal => {
                     val.approx_eq_ulps(&*other.value.as_ref().unwrap().read().unwrap(), 2)
                 }
-                CompOperator::Less => {
-                    *other.value.as_ref().unwrap().read().unwrap() < *val
-                }
-                CompOperator::More => {
-                    *other.value.as_ref().unwrap().read().unwrap() > *val
-                }
+                CompOperator::Less => *other.value.as_ref().unwrap().read().unwrap() < *val,
+                CompOperator::More => *other.value.as_ref().unwrap().read().unwrap() > *val,
             }
         } else {
             true
