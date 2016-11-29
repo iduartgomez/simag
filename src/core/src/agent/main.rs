@@ -18,3 +18,9 @@ impl Agent {
         self.representation.tell(source)
     }
 }
+
+impl Default for Agent {
+    fn default() -> Agent {
+        Agent::new()
+    }
+}

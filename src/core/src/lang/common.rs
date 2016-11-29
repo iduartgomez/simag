@@ -1,9 +1,12 @@
+#![allow(needless_bool)]
+
 use std::str;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::RwLock;
 
 use chrono::{UTC, DateTime};
+use float_cmp::ApproxEqUlps;
 
 use lang::parser::*;
 use lang::logsent::*;
@@ -31,11 +34,10 @@ impl<'a> Predicate {
                     Ok(Predicate::FreeClsMemb(t))
                 }
                 Ok(Terminal::GroundedTerm(gt)) => {
-                    let t =
-                        GroundedClsMemb::new(gt, a.uval.clone(), name.to_string(), None, context)?;
+                    let t = GroundedClsMemb::new(gt, a.uval, name.to_string(), None, context)?;
                     Ok(Predicate::GroundedClsMemb(t))
                 }
-                Ok(Terminal::Keyword(kw)) => return Err(ParseErrF::ReservedKW(String::from(kw))),
+                Ok(Terminal::Keyword(kw)) => Err(ParseErrF::ReservedKW(String::from(kw))),
                 Err(err) => Err(err),
             }
         } else {
@@ -43,16 +45,16 @@ impl<'a> Predicate {
                 return Err(ParseErrF::ClassIsVar);
             }
             match Terminal::from(&a.term, context) {
-                Ok(Terminal::FreeTerm(_)) if !is_func => return Err(ParseErrF::BothAreVars),
+                Ok(Terminal::FreeTerm(_)) if !is_func => Err(ParseErrF::BothAreVars),
                 Ok(Terminal::FreeTerm(ft)) => {
                     let t = FreeClsMemb::new(ft, a.uval, name, None)?;
                     Ok(Predicate::FreeClsMemb(t))
                 }
                 Ok(Terminal::GroundedTerm(gt)) => {
-                    let t = FreeClsOwner::new(gt, a.uval.clone(), name, None)?;
+                    let t = FreeClsOwner::new(gt, a.uval, name, None)?;
                     Ok(Predicate::FreeClsOwner(t))
                 }
-                Ok(Terminal::Keyword(kw)) => return Err(ParseErrF::ReservedKW(String::from(kw))),
+                Ok(Terminal::Keyword(kw)) => Err(ParseErrF::ReservedKW(String::from(kw))),
                 Err(err) => Err(err),
             }
         }
@@ -71,29 +73,29 @@ impl<'a> Predicate {
         match *self {
             Predicate::GroundedClsMemb(ref t) => {
                 if t.value.is_some() {
-                    let val = t.value.as_ref().unwrap().read().unwrap().clone();
+                    let val = t.value.as_ref().unwrap().read().unwrap();
                     let op = *t.operator.as_ref().unwrap();
-                    return (Some(op), Some(val));
+                    (Some(op), Some(*val))
                 } else {
-                    return (None, None);
+                    (None, None)
                 }
             }
             Predicate::FreeClsMemb(ref t) => {
                 if t.value.is_some() {
                     let val = *t.value.as_ref().unwrap();
                     let op = *t.operator.as_ref().unwrap();
-                    return (Some(op), Some(val));
+                    (Some(op), Some(val))
                 } else {
-                    return (None, None);
+                    (None, None)
                 }
             }
             Predicate::FreeClsOwner(ref t) => {
                 if t.value.is_some() {
                     let val = *t.value.as_ref().unwrap();
                     let op = *t.operator.as_ref().unwrap();
-                    return (Some(op), Some(val));
+                    (Some(op), Some(val))
                 } else {
-                    return (None, None);
+                    (None, None)
                 }
             }
         }
@@ -162,7 +164,7 @@ pub struct GroundedClsMemb {
 }
 
 impl GroundedClsMemb {
-    //! Internally the mutable parts are wrapped in RwLock types, as they can be accessed
+    //! Internally the mutable parts are wrapped in `RwLock` types, as they can be accessed
     //! from a multithreaded environment. This provides enough atomicity so the most
     //! time it won't be blocking other reads.
     fn new(term: Rc<String>,
@@ -254,15 +256,16 @@ impl GroundedClsMemb {
     }
 
     pub fn from_free(free: &FreeClsMemb, assignment: Rc<String>) -> GroundedClsMemb {
-        let val;
-        let op;
-        if free.value.is_some() {
-            val = Some(RwLock::new(free.value.unwrap()));
-            op = Some(free.operator.unwrap());
+        let val = if free.value.is_some() {
+            Some(RwLock::new(free.value.unwrap()))
         } else {
-            val = None;
-            op = None;
-        }
+            None
+        };
+        let op = if free.value.is_some() {
+            Some(free.operator.unwrap())
+        } else {
+            None
+        };
         GroundedClsMemb {
             term: assignment,
             value: val,
@@ -282,7 +285,8 @@ impl GroundedClsMemb {
         }
         if self.operator.is_some() && other.operator.is_none() {
             return false;
-        } else if other.operator.is_some() && self.operator.is_none() {
+        }
+        if other.operator.is_some() && self.operator.is_none() {
             return false;
         }
         true
@@ -311,30 +315,28 @@ impl ::std::cmp::PartialEq for GroundedClsMemb {
             CompOperator::Equal => {
                 if op_rhs.is_equal() {
                     if val_lhs == val_rhs {
-                        return true;
+                        true
                     } else {
-                        return false;
+                        false
                     }
                 } else if op_rhs.is_more() {
                     if val_lhs > val_rhs {
-                        return true;
+                        true
                     } else {
-                        return false;
+                        false
                     }
+                } else if val_lhs < val_rhs {
+                    true
                 } else {
-                    if val_lhs < val_rhs {
-                        return true;
-                    } else {
-                        return false;
-                    }
+                    false
                 }
             }
             CompOperator::More => {
                 if op_rhs.is_equal() {
                     if val_lhs < val_rhs {
-                        return true;
+                        true
                     } else {
-                        return false;
+                        false
                     }
                 } else {
                     panic!("simag: grounded terms operators in assertments \
@@ -344,9 +346,9 @@ impl ::std::cmp::PartialEq for GroundedClsMemb {
             CompOperator::Less => {
                 if op_rhs.is_equal() {
                     if val_lhs > val_rhs {
-                        return true;
+                        true
                     } else {
-                        return false;
+                        false
                     }
                 } else {
                     panic!("simag: grounded terms operators in assertments \
@@ -368,7 +370,7 @@ impl ::std::clone::Clone for GroundedClsMemb {
         GroundedClsMemb {
             term: self.term.clone(),
             value: value,
-            operator: self.operator.clone(),
+            operator: self.operator,
             parent: self.parent.clone(),
             dates: self.dates.clone(),
         }
@@ -399,15 +401,15 @@ impl GroundedFunc {
         let mut second = None;
         let mut third = None;
         for (i, a) in free.args.as_ref().unwrap().iter().enumerate() {
-            let n_a = match a {
-                &Predicate::FreeClsMemb(ref free) => {
-                    if let Some(ref entity) = assignments.get(&free.term) {
+            let n_a = match *a {
+                Predicate::FreeClsMemb(ref free) => {
+                    if let Some(entity) = assignments.get(&free.term) {
                         GroundedClsMemb::from_free(free, entity.name.clone())
                     } else {
                         return Err(());
                     }
                 }
-                &Predicate::GroundedClsMemb(ref term) => term.clone(),
+                Predicate::GroundedClsMemb(ref term) => term.clone(),
                 _ => return Err(()),
             };
             if i == 0 {
@@ -438,12 +440,12 @@ impl GroundedFunc {
     #[inline]
     pub fn name_in_pos(&self, name: &str, pos: &usize) -> bool {
         if (*pos < 2) && (&**self.args[*pos].get_name() == name) {
-            true
-        } else if self.third.is_some() && &**self.third.as_ref().unwrap().get_name() == name {
-            true
-        } else {
-            false
+            return true;
         }
+        if self.third.is_some() && &**self.third.as_ref().unwrap().get_name() == name {
+            return true;
+        }
+        false
     }
 
     #[inline]
@@ -558,23 +560,21 @@ impl FreeClsMemb {
             match other.operator.unwrap() {
                 CompOperator::Equal => {
                     if self.operator.as_ref().unwrap().is_equal() {
-                        if val_free == val_grounded {
-                            return true;
+                        if val_free.approx_eq_ulps(&val_grounded, 2) {
+                            true
                         } else {
-                            return false;
+                            false
                         }
                     } else if self.operator.as_ref().unwrap().is_more() {
                         if val_grounded > val_free {
-                            return true;
+                            true
                         } else {
-                            return false;
+                            false
                         }
+                    } else if val_grounded < val_free {
+                        true
                     } else {
-                        if val_grounded < val_free {
-                            return true;
-                        } else {
-                            return false;
-                        }
+                        false
                     }
                 }
                 _ => {
@@ -635,7 +635,7 @@ impl FreeClsOwner {
             let val = self.value.as_ref().unwrap();
             match *self.operator.as_ref().unwrap() {
                 CompOperator::Equal => {
-                    if *other.value.as_ref().unwrap().read().unwrap() == *val {
+                    if val.approx_eq_ulps(&*other.value.as_ref().unwrap().read().unwrap(), 2) {
                         true
                     } else {
                         false
@@ -701,17 +701,17 @@ pub enum Assert {
 impl Assert {
     #[inline]
     pub fn get_name(&self) -> Rc<String> {
-        match self {
-            &Assert::FuncDecl(ref f) => f.get_name(),
-            &Assert::ClassDecl(ref c) => c.get_name(),
+        match *self {
+            Assert::FuncDecl(ref f) => f.get_name(),
+            Assert::ClassDecl(ref c) => c.get_name(),
         }
     }
 
     #[inline]
     pub fn parent_is_grounded(&self) -> bool {
-        match self {
-            &Assert::FuncDecl(ref f) => f.parent_is_grounded(),
-            &Assert::ClassDecl(ref c) => c.parent_is_grounded(),
+        match *self {
+            Assert::FuncDecl(ref f) => f.parent_is_grounded(),
+            Assert::ClassDecl(ref c) => c.parent_is_grounded(),
         }
     }
 
@@ -740,25 +740,25 @@ impl Assert {
                              agent: &agent::Representation,
                              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
                              -> Option<bool> {
-        match self {
-            &Assert::FuncDecl(ref f) => f.equal_to_grounded(agent, assignments),
-            &Assert::ClassDecl(ref c) => c.equal_to_grounded(agent, assignments),
+        match *self {
+            Assert::FuncDecl(ref f) => f.equal_to_grounded(agent, assignments),
+            Assert::ClassDecl(ref c) => c.equal_to_grounded(agent, assignments),
         }
     }
 
     #[inline]
     pub fn is_class(&self) -> bool {
-        match self {
-            &Assert::FuncDecl(_) => false,
-            &Assert::ClassDecl(_) => true,
+        match *self {
+            Assert::FuncDecl(_) => false,
+            Assert::ClassDecl(_) => true,
         }
     }
 
     #[inline]
     pub fn contains(&self, var: &Var) -> bool {
-        match self {
-            &Assert::FuncDecl(ref f) => f.contains_var(var),
-            &Assert::ClassDecl(ref c) => c.contains_var(var),
+        match *self {
+            Assert::FuncDecl(ref f) => f.contains_var(var),
+            Assert::ClassDecl(ref c) => c.contains_var(var),
         }
     }
 
@@ -767,17 +767,17 @@ impl Assert {
                       agent: &agent::Representation,
                       assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
                       context: &mut agent::ProofResult) {
-        match self {
-            &Assert::FuncDecl(ref f) => f.substitute(agent, assignments, context),
-            &Assert::ClassDecl(ref c) => c.substitute(agent, assignments, context),
+        match *self {
+            Assert::FuncDecl(ref f) => f.substitute(agent, assignments, context),
+            Assert::ClassDecl(ref c) => c.substitute(agent, assignments, context),
         }
     }
 
     #[inline]
     pub fn get_id(&self) -> Vec<u8> {
-        match self {
-            &Assert::FuncDecl(ref f) => f.get_id(),
-            &Assert::ClassDecl(ref c) => c.get_id(),
+        match *self {
+            Assert::FuncDecl(ref f) => f.get_id(),
+            Assert::ClassDecl(ref c) => c.get_id(),
         }
     }
 }
@@ -808,12 +808,10 @@ impl<'a> FuncDecl {
             Ok(val) => val,
         };
         match variant {
-            FuncVariants::TimeCalc => return FuncDecl::decl_timecalc_fn(other, context),
-            FuncVariants::Relational => {
-                return FuncDecl::decl_relational_fn(other, context, func_name)
-            }
+            FuncVariants::TimeCalc => FuncDecl::decl_timecalc_fn(other, context),
+            FuncVariants::Relational => FuncDecl::decl_relational_fn(other, context, func_name),
             FuncVariants::NonRelational => {
-                return FuncDecl::decl_nonrelational_fn(other, context, func_name)
+                FuncDecl::decl_nonrelational_fn(other, context, func_name)
             }
         }
     }
@@ -856,8 +854,8 @@ impl<'a> FuncDecl {
             return false;
         }
         for a in self.args.as_ref().unwrap().iter() {
-            match a {
-                &Predicate::GroundedClsMemb(_) => {}
+            match *a {
+                Predicate::GroundedClsMemb(_) => {}
                 _ => return false,
             }
         }
@@ -1020,13 +1018,12 @@ impl<'a> FuncDecl {
     fn contains_var(&self, var: &Var) -> bool {
         if self.args.is_some() {
             for a in self.args.as_ref().unwrap() {
-                match a {
-                    &Predicate::FreeClsMemb(ref term) => {
-                        if &*term.term as *const Var == &*var as *const Var {
-                            return true;
-                        }
+                if let Predicate::FreeClsMemb(ref term) = *a {
+                    if &*term.term as *const Var == &*var as *const Var {
+                        return true;
                     }
-                    _ => continue,
+                } else {
+                    continue;
                 }
             }
         }
@@ -1066,9 +1063,9 @@ impl<'a> FuncDecl {
                 return None;
             }
             let assignments = assignments.as_ref().unwrap();
-            if let Ok(grfunc) = GroundedFunc::from_free(&self, assignments) {
+            if let Ok(grfunc) = GroundedFunc::from_free(self, assignments) {
                 for arg in self.get_args() {
-                    if let &Predicate::FreeClsMemb(ref arg) = arg {
+                    if let Predicate::FreeClsMemb(ref arg) = *arg {
                         if let Some(entity) = assignments.get(&arg.term) {
                             if let Some(current) = entity.get_relationship(&grfunc) {
                                 if **current != grfunc {
@@ -1089,7 +1086,7 @@ impl<'a> FuncDecl {
                   agent: &agent::Representation,
                   assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
                   context: &mut agent::ProofResult) {
-        if let Ok(grfunc) = GroundedFunc::from_free(&self, assignments.as_ref().unwrap()) {
+        if let Ok(grfunc) = GroundedFunc::from_free(self, assignments.as_ref().unwrap()) {
             let grfunc = Rc::new(grfunc);
             agent.up_relation(grfunc.clone());
             context.grounded.push((Grounded::Function(grfunc.clone()), UTC::now()))
@@ -1160,7 +1157,7 @@ impl<'a> ClassDecl {
             let mut id_1 = Vec::from(self.name.get_name().as_bytes());
             id.append(&mut id_1);
         }
-        for a in self.args.iter() {
+        for a in &self.args {
             let mut id_2 = a.get_id();
             id.append(&mut id_2)
         }
@@ -1175,12 +1172,9 @@ impl<'a> ClassDecl {
 
     fn contains_var(&self, var: &Var) -> bool {
         for a in &self.args {
-            match a {
-                &Predicate::FreeClsMemb(ref term) => {
-                    if &*term.term as *const Var == &*var as *const Var {
-                        return true;
-                    }
-                }
+            match *a {
+                Predicate::FreeClsMemb(ref term) if &*term.term as *const Var ==
+                                                    &*var as *const Var => return true,
                 _ => continue,
             }
         }
@@ -1208,8 +1202,8 @@ impl<'a> ClassDecl {
                          assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
                          -> Option<bool> {
         for a in &self.args {
-            match a {
-                &Predicate::FreeClsMemb(ref free) => {
+            match *a {
+                Predicate::FreeClsMemb(ref free) => {
                     if assignments.is_none() {
                         return None;
                     }
@@ -1225,7 +1219,7 @@ impl<'a> ClassDecl {
                         return None;
                     }
                 }
-                &Predicate::GroundedClsMemb(ref compare) => {
+                Predicate::GroundedClsMemb(ref compare) => {
                     let entity = agent.get_entity_from_class(self.get_name(), compare.term.clone());
                     if let Some(current) = entity {
                         if *current != *compare {
@@ -1246,15 +1240,15 @@ impl<'a> ClassDecl {
                   assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
                   context: &mut agent::ProofResult) {
         for a in &self.args {
-            let grfact = match a {
-                &Predicate::FreeClsMemb(ref free) => {
-                    if let Some(ref entity) = assignments.as_ref().unwrap().get(&free.term) {
+            let grfact = match *a {
+                Predicate::FreeClsMemb(ref free) => {
+                    if let Some(entity) = assignments.as_ref().unwrap().get(&free.term) {
                         GroundedClsMemb::from_free(free, entity.name.clone())
                     } else {
                         break;
                     }
                 }
-                &Predicate::GroundedClsMemb(ref grounded) => grounded.clone(),
+                Predicate::GroundedClsMemb(ref grounded) => grounded.clone(),
                 _ => return, // this path won't be taken in any program
             };
             let grfact = Rc::new(grfact);
@@ -1310,7 +1304,7 @@ impl<'a> OpArg {
     pub fn from(other: &OpArgBorrowed<'a>, context: &mut Context) -> Result<OpArg, ParseErrF> {
         let comp = match other.comp {
             Some((op, ref tors)) => {
-                let t = OpArgTerm::from(&tors, context)?;
+                let t = OpArgTerm::from(tors, context)?;
                 Some((op, t))
             }
             None => None,
@@ -1340,10 +1334,10 @@ impl<'a> OpArg {
         let mut id_1 = Vec::from(self.term.get_name().as_bytes());
         id.append(&mut id_1);
         if let Some((ref op, ref term)) = self.comp {
-            match op {
-                &CompOperator::Equal => id.push(0),
-                &CompOperator::Less => id.push(1),
-                &CompOperator::More => id.push(2),
+            match *op {
+                CompOperator::Equal => id.push(0),
+                CompOperator::Less => id.push(1),
+                CompOperator::More => id.push(2),
             }
             let mut id_2 = Vec::from(term.get_name().as_bytes());
             id.append(&mut id_2);
@@ -1497,60 +1491,55 @@ impl<'a> Terminal {
 
     fn var_equality(&self, v1: &Var) -> bool {
         match *self {
-            Terminal::FreeTerm(ref v0) => {
-                if (&*v1 as *const Var) == (&**v0 as *const Var) {
-                    true
-                } else {
-                    false
-                }
-            }
+            Terminal::FreeTerm(ref v0) if (&*v1 as *const Var) == (&**v0 as *const Var) => true,
             _ => false,
         }
     }
 
     fn is_var(&self) -> bool {
-        match *self {
-            Terminal::FreeTerm(_) => true,
-            _ => false,
+        if let Terminal::FreeTerm(_) = *self {
+            true
+        } else {
+            false
         }
     }
 
     fn get_name(&self) -> Rc<String> {
-        match self {
-            &Terminal::GroundedTerm(ref name) => name.clone(),
-            _ => panic!("simag: attempted to get a name from a non-grounded terminal"),
+        if let Terminal::GroundedTerm(ref name) = *self {
+            name.clone()
+        } else {
+            panic!("simag: attempted to get a name from a non-grounded terminal")
         }
     }
 
     fn to_string(&self) -> Rc<String> {
-        match self {
-            &Terminal::GroundedTerm(ref name) => name.clone(),
-            _ => panic!("simag: attempted to get a name from a non-grounded terminal"),
+        if let Terminal::GroundedTerm(ref name) = *self {
+            name.clone()
+        } else {
+            panic!("simag: attempted to get a name from a non-grounded terminal")
         }
     }
 
     fn is_grounded(&self) -> bool {
-        match self {
-            &Terminal::FreeTerm(_) => false,
-            _ => true,
+        if let Terminal::FreeTerm(_) = *self {
+            false
+        } else {
+            true
         }
     }
 
     pub fn get_var(&self) -> Rc<Var> {
-        match self {
-            &Terminal::FreeTerm(ref var) => var.clone(),
-            _ => panic!("simag: attempted to get a variable address in a grounded terminal"),
+        if let Terminal::FreeTerm(ref var) = *self {
+            var.clone()
+        } else {
+            panic!("simag: attempted to get a variable address in a grounded terminal")
         }
     }
 }
 
 fn reserved(s: &str) -> bool {
     match s {
-        "let" => true,
-        "time_calc" => true,
-        "exists" => true,
-        "fn" => true,
-        "time" => true,
+        "let" | "time_calc" | "exists" | "fn" | "time" => true,
         _ => false,
     }
 }

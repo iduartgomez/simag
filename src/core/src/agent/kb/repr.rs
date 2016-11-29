@@ -1,8 +1,9 @@
 use std::collections::{HashMap, VecDeque};
 use std::iter::FromIterator;
-use std::sync::{RwLock};
+use std::sync::RwLock;
 use std::rc::Rc;
 
+use float_cmp::ApproxEqUlps;
 use chrono::{UTC, DateTime};
 
 use lang;
@@ -64,7 +65,7 @@ impl Representation {
                     ParseTree::Assertion(assertions) => {
                         for assertion in assertions {
                             if assertion.is_class() {
-                                for a in assertion.unwrap_cls().into_iter() {
+                                for a in assertion.unwrap_cls() {
                                     self.up_membership(Rc::new(a))
                                 }
                             } else {
@@ -78,7 +79,7 @@ impl Representation {
                     ParseTree::ParseErr(err) => errors.push(err),
                 }
             }
-            if errors.len() > 0 {
+            if !errors.is_empty() {
                 Err(errors)
             } else {
                 Ok(())
@@ -93,7 +94,7 @@ impl Representation {
         let pres = lang::logic_parser(source, false);
         if pres.is_ok() {
             let pres = QueryInput::ManyQueries(pres.unwrap());
-            let mut inf = match Inference::new(&self, pres, false) {
+            let mut inf = match Inference::new(self, pres, false) {
                 Ok(inf) => inf,
                 Err(()) => return Answer::QueryErr,
             };
@@ -108,7 +109,7 @@ impl Representation {
     }
 
     fn ask_processed(&self, source: QueryInput, ignore_current: bool) -> Answer {
-        let mut inf = match Inference::new(&self, source, ignore_current) {
+        let mut inf = match Inference::new(self, source, ignore_current) {
             Ok(inf) => inf,
             Err(()) => return Answer::QueryErr,
         };
@@ -127,34 +128,31 @@ impl Representation {
         }
         let decl;
         let is_new: bool;
-        match (&assert.get_name()).starts_with("$") {
-            true => {
-                let entity_exists = self.entities.read().unwrap().contains_key(&assert.get_name());
-                if entity_exists {
-                    let lock = self.entities.read().unwrap();
-                    let entity = lock.get(&assert.get_name()).unwrap();
-                    is_new = entity.add_class_membership(assert.clone());
-                    decl = ClassMember::Entity(assert.clone());
-                } else {
-                    let entity = Box::new(Entity::new(assert.get_name()));
-                    is_new = entity.add_class_membership(assert.clone());
-                    self.entities.write().unwrap().insert(entity.name.clone(), entity);
-                    decl = ClassMember::Entity(assert.clone());
-                }
+        if (&assert.get_name()).starts_with('$') {
+            let entity_exists = self.entities.read().unwrap().contains_key(&assert.get_name());
+            if entity_exists {
+                let lock = self.entities.read().unwrap();
+                let entity = lock.get(&assert.get_name()).unwrap();
+                is_new = entity.add_class_membership(assert.clone());
+                decl = ClassMember::Entity(assert.clone());
+            } else {
+                let entity = Box::new(Entity::new(assert.get_name()));
+                is_new = entity.add_class_membership(assert.clone());
+                self.entities.write().unwrap().insert(entity.name.clone(), entity);
+                decl = ClassMember::Entity(assert.clone());
             }
-            false => {
-                let class_exists = self.classes.read().unwrap().contains_key(&assert.get_name());
-                if class_exists {
-                    let lock = self.classes.read().unwrap();
-                    let class = lock.get(&assert.get_name()).unwrap();
-                    is_new = class.add_class_membership(assert.clone());
-                    decl = ClassMember::Class(assert.clone());
-                } else {
-                    let class = Box::new(Class::new(assert.get_name(), ClassKind::Membership));
-                    is_new = class.add_class_membership(assert.clone());
-                    self.classes.write().unwrap().insert(class.name.clone(), class);
-                    decl = ClassMember::Class(assert.clone());
-                }
+        } else {
+            let class_exists = self.classes.read().unwrap().contains_key(&assert.get_name());
+            if class_exists {
+                let lock = self.classes.read().unwrap();
+                let class = lock.get(&assert.get_name()).unwrap();
+                is_new = class.add_class_membership(assert.clone());
+                decl = ClassMember::Class(assert.clone());
+            } else {
+                let class = Box::new(Class::new(assert.get_name(), ClassKind::Membership));
+                is_new = class.add_class_membership(assert.clone());
+                self.classes.write().unwrap().insert(class.name.clone(), class);
+                decl = ClassMember::Class(assert.clone());
             }
         }
         if is_new {
@@ -170,30 +168,27 @@ impl Representation {
         let process_arg = |a: &GroundedClsMemb| {
             let subject = a.get_name();
             let is_new1;
-            match (&subject).starts_with("$") {
-                true => {
-                    let entity_exists = self.entities.read().unwrap().contains_key(&subject);
-                    if entity_exists {
-                        let lock = self.entities.read().unwrap();
-                        let entity = lock.get(&subject).unwrap();
-                        is_new1 = entity.add_relationship(assert.clone());
-                    } else {
-                        let entity = Box::new(Entity::new(subject));
-                        is_new1 = entity.add_relationship(assert.clone());
-                        self.entities.write().unwrap().insert(entity.name.clone(), entity);
-                    }
+            if (&subject).starts_with('$') {
+                let entity_exists = self.entities.read().unwrap().contains_key(&subject);
+                if entity_exists {
+                    let lock = self.entities.read().unwrap();
+                    let entity = lock.get(&subject).unwrap();
+                    is_new1 = entity.add_relationship(assert.clone());
+                } else {
+                    let entity = Box::new(Entity::new(subject));
+                    is_new1 = entity.add_relationship(assert.clone());
+                    self.entities.write().unwrap().insert(entity.name.clone(), entity);
                 }
-                false => {
-                    let class_exists = self.classes.read().unwrap().contains_key(&subject);
-                    if class_exists {
-                        let lock = self.classes.read().unwrap();
-                        let class = lock.get(&subject).unwrap();
-                        is_new1 = class.add_relationship(assert.clone());
-                    } else {
-                        let class = Box::new(Class::new(subject, ClassKind::Membership));
-                        is_new1 = class.add_relationship(assert.clone());
-                        self.classes.write().unwrap().insert(class.name.clone(), class);
-                    }
+            } else {
+                let class_exists = self.classes.read().unwrap().contains_key(&subject);
+                if class_exists {
+                    let lock = self.classes.read().unwrap();
+                    let class = lock.get(&subject).unwrap();
+                    is_new1 = class.add_relationship(assert.clone());
+                } else {
+                    let class = Box::new(Class::new(subject, ClassKind::Membership));
+                    is_new1 = class.add_relationship(assert.clone());
+                    self.classes.write().unwrap().insert(class.name.clone(), class);
                 }
             }
             let new_check = is_new.clone();
@@ -254,8 +249,8 @@ impl Representation {
         };
 
         for p in belief.get_all_predicates() {
-            match p {
-                &lang::Assert::ClassDecl(ref cls_decl) => {
+            match *p {
+                lang::Assert::ClassDecl(ref cls_decl) => {
                     let class_exists = self.classes
                         .read()
                         .unwrap()
@@ -276,26 +271,15 @@ impl Representation {
                     for arg in cls_decl.get_args() {
                         if !arg.is_var() {
                             let subject = arg.get_name();
-                            match subject.starts_with("$") {
-                                true => {
-                                    update(subject,
-                                           cls_decl.get_name(),
-                                           true,
-                                           belief.clone(),
-                                           &self)
-                                }
-                                false => {
-                                    update(subject,
-                                           cls_decl.get_name(),
-                                           false,
-                                           belief.clone(),
-                                           &self)
-                                }
+                            if subject.starts_with('$') {
+                                update(subject, cls_decl.get_name(), true, belief.clone(), self)
+                            } else {
+                                update(subject, cls_decl.get_name(), false, belief.clone(), self)
                             }
                         }
                     }
                 }
-                &lang::Assert::FuncDecl(ref fn_decl) => {
+                lang::Assert::FuncDecl(ref fn_decl) => {
                     let class_exists = self.classes
                         .read()
                         .unwrap()
@@ -316,17 +300,10 @@ impl Representation {
                     for arg in fn_decl.get_args() {
                         if !arg.is_var() {
                             let subject = arg.get_name();
-                            match subject.starts_with("$") {
-                                true => {
-                                    update(subject, fn_decl.get_name(), true, belief.clone(), &self)
-                                }
-                                false => {
-                                    update(subject,
-                                           fn_decl.get_name(),
-                                           false,
-                                           belief.clone(),
-                                           &self)
-                                }
+                            if subject.starts_with('$') {
+                                update(subject, fn_decl.get_name(), true, belief.clone(), self)
+                            } else {
+                                update(subject, fn_decl.get_name(), false, belief.clone(), self)
                             }
                         }
                     }
@@ -353,7 +330,7 @@ impl Representation {
             }
         };
         let iter_func_candidates = |func_decl: &lang::FuncDecl,
-                                    candidates: &ArgsProductInput| {
+                                    candidates: &HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>>| {
             let mapped = ArgsProduct::product(candidates.clone());
             if let Some(mapped) = mapped {
                 for args in mapped {
@@ -396,11 +373,11 @@ impl Representation {
                 let class = lock.get(&name).unwrap();
                 class.add_rule(rule.clone());
             } else {
-                let nc = match p {
-                    &lang::Assert::ClassDecl(_) => {
+                let nc = match *p {
+                    lang::Assert::ClassDecl(_) => {
                         Box::new(Class::new(name.clone(), ClassKind::Membership))
                     }
-                    &lang::Assert::FuncDecl(_) => {
+                    lang::Assert::FuncDecl(_) => {
                         Box::new(Class::new(name.clone(), ClassKind::Relationship))
                     }
                 };
@@ -416,7 +393,9 @@ impl Representation {
 
     /// Takes a vector of class names and returns a hash map with those classes as keys
     /// and the memberships to those classes.
-    pub fn by_class(&self, classes: &Vec<Rc<String>>) -> HashMap<Rc<String>, Vec<Rc<GroundedClsMemb>>> {
+    pub fn by_class(&self,
+                    classes: &[Rc<String>])
+                    -> HashMap<Rc<String>, Vec<Rc<GroundedClsMemb>>> {
         let mut dict = HashMap::new();
         let lock = self.classes.read().unwrap();
         for cls in classes {
@@ -427,7 +406,7 @@ impl Representation {
             let mut v = vec![];
             for e in &**cls_ref.unwrap().members.read().unwrap() {
                 match *e {
-                    ClassMember::Class(ref m) => v.push(m.clone()),
+                    ClassMember::Class(ref m) |
                     ClassMember::Entity(ref m) => v.push(m.clone()),
                     _ => {}
                 }
@@ -440,9 +419,10 @@ impl Representation {
     /// Takes a vector of relation declarations and returns a hash map with those relation
     /// names as keys and a hash map of the objects which have one relation of that kind
     /// as value (with a list of the grounded functions for each object).
+    #[allow(type_complexity)]
     pub fn by_relationship(&self,
-                       funcs: &Vec<&lang::FuncDecl>)
-                       -> HashMap<Rc<String>, HashMap<Rc<String>, Vec<Rc<GroundedFunc>>>> {
+                           funcs: &[&lang::FuncDecl])
+                           -> HashMap<Rc<String>, HashMap<Rc<String>, Vec<Rc<GroundedFunc>>>> {
         let mut dict = HashMap::new();
         let lock = self.classes.read().unwrap();
         for func in funcs {
@@ -452,14 +432,11 @@ impl Representation {
             }
             let mut m = HashMap::new();
             for e in &**func_ref.unwrap().members.read().unwrap() {
-                match *e {
-                    ClassMember::Func(ref f) => {
-                        for name in f.get_args_names() {
-                            let e: &mut Vec<_> = m.entry(name).or_insert(Vec::new());
-                            e.push(f.clone())
-                        }
+                if let ClassMember::Func(ref f) = *e {
+                    for name in f.get_args_names() {
+                        let e: &mut Vec<_> = m.entry(name).or_insert(Vec::new());
+                        e.push(f.clone())
                     }
-                    _ => {}
                 }
             }
             dict.insert(func.get_name(), m);
@@ -471,57 +448,49 @@ impl Representation {
                                  class: Rc<String>,
                                  subject: Rc<String>)
                                  -> Option<Rc<GroundedClsMemb>> {
-        match subject.starts_with("$") {
-            true => {
-                let entity_exists = self.entities.read().unwrap().contains_key(&subject);
-                if entity_exists {
-                    let lock = self.entities.read().unwrap();
-                    match lock.get(&subject).unwrap().belongs_to_class(class) {
-                        Some(r) => Some(r.clone()),
-                        None => None,
-                    }
-                } else {
-                    None
+        if subject.starts_with('$') {
+            let entity_exists = self.entities.read().unwrap().contains_key(&subject);
+            if entity_exists {
+                let lock = self.entities.read().unwrap();
+                match lock.get(&subject).unwrap().belongs_to_class(class) {
+                    Some(r) => Some(r.clone()),
+                    None => None,
                 }
+            } else {
+                None
             }
-            false => {
-                let class_exists = self.classes.read().unwrap().contains_key(&subject);
-                if class_exists {
-                    let lock = self.classes.read().unwrap();
-                    match lock.get(&subject).unwrap().belongs_to_class(class) {
-                        Some(r) => Some(r.clone()),
-                        None => None,
-                    }
-                } else {
-                    None
+        } else {
+            let class_exists = self.classes.read().unwrap().contains_key(&subject);
+            if class_exists {
+                let lock = self.classes.read().unwrap();
+                match lock.get(&subject).unwrap().belongs_to_class(class) {
+                    Some(r) => Some(r.clone()),
+                    None => None,
                 }
+            } else {
+                None
             }
         }
     }
 
     pub fn class_membership(&self, pred: &GroundedClsMemb) -> Option<bool> {
         let subject = pred.get_name();
-        match subject.starts_with("$") {
-            true => {
-                if let Some(entity) = self.entities.read().unwrap().get(&subject) {
-                    if let Some(current) = entity.belongs_to_class(pred.get_parent()) {
-                        if *current == *pred {
-                            return Some(true);
-                        } else {
-                            return Some(false);
-                        }
+        if subject.starts_with('$') {
+            if let Some(entity) = self.entities.read().unwrap().get(&subject) {
+                if let Some(current) = entity.belongs_to_class(pred.get_parent()) {
+                    if *current == *pred {
+                        return Some(true);
+                    } else {
+                        return Some(false);
                     }
                 }
             }
-            false => {
-                if let Some(class) = self.classes.read().unwrap().get(&subject) {
-                    if let Some(current) = class.belongs_to_class(pred.get_parent()) {
-                        if *current == *pred {
-                            return Some(true);
-                        } else {
-                            return Some(false);
-                        }
-                    }
+        } else if let Some(class) = self.classes.read().unwrap().get(&subject) {
+            if let Some(current) = class.belongs_to_class(pred.get_parent()) {
+                if *current == *pred {
+                    return Some(true);
+                } else {
+                    return Some(false);
                 }
             }
         }
@@ -529,47 +498,37 @@ impl Representation {
     }
 
     pub fn get_class_membership(&self, subject: &lang::FreeClsOwner) -> Vec<Rc<GroundedClsMemb>> {
-        let ref name = subject.term;
-        match name.starts_with("$") {
-            true => {
-                if let Some(entity) = self.entities.read().unwrap().get(name) {
-                    entity.get_class_membership(subject)
-                } else {
-                    vec![]
-                }
+        let name = &subject.term;
+        if name.starts_with('$') {
+            if let Some(entity) = self.entities.read().unwrap().get(name) {
+                entity.get_class_membership(subject)
+            } else {
+                vec![]
             }
-            false => {
-                if let Some(class) = self.classes.read().unwrap().get(name) {
-                    class.get_class_membership(subject)
-                } else {
-                    vec![]
-                }
-            }
+        } else if let Some(class) = self.classes.read().unwrap().get(name) {
+            class.get_class_membership(subject)
+        } else {
+            vec![]
         }
     }
 
     pub fn has_relationship(&self, pred: &GroundedFunc, subject: Rc<String>) -> Option<bool> {
-        match subject.starts_with("$") {
-            true => {
-                if let Some(entity) = self.entities.read().unwrap().get(&subject) {
-                    if let Some(current) = entity.has_relationship(pred) {
-                        if *current == *pred {
-                            return Some(true);
-                        } else {
-                            return Some(false);
-                        }
+        if subject.starts_with('$') {
+            if let Some(entity) = self.entities.read().unwrap().get(&subject) {
+                if let Some(current) = entity.has_relationship(pred) {
+                    if *current == *pred {
+                        return Some(true);
+                    } else {
+                        return Some(false);
                     }
                 }
             }
-            false => {
-                if let Some(class) = self.classes.read().unwrap().get(&subject) {
-                    if let Some(current) = class.has_relationship(pred) {
-                        if *current == *pred {
-                            return Some(true);
-                        } else {
-                            return Some(false);
-                        }
-                    }
+        } else if let Some(class) = self.classes.read().unwrap().get(&subject) {
+            if let Some(current) = class.has_relationship(pred) {
+                if *current == *pred {
+                    return Some(true);
+                } else {
+                    return Some(false);
                 }
             }
         }
@@ -577,28 +536,23 @@ impl Representation {
     }
 
     pub fn get_relationships(&self,
-                         func: &lang::FuncDecl)
-                         -> HashMap<Rc<String>, Vec<Rc<GroundedFunc>>> {
+                             func: &lang::FuncDecl)
+                             -> HashMap<Rc<String>, Vec<Rc<GroundedFunc>>> {
         let mut res = HashMap::new();
         for (pos, arg) in func.get_args().enumerate() {
             if !arg.is_var() {
                 let name = arg.get_name();
-                match name.starts_with("$") {
-                    true => {
-                        if let Some(entity) = self.entities.read().unwrap().get(&name) {
-                            let mut v = entity.get_relationships(pos, arg);
-                            for (rel, mut funcs) in v.drain() {
-                                res.entry(rel).or_insert(vec![]).append(&mut funcs);
-                            }
+                if name.starts_with('$') {
+                    if let Some(entity) = self.entities.read().unwrap().get(&name) {
+                        let mut v = entity.get_relationships(pos, arg);
+                        for (rel, mut funcs) in v.drain() {
+                            res.entry(rel).or_insert(vec![]).append(&mut funcs);
                         }
                     }
-                    false => {
-                        if let Some(class) = self.classes.read().unwrap().get(&name) {
-                            let mut v = class.get_relationships(pos, arg);
-                            for (rel, mut funcs) in v.drain() {
-                                res.entry(rel).or_insert(vec![]).append(&mut funcs);
-                            }
-                        }
+                } else if let Some(class) = self.classes.read().unwrap().get(&name) {
+                    let mut v = class.get_relationships(pos, arg);
+                    for (rel, mut funcs) in v.drain() {
+                        res.entry(rel).or_insert(vec![]).append(&mut funcs);
                     }
                 }
             }
@@ -651,24 +605,20 @@ impl Entity {
 
     fn get_class_membership(&self, compare: &lang::FreeClsOwner) -> Vec<Rc<GroundedClsMemb>> {
         let lock = self.classes.read().unwrap();
-        let v: Vec<_> = lock.values().filter(|x| compare.filter_grounded(&**x)).cloned().collect();
-        v
+        lock.values().filter(|x| compare.filter_grounded(&**x)).cloned().collect::<Vec<_>>()
     }
 
     fn add_class_membership(&self, grounded: Rc<GroundedClsMemb>) -> bool {
         let mut lock = self.classes.write().unwrap();
         let name = grounded.get_parent();
         let stmt_exists = lock.contains_key(&name);
-        match stmt_exists {
-            true => {
-                let current = lock.get(&name).unwrap();
-                current.update(grounded);
-                false
-            }
-            false => {
-                lock.insert(name, grounded);
-                true
-            }
+        if stmt_exists {
+            let current = lock.get(&name).unwrap();
+            current.update(grounded);
+            false
+        } else {
+            lock.insert(name, grounded);
+            true
         }
     }
 
@@ -698,7 +648,7 @@ impl Entity {
                     match op {
                         None => res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone()),
                         Some(lang::CompOperator::Equal) => {
-                            if *val.as_ref().unwrap() == f.get_value() {
+                            if f.get_value().approx_eq_ulps(val.as_ref().unwrap(), 2) {
                                 res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
                             }
                         }
@@ -723,42 +673,36 @@ impl Entity {
         let mut lock = self.relations.write().unwrap();
         let name = func.get_name();
         let stmt_exists = lock.contains_key(&name);
-        match stmt_exists {
-            true => {
-                let funcs_type = lock.get_mut(&name).unwrap();
-                let mut found_rel = false;
-                for f in funcs_type.iter_mut() {
-                    if f.comparable(&*func) {
-                        f.update(func.clone());
-                        found_rel = true;
-                        break;
-                    }
-                }
-                if !found_rel {
-                    funcs_type.push(func.clone());
-                    true
-                } else {
-                    false
+        if stmt_exists {
+            let funcs_type = lock.get_mut(&name).unwrap();
+            let mut found_rel = false;
+            for f in funcs_type.iter_mut() {
+                if f.comparable(&*func) {
+                    f.update(func.clone());
+                    found_rel = true;
+                    break;
                 }
             }
-            false => {
-                lock.insert(name, vec![func.clone()]);
+            if !found_rel {
+                funcs_type.push(func.clone());
                 true
+            } else {
+                false
             }
+        } else {
+            lock.insert(name, vec![func.clone()]);
+            true
         }
     }
 
     fn add_belief(&self, belief: Rc<LogSentence>, parent: Rc<String>) {
         let sent_exists = self.beliefs.read().unwrap().contains_key(&parent);
-        match sent_exists {
-            true => {
-                if let Some(ls) = self.beliefs.write().unwrap().get_mut(&parent) {
-                    ls.push(belief)
-                }
+        if sent_exists {
+            if let Some(ls) = self.beliefs.write().unwrap().get_mut(&parent) {
+                ls.push(belief)
             }
-            false => {
-                self.beliefs.write().unwrap().insert(parent, vec![belief]);
-            }
+        } else {
+            self.beliefs.write().unwrap().insert(parent, vec![belief]);
         }
     }
 }
@@ -799,8 +743,7 @@ enum ClassMember {
 impl ClassMember {
     fn unwrap_memb(&self) -> Rc<GroundedClsMemb> {
         match *self {
-            ClassMember::Entity(ref obj) => obj.clone(),
-            ClassMember::Class(ref obj) => obj.clone(),
+            ClassMember::Entity(ref obj) | ClassMember::Class(ref obj) => obj.clone(),
             _ => panic!(),
         }
     }
@@ -836,8 +779,7 @@ impl Class {
 
     fn get_class_membership(&self, compare: &lang::FreeClsOwner) -> Vec<Rc<GroundedClsMemb>> {
         let lock = self.classes.read().unwrap();
-        let v: Vec<_> = lock.values().filter(|x| compare.filter_grounded(&**x)).cloned().collect();
-        v
+        lock.values().filter(|x| compare.filter_grounded(&**x)).cloned().collect::<Vec<_>>()
     }
 
     /// Set a superclass of this class
@@ -845,16 +787,13 @@ impl Class {
         let mut lock = self.classes.write().unwrap();
         let name = grounded.get_parent();
         let stmt_exists = lock.contains_key(&name);
-        match stmt_exists {
-            true => {
-                let current = lock.get_mut(&name).unwrap();
-                current.update(grounded);
-                false
-            }
-            false => {
-                lock.insert(name, grounded);
-                true
-            }
+        if stmt_exists {
+            let current = lock.get_mut(&name).unwrap();
+            current.update(grounded);
+            false
+        } else {
+            lock.insert(name, grounded);
+            true
         }
     }
 
@@ -897,7 +836,7 @@ impl Class {
                     match op {
                         None => res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone()),
                         Some(lang::CompOperator::Equal) => {
-                            if *val.as_ref().unwrap() == f.get_value() {
+                            if f.get_value().approx_eq_ulps(val.as_ref().unwrap(), 2) {
                                 res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
                             }
                         }
@@ -932,7 +871,7 @@ impl Class {
                 if i == 0 {
                     match func.get_uval() {
                         (lang::CompOperator::Equal, val) => {
-                            if val != curr_func.get_value() {
+                            if !val.approx_eq_ulps(&curr_func.get_value(), 2) {
                                 process = false;
                             }
                         }
@@ -961,28 +900,25 @@ impl Class {
         let mut lock = self.relations.write().unwrap();
         let name = func.get_name();
         let stmt_exists = lock.contains_key(&name);
-        match stmt_exists {
-            true => {
-                let funcs_type = lock.get_mut(&name).unwrap();
-                let mut found_rel = false;
-                for f in funcs_type.iter_mut() {
-                    if f.comparable(&*func) {
-                        f.update(func.clone());
-                        found_rel = true;
-                        break;
-                    }
-                }
-                if !found_rel {
-                    funcs_type.push(func.clone());
-                    true
-                } else {
-                    false
+        if stmt_exists {
+            let funcs_type = lock.get_mut(&name).unwrap();
+            let mut found_rel = false;
+            for f in funcs_type.iter_mut() {
+                if f.comparable(&*func) {
+                    f.update(func.clone());
+                    found_rel = true;
+                    break;
                 }
             }
-            false => {
-                lock.insert(name, vec![func.clone()]);
+            if !found_rel {
+                funcs_type.push(func.clone());
                 true
+            } else {
+                false
             }
+        } else {
+            lock.insert(name, vec![func.clone()]);
+            true
         }
     }
 
@@ -993,15 +929,12 @@ impl Class {
 
     fn add_belief(&self, belief: Rc<LogSentence>, parent: Rc<String>) {
         let sent_exists = self.beliefs.read().unwrap().contains_key(&parent);
-        match sent_exists {
-            true => {
-                if let Some(ls) = self.beliefs.write().unwrap().get_mut(&parent) {
-                    ls.push(belief)
-                }
+        if sent_exists {
+            if let Some(ls) = self.beliefs.write().unwrap().get_mut(&parent) {
+                ls.push(belief)
             }
-            false => {
-                self.beliefs.write().unwrap().insert(parent, vec![belief]);
-            }
+        } else {
+            self.beliefs.write().unwrap().insert(parent, vec![belief]);
         }
     }
 

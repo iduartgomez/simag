@@ -13,7 +13,7 @@ pub use self::common::*;
 /// at the same time, separated by newlines and/or curly braces.
 ///
 /// It includes a a scanner and parser for the synthatical analysis which translate
-/// to the `program` in form of a ParseResult to be feed to an Agent.
-pub fn logic_parser<'a>(source: String, tell: bool) -> Result<VecDeque<ParseTree>, ParseErrF> {
+/// to the **program** in form of a `ParseResult` to be feed to an Agent.
+pub fn logic_parser(source: String, tell: bool) -> Result<VecDeque<ParseTree>, ParseErrF> {
     self::parser::Parser::parse(source, tell)
 }

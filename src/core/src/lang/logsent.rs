@@ -3,7 +3,7 @@
 //! for reasoning, cataloging objects into sets/classes, and the relationships
 //! between these objects.
 //!
-//! LogSentence types are akin to minimal working compiled programs formed
+//! `LogSentence` types are akin to minimal working compiled programs formed
 //! by compounded expressions which will evaluate with the current knowledge
 //! when called and perform any subtitution in the knowledge base if pertinent.
 use std::collections::{HashMap, HashSet};
@@ -87,7 +87,7 @@ impl<'a> LogSentence {
             sent.predicates = (lhs_v, rhs_v);
             // add var requeriments
             let req = sent.get_var_requeriments();
-            if req.len() > 0 {
+            if !req.is_empty() {
                 sent.var_req = Some(req);
             }
         }
@@ -191,14 +191,14 @@ impl<'a> LogSentence {
     }
 
     fn generate_uid(&mut self) {
-        for a in self.particles.iter() {
-            match &**a {
-                &Particle::Conjunction(_) => self.id.push(0),
-                &Particle::Disjunction(_) => self.id.push(1),
-                &Particle::Equivalence(_) => self.id.push(2),
-                &Particle::Implication(_) => self.id.push(3),
-                &Particle::IndConditional(_) => self.id.push(4),
-                &Particle::Atom(ref p) => {
+        for a in &self.particles {
+            match **a {
+                Particle::Conjunction(_) => self.id.push(0),
+                Particle::Disjunction(_) => self.id.push(1),
+                Particle::Equivalence(_) => self.id.push(2),
+                Particle::Implication(_) => self.id.push(3),
+                Particle::IndConditional(_) => self.id.push(4),
+                Particle::Atom(ref p) => {
                     let mut id_1 = p.get_id();
                     self.id.append(&mut id_1)
                 }
@@ -250,11 +250,9 @@ impl fmt::Display for LogSentence {
                 depth -= 1;
                 let s = format!("\n{}", tab_times(depth));
                 breaks.push((i, s));
-            } else if c == 'n' {
-                if &prelim[i..i + 3] == "n1:" {
-                    let s = format!("\n{}", tab_times(depth));
-                    breaks.push((i, s))
-                }
+            } else if c == 'n' && &prelim[i..i + 3] == "n1:" {
+                let s = format!("\n{}", tab_times(depth));
+                breaks.push((i, s));
             }
         }
         let mut slices = Vec::new();
@@ -722,7 +720,7 @@ impl Particle {
     fn pred_ref(&self) -> Rc<Assert> {
         match *self {
             Particle::Atom(ref p) => p.pred.clone(),
-            _ => panic!()
+            _ => panic!(),
         }
     }
 
@@ -762,6 +760,12 @@ pub struct Context {
     pub is_tell: bool,
 }
 
+impl Default for Context {
+    fn default() -> Context {
+        Context::new()
+    }
+}
+
 impl Context {
     pub fn new() -> Context {
         Context {
@@ -779,9 +783,8 @@ impl Context {
 
     fn iexpr(&self) -> bool {
         match self.stype {
-            SentType::Expr => false,
             SentType::IExpr => true,
-            SentType::Rule => false,
+            SentType::Rule | SentType::Expr => false,
         }
     }
 }
@@ -850,14 +853,6 @@ impl PIntermediate {
             _ => false,
         }
     }
-
-    fn is_atom(&self) -> bool {
-        if let Some(_) = self.pred {
-            true
-        } else {
-            false
-        }
-    }
 }
 
 fn walk_ast(ast: &Next,
@@ -866,15 +861,15 @@ fn walk_ast(ast: &Next,
             -> Result<PIntermediate, ParseErrF> {
     match *ast {
         Next::Assert(ref decl) => {
-            let particle = match decl {
-                &AssertBorrowed::ClassDecl(ref decl) => {
+            let particle = match *decl {
+                AssertBorrowed::ClassDecl(ref decl) => {
                     let cls = match ClassDecl::from(decl, context) {
                         Err(err) => return Err(err),
                         Ok(cls) => cls,
                     };
                     PIntermediate::new(None, Some(Assert::ClassDecl(cls)))
                 }
-                &AssertBorrowed::FuncDecl(ref decl) => {
+                AssertBorrowed::FuncDecl(ref decl) => {
                     let func = match FuncDecl::from(decl, context) {
                         Err(err) => return Err(err),
                         Ok(func) => func,
@@ -958,7 +953,7 @@ fn walk_ast(ast: &Next,
                 }
             }
             if ast.logic_op.is_some() {
-                let mut op = PIntermediate::new(ast.logic_op.clone(), None);
+                let mut op = PIntermediate::new(ast.logic_op, None);
                 let next = match walk_ast(&ast.next, sent, context) {
                     Ok(opt) => opt,
                     Err(err) => return Err(err),
@@ -991,14 +986,14 @@ fn walk_ast(ast: &Next,
                     Err(err) => return Err(err),
 
                 };
-                let lhs_is_atom = lhs.is_atom();
+                let lhs_is_atom = lhs.pred.is_some();
                 // walk rhs
                 context.in_rhs = true;
                 let mut rhs = match walk_ast(&nodes[1], sent, context) {
                     Ok(ptr) => ptr,
                     Err(err) => return Err(err),
                 };
-                let rhs_is_atom = rhs.is_atom();
+                let rhs_is_atom = rhs.pred.is_some();
                 // lhs is connective and rhs isn't
                 context.in_rhs = in_side;
                 if !lhs_is_atom && rhs_is_atom {
@@ -1006,29 +1001,29 @@ fn walk_ast(ast: &Next,
                     let rhs = Rc::new(rhs.into_final(context));
                     sent.add_particle(rhs.clone());
                     lhs.add_rhs(rhs);
-                    Ok(lhs)
+                    return Ok(lhs);
                 } else if lhs_is_atom && !rhs_is_atom {
                     context.from_chain = true;
+                    // lhs comes from a chain, parent is rhs op
+                    let lhs = Rc::new(lhs.into_final(context));
+                    sent.add_particle(lhs.clone());
+                    rhs.add_lhs(lhs);
+                    return Ok(rhs);
+                }
+                if context.from_chain {
+                    context.from_chain = true;
+                    // rhs comes from a chain, parent is lhs op
+                    let rhs = Rc::new(rhs.into_final(context));
+                    sent.add_particle(rhs.clone());
+                    lhs.add_rhs(rhs);
+                    Ok(lhs)
+                } else {
+                    context.from_chain = true;
+                    // lhs comes from a chain, parent is rhs op
                     let lhs = Rc::new(lhs.into_final(context));
                     sent.add_particle(lhs.clone());
                     rhs.add_lhs(lhs);
                     Ok(rhs)
-                } else {
-                    if context.from_chain {
-                        context.from_chain = true;
-                        // rhs comes from a chain, parent is lhs op
-                        let rhs = Rc::new(rhs.into_final(context));
-                        sent.add_particle(rhs.clone());
-                        lhs.add_rhs(rhs);
-                        Ok(lhs)
-                    } else {
-                        context.from_chain = true;
-                        // lhs comes from a chain, parent is rhs op
-                        let lhs = Rc::new(lhs.into_final(context));
-                        sent.add_particle(lhs.clone());
-                        rhs.add_lhs(lhs);
-                        Ok(rhs)
-                    }
                 }
             } else {
                 let in_side = context.in_rhs;
@@ -1087,9 +1082,9 @@ fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), 
 
     fn has_icond_child(p: &Particle, lhs: &mut Vec<Rc<Particle>>) -> Result<(), ParseErrF> {
         if let Some(n1_0) = p.get_next(0) {
-            match &*n1_0 {
-                &Particle::IndConditional(_) => return Err(ParseErrF::IExprICondLHS),
-                &Particle::Atom(_) => {
+            match *n1_0 {
+                Particle::IndConditional(_) => return Err(ParseErrF::IExprICondLHS),
+                Particle::Atom(_) => {
                     lhs.push(n1_0.clone());
                 }
                 _ => {}
@@ -1097,9 +1092,9 @@ fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), 
             has_icond_child(&*n1_0, lhs)?;
         }
         if let Some(n1_1) = p.get_next(1) {
-            match &*n1_1 {
-                &Particle::IndConditional(_) => return Err(ParseErrF::IExprICondLHS),
-                &Particle::Atom(_) => {
+            match *n1_1 {
+                Particle::IndConditional(_) => return Err(ParseErrF::IExprICondLHS),
+                Particle::Atom(_) => {
                     lhs.push(n1_1.clone());
                 }
                 _ => {}
@@ -1122,11 +1117,11 @@ fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), 
         // test that the rh-most-s does include only icond or 'OR' connectives
         let mut is_wrong = Ok(());
         if let Some(n1_1) = p.get_next(1) {
-            match &*n1_1 {
-                &Particle::IndConditional(_) => {}
-                &Particle::Disjunction(_) => {}
-                &Particle::Conjunction(_) => {}
-                &Particle::Atom(_) => {}
+            match *n1_1 {
+                Particle::IndConditional(_) |
+                Particle::Disjunction(_) |
+                Particle::Conjunction(_) |
+                Particle::Atom(_) => {}
                 _ => return Err(ParseErrF::IExprWrongOp),
             }
             is_wrong = wrong_operator(&*n1_1, lhs);
@@ -1135,24 +1130,20 @@ fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), 
     }
 
     let first: &Particle = &*sent.root.as_ref().unwrap();
-    match first {
-        &Particle::IndConditional(_) => {}
+    match *first {
+        Particle::IndConditional(_) => {}
         _ => return Err(ParseErrF::IExprNotIcond),
     }
     if let Some(n1_0) = first.get_next(0) {
-        match &*n1_0 {
-            &Particle::IndConditional(_) => return Err(ParseErrF::IExprICondLHS),
-            _ => {}
+        if let Particle::IndConditional(_) = *n1_0 {
+            return Err(ParseErrF::IExprICondLHS);
         }
     }
     for p in &sent.particles {
-        match **p {
-            Particle::Atom(ref atom) => {
-                if !atom.pred.parent_is_grounded() {
-                    return Err(ParseErrF::WrongPredicate);
-                }
+        if let Particle::Atom(ref atom) = **p {
+            if !atom.pred.parent_is_grounded() {
+                return Err(ParseErrF::WrongPredicate);
             }
-            _ => {}
         }
     }
     wrong_operator(first, lhs)

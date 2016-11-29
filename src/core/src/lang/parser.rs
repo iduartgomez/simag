@@ -51,7 +51,7 @@ const IMPL_OP: &'static [u8] = b"=>";
 pub struct Parser;
 impl Parser {
     /// Lexerless (mostly) recursive descent parser. Takes a string and outputs a correct ParseTree.
-    pub fn parse<'b>(mut input: String, tell: bool) -> Result<VecDeque<ParseTree>, ParseErrF> {
+    pub fn parse(mut input: String, tell: bool) -> Result<VecDeque<ParseTree>, ParseErrF> {
         // store is a vec where the sequence of characters after cleaning up comments
         // will be stored, both have to be extended to 'static lifetime so they can be
         fn extend_lifetime<'b, T>(r: &'b mut T) -> &'static mut T {
@@ -106,15 +106,15 @@ impl Parser {
             match scopes.unwrap_err() {
                 nom::Err::Position(t, p) => {
                     match (t, p) {
-                        (ErrorKind::Custom(0), p) => return Err(ParseErrB::NonTerminal(p)),
-                        (ErrorKind::Custom(1), p) => return Err(ParseErrB::NonNumber(p)),
-                        (ErrorKind::Custom(11), p) => return Err(ParseErrB::NotScope(p)),
-                        (ErrorKind::Custom(12), p) => return Err(ParseErrB::UnbalDelim(p)),
-                        (ErrorKind::Custom(15), p) => return Err(ParseErrB::IllegalChain(p)),
-                        (_, p) => return Err(ParseErrB::SyntaxErrorPos(p)),
+                        (ErrorKind::Custom(0), p) => Err(ParseErrB::NonTerminal(p)),
+                        (ErrorKind::Custom(1), p) => Err(ParseErrB::NonNumber(p)),
+                        (ErrorKind::Custom(11), p) => Err(ParseErrB::NotScope(p)),
+                        (ErrorKind::Custom(12), p) => Err(ParseErrB::UnbalDelim(p)),
+                        (ErrorKind::Custom(15), p) => Err(ParseErrB::IllegalChain(p)),
+                        (_, p) => Err(ParseErrB::SyntaxErrorPos(p)),
                     }
                 }
-                _ => return Err(ParseErrB::SyntaxErrorU),
+                _ => Err(ParseErrB::SyntaxErrorU),
             }
         } else {
             let (_, scopes) = scopes.unwrap();
@@ -162,7 +162,7 @@ pub enum ParseErrF {
 
 impl ParseErrF {
     #[allow(dead_code)]
-    fn format<'a>(_err: ParseErrB<'a>) -> String {
+    fn format(_err: ParseErrB) -> String {
         unimplemented!()
     }
 }
@@ -204,14 +204,10 @@ impl ParseTree {
                         let ptr = Box::into_raw(Box::new(ParseTree::IExpr(sent))) as usize;
                         Ok(ptr)
                     }
-                    SentType::Rule => {
-                        let ptr = Box::into_raw(Box::new(ParseTree::Expr(sent))) as usize;
-                        Ok(ptr)
-                    }
                     SentType::Expr if context.is_tell => {
                         Err(ParseErrF::ExprWithVars(format!("{}", sent)))
                     }
-                    SentType::Expr => {
+                    SentType::Rule | SentType::Expr => {
                         let ptr = Box::into_raw(Box::new(ParseTree::Expr(sent))) as usize;
                         Ok(ptr)
                     }
@@ -248,20 +244,20 @@ pub enum Next<'a> {
 
 impl<'a> Next<'a> {
     fn is_assertion(&self, context: &mut Context) -> Result<Option<ParseTree>, ParseErrF> {
-        match self {
-            &Next::Assert(ref decl) => {
-                match decl {
-                    &AssertBorrowed::ClassDecl(ref decl) => {
+        match *self {
+            Next::Assert(ref decl) => {
+                match *decl {
+                    AssertBorrowed::ClassDecl(ref decl) => {
                         let cls = ClassDecl::from(decl, context)?;
                         Ok(Some(ParseTree::Assertion(vec![Assert::ClassDecl(cls)])))
                     }
-                    &AssertBorrowed::FuncDecl(ref decl) => {
+                    AssertBorrowed::FuncDecl(ref decl) => {
                         let func = FuncDecl::from(decl, context)?;
                         Ok(Some(ParseTree::Assertion(vec![Assert::FuncDecl(func)])))
                     }
                 }
             }
-            &Next::Chain(ref multi_decl) => {
+            Next::Chain(ref multi_decl) => {
                 let mut v0: Vec<Assert> = Vec::with_capacity(multi_decl.len());
                 // chek that indeed all elements are indeed assertions
                 // avoid creating declarations prematurely
@@ -279,7 +275,7 @@ impl<'a> Next<'a> {
                 }
                 Ok(Some(ParseTree::Assertion(v0)))
             }
-            &Next::ASTNode(ref node) => {
+            Next::ASTNode(ref node) => {
                 let a: Result<Option<ParseTree>, ParseErrF> = (**node).is_assertion(context);
                 match a {
                     Err(err) => Err(err),
@@ -289,7 +285,7 @@ impl<'a> Next<'a> {
                     _ => Ok(None),
                 }
             }
-            &Next::None => Ok(None),
+            Next::None => Ok(None),
         }
     }
 }
@@ -306,7 +302,7 @@ pub enum VarDeclBorrowed<'a> {
     Skolem(SkolemBorrowed<'a>),
 }
 
-fn get_blocks<'a>(input: &'a [u8]) -> IResult<&'a [u8], Vec<Next<'a>>> {
+fn get_blocks(input: &[u8]) -> IResult<&[u8], Vec<Next>> {
     let input = remove_multispace(input);
     if input.len() == 0 {
         // empty program
@@ -338,7 +334,7 @@ fn get_blocks<'a>(input: &'a [u8]) -> IResult<&'a [u8], Vec<Next<'a>>> {
     }
     if lp != rp {
         return IResult::Error(nom::Err::Position(ErrorKind::Custom(12), input));
-    } else if mcd.len() == 0 {
+    } else if mcd.is_empty() {
         return IResult::Error(nom::Err::Position(ErrorKind::Custom(11), input));
     }
     for _ in 0..mcd.len() {
@@ -349,14 +345,15 @@ fn get_blocks<'a>(input: &'a [u8]) -> IResult<&'a [u8], Vec<Next<'a>>> {
             IResult::Incomplete(_) => return IResult::Error(nom::Err::Code(ErrorKind::Count)),
         }
     }
-    if results.len() == 0 {
+    if results.is_empty() {
         return IResult::Error(nom::Err::Position(ErrorKind::Custom(11), input));
     }
     IResult::Done(&b" "[..], results)
 }
 
 // scope disambiguation infrastructure:
-fn scope<'a>(input: &'a [u8]) -> IResult<&'a [u8], Next<'a>> {
+#[allow(cyclomatic_complexity)]
+fn scope(input: &[u8]) -> IResult<&[u8], Next> {
     // check that it is indeed an scope
     let od = tuple!(input, opt!(take_while!(is_multispace)), char!('('));
     let input = match od {
@@ -372,99 +369,93 @@ fn scope<'a>(input: &'a [u8]) -> IResult<&'a [u8], Next<'a>> {
     };
     // try to get terminal nodes from input[0..], check if it's lhs
     let subnodes: IResult<&[u8], Vec<ASTNode>> = many1!(rest, expand_side);
-    match subnodes {
-        IResult::Done(r, mut d) => {
-            // lhs node
-            if is_endnode == false {
-                let subnodes_r: IResult<&[u8], Vec<ASTNode>> = many1!(rest_r, expand_side);
-                if subnodes_r.is_done() {
-                    return IResult::Error(nom::Err::Position(ErrorKind::Custom(15), rest_r));
-                } else {
-                    // chek if the rhs is a multi decl or legal end node
-                    let out1 = logic_operator(rest_r);
-                    if out1.is_done() {
-                        let (i2, op) = out1.unwrap();
-                        let mut lhs = vec![];
-                        for e in d {
-                            lhs.push(Next::ASTNode(Box::new(e)))
-                        }
-                        let lhs = Next::ASTNode(Box::new(ASTNode {
-                            next: Next::Chain(lhs),
-                            logic_op: Some(LogicOperator::from_bytes(op)),
-                            vars: None,
-                        }));
-                        let (r, rhs) = match scope(i2) {
-                            IResult::Done(r, next) => (r, next),
-                            IResult::Error(err) => return IResult::Error(err),
-                            IResult::Incomplete(err) => return IResult::Incomplete(err),
-                        };
-                        return IResult::Done(r, Next::Chain(vec![lhs, rhs]));
-                    }
-                }
-            }
-            if d.len() > 1 {
-                // multiple declarations, cannot have inner scopes
-                let rest_l = remove_multispace(rest_l);
-                if rest_l.len() > 0 {
-                    return IResult::Error(nom::Err::Position(ErrorKind::Custom(15), rest_l));
-                }
-                let mut v0 = Vec::new();
-                for e in d.drain(..) {
-                    v0.push(Next::ASTNode(Box::new(e)))
-                }
-                return IResult::Done(r, Next::Chain(v0));
+    if let IResult::Done(r, mut d) = subnodes {
+        // lhs node
+        if !is_endnode {
+            let subnodes_r: IResult<&[u8], Vec<ASTNode>> = many1!(rest_r, expand_side);
+            if subnodes_r.is_done() {
+                return IResult::Error(nom::Err::Position(ErrorKind::Custom(15), rest_r));
             } else {
-                // single decl, test for rest
-                let decl = d.pop().unwrap();
-                let rest_l = remove_multispace(rest_l);
-                if rest_l.len() > 0 {
-                    match scope(rest_l) {
-                        IResult::Done(r, next) => {
-                            let d = Next::Chain(vec![Next::ASTNode(Box::new(decl)), next]);
-                            return IResult::Done(r, d);
-                        }
+                // chek if the rhs is a multi decl or legal end node
+                let out1 = logic_operator(rest_r);
+                if out1.is_done() {
+                    let (i2, op) = out1.unwrap();
+                    let mut lhs = vec![];
+                    for e in d {
+                        lhs.push(Next::ASTNode(Box::new(e)))
+                    }
+                    let lhs = Next::ASTNode(Box::new(ASTNode {
+                        next: Next::Chain(lhs),
+                        logic_op: Some(LogicOperator::from_bytes(op)),
+                        vars: None,
+                    }));
+                    let (r, rhs) = match scope(i2) {
+                        IResult::Done(r, next) => (r, next),
                         IResult::Error(err) => return IResult::Error(err),
                         IResult::Incomplete(err) => return IResult::Incomplete(err),
-                    }
-                } else {
-                    return IResult::Done(r, Next::ASTNode(Box::new(decl)));
+                    };
+                    return IResult::Done(r, Next::Chain(vec![lhs, rhs]));
                 }
             }
         }
-        _ => {}
+        if d.len() > 1 {
+            // multiple declarations, cannot have inner scopes
+            let rest_l = remove_multispace(rest_l);
+            if rest_l.len() > 0 {
+                return IResult::Error(nom::Err::Position(ErrorKind::Custom(15), rest_l));
+            }
+            let mut v0 = Vec::new();
+            for e in d.drain(..) {
+                v0.push(Next::ASTNode(Box::new(e)))
+            }
+            return IResult::Done(r, Next::Chain(v0));
+        } else {
+            // single decl, test for rest
+            let decl = d.pop().unwrap();
+            let rest_l = remove_multispace(rest_l);
+            if rest_l.len() > 0 {
+                match scope(rest_l) {
+                    IResult::Done(r, next) => {
+                        let d = Next::Chain(vec![Next::ASTNode(Box::new(decl)), next]);
+                        return IResult::Done(r, d);
+                    }
+                    IResult::Error(err) => return IResult::Error(err),
+                    IResult::Incomplete(err) => return IResult::Incomplete(err),
+                }
+            } else {
+                return IResult::Done(r, Next::ASTNode(Box::new(decl)));
+            }
+        }
     }
     // parsing from beginning failed... check if it's a rhs
     // try to get terminal nodes from input[pcd..] // pcd = previous closing delimiter
     let subnodes: IResult<&[u8], Vec<ASTNode>> = many1!(rest_r, expand_side);
-    match subnodes {
-        IResult::Done(r0, mut d) => {
-            // rhs node
-            if d.len() > 1 {
-                // multiple declarations, cannot have inner scopes
-                let trial = scope(rest_l);
-                if trial.is_done() {
-                    return IResult::Error(nom::Err::Position(ErrorKind::Custom(15), rest_l));
-                }
-                let mut v0 = Vec::new();
-                for e in d.drain(..) {
-                    v0.push(Next::ASTNode(Box::new(e)))
-                }
-                return IResult::Done(r0, Next::Chain(v0));
-            } else {
-                let decl = d.pop().unwrap();
-                // single decl, test for lhs
-                let (r1, next) = match scope(rest_l) {
-                    IResult::Done(r, d) => (r, Next::Chain(vec![d, Next::ASTNode(Box::new(decl))])),
-                    IResult::Error(nom::Err::Position(ErrorKind::Custom(11), _)) => {
-                        (r0, Next::ASTNode(Box::new(decl)))
-                    }
-                    IResult::Error(err) => return IResult::Error(err),
-                    IResult::Incomplete(err) => return IResult::Incomplete(err),
-                };
-                return IResult::Done(r1, next);
+    if let IResult::Done(r0, mut d) = subnodes {
+        // rhs node
+        if d.len() > 1 {
+            // multiple declarations, cannot have inner scopes
+            let trial = scope(rest_l);
+            if trial.is_done() {
+                return IResult::Error(nom::Err::Position(ErrorKind::Custom(15), rest_l));
             }
+            let mut v0 = Vec::new();
+            for e in d.drain(..) {
+                v0.push(Next::ASTNode(Box::new(e)))
+            }
+            return IResult::Done(r0, Next::Chain(v0));
+        } else {
+            let decl = d.pop().unwrap();
+            // single decl, test for lhs
+            let (r1, next) = match scope(rest_l) {
+                IResult::Done(r, d) => (r, Next::Chain(vec![d, Next::ASTNode(Box::new(decl))])),
+                IResult::Error(nom::Err::Position(ErrorKind::Custom(11), _)) => {
+                    (r0, Next::ASTNode(Box::new(decl)))
+                }
+                IResult::Error(err) => return IResult::Error(err),
+                IResult::Incomplete(err) => return IResult::Incomplete(err),
+            };
+            return IResult::Done(r1, next);
         }
-        _ => {}
     }
     // not a terminal node, keep going
     let rest = remove_multispace(rest);
@@ -516,6 +507,7 @@ fn take_vars(input: &[u8]) -> (usize, Option<Vec<VarDeclBorrowed>>) {
     (offset, vars)
 }
 
+#[allow(type_complexity)]
 fn take_rest_scope(offset: usize,
                    input: &[u8])
                    -> Result<(&[u8], &[u8], &[u8], bool), nom::Err<&[u8]>> {
@@ -575,12 +567,10 @@ fn take_rest_scope(offset: usize,
         } else {
             if offset < pcd {
                 rest_r = &input[pcd + 1..cd];
+            } else if offset > cd {
+                rest_r = &b" "[..]
             } else {
-                if offset > cd {
-                    rest_r = &b" "[..]
-                } else {
-                    rest_r = &input[offset..cd];
-                }
+                rest_r = &input[offset..cd];
             }
             if offset < nod {
                 rest_l = &input[nod..pcd + 1];
@@ -588,20 +578,18 @@ fn take_rest_scope(offset: usize,
                 rest_l = &input[offset..pcd + 1];
             }
         }
+    } else if nod > pcd {
+        rest = &input[0..];
+        rest_r = &input[pcd + 1..];
+        rest_l = &input[0..pcd + 1];
+    } else if is_endnode {
+        rest = &input[0..cd];
+        rest_r = &input[0..cd];
+        rest_l = &input[0..0];
     } else {
-        if nod > pcd {
-            rest = &input[0..];
-            rest_r = &input[pcd + 1..];
-            rest_l = &input[0..pcd + 1];
-        } else if is_endnode {
-            rest = &input[0..cd];
-            rest_r = &input[0..cd];
-            rest_l = &input[0..0];
-        } else {
-            rest = &input[0..cd];
-            rest_r = &input[pcd + 1..cd];
-            rest_l = &input[nod..pcd + 1];
-        }
+        rest = &input[0..cd];
+        rest_r = &input[pcd + 1..cd];
+        rest_l = &input[nod..pcd + 1];
     }
     Ok((rest, rest_l, rest_r, is_endnode))
 }
@@ -929,14 +917,13 @@ pub enum Number {
 }
 
 fn number(input: &[u8]) -> IResult<&[u8], Number> {
-    let mut signed = false;
     let mut float = false;
     let mut idx = 0_usize;
-    let mut rest = input;
-    if (input[0] == b'-') | (input[0] == b'+') {
-        signed = true;
-        rest = &input[1..];
-    }
+    let rest = if (input[0] == b'-') | (input[0] == b'+') {
+        &input[1..]
+    } else {
+        input
+    };
     for (x, c) in rest.iter().enumerate() {
         if is_digit(*c) | (*c == b'.') {
             if *c == b'.' {
@@ -949,32 +936,26 @@ fn number(input: &[u8]) -> IResult<&[u8], Number> {
             return IResult::Error(nom::Err::Position(ErrorKind::Custom(1), input));
         }
     }
-    match (signed, float) {
-        (true, true) => {
-            IResult::Done(&input[idx + 1..],
-                          Number::SignedFloat(<f32>::from_str(str::from_utf8(&input[0..idx + 1])
-                                  .unwrap())
-                              .unwrap()))
-        }
-        (true, false) => {
-            IResult::Done(&input[idx + 1..],
-                          Number::SignedInteger(<i32>::from_str(str::from_utf8(&input[0..idx +
-                                                                                         1])
-                                  .unwrap())
-                              .unwrap()))
-        }
-        (false, true) => {
-            IResult::Done(&input[idx..],
-                          Number::UnsignedFloat(<f32>::from_str(str::from_utf8(&input[0..idx])
-                                  .unwrap())
-                              .unwrap()))
-        }
-        (false, false) => {
-            IResult::Done(&input[idx..],
-                          Number::UnsignedInteger(<u32>::from_str(str::from_utf8(&input[0..idx])
-                                  .unwrap())
-                              .unwrap()))
-        }
+    if float && (input[0] == b'-') {
+        IResult::Done(&input[idx + 1..],
+                      Number::SignedFloat(<f32>::from_str(str::from_utf8(&input[0..idx + 1])
+                              .unwrap())
+                          .unwrap()))
+    } else if !float && (input[0] == b'-') {
+        IResult::Done(&input[idx + 1..],
+                      Number::SignedInteger(<i32>::from_str(str::from_utf8(&input[0..idx + 1])
+                              .unwrap())
+                          .unwrap()))
+    } else if float {
+        IResult::Done(&input[idx..],
+                      Number::UnsignedFloat(<f32>::from_str(str::from_utf8(&input[0..idx])
+                              .unwrap())
+                          .unwrap()))
+    } else {
+        IResult::Done(&input[idx..],
+                      Number::UnsignedInteger(<u32>::from_str(str::from_utf8(&input[0..idx])
+                              .unwrap())
+                          .unwrap()))
     }
 }
 
@@ -1008,7 +989,7 @@ impl<'a> ::std::fmt::Debug for TerminalBorrowed<'a> {
 fn terminal(input: &[u8]) -> IResult<&[u8], &[u8]> {
     let mut idx = 0_usize;
     for (x, c) in input.iter().enumerate() {
-        if (is_alphanumeric(*c) == true) | (*c == b'_') | ((*c == b'$') & (x == 0)) {
+        if is_alphanumeric(*c) | (*c == b'_') | ((*c == b'$') & (x == 0)) {
             idx = x + 1;
         } else if idx > 0 {
             break;
@@ -1019,8 +1000,9 @@ fn terminal(input: &[u8]) -> IResult<&[u8], &[u8]> {
     IResult::Done(&input[idx..], &input[0..idx])
 }
 
+#[allow(needless_bool)]
 fn is_term_char(c: u8) -> bool {
-    if (is_alphanumeric(c) == true) | (c == b'_') | (c == b'$') {
+    if is_alphanumeric(c) | (c == b'_') | (c == b'$') {
         true
     } else {
         false
@@ -1151,6 +1133,7 @@ fn remove_multispace(input: &[u8]) -> &[u8] {
     }
 }
 
+#[allow(needless_bool)]
 fn is_multispace(chr: u8) -> bool {
     if chr == b' ' || chr == b'\t' || chr == b'\r' || chr == b'\n' {
         true
