@@ -344,7 +344,7 @@ impl Representation {
             }
         };
 
-        for var_req in belief.get_lhs_predicates().to_sent_args() {
+        for var_req in belief.get_lhs_predicates().to_sent_req() {
             if let Some(candidates) = meet_sent_req(self, &var_req) {
                 for var in candidates.keys() {
                     let it = belief.get_rhs_predicates();

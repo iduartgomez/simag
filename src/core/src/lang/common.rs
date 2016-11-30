@@ -422,7 +422,7 @@ impl GroundedFunc {
     }
 
     pub fn comparable(&self, other: &GroundedFunc) -> bool {
-        if other.get_name() != self.name {
+        if other.name != self.name {
             return false;
         }
         if !self.args[0].comparable(&other.args[0]) {
@@ -431,9 +431,10 @@ impl GroundedFunc {
         if !self.args[1].comparable(&other.args[1]) {
             return false;
         }
-        if self.third.is_some() && other.third.is_some() &&
-           !self.third.as_ref().unwrap().comparable(other.third.as_ref().unwrap()) {
-            false
+        if self.third.is_some() && other.third.is_some() {
+            let st = self.third.as_ref().unwrap();
+            let ot = other.third.as_ref().unwrap();
+            st.comparable(ot)
         } else {
             self.third.is_none() && other.third.is_none()
         }
@@ -989,7 +990,8 @@ impl<'a> FuncDecl {
         if self.is_grounded() {
             let sbj = self.args.as_ref().unwrap();
             let grfunc = self.clone().into_grounded();
-            agent.has_relationship(&grfunc, sbj[0].get_name())
+            let res = agent.has_relationship(&grfunc, sbj[0].get_name());
+            res
         } else {
             if assignments.is_none() {
                 return None;

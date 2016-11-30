@@ -194,6 +194,7 @@ pub struct LhsPreds<'a> {
     index: Vec<(usize, bool)>,
     curr: usize,
     sent: &'a LogSentence,
+    done: HashSet<Vec<usize>>,
 }
 
 impl<'a> LhsPreds<'a> {
@@ -205,13 +206,13 @@ impl<'a> LhsPreds<'a> {
         if !l.is_empty() {
             f.push(l);
         }
-        println!("\nPERMUTAR: {:?}\n", f.iter().map(|x| x.len()).collect::<Vec<_>>());
         let idx = vec![(0, false); f.len()];
         LhsPreds {
             preds: f,
             index: idx,
             curr: 0,
             sent: sent,
+            done: HashSet::new(),
         }
     }
 
@@ -241,7 +242,7 @@ impl<'a> LhsPreds<'a> {
 
     /// Iterates the permutations of the sentence variable requeriments.
     /// This just takes into consideration the LHS variables.
-    pub fn to_sent_args(self) -> SentVarReq<'a> {
+    pub fn to_sent_req(self) -> SentVarReq<'a> {
         SentVarReq { iter: self }
     }
 }
@@ -249,44 +250,51 @@ impl<'a> LhsPreds<'a> {
 impl<'a> ::std::iter::Iterator for LhsPreds<'a> {
     type Item = Vec<&'a Assert>;
     fn next(&mut self) -> Option<Vec<&'a Assert>> {
-        let mut max = 0;
-        for v in &self.index {
-            if v.1 {
-                max += 1;
+        loop {
+            let mut max = 0;
+            for v in &self.index {
+                if v.1 {
+                    max += 1;
+                }
             }
-        }
-        if max == self.index.len() {
-            return None;
-        }
+            if max == self.index.len() {
+                return None;
+            }
 
-        let mut row = vec![];
-        let preds: &[Vec<Rc<Assert>>] = unsafe { &*(&*self.preds as *const [_]) as &'a [_] };
-        for (i, v) in preds.iter().enumerate() {
-            let idx = self.index[i].0;
-            row.push(&*v[idx]);
-        }
-        if self.index[self.curr].0 < self.preds[self.curr].len() {
-            let mut max = true;
-            for (pos, &mut (ref mut i, _)) in self.index.iter_mut().enumerate() {
-                if (pos != self.curr) && (*i < self.preds[pos].len() - 1) {
-                    *i += 1;
-                    max = false;
-                    break;
+            let mut comb = vec![];
+            let mut row = vec![];
+            let preds: &[Vec<Rc<Assert>>] = unsafe { &*(&*self.preds as *const [_]) as &'a [_] };
+            for (i, v) in preds.iter().enumerate() {
+                let idx = self.index[i].0;
+                comb.push(idx);
+                row.push(&*v[idx]);
+            }
+            if self.index[self.curr].0 < self.preds[self.curr].len() {
+                let mut max = true;
+                for (pos, &mut (ref mut i, _)) in self.index.iter_mut().enumerate() {
+                    if (pos != self.curr) && (*i < self.preds[pos].len() - 1) {
+                        *i += 1;
+                        max = false;
+                        break;
+                    }
+                }
+                if max && self.index[self.curr].0 < self.preds[self.curr].len() - 1 {
+                    self.index[self.curr].0 += 1;
+                } else if max && self.curr != self.index.len() - 1 {
+                    for e in &mut self.index {
+                        e.0 = 0;
+                    }
+                    self.index[self.curr].1 = true;
+                    self.curr += 1;
+                } else {
+                    self.index[self.curr].1 = true;
                 }
             }
-            if max && self.index[self.curr].0 < self.preds[self.curr].len() - 1 {
-                self.index[self.curr].0 += 1;
-            } else if max && self.curr != self.index.len() - 1 {
-                for e in &mut self.index {
-                    e.0 = 0;
-                }
-                self.index[self.curr].1 = true;
-                self.curr += 1;
-            } else {
-                self.index[self.curr].1 = true;
+            if !self.done.contains(&comb) {
+                self.done.insert(comb);
+                return Some(row);
             }
         }
-        Some(row)
     }
 }
 
@@ -313,7 +321,6 @@ impl<'a> ::std::iter::Iterator for SentVarReq<'a> {
                 }
                 requeriments.insert(var.clone(), var_req);
             }
-            println!("\nREQ: {:?}\n", requeriments);
             Some(requeriments)
         } else {
             None
@@ -654,22 +661,22 @@ impl LogicDisjunction {
         let n0_res;
         if let Some(res) = self.next_lhs.solve(agent, assignments) {
             if res {
-                n0_res = true;
+                n0_res = Some(true);
             } else {
-                n0_res = false;
+                n0_res = Some(false);
             }
         } else {
-            return None;
+            n0_res = None;
         }
         let n1_res;
         if let Some(res) = self.next_rhs.solve(agent, assignments) {
             if res {
-                n1_res = true;
+                n1_res = Some(true);
             } else {
-                n1_res = false;
+                n1_res = Some(false);
             }
         } else {
-            return None;
+            n1_res = None;
         }
         if n0_res != n1_res {
             Some(true)
@@ -1191,39 +1198,31 @@ fn walk_ast(ast: &Next,
 
 fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), ParseErrF> {
 
-    fn has_icond_child(p: &Particle, lhs: &mut Vec<Rc<Particle>>) -> Result<(), ParseErrF> {
+    fn has_icond_child(p: &Particle) -> Result<(), ParseErrF> {
         if let Some(n1_0) = p.get_next(0) {
             match *n1_0 {
                 Particle::IndConditional(_) => return Err(ParseErrF::IExprICondLHS),
-                Particle::Atom(_) => {
-                    lhs.push(n1_0.clone());
-                }
                 _ => {}
             }
-            has_icond_child(&*n1_0, lhs)?;
+            has_icond_child(&*n1_0)?;
         }
         if let Some(n1_1) = p.get_next(1) {
             match *n1_1 {
                 Particle::IndConditional(_) => return Err(ParseErrF::IExprICondLHS),
-                Particle::Atom(_) => {
-                    lhs.push(n1_1.clone());
-                }
                 _ => {}
             }
-            has_icond_child(&*n1_1, lhs)?;
+            has_icond_child(&*n1_1)?;
         }
         Ok(())
     }
 
-    fn wrong_operator(p: &Particle, lhs: &mut Vec<Rc<Particle>>) -> Result<(), ParseErrF> {
+    fn wrong_operator(p: &Particle) -> Result<(), ParseErrF> {
         if let Some(n1_0) = p.get_next(0) {
             // test that the lhs does not include any indicative conditional
             if n1_0.is_icond() {
                 return Err(ParseErrF::IExprICondLHS);
-            } else if n1_0.is_atom() {
-                lhs.push(n1_0.clone());
             }
-            has_icond_child(&*n1_0, lhs)?;
+            has_icond_child(&*n1_0)?;
         }
         // test that the rh-most-s does include only icond or 'OR' connectives
         let mut is_wrong = Ok(());
@@ -1235,9 +1234,25 @@ fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), 
                 Particle::Atom(_) => {}
                 _ => return Err(ParseErrF::IExprWrongOp),
             }
-            is_wrong = wrong_operator(&*n1_1, lhs);
+            is_wrong = wrong_operator(&*n1_1);
         }
         is_wrong
+    }
+
+    fn get_lhs_preds(p: Rc<Particle>, lhs: &mut Vec<Rc<Particle>>) {
+        if let Some(n1_0) = p.get_next(0) {
+            if let Particle::Atom(_) = *n1_0 {
+                lhs.push(n1_0.clone());
+            }
+            get_lhs_preds(n1_0, lhs);
+            let n1_1 = p.get_next(1).unwrap();
+            if let Particle::Atom(_) = *n1_1 {
+                lhs.push(n1_1.clone());
+            }
+            get_lhs_preds(n1_1, lhs)
+        } else {
+            lhs.push(p);
+        }
     }
 
     let first: &Particle = &*sent.root.as_ref().unwrap();
@@ -1249,6 +1264,7 @@ fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), 
         if let Particle::IndConditional(_) = *n1_0 {
             return Err(ParseErrF::IExprICondLHS);
         }
+        get_lhs_preds(n1_0, lhs)
     }
     for p in &sent.particles {
         if let Particle::Atom(ref atom) = **p {
@@ -1257,7 +1273,7 @@ fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), 
             }
         }
     }
-    wrong_operator(first, lhs)
+    wrong_operator(first)
 }
 
 #[cfg(test)]

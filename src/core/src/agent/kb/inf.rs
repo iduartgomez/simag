@@ -418,8 +418,6 @@ impl<'a> ActiveQuery<'a> {
     }
 }
 
-type ProofArgs = Vec<(Rc<lang::Var>, Rc<VarAssignment>)>;
-
 #[derive(Debug)]
 pub struct ProofResult {
     pub result: Option<bool>,
@@ -469,11 +467,11 @@ impl<'a> InfTrial<'a> {
                 node = &*(node_r as *const ProofNode);
                 args = Rc::new(*Box::from_raw(args_r as *mut ProofArgs));
             }
-            let arg_hash = arg_hash_val(&args);
+            let arg_hash_val = arg_hash_val(&args);
             let node_r = node as *const ProofNode;
             let args_done = {
-                if let Some(queued) = inf.queue.read().unwrap().get(&(node_r)) {
-                    queued.contains(&arg_hash)
+                if let Some(queued) = inf.queue.read().unwrap().get(&node_r) {
+                    queued.contains(&arg_hash_val)
                 } else {
                     false
                 }
@@ -493,7 +491,7 @@ impl<'a> InfTrial<'a> {
                         let mut lock1 = inf.queue.write().unwrap();
                         lock1.entry(node_r)
                             .or_insert(HashSet::new())
-                            .insert(arg_hash);
+                            .insert(arg_hash_val);
                         let mut lock3 = inf.args.write().unwrap();
                         lock3.push(args.clone());
                     }
@@ -519,7 +517,7 @@ impl<'a> InfTrial<'a> {
                     // recursively try unifying all possible argument with the
                     // operating logic sentence:
                     // get all the entities/classes from the kb that meet the proof requeriments
-                    for var_req in node.proof.get_lhs_predicates().to_sent_args() {
+                    for var_req in node.proof.get_lhs_predicates().to_sent_req() {
                         let assignments = meet_sent_req(self.kb, &var_req);
                         if assignments.is_none() {
                             for e in node.antecedents.clone() {
@@ -531,8 +529,7 @@ impl<'a> InfTrial<'a> {
                         }
                         // lazily iterate over all possible combinations of the substitutions
                         let mapped = ArgsProduct::product(assignments.unwrap());
-                        if mapped.is_some() {
-                            let mapped = mapped.unwrap();
+                        if let Some(mapped) = mapped {
                             pool.scoped(|scope| {
                                 let node_r = &**node as *const ProofNode as usize;
                                 for args in mapped {
@@ -780,11 +777,14 @@ pub fn meet_sent_req(rep: &Representation,
     Some(results)
 }
 
+type ProofArgs = Vec<(Rc<lang::Var>, Rc<VarAssignment>)>;
+
 #[derive(Debug)]
 pub struct ArgsProduct {
     indexes: HashMap<Rc<lang::Var>, (usize, bool)>,
     input: HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>>,
     curr: Rc<lang::Var>,
+    done: HashSet<Vec<(*const lang::Var, Rc<String>)>>,
 }
 
 impl ArgsProduct {
@@ -804,6 +804,7 @@ impl ArgsProduct {
                 indexes: indexes,
                 input: input,
                 curr: curr.unwrap(),
+                done: HashSet::new(),
             })
         } else {
             None
@@ -815,16 +816,21 @@ impl ::std::iter::Iterator for ArgsProduct {
     type Item = ProofArgs;
 
     fn next(&mut self) -> Option<ProofArgs> {
-        let mut row_0 = vec![];
-        for (k1, v1) in &self.input {
-            let idx_1 = self.indexes[k1];
-            let e = (k1.clone(), v1[idx_1.0].clone());
-            row_0.push(e);
-        }
-        if self.completed_iter() {
-            None
-        } else {
-            Some(row_0)
+        loop {
+            let mut row_0 = vec![];
+            let mut val = vec![];
+            for (k1, v1) in &self.input {
+                let idx_1 = self.indexes[k1];
+                let assign = v1[idx_1.0].clone();
+                val.push((&**k1 as *const lang::Var, assign.name.clone()));
+                row_0.push((k1.clone(), assign));
+            }
+            if self.completed_iter() {
+                return None;
+            } else if !self.done.contains(&val) {
+                self.done.insert(val);
+                return Some(row_0);
+            }
         }
     }
 }
@@ -867,8 +873,8 @@ impl ArgsProduct {
                     curr.0 += 1;
                 }
             } else {
-                for k in self.indexes.keys() {
-                    if *k != self.curr {
+                for (k, v) in self.indexes.iter() {
+                    if *k != self.curr && !v.1 {
                         self.curr = k.clone();
                         break;
                     }
@@ -1141,28 +1147,29 @@ mod test {
     use agent::kb::repr::Representation;
     use std::collections::HashSet;
 
-    #[test]
-    fn temp() {
-        let test_07 = String::from("
-            # retrieve all objs which fit to a criteria
-            (fn::produce[milk,u=1;$Lulu])
-            (cow[$Lucy,u=1])
-            (goat[$Vicky,u=1])
-            ((let x) ((cow[x,u=1] || goat[x,u=1]) |> (female[x,u=1] && animal[x,u=1])))
-            ((let x) ((female[x,u>0] && animal[x,u>0]) |> fn::produce[milk,u=1;x]))
+    //#[test]
+    fn _temp() {
+        let test_03 = String::from("
+            ( fn::owns[$M1,u=1;$Nono] )
+            ( missile[$M1,u=1] )
+            ( american[$West,u=1] )
+            ( fn::enemy[$Nono,u=1;$America] )
+            (( let x, y, z )
+             (( american[x,u=1] && weapon[y,u=1] && fn::sells[y,u=1;x;z] && hostile[z,u=1]  )
+                 |> criminal[x,u=1] ))
+            (( let x )
+             (( fn::owns[x,u=1;$Nono] && missile[x,u=1] ) |> fn::sells[x,u=1;$West;$Nono] ))
+            (( let x ) ( missile[x,u=1] |> weapon[x,u=1] ) )
+            (( let x ) ( fn::enemy[x,u=1;$America] |> hostile[x,u=1] ) )
         ");
-        let q07_01 = "((let x) (fn::produce[milk,u>0;x]))".to_string();
+        let q03_01 = "(criminal[$West,u=1]) && hostile[$Nono,u=1] && weapon[$M1,u=1]".to_string();
         let rep = Representation::new();
-        rep.tell(test_07).unwrap();
-        let answ = rep.ask(q07_01);
-        let a07_01 = answ.get_relationships();
-        println!("\nANSWER:\n{:?}", a07_01);
-        assert!(a07_01.contains_key("$Lulu"));
-        assert!(a07_01.contains_key("$Lucy"));
-        assert!(a07_01.contains_key("$Vicky"));
+        rep.tell(test_03).unwrap();
+        let answ = rep.ask(q03_01);
+        assert_eq!(answ.get_results_single(), Some(true));
     }
 
-    // #[test]
+    #[test]
     fn ask_pred() {
         let test_01 = String::from("
             ( professor[$Lucy,u=1] )
@@ -1203,7 +1210,8 @@ mod test {
         let q03_01 = "(criminal[$West,u=1]) && hostile[$Nono,u=1] && weapon[$M1,u=1]".to_string();
         let rep = Representation::new();
         rep.tell(test_03).unwrap();
-        assert_eq!(rep.ask(q03_01).get_results_single(), Some(true));
+        let answ = rep.ask(q03_01);
+        assert_eq!(answ.get_results_single(), Some(true));
 
         let _test_04 = String::from("
             (( let x, y, t1:time, t2:time=\"*now\" )
@@ -1262,7 +1270,7 @@ mod test {
         assert_eq!(cnt, 2)
     }
 
-    // #[test]
+    #[test]
     fn ask_func() {
         let test_01 = String::from("
             ( professor[$Lucy,u=1] )
@@ -1323,14 +1331,22 @@ mod test {
         ");
         let _q06_01 = "(fn::eat[$M1,u=1;$Pancho])".to_string();
 
-        let _test_07 = String::from("
+        let test_07 = String::from("
             # retrieve all objs which fit to a criteria
+            (fn::produce[milk,u=1;$Lulu])
             (cow[$Lucy,u=1])
             (goat[$Vicky,u=1])
             ((let x) ((cow[x,u=1] || goat[x,u=1]) |> (female[x,u=1] && animal[x,u=1])))
             ((let x) ((female[x,u>0] && animal[x,u>0]) |> fn::produce[milk,u=1;x]))
         ");
-        let _q07_01 = "((let x) (fn::produce[milk,u>0;x]))".to_string();
+        let q07_01 = "((let x) (fn::produce[milk,u>0;x]))".to_string();
+        let rep = Representation::new();
+        rep.tell(test_07).unwrap();
+        let answ = rep.ask(q07_01);
+        let a07_01 = answ.get_relationships();
+        assert!(a07_01.contains_key("$Lulu"));
+        assert!(a07_01.contains_key("$Lucy"));
+        assert!(a07_01.contains_key("$Vicky"));
 
         let test_08 = String::from("
             # retrieve all relations between objects

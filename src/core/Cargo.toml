@@ -5,7 +5,6 @@ authors = ["IDG <iduartgomez@gmail.com>"]
 
 [dependencies]
 nom = "*"
-uuid = { version = "*", features = ["v4"] }
 chrono = "*"
 scoped_threadpool = "0.1.*"
 float-cmp = "*"
