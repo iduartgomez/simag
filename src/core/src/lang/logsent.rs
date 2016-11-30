@@ -242,7 +242,7 @@ impl<'a> LhsPreds<'a> {
 
     /// Iterates the permutations of the sentence variable requeriments.
     /// This just takes into consideration the LHS variables.
-    pub fn to_sent_req(self) -> SentVarReq<'a> {
+    pub fn into_sent_req(self) -> SentVarReq<'a> {
         SentVarReq { iter: self }
     }
 }
@@ -1200,16 +1200,14 @@ fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), 
 
     fn has_icond_child(p: &Particle) -> Result<(), ParseErrF> {
         if let Some(n1_0) = p.get_next(0) {
-            match *n1_0 {
-                Particle::IndConditional(_) => return Err(ParseErrF::IExprICondLHS),
-                _ => {}
+            if let Particle::IndConditional(_) = *n1_0 {
+                return Err(ParseErrF::IExprICondLHS);
             }
             has_icond_child(&*n1_0)?;
         }
         if let Some(n1_1) = p.get_next(1) {
-            match *n1_1 {
-                Particle::IndConditional(_) => return Err(ParseErrF::IExprICondLHS),
-                _ => {}
+            if let Particle::IndConditional(_) = *n1_1 {
+                return Err(ParseErrF::IExprICondLHS);
             }
             has_icond_child(&*n1_1)?;
         }

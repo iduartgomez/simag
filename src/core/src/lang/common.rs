@@ -990,8 +990,7 @@ impl<'a> FuncDecl {
         if self.is_grounded() {
             let sbj = self.args.as_ref().unwrap();
             let grfunc = self.clone().into_grounded();
-            let res = agent.has_relationship(&grfunc, sbj[0].get_name());
-            res
+            agent.has_relationship(&grfunc, sbj[0].get_name())
         } else {
             if assignments.is_none() {
                 return None;

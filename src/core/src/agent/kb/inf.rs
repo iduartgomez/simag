@@ -1,4 +1,5 @@
 //! Inference infrastructure
+
 #![allow(or_fun_call)]
 #![allow(mutex_atomic)]
 
@@ -307,30 +308,59 @@ impl<'a> Inference<'a> {
             }
         });
 
-        for (var, classes) in &self.query.cls_queries_free {
-            for cls in classes {
-                let cls_name = cls.get_parent();
-                let lock = self.kb.classes.read().unwrap();
-                if let Some(cls_curr) = lock.get(&cls_name) {
-                    let members: Vec<Rc<GroundedClsMemb>> = cls_curr.get_members(cls);
-                    for m in members {
-                        let name = unsafe { &*(&*m.get_name() as *const String) as &'a str };
-                        self.results.add_membership(var.clone(), name, m);
-                    }
+        pool.scoped(|scope| {
+            for (var, classes) in &self.query.cls_queries_free {
+                let var_r = &*var as *const Rc<lang::Var> as usize;
+                for cls in classes {
+                    let cls_r = &**cls as *const lang::FreeClsMemb as usize;
+                    scope.execute(move || {
+                        let inf: &Inference;
+                        let cls: &lang::FreeClsMemb;
+                        let var: &Rc<lang::Var>;
+                        unsafe {
+                            var = &*(var_r as *const Rc<lang::Var>);
+                            inf = &*(inf_ptr as *const Inference);
+                            cls = &*(cls_r as *const lang::FreeClsMemb);
+                        }
+                        let cls_name = cls.get_parent();
+                        let lock = inf.kb.classes.read().unwrap();
+                        if let Some(cls_curr) = lock.get(&cls_name) {
+                            let members: Vec<Rc<GroundedClsMemb>> = cls_curr.get_members(cls);
+                            for m in members {
+                                let name =
+                                    unsafe { &*(&*m.get_name() as *const String) as &'a str };
+                                inf.results.add_membership(var.clone(), name, m);
+                            }
+                        }
+                    });
                 }
             }
-        }
+        });
 
-        for (var, funcs) in &self.query.func_queries_free {
-            for func in funcs {
-                let func_name = func.get_name();
-                let lock = self.kb.classes.read().unwrap();
-                if let Some(cls_curr) = lock.get(&func_name) {
-                    let members: Vec<Rc<GroundedFunc>> = cls_curr.get_funcs(func);
-                    self.results.add_relationships(var.clone(), &members);
+        pool.scoped(|scope| {
+            for (var, funcs) in &self.query.func_queries_free {
+                let var_r = &*var as *const Rc<lang::Var> as usize;
+                for func in funcs {
+                    let func_r = func as *const Rc<lang::FuncDecl> as usize;
+                    scope.execute(move || {
+                        let inf: &Inference;
+                        let func: &Rc<lang::FuncDecl>;
+                        let var: &Rc<lang::Var>;
+                        unsafe {
+                            var = &*(var_r as *const Rc<lang::Var>);
+                            inf = &*(inf_ptr as *const Inference);
+                            func = &*(func_r as *const Rc<lang::FuncDecl>);
+                        }
+                        let func_name = func.get_name();
+                        let lock = inf.kb.classes.read().unwrap();
+                        if let Some(cls_curr) = lock.get(&func_name) {
+                            let members: Vec<Rc<GroundedFunc>> = cls_curr.get_funcs(func);
+                            inf.results.add_relationships(var.clone(), &members);
+                        }
+                    });
                 }
             }
-        }
+        });
 
         pool.scoped(|scope| {
             for (var, objs) in &self.query.cls_memb_query {
@@ -517,7 +547,7 @@ impl<'a> InfTrial<'a> {
                     // recursively try unifying all possible argument with the
                     // operating logic sentence:
                     // get all the entities/classes from the kb that meet the proof requeriments
-                    for var_req in node.proof.get_lhs_predicates().to_sent_req() {
+                    for var_req in node.proof.get_lhs_predicates().into_sent_req() {
                         let assignments = meet_sent_req(self.kb, &var_req);
                         if assignments.is_none() {
                             for e in node.antecedents.clone() {
@@ -873,7 +903,7 @@ impl ArgsProduct {
                     curr.0 += 1;
                 }
             } else {
-                for (k, v) in self.indexes.iter() {
+                for (k, v) in &self.indexes {
                     if *k != self.curr && !v.1 {
                         self.curr = k.clone();
                         break;
@@ -1147,7 +1177,7 @@ mod test {
     use agent::kb::repr::Representation;
     use std::collections::HashSet;
 
-    //#[test]
+    // #[test]
     fn _temp() {
         let test_03 = String::from("
             ( fn::owns[$M1,u=1;$Nono] )
