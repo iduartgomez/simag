@@ -1266,7 +1266,7 @@ fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), 
     }
     for p in &sent.particles {
         if let Particle::Atom(ref atom) = **p {
-            if !atom.pred.parent_is_grounded() {
+            if !atom.pred.parent_is_grounded() && !atom.pred.parent_is_kw() {
                 return Err(ParseErrF::WrongPredicate);
             }
         }

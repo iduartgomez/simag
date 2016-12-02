@@ -157,6 +157,7 @@ pub enum ParseErrF {
     WrongArgNumb,
     WrongPredicate,
     WrongDef,
+    TimeFnErr(TimeFnErr),
     None,
 }
 
@@ -1133,13 +1134,8 @@ fn remove_multispace(input: &[u8]) -> &[u8] {
     }
 }
 
-#[allow(needless_bool)]
 fn is_multispace(chr: u8) -> bool {
-    if chr == b' ' || chr == b'\t' || chr == b'\r' || chr == b'\n' {
-        true
-    } else {
-        false
-    }
+    chr == b' ' || chr == b'\t' || chr == b'\r' || chr == b'\n'
 }
 
 #[cfg(test)]

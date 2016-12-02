@@ -280,6 +280,9 @@ impl Representation {
                     }
                 }
                 lang::Assert::FuncDecl(ref fn_decl) => {
+                    if !fn_decl.is_relational() {
+                        continue;
+                    }
                     let class_exists = self.classes
                         .read()
                         .unwrap()
@@ -579,6 +582,18 @@ impl Representation {
 /// 0.9 (in natural language then it would be 'very cold') or 0.1
 /// (then it would be 'a bit cold', the subjective adjectives are defined
 /// in the class itself).
+///
+/// Attributes:
+///
+///     * id -> Unique identifier for the object.
+///     * name -> Name of the unique object.
+///     * categ -> Categories to which the object belongs.
+///                Includes the degree of membership (ie. ('cold', 0.9)).
+///     * attr -> Implicit attributes of the object, unique to itself.
+///     * cog (opt) -> These are the cognitions/relations attributed to the
+///                    object by the agent owning this representation.
+///     * relations (opt) -> Functions between objects and/or classes.
+///
 #[derive(Debug)]
 pub struct Entity {
     pub name: Rc<String>,
@@ -671,6 +686,9 @@ impl Entity {
         res
     }
 
+    /// Adds a new relationship for the entity.
+    /// Returns 'true' in case the relationship didn't exist previously,
+    /// 'false' otherwise. If it already existed, it's value is updated.
     fn add_relationship(&self, func: Rc<GroundedFunc>) -> bool {
         let mut lock = self.relations.write().unwrap();
         let name = func.get_name();
@@ -898,7 +916,9 @@ impl Class {
         res
     }
 
-    /// Add a relationship this class has with other classes/entities
+    /// Add a relationship this class has with other classes/entities.
+    /// Returns 'true' in case the relationship didn't exist,
+    /// 'false' otherwise. If it already existed it's value is updated.
     fn add_relationship(&self, func: Rc<GroundedFunc>) -> bool {
         let mut lock = self.relations.write().unwrap();
         let name = func.get_name();

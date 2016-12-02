@@ -1,4 +1,20 @@
 //! Inference infrastructure
+//!
+//! ## Safety
+//! There is some unsafe code on this module, the unsafe code performs to taks:
+//!     * Assure the compiler that data being referenced will live long enough,
+//!       this is, increasing the lifetime bounds.
+//!     * Bypass the ```Send``` trait type check when multithreading.
+//!
+//! Both of those are safe because a Representation owns, uniquely, all its
+//! knowledge by the duration of it's own lifetime (data is never dropped, while
+//! the representation is alive), thereby is safe to point to the data being
+//! referenced from the representation or the query (for the duration of the query).
+//!
+//! There is an intensive use of reference counted data throught the module,
+//! to avoid unnecesary copies. The problem is that Rc is not ```Send``` compliant
+//! so we need to 'hack' the type checking system through unsafe code to cheat
+//! the compiler.
 
 #![allow(or_fun_call)]
 #![allow(mutex_atomic)]
@@ -251,14 +267,10 @@ impl<'a> Inference<'a> {
                 let obj: &str = &**obj;
                 for pred in preds {
                     let pred_r = *pred as *const GroundedClsMemb as usize;
-                    let query = unsafe { &*(&*pred.get_parent() as *const String) as &'static str };
-                    scope.execute(move || {
-                        let inf: &Inference;
-                        let pred: &GroundedClsMemb;
-                        unsafe {
-                            inf = &*(inf_ptr as *const Inference);
-                            pred = &*(pred_r as *const GroundedClsMemb);
-                        }
+                    let query = unsafe { &*(&*pred.get_parent() as *const String) as &'a str };
+                    scope.execute(move || unsafe {
+                        let inf: &Inference = &*(inf_ptr as *const Inference);
+                        let pred: &GroundedClsMemb = &*(pred_r as *const GroundedClsMemb);
                         let result = if !inf.ignore_current {
                             inf.kb.class_membership(pred)
                         } else {
@@ -281,18 +293,13 @@ impl<'a> Inference<'a> {
         pool.scoped(|scope| {
             for pred in &self.query.func_queries_grounded {
                 let pred_r = &**pred as *const GroundedFunc as usize;
-                scope.execute(move || {
-                    let inf: &Inference;
-                    let pred: &GroundedFunc;
-                    let query: &str;
-                    unsafe {
-                        inf = &*(inf_ptr as *const Inference);
-                        pred = &*(pred_r as *const GroundedFunc);
-                        query = &*(&*pred.name as *const String) as &'static str;
-                    }
+                scope.execute(move || unsafe {
+                    let inf: &Inference = &*(inf_ptr as *const Inference);
+                    let pred: &GroundedFunc = &*(pred_r as *const GroundedFunc);
+                    let query: &str = &*(&*pred.name as *const String) as &'a str;
                     let mut result = None;
                     for arg in &pred.args {
-                        let obj = unsafe { &*(&*arg.get_name() as *const String) as &'static str };
+                        let obj = &*(&*arg.get_name() as *const String) as &'a str;
                         if !inf.ignore_current {
                             result = inf.kb.has_relationship(pred, arg.get_name());
                         }
@@ -313,22 +320,16 @@ impl<'a> Inference<'a> {
                 let var_r = &*var as *const Rc<lang::Var> as usize;
                 for cls in classes {
                     let cls_r = &**cls as *const lang::FreeClsMemb as usize;
-                    scope.execute(move || {
-                        let inf: &Inference;
-                        let cls: &lang::FreeClsMemb;
-                        let var: &Rc<lang::Var>;
-                        unsafe {
-                            var = &*(var_r as *const Rc<lang::Var>);
-                            inf = &*(inf_ptr as *const Inference);
-                            cls = &*(cls_r as *const lang::FreeClsMemb);
-                        }
+                    scope.execute(move || unsafe {
+                        let inf: &Inference = &*(inf_ptr as *const Inference);
+                        let cls: &lang::FreeClsMemb = &*(cls_r as *const lang::FreeClsMemb);
+                        let var: &Rc<lang::Var> = &*(var_r as *const Rc<lang::Var>);
                         let cls_name = cls.get_parent();
                         let lock = inf.kb.classes.read().unwrap();
                         if let Some(cls_curr) = lock.get(&cls_name) {
                             let members: Vec<Rc<GroundedClsMemb>> = cls_curr.get_members(cls);
                             for m in members {
-                                let name =
-                                    unsafe { &*(&*m.get_name() as *const String) as &'a str };
+                                let name = &*(&*m.get_name() as *const String) as &'a str;
                                 inf.results.add_membership(var.clone(), name, m);
                             }
                         }
@@ -342,15 +343,10 @@ impl<'a> Inference<'a> {
                 let var_r = &*var as *const Rc<lang::Var> as usize;
                 for func in funcs {
                     let func_r = func as *const Rc<lang::FuncDecl> as usize;
-                    scope.execute(move || {
-                        let inf: &Inference;
-                        let func: &Rc<lang::FuncDecl>;
-                        let var: &Rc<lang::Var>;
-                        unsafe {
-                            var = &*(var_r as *const Rc<lang::Var>);
-                            inf = &*(inf_ptr as *const Inference);
-                            func = &*(func_r as *const Rc<lang::FuncDecl>);
-                        }
+                    scope.execute(move || unsafe {
+                        let inf: &Inference = &*(inf_ptr as *const Inference);
+                        let func: &Rc<lang::FuncDecl> = &*(func_r as *const Rc<lang::FuncDecl>);
+                        let var: &Rc<lang::Var> = &*(var_r as *const Rc<lang::Var>);
                         let func_name = func.get_name();
                         let lock = inf.kb.classes.read().unwrap();
                         if let Some(cls_curr) = lock.get(&func_name) {
@@ -367,16 +363,11 @@ impl<'a> Inference<'a> {
                 let var_r = var as *const Rc<lang::Var> as usize;
                 for obj in objs {
                     let obj_r = *obj as *const lang::FreeClsOwner as usize;
-                    scope.execute(move || {
-                        let inf: &Inference;
-                        let obj: &lang::FreeClsOwner;
-                        let var: Rc<lang::Var>;
-                        unsafe {
-                            inf = &*(inf_ptr as *const Inference);
-                            obj = &*(obj_r as *const lang::FreeClsOwner);
-                            var = (&*(var_r as *const Rc<lang::Var>)).clone();
-                        }
-                        let name = unsafe { &*(&*obj.term as *const String) as &'a str };
+                    scope.execute(move || unsafe {
+                        let inf: &Inference = &*(inf_ptr as *const Inference);
+                        let obj: &lang::FreeClsOwner = &*(obj_r as *const lang::FreeClsOwner);
+                        let var: Rc<lang::Var> = (&*(var_r as *const Rc<lang::Var>)).clone();
+                        let name = &*(&*obj.term as *const String) as &'a str;
                         let member_of = inf.kb.get_class_membership(obj);
                         for m in member_of {
                             inf.results.add_membership(var.clone(), name, m);
@@ -391,15 +382,10 @@ impl<'a> Inference<'a> {
                 let var_r = &*var as *const Rc<lang::Var> as usize;
                 for func in funcs {
                     let func_r = func as *const Rc<lang::FuncDecl> as usize;
-                    scope.execute(move || {
-                        let inf: &Inference;
-                        let func: &Rc<lang::FuncDecl>;
-                        let var: Rc<lang::Var>;
-                        unsafe {
-                            inf = &*(inf_ptr as *const Inference);
-                            func = &*(func_r as *const Rc<lang::FuncDecl>);
-                            var = (&*(var_r as *const Rc<lang::Var>)).clone();
-                        }
+                    scope.execute(move || unsafe {
+                        let inf: &Inference = &*(inf_ptr as *const Inference);
+                        let func: &Rc<lang::FuncDecl> = &*(func_r as *const Rc<lang::FuncDecl>);
+                        let var: Rc<lang::Var> = (&*(var_r as *const Rc<lang::Var>)).clone();
                         let relationships = inf.kb.get_relationships(func);
                         for funcs in relationships.values() {
                             inf.results.add_relationships(var.clone(), funcs);
@@ -488,15 +474,10 @@ impl<'a> InfTrial<'a> {
              mut chk: VecDeque<Rc<String>>,
              mut done: HashSet<Rc<String>>) {
 
-        fn scoped_exec(inf_ptr: usize, node_r: usize, args_r: usize) {
-            let inf: &InfTrial;
-            let node: &ProofNode;
-            let args: Rc<ProofArgs>;
-            unsafe {
-                inf = &*(inf_ptr as *const InfTrial);
-                node = &*(node_r as *const ProofNode);
-                args = Rc::new(*Box::from_raw(args_r as *mut ProofArgs));
-            }
+        unsafe fn scoped_exec(inf_ptr: usize, node_r: usize, args_r: usize) {
+            let inf: &InfTrial = &*(inf_ptr as *const InfTrial);
+            let node: &ProofNode = &*(node_r as *const ProofNode);
+            let args: Rc<ProofArgs> = Rc::new(*Box::from_raw(args_r as *mut ProofArgs));
             let arg_hash_val = arg_hash_val(&args);
             let node_r = node as *const ProofNode;
             let args_done = {
@@ -570,7 +551,9 @@ impl<'a> InfTrial<'a> {
                                         }
                                     }
                                     let args_r = Box::into_raw(Box::new(args)) as usize;
-                                    scope.execute(move || scoped_exec(inf_ptr, node_r, args_r));
+                                    unsafe {
+                                        scope.execute(move || scoped_exec(inf_ptr, node_r, args_r))
+                                    };
                                 }
                             });
                         }
@@ -1177,29 +1160,23 @@ mod test {
     use agent::kb::repr::Representation;
     use std::collections::HashSet;
 
-    // #[test]
+    #[test]
     fn _temp() {
-        let test_03 = String::from("
-            ( fn::owns[$M1,u=1;$Nono] )
-            ( missile[$M1,u=1] )
-            ( american[$West,u=1] )
-            ( fn::enemy[$Nono,u=1;$America] )
-            (( let x, y, z )
-             (( american[x,u=1] && weapon[y,u=1] && fn::sells[y,u=1;x;z] && hostile[z,u=1]  )
-                 |> criminal[x,u=1] ))
-            (( let x )
-             (( fn::owns[x,u=1;$Nono] && missile[x,u=1] ) |> fn::sells[x,u=1;$West;$Nono] ))
-            (( let x ) ( missile[x,u=1] |> weapon[x,u=1] ) )
-            (( let x ) ( fn::enemy[x,u=1;$America] |> hostile[x,u=1] ) )
+        let test_04 = String::from("
+            (( let x, y, t1:time, t2:time=\"*now\" )
+             (( dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x] && fn::time_calc(t1<t2) )
+              |> fat(time=t2)[x,u=1] ))
+            ( dog[$Pancho,u=1] )
+            ( meat[$M1,u=1] )
+            ( fn::eat(time=\"2014-07-05T10:25:00Z\")[$M1,u=1;$Pancho] )
         ");
-        let q03_01 = "(criminal[$West,u=1]) && hostile[$Nono,u=1] && weapon[$M1,u=1]".to_string();
+        let q04_01 = "( fat(time='*now')[$Pancho,u=1] )".to_string();
         let rep = Representation::new();
-        rep.tell(test_03).unwrap();
-        let answ = rep.ask(q03_01);
-        assert_eq!(answ.get_results_single(), Some(true));
+        rep.tell(test_04);
+        assert_eq!(rep.ask(q04_01).get_results_single(), Some(true));
     }
 
-    #[test]
+    //#[test]
     fn ask_pred() {
         let test_01 = String::from("
             ( professor[$Lucy,u=1] )
@@ -1300,7 +1277,7 @@ mod test {
         assert_eq!(cnt, 2)
     }
 
-    #[test]
+    //#[test]
     fn ask_func() {
         let test_01 = String::from("
             ( professor[$Lucy,u=1] )

@@ -32,7 +32,7 @@ impl<'a> Predicate {
                     Ok(Predicate::FreeClsMemb(t))
                 }
                 Ok(Terminal::GroundedTerm(gt)) => {
-                    let t = GroundedClsMemb::new(gt, a.uval, name.to_string(), None, context)?;
+                    let t = GroundedClsMemb::new(gt, a.uval, name.get_name(), None, context)?;
                     Ok(Predicate::GroundedClsMemb(t))
                 }
                 Ok(Terminal::Keyword(kw)) => Err(ParseErrF::ReservedKW(String::from(kw))),
@@ -250,7 +250,7 @@ impl GroundedClsMemb {
             term: assignment,
             value: val,
             operator: op,
-            parent: free.parent.to_string(),
+            parent: free.parent.get_name(),
             dates: Rc::new(RwLock::new(vec![UTC::now()])),
         }
     }
@@ -649,6 +649,14 @@ impl Assert {
     }
 
     #[inline]
+    pub fn parent_is_kw(&self) -> bool {
+        match *self {
+            Assert::FuncDecl(ref f) => f.parent_is_kw(),
+            Assert::ClassDecl(_) => false,
+        }
+    }
+
+    #[inline]
     pub fn unwrap_fn(self) -> FuncDecl {
         match self {
             Assert::FuncDecl(f) => f,
@@ -720,7 +728,7 @@ pub struct FuncDecl {
     name: Terminal,
     args: Option<Vec<Predicate>>,
     op_args: Option<Vec<OpArg>>,
-    variant: FuncVariants,
+    pub variant: FuncVariants,
 }
 
 impl<'a> FuncDecl {
@@ -795,11 +803,19 @@ impl<'a> FuncDecl {
         true
     }
 
+    pub fn is_relational(&self) -> bool {
+        if let FuncVariants::Relational = self.variant {
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn get_name(&self) -> Rc<String> {
         match self.name {
             Terminal::FreeTerm(ref var) => Rc::new(var.name.clone()),
             Terminal::GroundedTerm(ref name) => name.clone(),
-            Terminal::Keyword(_) => panic!(),
+            Terminal::Keyword(kw) => Rc::new(kw.to_string()),
         }
     }
 
@@ -862,8 +878,8 @@ impl<'a> FuncDecl {
             }
             None => return Err(ParseErrF::WrongDef),
         };
-        if op_args.as_ref().unwrap().len() != 2 {
-            return Err(ParseErrF::WrongDef);
+        if op_args.as_ref().unwrap().is_empty() {
+            return Err(ParseErrF::TimeFnErr(TimeFnErr::InsufArgs));
         }
         Ok(FuncDecl {
             name: Terminal::Keyword("time_calc"),
@@ -904,16 +920,14 @@ impl<'a> FuncDecl {
             Some(ref oargs) => {
                 let mut v0 = Vec::with_capacity(oargs.len());
                 for e in oargs {
-                    let a = match OpArg::from(e, context) {
-                        Err(err) => return Err(err),
-                        Ok(a) => a,
-                    };
+                    let a = OpArg::from(e, context)?;
                     v0.push(a);
                 }
                 Some(v0)
             }
             None => None,
         };
+
         Ok(FuncDecl {
             name: name,
             args: Some(args),
@@ -973,6 +987,13 @@ impl<'a> FuncDecl {
     fn parent_is_grounded(&self) -> bool {
         match self.name {
             Terminal::GroundedTerm(_) => true,
+            _ => false,
+        }
+    }
+
+    fn parent_is_kw(&self) -> bool {
+        match self.name {
+            Terminal::Keyword(_) => true,
             _ => false,
         }
     }
@@ -1235,17 +1256,61 @@ struct OpArg {
 
 impl<'a> OpArg {
     pub fn from(other: &OpArgBorrowed<'a>, context: &mut Context) -> Result<OpArg, ParseErrF> {
+        let t0 = match OpArgTerm::from(&other.term, context) {
+            Err(ParseErrF::ReservedKW(kw)) => {
+                if &kw == "time" {
+                    let targ = OpArg::ignore_kw(other, "time", context)?;
+                    return Ok(targ);
+                } else {
+                    return Err(ParseErrF::ReservedKW(kw));
+                }
+            }
+            Err(err) => return Err(err),
+            Ok(arg) => arg,
+        };
         let comp = match other.comp {
             Some((op, ref tors)) => {
-                let t = OpArgTerm::from(tors, context)?;
+                let t = match OpArgTerm::from(tors, context) {
+                    Ok(t) => t,
+                    Err(ParseErrF::ReservedKW(kw)) => {
+                        if &kw == "time" {
+                            if t0.is_var() {
+                                OpArgTerm::TimePayload(TimeFn::IsVar)
+                            } else {
+                                return Err(ParseErrF::WrongDef);
+                            }
+                        } else {
+                            return Err(ParseErrF::ReservedKW(kw));
+                        }
+                    }
+                    Err(err) => return Err(err),
+                };
                 Some((op, t))
             }
             None => None,
         };
-        let t = OpArgTerm::from(&other.term, context)?;
+        Ok(OpArg {
+            term: t0,
+            comp: comp,
+        })
+    }
+
+    fn ignore_kw(other: &OpArgBorrowed<'a>,
+                 kw: &str,
+                 context: &mut Context)
+                 -> Result<OpArg, ParseErrF> {
+        let t;
+        let payload;
+        match kw {
+            "time" => {
+                t = OpArgTerm::TimeOp;
+                payload = Some(OpArgTerm::time_payload(other.comp.as_ref(), context)?);
+            }
+            val => return Err(ParseErrF::ReservedKW(val.to_string())),
+        };
         Ok(OpArg {
             term: t,
-            comp: comp,
+            comp: payload,
         })
     }
 
@@ -1264,18 +1329,51 @@ impl<'a> OpArg {
 
     fn get_id(&self) -> Vec<u8> {
         let mut id = vec![];
-        let mut id_1 = Vec::from(self.term.get_name().as_bytes());
-        id.append(&mut id_1);
+        if self.term.is_grounded() {
+            let mut id_1 = Vec::from(self.term.get_name().as_bytes());
+            id.append(&mut id_1);
+        }
         if let Some((ref op, ref term)) = self.comp {
             match *op {
                 CompOperator::Equal => id.push(0),
                 CompOperator::Less => id.push(1),
                 CompOperator::More => id.push(2),
             }
-            let mut id_2 = Vec::from(term.get_name().as_bytes());
-            id.append(&mut id_2);
+            if self.term.is_grounded() {
+                let mut id_2 = Vec::from(term.get_name().as_bytes());
+                id.append(&mut id_2);
+            }
         }
         id
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TimeFn {
+    Now,
+    Date(DateTime<UTC>),
+    IsVar,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum TimeFnErr {
+    NotAssignment,
+    WrongFormat(String),
+    IsNotVar,
+    InsufArgs,
+}
+
+impl TimeFn {
+    fn from_str(slice: &[u8]) -> Result<TimeFn, ParseErrF> {
+        if slice == b"*now" {
+            Ok(TimeFn::Now)
+        } else {
+            let s = unsafe { str::from_utf8_unchecked(slice) };
+            match s.parse::<DateTime<UTC>>() {
+                Err(_) => Err(ParseErrF::TimeFnErr(TimeFnErr::WrongFormat(s.to_owned()))),
+                Ok(date) => Ok(TimeFn::Date(date)),
+            }
+        }
     }
 }
 
@@ -1283,6 +1381,8 @@ impl<'a> OpArg {
 enum OpArgTerm {
     Terminal(Terminal),
     String(String),
+    TimeOp,
+    TimePayload(TimeFn),
 }
 
 impl<'a> OpArgTerm {
@@ -1298,18 +1398,67 @@ impl<'a> OpArgTerm {
         }
     }
 
+    fn time_payload(other: Option<&(CompOperator, OpArgTermBorrowed<'a>)>,
+                    context: &mut Context)
+                    -> Result<(CompOperator, OpArgTerm), ParseErrF> {
+        match other {
+            None => Ok((CompOperator::Equal, OpArgTerm::TimePayload(TimeFn::IsVar))),
+            Some(&(ref op, ref term)) => {
+                if !op.is_equal() {
+                    return Err(ParseErrF::TimeFnErr(TimeFnErr::NotAssignment));
+                }
+                match *term {
+                    OpArgTermBorrowed::String(slice) => {
+                        let date = TimeFn::from_str(slice)?;
+                        Ok((CompOperator::Equal, OpArgTerm::TimePayload(date)))
+                    }
+                    OpArgTermBorrowed::Terminal(_) => {
+                        let var = OpArgTerm::from(term, context)?;
+                        if var.is_var() {
+                            Ok((CompOperator::Equal, var))
+                        } else {
+                            return Err(ParseErrF::TimeFnErr(TimeFnErr::IsNotVar));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[inline]
     fn var_equality(&self, var: &Var) -> bool {
         match *self {
             OpArgTerm::Terminal(ref term) => term.var_equality(var),
-            OpArgTerm::String(_) => false,
+            _ => false,
+        }
+    }
+
+    fn is_var(&self) -> bool {
+        match *self {
+            OpArgTerm::Terminal(ref t) => t.is_var(),
+            _ => false,
+        }
+    }
+
+    fn is_grounded(&self) -> bool {
+        match *self {
+            OpArgTerm::Terminal(ref t) => t.is_grounded(),
+            _ => false,
+        }
+    }
+
+    #[inline]
+    pub fn is_time_op(&self) -> bool {
+        match *self {
+            OpArgTerm::TimeOp => true,
+            _ => false,
         }
     }
 
     fn get_name(&self) -> Rc<String> {
         match *self {
             OpArgTerm::Terminal(ref term) => term.get_name(),
-            OpArgTerm::String(ref s) => Rc::new(s.clone()),
+            _ => panic!(),
         }
     }
 }
@@ -1445,19 +1594,11 @@ impl<'a> Terminal {
         }
     }
 
-    fn to_string(&self) -> Rc<String> {
-        if let Terminal::GroundedTerm(ref name) = *self {
-            name.clone()
-        } else {
-            panic!("simag: attempted to get a name from a non-grounded terminal")
-        }
-    }
-
     fn is_grounded(&self) -> bool {
-        if let Terminal::FreeTerm(_) = *self {
-            false
-        } else {
+        if let Terminal::GroundedTerm(_) = *self {
             true
+        } else {
+            false
         }
     }
 
