@@ -4,13 +4,11 @@ use std::sync::RwLock;
 use std::rc::Rc;
 
 use float_cmp::ApproxEqUlps;
-use chrono::{DateTime, UTC};
+use chrono::UTC;
 
 use lang;
 use lang::{GroundedClsMemb, GroundedFunc, LogSentence, ParseErrF, ParseTree};
 use super::*;
-
-type Date = DateTime<UTC>;
 
 /// This type is a container for internal agent's representations.
 /// An agent can have any number of such representations at any moment,
@@ -65,7 +63,15 @@ impl Representation {
                     ParseTree::Assertion(assertions) => {
                         for assertion in assertions {
                             if assertion.is_class() {
-                                for a in assertion.unwrap_cls() {
+                                let cls_decl = assertion.unwrap_cls();
+                                let time_data = cls_decl.get_own_time_data(&None);
+                                for a in cls_decl {
+                                    if let Some(ref data) = time_data {
+                                        a.override_time_data(data);
+                                    } else {
+                                        let set_now = vec![Rc::new(UTC::now())];
+                                        a.override_time_data(&set_now);
+                                    }
                                     self.up_membership(Rc::new(a))
                                 }
                             } else {
@@ -339,7 +345,7 @@ impl Representation {
                 for args in mapped {
                     let args = HashMap::from_iter(args.iter()
                         .map(|&(ref v, ref a)| (v.clone(), &**a)));
-                    if let Ok(grfunc) = GroundedFunc::from_free(func_decl, &args) {
+                    if let Ok(grfunc) = GroundedFunc::from_free(func_decl, &args, &None) {
                         let grfunc = Rc::new(grfunc);
                         self.ask_processed(QueryInput::AskRelationalFunc(grfunc), true);
                     }
@@ -534,6 +540,32 @@ impl Representation {
                     return Some(true);
                 } else {
                     return Some(false);
+                }
+            }
+        }
+        None
+    }
+
+    pub fn get_relationship(&self,
+                            pred: &GroundedFunc,
+                            subject: Rc<String>)
+                            -> Option<Rc<GroundedFunc>> {
+        if subject.starts_with('$') {
+            if let Some(entity) = self.entities.read().unwrap().get(&subject) {
+                if let Some(current) = entity.has_relationship(pred) {
+                    if *current == *pred {
+                        return Some(current);
+                    } else {
+                        return None;
+                    }
+                }
+            }
+        } else if let Some(class) = self.classes.read().unwrap().get(&subject) {
+            if let Some(current) = class.has_relationship(pred) {
+                if *current == *pred {
+                    return Some(current);
+                } else {
+                    return None;
                 }
             }
         }

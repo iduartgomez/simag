@@ -36,11 +36,12 @@ use std::collections::VecDeque;
 use std::thread;
 
 use nom::{ErrorKind, IResult};
-use nom::{eof, is_alphanumeric, is_digit};
+use nom::{is_alphanumeric, is_digit};
 use nom;
 
 use lang::logsent::*;
 use lang::common::*;
+use lang::errors::ParseErrF;
 
 const ICOND_OP: &'static [u8] = b"|>";
 const AND_OP: &'static [u8] = b"&&";
@@ -124,7 +125,7 @@ impl Parser {
 }
 
 #[derive(Debug)]
-enum ParseErrB<'a> {
+pub enum ParseErrB<'a> {
     SyntaxError(Box<ParseErrB<'a>>),
     SyntaxErrorU,
     SyntaxErrorPos(&'a [u8]),
@@ -135,44 +136,6 @@ enum ParseErrB<'a> {
     NonTerminal(&'a [u8]),
     NonNumber(&'a [u8]),
     UnclosedComment(&'a [u8]),
-}
-
-#[derive(Debug, PartialEq)]
-pub enum ParseErrF {
-    Msg(String),
-    ReservedKW(String),
-    IConnectInChain,
-    IConnectAfterAnd,
-    IConnectAfterOr,
-    IUVal(f32),
-    IUValComp,
-    IExprWrongOp,
-    IExprICondLHS,
-    IExprNotIcond,
-    RuleInclICond(String),
-    ExprWithVars(String),
-    BothAreVars,
-    ClassIsVar,
-    RFuncWrongArgs,
-    WrongArgNumb,
-    WrongPredicate,
-    WrongDef,
-    TimeFnErr(TimeFnErr),
-    None,
-}
-
-impl ParseErrF {
-    #[allow(dead_code)]
-    fn format(_err: ParseErrB) -> String {
-        unimplemented!()
-    }
-}
-
-impl<'a> From<ParseErrB<'a>> for ParseErrF {
-    fn from(_err: ParseErrB<'a>) -> ParseErrF {
-        // TODO: implement err messag building
-        ParseErrF::Msg(String::from("failed"))
-    }
 }
 
 #[derive(Debug)]
@@ -1100,6 +1063,15 @@ named!(remove_comments(&[u8]) -> Vec<&[u8]>,
     )
 );
 
+#[inline]
+fn eof(input: &[u8]) -> IResult<&[u8], &[u8]> {
+    if input.len() > 0 {
+        IResult::Done(input, input)
+    } else {
+        IResult::Error(nom::Err::Position(ErrorKind::Eof, input))
+    }
+}
+
 fn comment_tag(input: &[u8]) -> IResult<&[u8], &[u8]> {
     let mut comment = false;
     let mut idx = 0_usize;
@@ -1140,7 +1112,7 @@ fn is_multispace(chr: u8) -> bool {
 
 #[cfg(test)]
 mod test {
-    use super::{ParseErrB, class_decl, func_decl};
+    use super::{class_decl, func_decl};
     use super::*;
     use std::str;
 

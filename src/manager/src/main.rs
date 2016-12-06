@@ -214,33 +214,3 @@ fn main() {
     }
 
 }
-
-// struct Agent{
-//
-// }
-//
-// Expose an interface for agent management it includes the calls
-// and callbacks from Python.
-// impl Agent {
-//
-// Routine to create a new agent from Python returns a PyObject
-// pub fn new() {
-// unsafe {
-// }
-// }
-//
-// Tells the agent a string of FOLext flavour and
-// returns True if it succeeds or {custom error} otherwise
-// pub fn tell() {
-// unsafe {
-// }
-// }
-//
-// Asks the agent a string of FOLext flavour returns
-// a boolean or a string
-// pub fn ask() {
-// unsafe {
-// }
-// }
-// }
-//

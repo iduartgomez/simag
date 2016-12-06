@@ -25,14 +25,11 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Mutex, RwLock};
 use std::rc::Rc;
 
-use chrono::{DateTime, UTC};
 use scoped_threadpool::Pool;
 
 use lang;
-use lang::{GroundedClsMemb, GroundedFunc, LogSentence, ParseErrF, ParseTree};
+use lang::{GroundedClsMemb, GroundedFunc, LogSentence, ParseErrF, ParseTree, Date};
 use super::repr::*;
-
-type Date = DateTime<UTC>;
 
 pub struct Inference<'a> {
     query: QueryProcessed<'a>,
@@ -902,7 +899,6 @@ impl ArgsProduct {
 }
 
 fn arg_hash_val(input: &[(Rc<lang::Var>, Rc<VarAssignment>)]) -> Vec<usize> {
-    // ProofArgs: Vec<(Rc<lang::Var>, Rc<VarAssignment>)>;
     let mut v = vec![];
     for &(ref var, ref assigned) in input {
         v.push(&**var as *const lang::Var as usize);
@@ -1162,6 +1158,34 @@ mod test {
 
     #[test]
     fn _temp() {
+        /*
+        Atom(LogicAtom {
+            pred: FuncDecl(FuncDecl { name: GroundedTerm("eat"), ...,
+            op_args: Some([
+                OpArg { term: Terminal(FreeTerm(Var { name: "t1", op_arg: Some(OpArg { term: TimeOp, comp: Some((Equal, TimePayload(IsVar))), kind: TimeVar }), kind: Time })), comp: None, kind: TimeVarFrom }
+            ]),
+            variant: Relational }) }),
+        Atom(LogicAtom { pred: FuncDecl(FuncDecl { name: Keyword("time_calc"), args: None,
+            op_args: Some([OpArg {
+                term: Terminal(FreeTerm(
+                    Var {
+                        name: "t1",
+                        op_arg: Some(OpArg {term: TimeOp, comp: Some((Equal, TimePayload(IsVar))), kind: TimeVar }),
+                        kind: Time }
+                    )),
+                comp: Some((Less, Terminal(FreeTerm(Var { name: "t2", op_arg: Some(OpArg { term: TimeOp, comp: Some((Equal, TimePayload(Now))), kind: TimeDecl }), kind: TimeDecl })))),
+            kind: Generic
+            }]),
+            variant: TimeCalc })
+        }),
+        Atom(LogicAtom { pred: ClassDecl(ClassDecl { name: GroundedTerm("fat"),
+            op_args: Some([OpArg {
+                term: TimeOp,
+                comp: Some((Equal, Terminal(FreeTerm(Var {"t2"})))),
+                kind: TimeVarAssign }])
+            })
+        })
+        */
         let test_04 = String::from("
             (( let x, y, t1:time, t2:time=\"*now\" )
              (( dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x] && fn::time_calc(t1<t2) )
@@ -1170,9 +1194,9 @@ mod test {
             ( meat[$M1,u=1] )
             ( fn::eat(time=\"2014-07-05T10:25:00Z\")[$M1,u=1;$Pancho] )
         ");
-        let q04_01 = "( fat(time='*now')[$Pancho,u=1] )".to_string();
+        let q04_01 = "(fat(time='*now')[$Pancho,u=1])".to_string();
         let rep = Representation::new();
-        rep.tell(test_04);
+        rep.tell(test_04).unwrap();
         assert_eq!(rep.ask(q04_01).get_results_single(), Some(true));
     }
 
@@ -1220,56 +1244,36 @@ mod test {
         let answ = rep.ask(q03_01);
         assert_eq!(answ.get_results_single(), Some(true));
 
-        let _test_04 = String::from("
-            (( let x, y, t1:time, t2:time=\"*now\" )
-             (( dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x] && fn::time_calc(t1<t2) )
-              |> fat(time=t2)[x,u=1] ))
-            ( dog[$Pancho,u=1] )
-            ( meat[$M1,u=1] )
-            ( fn::eat(time=\"2015.07.05.10.25\")[$M1,u=1;$Pancho] )
-        ");
-        let _q04_01 = "(fat(t='*now')[$Pancho,u=1])".to_string();
-
-        let _test_05 = String::from("
-            (( let x, y, t1:time, t2:time=\"2016.01.01\" )
-             (( (dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x]) && fn::time_calc(t1<t2) )
-              |> fat(time=t2)[x,u=1] ))
-            ( dog[$Pancho,u=1] )
-            ( meat[$M1,u=1] )
-            ( fn::eat(time=\"2015.07.05.10.25\")[$M1,u=1;$Pancho] )
-        ");
-        let _q05_01 = "(fat(t='*now')[$Pancho,u=1])".to_string();
-
-        let test_06 = String::from("
+        let test_04 = String::from("
             # query for all 'professor'
             ( professor[$Lucy,u=1] )
             ( dean[$John,u=1] )
             ((let x) (dean[x,u=1] |> professor[x,u=1]))
         ");
-        let q06_01 = "((let x) (professor[x,u=1]))".to_string();
+        let q04_01 = "((let x) (professor[x,u=1]))".to_string();
         let rep = Representation::new();
-        rep.tell(test_06).unwrap();
-        let answ = rep.ask(q06_01);
-        let a06_01 = answ.get_memberships();
-        assert!(a06_01.contains_key("$Lucy"));
-        assert!(a06_01.contains_key("$John"));
+        rep.tell(test_04).unwrap();
+        let answ = rep.ask(q04_01);
+        let a04_01 = answ.get_memberships();
+        assert!(a04_01.contains_key("$Lucy"));
+        assert!(a04_01.contains_key("$John"));
 
-        let test_07 = String::from("
+        let test_05 = String::from("
             # query for all classes '$Lucy' is member of
             (professor[$Lucy,u=1])
         	((let x) (professor[x,u=1] |> person[x,u=1]))
         	(ugly[$Lucy,u=0.2])
         ");
-        let q07_01 = "((let x) (x[$Lucy,u>0.5]))".to_string();
+        let q05_01 = "((let x) (x[$Lucy,u>0.5]))".to_string();
         let rep = Representation::new();
-        rep.tell(test_07).unwrap();
+        rep.tell(test_05).unwrap();
         let mut results = HashSet::new();
         results.insert("professor");
         results.insert("person");
-        let answ = rep.ask(q07_01);
-        let a07_01 = answ.get_memberships();
+        let answ = rep.ask(q05_01);
+        let a05_01 = answ.get_memberships();
         let mut cnt = 0;
-        for a in a07_01.get("$Lucy").unwrap() {
+        for a in a05_01.get("$Lucy").unwrap() {
             cnt += 1;
             assert!(results.contains(&**a.get_parent()));
             assert!(&**a.get_parent() != "ugly");
@@ -1314,6 +1318,78 @@ mod test {
         rep.tell(test_03).unwrap();
         assert_eq!(rep.ask(q03_01).get_results_single(), Some(true));
 
+        let test_04 = String::from("
+            # retrieve all objs which fit to a criteria
+            (fn::produce[milk,u=1;$Lulu])
+            (cow[$Lucy,u=1])
+            (goat[$Vicky,u=1])
+            ((let x) ((cow[x,u=1] || goat[x,u=1]) |> (female[x,u=1] && animal[x,u=1])))
+            ((let x) ((female[x,u>0] && animal[x,u>0]) |> fn::produce[milk,u=1;x]))
+        ");
+        let q04_01 = "((let x) (fn::produce[milk,u>0;x]))".to_string();
+        let rep = Representation::new();
+        rep.tell(test_04).unwrap();
+        let answ = rep.ask(q04_01);
+        let a04_01 = answ.get_relationships();
+        assert!(a04_01.contains_key("$Lulu"));
+        assert!(a04_01.contains_key("$Lucy"));
+        assert!(a04_01.contains_key("$Vicky"));
+
+        let test_05 = String::from("
+            # retrieve all relations between objects
+            (fn::loves[$Vicky,u=1;$Lucy])
+            (fn::worships[$Vicky,u=1;cats])
+            (fn::hates[$Vicky,u=0;dogs])
+        ");
+        let q05_01 = "((let x) (fn::x[$Vicky,u>0;$Lucy]))".to_string();
+        let rep = Representation::new();
+        rep.tell(test_05).unwrap();
+        let mut results = HashSet::new();
+        results.insert("loves");
+        results.insert("worships");
+        let answ = rep.ask(q05_01);
+        let a05_01 = answ.get_relationships();
+        let mut cnt = 0;
+        for a in a05_01.get("$Vicky").unwrap() {
+            cnt += 1;
+            assert!(results.contains(&**a.get_name()));
+            assert!(&**a.get_name() != "hates");
+        }
+        assert_eq!(cnt, 2);
+
+        let q05_02 = "((let x, y) (fn::x[$Vicky,u=0;y]))".to_string();
+        let answ = rep.ask(q05_02);
+        let a05_02 = answ.get_relationships();
+        let mut cnt = 0;
+        for a in a05_02.get("$Vicky").unwrap() {
+            cnt += 1;
+            assert!(&**a.get_name() == "hates");
+        }
+        assert_eq!(cnt, 1);
+    }
+
+    //#[test]
+    fn _time_calc() {
+        let _test_04 = String::from("
+            (( let x, y, t1:time, t2:time=\"*now\" )
+             (( dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x] && fn::time_calc(t1<t2) )
+              |> fat(time=t2)[x,u=1] ))
+            ( dog[$Pancho,u=1] )
+            ( meat[$M1,u=1] )
+            ( fn::eat(time=\"2015.07.05.10.25\")[$M1,u=1;$Pancho] )
+        ");
+        let _q04_01 = "(fat(t='*now')[$Pancho,u=1])".to_string();
+
+        let _test_05 = String::from("
+            (( let x, y, t1:time, t2:time=\"2016.01.01\" )
+             (( (dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x]) && fn::time_calc(t1<t2) )
+              |> fat(time=t2)[x,u=1] ))
+            ( dog[$Pancho,u=1] )
+            ( meat[$M1,u=1] )
+            ( fn::eat(time=\"2015.07.05.10.25\")[$M1,u=1;$Pancho] )
+        ");
+        let _q05_01 = "(fat(t='*now')[$Pancho,u=1])".to_string();
+
         let _test_05 = String::from("
             (( let x, y, t1: time=\"2015.01.01\", t2: time=\"2015.02.01\" )
              ( ( dog[x,u=1] && meat[y,u=1] && fat(time=t2)[x,u=1] && fn::time_calc(t1<t2) )
@@ -1337,55 +1413,5 @@ mod test {
             ( fat(time=\"2015.12.01\")[$Pancho,u=1] )
         ");
         let _q06_01 = "(fn::eat[$M1,u=1;$Pancho])".to_string();
-
-        let test_07 = String::from("
-            # retrieve all objs which fit to a criteria
-            (fn::produce[milk,u=1;$Lulu])
-            (cow[$Lucy,u=1])
-            (goat[$Vicky,u=1])
-            ((let x) ((cow[x,u=1] || goat[x,u=1]) |> (female[x,u=1] && animal[x,u=1])))
-            ((let x) ((female[x,u>0] && animal[x,u>0]) |> fn::produce[milk,u=1;x]))
-        ");
-        let q07_01 = "((let x) (fn::produce[milk,u>0;x]))".to_string();
-        let rep = Representation::new();
-        rep.tell(test_07).unwrap();
-        let answ = rep.ask(q07_01);
-        let a07_01 = answ.get_relationships();
-        assert!(a07_01.contains_key("$Lulu"));
-        assert!(a07_01.contains_key("$Lucy"));
-        assert!(a07_01.contains_key("$Vicky"));
-
-        let test_08 = String::from("
-            # retrieve all relations between objects
-            (fn::loves[$Vicky,u=1;$Lucy])
-            (fn::worships[$Vicky,u=1;cats])
-            (fn::hates[$Vicky,u=0;dogs])
-        ");
-
-        let q08_01 = "((let x) (fn::x[$Vicky,u>0;$Lucy]))".to_string();
-        let rep = Representation::new();
-        rep.tell(test_08).unwrap();
-        let mut results = HashSet::new();
-        results.insert("loves");
-        results.insert("worships");
-        let answ = rep.ask(q08_01);
-        let a08_01 = answ.get_relationships();
-        let mut cnt = 0;
-        for a in a08_01.get("$Vicky").unwrap() {
-            cnt += 1;
-            assert!(results.contains(&**a.get_name()));
-            assert!(&**a.get_name() != "hates");
-        }
-        assert_eq!(cnt, 2);
-
-        let q08_02 = "((let x, y) (fn::x[$Vicky,u=0;y]))".to_string();
-        let answ = rep.ask(q08_02);
-        let a08_02 = answ.get_relationships();
-        let mut cnt = 0;
-        for a in a08_02.get("$Vicky").unwrap() {
-            cnt += 1;
-            assert!(&**a.get_name() == "hates");
-        }
-        assert_eq!(cnt, 1);
     }
 }

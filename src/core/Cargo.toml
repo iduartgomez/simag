@@ -4,7 +4,7 @@ version = "0.0.1"
 authors = ["IDG <iduartgomez@gmail.com>"]
 
 [dependencies]
-nom = "*"
+nom = { version = "^2.0.0", features = ["verbose-errors"] }
 chrono = "*"
 scoped_threadpool = "0.1.*"
 float-cmp = "*"
