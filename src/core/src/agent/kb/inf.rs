@@ -705,6 +705,10 @@ pub fn meet_sent_req(rep: &Representation,
                      -> Option<HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>>> {
     let mut results: HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>> = HashMap::new();
     for (var, asserts) in req.iter() {
+        match var.kind {
+            lang::VarKind::Time | lang::VarKind::TimeDecl => continue,
+            _ => {}
+        }
         let mut class_list = Vec::new();
         let mut funcs_list = Vec::new();
         for a in asserts {
@@ -1022,6 +1026,9 @@ impl<'a> QueryProcessed<'a> {
                                 query.push_to_clsquery_free(t.get_var(), t);
                             }
                             lang::Predicate::GroundedClsMemb(ref t) => {
+                                if let Some(dates) = cdecl.get_time_payload() {
+                                    t.override_time_data(&dates);
+                                }
                                 query.push_to_clsquery_grounded(t.get_name(), t);
                             }
                             _ => return Err(()), // not happening ever
@@ -1158,43 +1165,15 @@ mod test {
 
     #[test]
     fn _temp() {
-        /*
-        Atom(LogicAtom {
-            pred: FuncDecl(FuncDecl { name: GroundedTerm("eat"), ...,
-            op_args: Some([
-                OpArg { term: Terminal(FreeTerm(Var { name: "t1", op_arg: Some(OpArg { term: TimeOp, comp: Some((Equal, TimePayload(IsVar))), kind: TimeVar }), kind: Time })), comp: None, kind: TimeVarFrom }
-            ]),
-            variant: Relational }) }),
-        Atom(LogicAtom { pred: FuncDecl(FuncDecl { name: Keyword("time_calc"), args: None,
-            op_args: Some([OpArg {
-                term: Terminal(FreeTerm(
-                    Var {
-                        name: "t1",
-                        op_arg: Some(OpArg {term: TimeOp, comp: Some((Equal, TimePayload(IsVar))), kind: TimeVar }),
-                        kind: Time }
-                    )),
-                comp: Some((Less, Terminal(FreeTerm(Var { name: "t2", op_arg: Some(OpArg { term: TimeOp, comp: Some((Equal, TimePayload(Now))), kind: TimeDecl }), kind: TimeDecl })))),
-            kind: Generic
-            }]),
-            variant: TimeCalc })
-        }),
-        Atom(LogicAtom { pred: ClassDecl(ClassDecl { name: GroundedTerm("fat"),
-            op_args: Some([OpArg {
-                term: TimeOp,
-                comp: Some((Equal, Terminal(FreeTerm(Var {"t2"})))),
-                kind: TimeVarAssign }])
-            })
-        })
-        */
         let test_04 = String::from("
-            (( let x, y, t1:time, t2:time=\"*now\" )
+            (( let x, y, t1:time, t2:time=\"Now\" )
              (( dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x] && fn::time_calc(t1<t2) )
               |> fat(time=t2)[x,u=1] ))
             ( dog[$Pancho,u=1] )
             ( meat[$M1,u=1] )
             ( fn::eat(time=\"2014-07-05T10:25:00Z\")[$M1,u=1;$Pancho] )
         ");
-        let q04_01 = "(fat(time='*now')[$Pancho,u=1])".to_string();
+        let q04_01 = "(fat(time='Now')[$Pancho,u=1])".to_string();
         let rep = Representation::new();
         rep.tell(test_04).unwrap();
         assert_eq!(rep.ask(q04_01).get_results_single(), Some(true));
@@ -1370,15 +1349,18 @@ mod test {
 
     //#[test]
     fn _time_calc() {
-        let _test_04 = String::from("
-            (( let x, y, t1:time, t2:time=\"*now\" )
+        let test_04 = String::from("
+            (( let x, y, t1:time, t2:time=\"Now\" )
              (( dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x] && fn::time_calc(t1<t2) )
               |> fat(time=t2)[x,u=1] ))
             ( dog[$Pancho,u=1] )
             ( meat[$M1,u=1] )
-            ( fn::eat(time=\"2015.07.05.10.25\")[$M1,u=1;$Pancho] )
+            ( fn::eat(time=\"2014-07-05T10:25:00Z\")[$M1,u=1;$Pancho] )
         ");
-        let _q04_01 = "(fat(t='*now')[$Pancho,u=1])".to_string();
+        let q04_01 = "(fat(time='Now')[$Pancho,u=1])".to_string();
+        let rep = Representation::new();
+        rep.tell(test_04).unwrap();
+        assert_eq!(rep.ask(q04_01).get_results_single(), Some(true));
 
         let _test_05 = String::from("
             (( let x, y, t1:time, t2:time=\"2016.01.01\" )
@@ -1388,7 +1370,7 @@ mod test {
             ( meat[$M1,u=1] )
             ( fn::eat(time=\"2015.07.05.10.25\")[$M1,u=1;$Pancho] )
         ");
-        let _q05_01 = "(fat(t='*now')[$Pancho,u=1])".to_string();
+        let _q05_01 = "(fat(t='Now')[$Pancho,u=1])".to_string();
 
         let _test_05 = String::from("
             (( let x, y, t1: time=\"2015.01.01\", t2: time=\"2015.02.01\" )

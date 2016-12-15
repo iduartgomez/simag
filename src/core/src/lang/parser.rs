@@ -177,7 +177,15 @@ impl ParseTree {
                     }
                 }
             }
-            Err(err) => Err(err),
+            Err(err) => Err(ParseErrF::LogSentErr(err)),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn is_err(&self) -> bool {
+        match *self {
+            ParseTree::ParseErr(_) => true,
+            _ => false,
         }
     }
 }

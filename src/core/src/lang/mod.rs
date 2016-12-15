@@ -26,27 +26,21 @@ pub type Date = DateTime<UTC>;
 mod errors {
     use super::parser::ParseErrB;
     use super::common::TimeFnErr;
+    use super::logsent::LogSentErr;
 
     #[derive(Debug, PartialEq)]
     pub enum ParseErrF {
         Msg(String),
         ReservedKW(String),
-        IConnectInChain,
-        IConnectAfterAnd,
-        IConnectAfterOr,
         IUVal(f32),
         IUValComp,
-        IExprWrongOp,
-        IExprICondLHS,
-        IExprNotIcond,
-        RuleInclICond(String),
         ExprWithVars(String),
         BothAreVars,
         ClassIsVar,
         RFuncWrongArgs,
         WrongArgNumb,
-        WrongPredicate,
         WrongDef,
+        LogSentErr(LogSentErr),
         TimeFnErr(TimeFnErr),
         None,
     }

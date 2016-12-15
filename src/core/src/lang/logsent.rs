@@ -12,11 +12,11 @@ use std::fmt;
 
 use chrono::UTC;
 
+use agent;
 use lang::parser::*;
 use lang::common::*;
-use lang::errors::ParseErrF;
-use agent;
-use super::Date;
+use super::{Date, ParseErrF};
+pub use self::errors::LogSentErr;
 
 /// Type to store a first-order logic complex sentence.
 ///
@@ -36,13 +36,13 @@ pub struct LogSentence {
     skolem: Option<Vec<Rc<Skolem>>>,
     root: Option<Rc<Particle>>,
     predicates: (Vec<Rc<Assert>>, Vec<Rc<Assert>>),
-    has_time_vars: bool,
+    has_time_vars: usize,
     pub created: Date,
     id: Vec<u8>,
 }
 
 impl<'a> LogSentence {
-    pub fn new(ast: &Next, context: &mut Context) -> Result<LogSentence, ParseErrF> {
+    pub fn new(ast: &Next, context: &mut Context) -> Result<LogSentence, LogSentErr> {
         let mut sent = LogSentence {
             particles: Vec::new(),
             produced: Vec::new(),
@@ -50,12 +50,14 @@ impl<'a> LogSentence {
             vars: None,
             root: None,
             predicates: (vec![], vec![]),
-            has_time_vars: false,
+            has_time_vars: 0,
             created: UTC::now(),
             id: vec![],
         };
-        let root = walk_ast(ast, &mut sent, context)?;
-        let root = Rc::new(root.into_final(context));
+        let root = match walk_ast(ast, &mut sent, context) {
+            Err(err) => return Err(err),
+            Ok(root) => Rc::new(root.into_final(context)),
+        };
         sent.particles.push(root.clone());
         sent.root = Some(root);
         // classify the kind of sentence and check that are correct
@@ -63,7 +65,8 @@ impl<'a> LogSentence {
             if !context.iexpr() {
                 context.stype = SentType::Rule;
             } else {
-                return Err(ParseErrF::RuleInclICond(format!("{}", sent)));
+                return Err(LogSentErr::RuleInclICond(Box::into_raw(Box::new(sent)) as usize)
+                    .into());
             }
         } else if context.iexpr() {
             {
@@ -71,17 +74,15 @@ impl<'a> LogSentence {
                 for var in sent_r.vars.as_ref().unwrap() {
                     match var.kind {
                         VarKind::Time | VarKind::TimeDecl => {
-                            sent_r.has_time_vars = true;
-                            break;
+                            sent_r.has_time_vars += 1;
+                            continue;
                         }
                         _ => {}
                     }
                 }
             }
             let mut lhs: Vec<Rc<Particle>> = vec![];
-            if let Err(err) = correct_iexpr(&sent, &mut lhs) {
-                return Err(err);
-            }
+            correct_iexpr(&sent, &mut lhs)?;
             let lhs: HashSet<_> = lhs.iter().map(|x| &**x as *const Particle).collect();
             let rhs: HashSet<_> = sent.particles
                 .iter()
@@ -99,9 +100,80 @@ impl<'a> LogSentence {
                 .map(|p| p.pred_ref())
                 .collect();
             sent.predicates = (lhs_v, rhs_v);
+            sent.op_arg_validation()?;
         }
         sent.generate_uid();
         Ok(sent)
+    }
+
+    fn op_arg_validation(&self) -> Result<(), LogSentErr> {
+        // check validity of optional arguments for predicates in the LHS:
+        for decl in &self.predicates.0 {
+            match **decl {
+                Assert::FuncDecl(ref func) => {
+                    if let Some(ref opargs) = func.op_args {
+                        for arg in opargs {
+                            match *arg {
+                                OpArg::TimeDecl(_) |
+                                OpArg::TimeVar |
+                                OpArg::TimeVarAssign(_) => {
+                                    return Err(LogSentErr::InvalidOpArg);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                Assert::ClassDecl(ref cls) => {
+                    if let Some(ref opargs) = cls.op_args {
+                        for arg in opargs {
+                            match *arg {
+                                OpArg::TimeDecl(_) |
+                                OpArg::TimeVar |
+                                OpArg::TimeVarAssign(_) => {
+                                    return Err(LogSentErr::InvalidOpArg);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // check validity of optional arguments for predicates in the RHS:
+        for decl in &self.predicates.1 {
+            match **decl {
+                Assert::FuncDecl(ref func) => {
+                    if let Some(ref opargs) = func.op_args {
+                        for arg in opargs {
+                            match *arg {
+                                OpArg::TimeDecl(_) |
+                                OpArg::TimeVar |
+                                OpArg::TimeVarFrom(_) => {
+                                    return Err(LogSentErr::InvalidOpArg);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                Assert::ClassDecl(ref cls) => {
+                    if let Some(ref opargs) = cls.op_args {
+                        for arg in opargs {
+                            match *arg {
+                                OpArg::TimeDecl(_) |
+                                OpArg::TimeVar |
+                                OpArg::TimeVarFrom(_) => {
+                                    return Err(LogSentErr::InvalidOpArg);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn solve(&self,
@@ -110,7 +182,7 @@ impl<'a> LogSentence {
                  context: &mut agent::ProofResult) {
         let root = self.root.clone();
         let time_assign = self.get_time_assignments(agent, &assignments);
-        if self.has_time_vars && time_assign.is_none() {
+        if self.has_time_vars != time_assign.len() {
             context.result = None;
             return;
         }
@@ -138,7 +210,7 @@ impl<'a> LogSentence {
     fn get_time_assignments(&self,
                             agent: &agent::Representation,
                             var_assign: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
-                            -> Option<HashMap<Rc<Var>, Vec<Rc<Date>>>> {
+                            -> HashMap<Rc<Var>, Vec<Rc<Date>>> {
         let mut time_assign = HashMap::new();
         'outer: for var in self.vars.as_ref().unwrap() {
             match var.kind {
@@ -147,21 +219,21 @@ impl<'a> LogSentence {
                         if pred.get_time_decl(&*var) {
                             let dates = pred.get_dates(agent, var_assign);
                             if dates.is_none() {
-                                return None;
+                                continue 'outer;
                             }
                             time_assign.insert(var.clone(), dates.unwrap());
                             continue 'outer;
                         }
                     }
                 }
+                VarKind::TimeDecl => {
+                    let dates = var.get_dates();
+                    time_assign.insert(var.clone(), dates);
+                }
                 _ => {}
             }
         }
-        if time_assign.is_empty() {
-            None
-        } else {
-            Some(time_assign)
-        }
+        time_assign
     }
 
     pub fn extract_all_predicates(self) -> (Vec<Rc<Var>>, Vec<Rc<Assert>>) {
@@ -466,7 +538,7 @@ impl LogicIndCond {
     fn solve(&self,
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &Option<HashMap<Rc<Var>, Vec<Rc<Date>>>>)
+             time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>)
              -> Option<bool> {
         if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign) {
             if res {
@@ -483,7 +555,7 @@ impl LogicIndCond {
     fn substitute(&self,
                   agent: &agent::Representation,
                   assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                  time_assign: &Option<HashMap<Rc<Var>, Vec<Rc<Date>>>>,
+                  time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>,
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
         self.next_rhs.substitute(agent, assignments, time_assign, context, rhs)
@@ -524,7 +596,7 @@ impl LogicEquivalence {
     fn solve(&self,
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &Option<HashMap<Rc<Var>, Vec<Rc<Date>>>>)
+             time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>)
              -> Option<bool> {
         let n0_res;
         if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign) {
@@ -588,7 +660,7 @@ impl LogicImplication {
     fn solve(&self,
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &Option<HashMap<Rc<Var>, Vec<Rc<Date>>>>)
+             time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>)
              -> Option<bool> {
         let n0_res;
         if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign) {
@@ -652,7 +724,7 @@ impl LogicConjunction {
     fn solve(&self,
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &Option<HashMap<Rc<Var>, Vec<Rc<Date>>>>)
+             time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>)
              -> Option<bool> {
         if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign) {
             if !res {
@@ -675,7 +747,7 @@ impl LogicConjunction {
     fn substitute(&self,
                   agent: &agent::Representation,
                   assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                  time_assign: &Option<HashMap<Rc<Var>, Vec<Rc<Date>>>>,
+                  time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>,
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
         self.next_rhs.substitute(agent, assignments, time_assign, context, rhs);
@@ -717,7 +789,7 @@ impl LogicDisjunction {
     fn solve(&self,
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &Option<HashMap<Rc<Var>, Vec<Rc<Date>>>>)
+             time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>)
              -> Option<bool> {
         let n0_res;
         if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign) {
@@ -750,7 +822,7 @@ impl LogicDisjunction {
     fn substitute(&self,
                   agent: &agent::Representation,
                   assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                  time_assign: &Option<HashMap<Rc<Var>, Vec<Rc<Date>>>>,
+                  time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>,
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
         if *rhs {
@@ -791,7 +863,7 @@ impl LogicAtom {
     fn solve(&self,
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &Option<HashMap<Rc<Var>, Vec<Rc<Date>>>>)
+             time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>)
              -> Option<bool> {
         if let Some(res) = self.pred.equal_to_grounded(agent, assignments, time_assign) {
             if res {
@@ -808,7 +880,7 @@ impl LogicAtom {
     fn substitute(&self,
                   agent: &agent::Representation,
                   assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                  time_assign: &Option<HashMap<Rc<Var>, Vec<Rc<Date>>>>,
+                  time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>,
                   context: &mut agent::ProofResult) {
         self.pred.substitute(agent, assignments, time_assign, context)
     }
@@ -844,7 +916,7 @@ impl Particle {
     fn solve(&self,
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &Option<HashMap<Rc<Var>, Vec<Rc<Date>>>>)
+             time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>)
              -> Option<bool> {
         match *self {
             Particle::Conjunction(ref p) => p.solve(agent, assignments, time_assign),
@@ -860,7 +932,7 @@ impl Particle {
     fn substitute(&self,
                   agent: &agent::Representation,
                   assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                  time_assign: &Option<HashMap<Rc<Var>, Vec<Rc<Date>>>>,
+                  time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>,
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
         match *self {
@@ -1048,20 +1120,20 @@ impl PIntermediate {
 fn walk_ast(ast: &Next,
             sent: &mut LogSentence,
             context: &mut Context)
-            -> Result<PIntermediate, ParseErrF> {
+            -> Result<PIntermediate, LogSentErr> {
     match *ast {
         Next::Assert(ref decl) => {
             let particle = match *decl {
                 AssertBorrowed::ClassDecl(ref decl) => {
                     let cls = match ClassDecl::from(decl, context) {
-                        Err(err) => return Err(err),
+                        Err(err) => return Err(LogSentErr::Boxed(Box::new(err))),
                         Ok(cls) => cls,
                     };
                     PIntermediate::new(None, Some(Assert::ClassDecl(cls)))
                 }
                 AssertBorrowed::FuncDecl(ref decl) => {
                     let func = match FuncDecl::from(decl, context) {
-                        Err(err) => return Err(err),
+                        Err(err) => return Err(LogSentErr::Boxed(Box::new(err))),
                         Ok(func) => func,
                     };
                     PIntermediate::new(None, Some(Assert::FuncDecl(func)))
@@ -1105,7 +1177,7 @@ fn walk_ast(ast: &Next,
                         // if there is a var in context with the current name, shadow it
                         VarDeclBorrowed::Var(ref v) => {
                             let var = match Var::from(v, context) {
-                                Err(err) => return Err(err),
+                                Err(err) => return Err(LogSentErr::Boxed(Box::new(err))),
                                 Ok(val) => Rc::new(val),
                             };
                             for (i, v) in context.vars.iter().enumerate() {
@@ -1119,7 +1191,7 @@ fn walk_ast(ast: &Next,
                         }
                         VarDeclBorrowed::Skolem(ref s) => {
                             let skolem = match Skolem::from(s, context) {
-                                Err(err) => return Err(err),
+                                Err(err) => return Err(LogSentErr::Boxed(Box::new(err))),
                                 Ok(val) => Rc::new(val),
                             };
                             for (i, v) in context.skols.iter().enumerate() {
@@ -1226,7 +1298,7 @@ fn walk_ast(ast: &Next,
                 } else if first.is_disjunction() {
                     operator = LogicOperator::Or;
                 } else {
-                    return Err(ParseErrF::IConnectInChain);
+                    return Err(LogSentErr::IConnectInChain);
                 }
                 let mut prev = walk_ast(&nodes[len], sent, context)?;
                 if operator.is_and() {
@@ -1234,7 +1306,7 @@ fn walk_ast(ast: &Next,
                         let i = len - i;
                         let mut p = walk_ast(&nodes[i], sent, context)?;
                         if !p.is_conjunction() {
-                            return Err(ParseErrF::IConnectAfterOr);
+                            return Err(LogSentErr::IConnectAfterOr);
                         } else {
                             let lr = Rc::new(prev.into_final(context));
                             sent.add_particle(lr.clone());
@@ -1247,7 +1319,7 @@ fn walk_ast(ast: &Next,
                         let i = len - i;
                         let mut p = walk_ast(&nodes[i], sent, context)?;
                         if !p.is_disjunction() {
-                            return Err(ParseErrF::IConnectAfterOr);
+                            return Err(LogSentErr::IConnectAfterOr);
                         } else {
                             let lr = Rc::new(prev.into_final(context));
                             sent.add_particle(lr.clone());
@@ -1264,33 +1336,33 @@ fn walk_ast(ast: &Next,
                 Ok(first)
             }
         }
-        Next::None => Err(ParseErrF::WrongDef),
+        Next::None => Err(LogSentErr::WrongDef),
     }
 }
 
-fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), ParseErrF> {
+fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), LogSentErr> {
 
-    fn has_icond_child(p: &Particle) -> Result<(), ParseErrF> {
+    fn has_icond_child(p: &Particle) -> Result<(), LogSentErr> {
         if let Some(n1_0) = p.get_next(0) {
             if let Particle::IndConditional(_) = *n1_0 {
-                return Err(ParseErrF::IExprICondLHS);
+                return Err(LogSentErr::IExprICondLHS);
             }
             has_icond_child(&*n1_0)?;
         }
         if let Some(n1_1) = p.get_next(1) {
             if let Particle::IndConditional(_) = *n1_1 {
-                return Err(ParseErrF::IExprICondLHS);
+                return Err(LogSentErr::IExprICondLHS);
             }
             has_icond_child(&*n1_1)?;
         }
         Ok(())
     }
 
-    fn wrong_operator(p: &Particle) -> Result<(), ParseErrF> {
+    fn wrong_operator(p: &Particle) -> Result<(), LogSentErr> {
         if let Some(n1_0) = p.get_next(0) {
             // test that the lhs does not include any indicative conditional
             if n1_0.is_icond() {
-                return Err(ParseErrF::IExprICondLHS);
+                return Err(LogSentErr::IExprICondLHS);
             }
             has_icond_child(&*n1_0)?;
         }
@@ -1302,7 +1374,7 @@ fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), 
                 Particle::Disjunction(_) |
                 Particle::Conjunction(_) |
                 Particle::Atom(_) => {}
-                _ => return Err(ParseErrF::IExprWrongOp),
+                _ => return Err(LogSentErr::IExprWrongOp),
             }
             is_wrong = wrong_operator(&*n1_1);
         }
@@ -1328,22 +1400,47 @@ fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), 
     let first: &Particle = &*sent.root.as_ref().unwrap();
     match *first {
         Particle::IndConditional(_) => {}
-        _ => return Err(ParseErrF::IExprNotIcond),
+        _ => return Err(LogSentErr::IExprNotIcond),
     }
     if let Some(n1_0) = first.get_next(0) {
         if let Particle::IndConditional(_) = *n1_0 {
-            return Err(ParseErrF::IExprICondLHS);
+            return Err(LogSentErr::IExprICondLHS);
         }
         get_lhs_preds(n1_0, lhs)
     }
     for p in &sent.particles {
         if let Particle::Atom(ref atom) = **p {
             if !atom.pred.parent_is_grounded() && !atom.pred.parent_is_kw() {
-                return Err(ParseErrF::WrongPredicate);
+                return Err(LogSentErr::WrongPredicate);
             }
         }
     }
     wrong_operator(first)
+}
+
+mod errors {
+    use super::*;
+
+    #[derive(Debug, PartialEq)]
+    pub enum LogSentErr {
+        Boxed(Box<ParseErrF>),
+        RuleInclICond(usize),
+        IExprWrongOp,
+        IExprICondLHS,
+        IExprNotIcond,
+        IConnectInChain,
+        IConnectAfterAnd,
+        IConnectAfterOr,
+        InvalidOpArg,
+        WrongDef,
+        WrongPredicate,
+    }
+
+    impl Into<ParseErrF> for LogSentErr {
+        fn into(self) -> ParseErrF {
+            ParseErrF::LogSentErr(self)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1381,28 +1478,9 @@ mod test {
         assert!(tree.is_ok());
         let mut tree = tree.unwrap();
 
-        match tree.pop_front().unwrap() {
-            ParseTree::ParseErr(ParseErrF::IExprICondLHS) => {}
-            ParseTree::IExpr(sent) => {
-                println!("@failed_err: {}", sent);
-                panic!()
-            }
-            _ => panic!(),
-        }
-
-        match tree.pop_front().unwrap() {
-            ParseTree::ParseErr(ParseErrF::IExprICondLHS) => {}
-            ParseTree::IExpr(sent) => {
-                println!("@failed_err: {}", sent);
-                panic!()
-            }
-            _ => panic!(),
-        }
-
-        match tree.pop_front().unwrap() {
-            ParseTree::IExpr(_) => {}
-            _ => panic!(),
-        }
+        assert!(tree.pop_front().unwrap().is_err());
+        assert!(tree.pop_front().unwrap().is_err());
+        assert_eq!(tree.pop_front().unwrap().is_err(), false);
 
         let sent = match tree.pop_front().unwrap() {
             ParseTree::IExpr(sent) => sent,

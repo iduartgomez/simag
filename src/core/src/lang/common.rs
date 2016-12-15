@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::RwLock;
 
-use chrono::UTC;
+use chrono::{Duration, UTC};
 use float_cmp::ApproxEqUlps;
 
 use lang::parser::*;
@@ -13,6 +13,7 @@ use agent;
 use super::Date;
 
 pub use self::errors::TimeFnErr;
+const TIME_EQ_DIFF: i64 = 1;
 
 // Predicate types:
 
@@ -287,12 +288,8 @@ impl GroundedClsMemb {
         } else if data.is_none() && !own_is_true {
             return false;
         }
-        let other_is_true = if data.as_ref().unwrap().len() % 2 == 1 {
-            true
-        } else {
-            false
-        };
-        own_is_true == other_is_true
+        let other_dates = data.as_ref().unwrap();
+        time_equality(&*own_dates, other_dates)
     }
 
     pub fn override_time_data(&self, data: &Vec<Rc<Date>>) {
@@ -378,8 +375,7 @@ pub struct GroundedFunc {
 
 impl ::std::cmp::PartialEq for GroundedFunc {
     fn eq(&self, other: &GroundedFunc) -> bool {
-        if self.name != other.name || self.args != other.args || self.third != other.third ||
-           *self.dates.read().unwrap() != *other.dates.read().unwrap() {
+        if self.name != other.name || self.args != other.args || self.third != other.third {
             false
         } else {
             true
@@ -392,7 +388,7 @@ impl ::std::cmp::Eq for GroundedFunc {}
 impl GroundedFunc {
     pub fn from_free(free: &FuncDecl,
                      assignments: &HashMap<Rc<Var>, &agent::VarAssignment>,
-                     time_assign: &Option<HashMap<Rc<Var>, Vec<Rc<Date>>>>)
+                     time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>)
                      -> Result<GroundedFunc, ()> {
         if !free.variant.is_relational() || free.args.as_ref().unwrap().len() < 2 {
             return Err(());
@@ -436,6 +432,11 @@ impl GroundedFunc {
         })
     }
 
+    fn time_equality(&self, data: &Vec<Rc<Date>>) -> bool {
+        let own_dates = self.dates.read().unwrap();
+        time_equality(&*own_dates, data)
+    }
+
     #[inline]
     pub fn get_name(&self) -> Rc<String> {
         self.name.clone()
@@ -447,17 +448,6 @@ impl GroundedFunc {
     }
 
     #[inline]
-    pub fn name_in_pos(&self, name: &str, pos: &usize) -> bool {
-        if (*pos < 2) && (&**self.args[*pos].get_name() == name) {
-            return true;
-        }
-        if self.third.is_some() && &**self.third.as_ref().unwrap().get_name() == name {
-            return true;
-        }
-        false
-    }
-
-    #[inline]
     pub fn get_args_names(&self) -> Vec<Rc<String>> {
         let mut v = Vec::with_capacity(3);
         v.push(self.args[0].get_name());
@@ -466,6 +456,17 @@ impl GroundedFunc {
             v.push(arg.get_name());
         }
         v
+    }
+
+    #[inline]
+    pub fn name_in_pos(&self, name: &str, pos: &usize) -> bool {
+        if (*pos < 2) && (&**self.args[*pos].get_name() == name) {
+            return true;
+        }
+        if self.third.is_some() && &**self.third.as_ref().unwrap().get_name() == name {
+            return true;
+        }
+        false
     }
 
     pub fn comparable(&self, other: &GroundedFunc) -> bool {
@@ -504,6 +505,8 @@ impl ::std::clone::Clone for GroundedFunc {
         }
     }
 }
+
+// Free types:
 
 #[derive(Debug, Clone)]
 pub struct FreeClsMemb {
@@ -748,7 +751,7 @@ impl Assert {
     pub fn equal_to_grounded(&self,
                              agent: &agent::Representation,
                              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                             time_assign: &Option<HashMap<Rc<Var>, Vec<Rc<Date>>>>)
+                             time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>)
                              -> Option<bool> {
         match *self {
             Assert::FuncDecl(ref f) => f.equal_to_grounded(agent, assignments, time_assign),
@@ -760,7 +763,7 @@ impl Assert {
     pub fn substitute(&self,
                       agent: &agent::Representation,
                       assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                      time_assign: &Option<HashMap<Rc<Var>, Vec<Rc<Date>>>>,
+                      time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>,
                       context: &mut agent::ProofResult) {
         match *self {
             Assert::FuncDecl(ref f) => f.substitute(agent, assignments, time_assign, context),
@@ -781,7 +784,7 @@ impl Assert {
 pub struct FuncDecl {
     name: Terminal,
     args: Option<Vec<Predicate>>,
-    op_args: Option<Vec<OpArg>>,
+    pub op_args: Option<Vec<OpArg>>,
     pub variant: FuncVariants,
 }
 
@@ -820,14 +823,13 @@ impl<'a> FuncDecl {
         };
         let mut time_data: Option<Vec<Rc<Date>>> = None;
         if let Some(mut oargs) = op_args {
-            for a in oargs.drain(..) {
-                match a.term {
-                    OpArgTerm::TimeOp => {
-                        if let Some((_, OpArgTerm::TimePayload(TimeFn::Date(date)))) = a.comp {
-                            time_data = Some(vec![date])
-                        } else if let Some((_, OpArgTerm::TimePayload(TimeFn::Now))) = a.comp {
-                            time_data = Some(vec![Rc::new(UTC::now())])
-                        }
+            for arg in oargs.drain(..) {
+                match arg {
+                    OpArg::TimeDecl(TimeFn::Date(date)) => {
+                        time_data = Some(vec![date]);
+                    }
+                    OpArg::TimeDecl(TimeFn::Now) => {
+                        time_data = Some(vec![Rc::new(UTC::now())]);
                     }
                     _ => {}
                 }
@@ -911,16 +913,17 @@ impl<'a> FuncDecl {
     }
 
     pub fn get_own_time_data(&self,
-                             assignments: &Option<HashMap<Rc<Var>, Vec<Rc<Date>>>>)
+                             assignments: &HashMap<Rc<Var>, Vec<Rc<Date>>>)
                              -> Option<Vec<Rc<Date>>> {
         if self.op_args.is_none() {
             return None;
         }
         let mut v = Vec::new();
         for arg in self.op_args.as_ref().unwrap() {
-            match arg.kind {
-                OpArgKind::TimeDecl | OpArgKind::TimeVarAssign => {
-                    v = arg.comp.as_ref().unwrap().1.get_time_payload(assignments);
+            match *arg {
+                OpArg::TimeDecl(_) |
+                OpArg::TimeVarAssign(_) => {
+                    v = arg.get_time_payload(assignments);
                     break;
                 }
                 _ => {}
@@ -933,14 +936,14 @@ impl<'a> FuncDecl {
         }
     }
 
-    fn get_time_decl(&self, var: &Var) -> bool {
+    fn get_time_decl(&self, var0: &Var) -> bool {
         if self.op_args.is_none() {
             return false;
         }
         for arg in self.op_args.as_ref().unwrap() {
-            match arg.kind {
-                OpArgKind::TimeVarFrom => {
-                    return arg.term.var_equality(var);
+            match *arg {
+                OpArg::TimeVarFrom(ref var1) => {
+                    return var1.var_equality(var0);
                 }
                 _ => {}
             }
@@ -952,10 +955,6 @@ impl<'a> FuncDecl {
                  agent: &agent::Representation,
                  var_assign: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
                  -> Option<Vec<Rc<Date>>> {
-        match self.variant {
-            FuncVariants::Relational => {}
-            _ => panic!(),
-        }
         if self.is_grounded() {
             let sbj = self.args.as_ref().unwrap();
             let grfunc = self.clone().into_grounded();
@@ -969,7 +968,8 @@ impl<'a> FuncDecl {
                 return None;
             }
             let assignments = var_assign.as_ref().unwrap();
-            if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, &None) {
+            let f = HashMap::new();
+            if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, &f) {
                 for arg in self.get_args() {
                     if let Predicate::FreeClsMemb(ref arg) = *arg {
                         if let Some(entity) = assignments.get(&arg.term) {
@@ -1149,10 +1149,11 @@ impl<'a> FuncDecl {
     fn equal_to_grounded(&self,
                          agent: &agent::Representation,
                          assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                         time_assign: &Option<HashMap<Rc<Var>, Vec<Rc<Date>>>>)
+                         time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>)
                          -> Option<bool> {
         match self.variant {
             FuncVariants::Relational => {}
+            FuncVariants::TimeCalc => return self.time_resolution(time_assign),
             _ => panic!(),
         }
         if self.is_grounded() {
@@ -1169,7 +1170,8 @@ impl<'a> FuncDecl {
                     if let Predicate::FreeClsMemb(ref arg) = *arg {
                         if let Some(entity) = assignments.get(&arg.term) {
                             if let Some(current) = entity.get_relationship(&grfunc) {
-                                if **current != grfunc {
+                                let grdates = &*grfunc.dates.read().unwrap();
+                                if **current != grfunc || !current.time_equality(grdates) {
                                     return Some(false);
                                 } else {
                                     return Some(true);
@@ -1183,10 +1185,19 @@ impl<'a> FuncDecl {
         }
     }
 
+    fn time_resolution(&self, assignments: &HashMap<Rc<Var>, Vec<Rc<Date>>>) -> Option<bool> {
+        for arg in self.op_args.as_ref().unwrap() {
+            if !arg.compare_time_args(assignments) {
+                return Some(false);
+            }
+        }
+        Some(true)
+    }
+
     fn substitute(&self,
                   agent: &agent::Representation,
                   assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                  time_assign: &Option<HashMap<Rc<Var>, Vec<Rc<Date>>>>,
+                  time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>,
                   context: &mut agent::ProofResult) {
         if let Ok(grfunc) = GroundedFunc::from_free(self,
                                                     assignments.as_ref().unwrap(),
@@ -1202,7 +1213,7 @@ impl<'a> FuncDecl {
 pub struct ClassDecl {
     name: Terminal,
     args: Vec<Predicate>,
-    op_args: Option<Vec<OpArg>>,
+    pub op_args: Option<Vec<OpArg>>,
 }
 
 impl<'a> ClassDecl {
@@ -1256,16 +1267,17 @@ impl<'a> ClassDecl {
     }
 
     pub fn get_own_time_data(&self,
-                             assignments: &Option<HashMap<Rc<Var>, Vec<Rc<Date>>>>)
+                             assignments: &HashMap<Rc<Var>, Vec<Rc<Date>>>)
                              -> Option<Vec<Rc<Date>>> {
         if self.op_args.is_none() {
             return None;
         }
         let mut v = Vec::new();
         for arg in self.op_args.as_ref().unwrap() {
-            match arg.kind {
-                OpArgKind::TimeDecl | OpArgKind::TimeVarAssign => {
-                    v = arg.comp.as_ref().unwrap().1.get_time_payload(assignments);
+            match *arg {
+                OpArg::TimeDecl(_) |
+                OpArg::TimeVarAssign(_) => {
+                    v = arg.get_time_payload(assignments);
                     break;
                 }
                 _ => {}
@@ -1278,14 +1290,14 @@ impl<'a> ClassDecl {
         }
     }
 
-    fn get_time_decl(&self, var: &Var) -> bool {
+    fn get_time_decl(&self, var0: &Var) -> bool {
         if self.op_args.is_none() {
             return false;
         }
         for arg in self.op_args.as_ref().unwrap() {
-            match arg.kind {
-                OpArgKind::TimeVarFrom => {
-                    return arg.term.var_equality(var);
+            match *arg {
+                OpArg::TimeVarFrom(ref var1) => {
+                    return var1.var_equality(var0);
                 }
                 _ => {}
             }
@@ -1326,6 +1338,21 @@ impl<'a> ClassDecl {
                 }
             }
             _ => return None, // this path won't be taken in any program
+        }
+        None
+    }
+
+    pub fn get_time_payload(&self) -> Option<Vec<Rc<Date>>> {
+        if self.op_args.is_none() {
+            return None;
+        }
+        for arg in self.op_args.as_ref().unwrap() {
+            match *arg {
+                OpArg::TimeDecl(ref decl) => {
+                    return Some(decl.get_time_payload());
+                }
+                _ => {}
+            }
         }
         None
     }
@@ -1379,7 +1406,7 @@ impl<'a> ClassDecl {
     fn equal_to_grounded(&self,
                          agent: &agent::Representation,
                          assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                         time_assign: &Option<HashMap<Rc<Var>, Vec<Rc<Date>>>>)
+                         time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>)
                          -> Option<bool> {
         let time_data = self.get_own_time_data(time_assign);
         for a in &self.args {
@@ -1420,7 +1447,7 @@ impl<'a> ClassDecl {
     fn substitute(&self,
                   agent: &agent::Representation,
                   assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                  time_assign: &Option<HashMap<Rc<Var>, Vec<Rc<Date>>>>,
+                  time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>,
                   context: &mut agent::ProofResult) {
         let time_data = self.get_own_time_data(time_assign);
         for a in &self.args {
@@ -1483,19 +1510,12 @@ impl<'a> ::std::iter::Iterator for DeclArgsIter<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct OpArg {
-    term: OpArgTerm,
-    comp: Option<(CompOperator, OpArgTerm)>,
-    kind: OpArgKind,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum OpArgKind {
-    TimeDecl,
+pub enum OpArg {
+    Generic(OpArgTerm, Option<(CompOperator, OpArgTerm)>),
+    TimeDecl(TimeFn),
     TimeVar,
-    TimeVarAssign,
-    TimeVarFrom,
-    Generic,
+    TimeVarAssign(Rc<Var>),
+    TimeVarFrom(Rc<Var>),
 }
 
 impl<'a> OpArg {
@@ -1512,7 +1532,6 @@ impl<'a> OpArg {
             Err(err) => return Err(err),
             Ok(arg) => arg,
         };
-        let mut kind = OpArgKind::Generic;
         let comp = match other.comp {
             Some((op, ref tors)) => {
                 match OpArgTerm::from(tors, context) {
@@ -1520,8 +1539,7 @@ impl<'a> OpArg {
                     Err(ParseErrF::ReservedKW(kw)) => {
                         if &kw == "time" {
                             if t0.is_var() {
-                                kind = OpArgKind::TimeVarFrom;
-                                None
+                                return Ok(OpArg::TimeVarFrom(t0.get_var()));
                             } else {
                                 return Err(ParseErrF::WrongDef);
                             }
@@ -1534,80 +1552,98 @@ impl<'a> OpArg {
             }
             None => None,
         };
-        Ok(OpArg {
-            term: t0,
-            comp: comp,
-            kind: kind,
-        })
+        Ok(OpArg::Generic(t0, comp))
     }
 
     fn ignore_kw(other: &OpArgBorrowed<'a>,
                  kw: &str,
                  context: &mut Context)
                  -> Result<OpArg, ParseErrF> {
-        let t;
-        let payload;
-        let kind;
         match kw {
             "time" => {
-                t = OpArgTerm::TimeOp;
                 let load = OpArgTerm::time_payload(other.comp.as_ref(), context)?;
                 if load.1.is_var() {
-                    kind = OpArgKind::TimeVarAssign;
+                    Ok(OpArg::TimeVarAssign(load.1.get_var()))
                 } else {
                     match load.1 {
-                        OpArgTerm::TimePayload(TimeFn::IsVar) => {
-                            kind = OpArgKind::TimeVar;
-                        }
-                        OpArgTerm::TimePayload(_) => {
-                            kind = OpArgKind::TimeDecl;
-                        }
+                        OpArgTerm::TimePayload(TimeFn::IsVar) => Ok(OpArg::TimeVar),
+                        OpArgTerm::TimePayload(load) => Ok(OpArg::TimeDecl(load)),
                         _ => panic!(),
                     }
                 }
-                payload = Some(load);
             }
-            val => return Err(ParseErrF::ReservedKW(val.to_string())),
+            val => Err(ParseErrF::ReservedKW(val.to_string())),
         }
-        Ok(OpArg {
-            term: t,
-            comp: payload,
-            kind: kind,
-        })
     }
 
     #[inline]
-    fn contains_var(&self, var: &Var) -> bool {
-        if self.term.var_equality(var) {
-            return true;
+    fn contains_var(&self, var1: &Var) -> bool {
+        match *self {
+            OpArg::TimeVarAssign(ref var0) => &**var0 == var1,
+            OpArg::TimeVarFrom(ref var0) => &**var0 == var1,
+            _ => false,
         }
-        if let Some((_, ref term)) = self.comp {
-            if term.var_equality(var) {
-                return true;
-            }
-        }
-        false
     }
 
     fn get_id(&self) -> Vec<u8> {
         let mut id = vec![];
-        if self.term.is_grounded() {
-            let mut id_1 = Vec::from(self.term.get_name().as_bytes());
-            id.append(&mut id_1);
-        }
-        if let Some((ref op, ref term)) = self.comp {
-            match *op {
-                CompOperator::Equal => id.push(0),
-                CompOperator::Less => id.push(1),
-                CompOperator::More => id.push(2),
-            }
-            if self.term.is_grounded() {
-                let mut id_2 = Vec::from(term.get_name().as_bytes());
-                id.append(&mut id_2);
-            }
+        match *self {
+            OpArg::Generic(_, _) => id.push(0),
+            OpArg::TimeDecl(_) => id.push(1),
+            OpArg::TimeVar => id.push(2),
+            OpArg::TimeVarAssign(_) => id.push(3),
+            OpArg::TimeVarFrom(_) => id.push(4),
         }
         id
     }
+
+    fn get_time_payload(&self, assignments: &HashMap<Rc<Var>, Vec<Rc<Date>>>) -> Vec<Rc<Date>> {
+        match *self {
+            OpArg::TimeDecl(TimeFn::Date(ref payload)) => vec![payload.clone()],
+            OpArg::TimeDecl(TimeFn::Now) => vec![Rc::new(UTC::now())],
+            OpArg::TimeVarAssign(ref var) => assignments.get(&*var).unwrap().clone(),
+            _ => panic!(),
+        }
+    }
+
+    fn compare_time_args(&self, assignments: &HashMap<Rc<Var>, Vec<Rc<Date>>>) -> bool {
+        let (term, op, comp) = match *self {
+            OpArg::Generic(ref term, Some((ref op, ref comp))) => (term, op, comp),
+            _ => return false,
+        };
+        let var0 = term.get_var();
+        let arg0 = assignments.get(&var0).as_ref().unwrap().last().unwrap();
+        let var1 = comp.get_var();
+        let arg1 = assignments.get(&var1).as_ref().unwrap().last().unwrap();
+        match *op {
+            CompOperator::Equal => {
+                let comp_diff = Duration::seconds(TIME_EQ_DIFF);
+                let lower_bound = **arg0 - comp_diff;
+                let upper_bound = **arg0 + comp_diff;
+                if !(**arg1 > lower_bound) || !(**arg1 < upper_bound) {
+                    false
+                } else {
+                    true
+                }
+            }
+            CompOperator::More => arg0 > arg1,
+            CompOperator::Less => arg0 < arg1,
+        }
+    }
+}
+
+fn time_equality(lhs: &Vec<Rc<Date>>, rhs: &Vec<Rc<Date>>) -> bool {
+    let lhs_is_true = if lhs.len() % 2 == 1 || lhs.is_empty() {
+        true
+    } else {
+        false
+    };
+    let rhs_is_true = if rhs.len() % 2 == 1 || rhs.is_empty() {
+        true
+    } else {
+        false
+    };
+    lhs_is_true == rhs_is_true
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1619,7 +1655,7 @@ pub enum TimeFn {
 
 impl TimeFn {
     fn from_str(slice: &[u8]) -> Result<TimeFn, ParseErrF> {
-        if slice == b"*now" {
+        if slice == b"Now" {
             Ok(TimeFn::Now)
         } else {
             let s = unsafe { str::from_utf8_unchecked(slice) };
@@ -1629,13 +1665,20 @@ impl TimeFn {
             }
         }
     }
+
+    fn get_time_payload(&self) -> Vec<Rc<Date>> {
+        match *self {
+            TimeFn::Date(ref payload) => vec![payload.clone()],
+            TimeFn::Now => vec![Rc::new(UTC::now())],
+            _ => panic!(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum OpArgTerm {
+pub enum OpArgTerm {
     Terminal(Terminal),
     String(String),
-    TimeOp,
     TimePayload(TimeFn),
 }
 
@@ -1679,27 +1722,7 @@ impl<'a> OpArgTerm {
         }
     }
 
-    fn get_time_payload(&self,
-                        assignments: &Option<HashMap<Rc<Var>, Vec<Rc<Date>>>>)
-                        -> Vec<Rc<Date>> {
-        match *self {
-            OpArgTerm::TimePayload(TimeFn::Date(ref payload)) => vec![payload.clone()],
-            OpArgTerm::TimePayload(TimeFn::Now) => vec![Rc::new(UTC::now())],
-            OpArgTerm::Terminal(Terminal::FreeTerm(ref var)) => {
-                assignments.as_ref().unwrap().get(var).unwrap().clone()
-            }
-            _ => panic!(),
-        }
-    }
-
     #[inline]
-    fn var_equality(&self, var: &Var) -> bool {
-        match *self {
-            OpArgTerm::Terminal(ref term) => term.var_equality(var),
-            _ => false,
-        }
-    }
-
     fn is_var(&self) -> bool {
         match *self {
             OpArgTerm::Terminal(ref t) => t.is_var(),
@@ -1707,29 +1730,23 @@ impl<'a> OpArgTerm {
         }
     }
 
-    fn is_grounded(&self) -> bool {
+    #[inline]
+    fn get_var(&self) -> Rc<Var> {
         match *self {
-            OpArgTerm::Terminal(ref t) => t.is_grounded(),
-            _ => false,
-        }
-    }
-
-    fn get_name(&self) -> Rc<String> {
-        match *self {
-            OpArgTerm::Terminal(ref term) => term.get_name(),
+            OpArgTerm::Terminal(ref term) => term.get_var(),
             _ => panic!(),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Var {
     pub name: String,
     op_arg: Option<OpArg>,
     pub kind: VarKind,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum VarKind {
     Normal,
     Time,
@@ -1743,11 +1760,11 @@ impl Var {
         let op_arg = match *op_arg {
             Some(ref op_arg) => {
                 let t = OpArg::from(op_arg, context)?;
-                match t.kind {
-                    OpArgKind::TimeDecl => {
+                match t {
+                    OpArg::TimeDecl(_) => {
                         kind = VarKind::TimeDecl;
                     }
-                    OpArgKind::TimeVar => {
+                    OpArg::TimeVar => {
                         kind = VarKind::Time;
                     }
                     _ => return Err(ParseErrF::WrongDef),
@@ -1765,6 +1782,15 @@ impl Var {
             op_arg: op_arg,
             kind: kind,
         })
+    }
+
+    pub fn get_dates(&self) -> Vec<Rc<Date>> {
+        let h = HashMap::new();
+        self.op_arg.as_ref().unwrap().get_time_payload(&h)
+    }
+
+    fn var_equality(&self, v1: &Var) -> bool {
+        (&*v1 as *const Var) == (self as *const Var)
     }
 }
 
@@ -1847,13 +1873,6 @@ impl<'a> Terminal {
             }
         }
         Ok(Terminal::GroundedTerm(Rc::new(name)))
-    }
-
-    fn var_equality(&self, v1: &Var) -> bool {
-        match *self {
-            Terminal::FreeTerm(ref v0) if (&*v1 as *const Var) == (&**v0 as *const Var) => true,
-            _ => false,
-        }
     }
 
     fn is_var(&self) -> bool {

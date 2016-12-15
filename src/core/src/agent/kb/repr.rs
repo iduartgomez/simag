@@ -64,7 +64,8 @@ impl Representation {
                         for assertion in assertions {
                             if assertion.is_class() {
                                 let cls_decl = assertion.unwrap_cls();
-                                let time_data = cls_decl.get_own_time_data(&None);
+                                let f = HashMap::new();
+                                let time_data = cls_decl.get_own_time_data(&f);
                                 for a in cls_decl {
                                     if let Some(ref data) = time_data {
                                         a.override_time_data(data);
@@ -345,7 +346,8 @@ impl Representation {
                 for args in mapped {
                     let args = HashMap::from_iter(args.iter()
                         .map(|&(ref v, ref a)| (v.clone(), &**a)));
-                    if let Ok(grfunc) = GroundedFunc::from_free(func_decl, &args, &None) {
+                    let f = HashMap::new();
+                    if let Ok(grfunc) = GroundedFunc::from_free(func_decl, &args, &f) {
                         let grfunc = Rc::new(grfunc);
                         self.ask_processed(QueryInput::AskRelationalFunc(grfunc), true);
                     }
