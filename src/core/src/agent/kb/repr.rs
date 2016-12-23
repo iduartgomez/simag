@@ -4,7 +4,6 @@ use std::sync::RwLock;
 use std::rc::Rc;
 
 use float_cmp::ApproxEqUlps;
-use chrono::UTC;
 
 use lang;
 use lang::{GroundedClsMemb, GroundedFunc, LogSentence, ParseErrF, ParseTree};
@@ -65,14 +64,11 @@ impl Representation {
                             if assertion.is_class() {
                                 let cls_decl = assertion.unwrap_cls();
                                 let f = HashMap::new();
-                                let time_data = cls_decl.get_own_time_data(&f);
+                                let time_data = cls_decl.get_own_time_data(&f, None);
                                 for a in cls_decl {
-                                    if let Some(ref data) = time_data {
-                                        a.override_time_data(data);
-                                    } else {
-                                        let set_now = vec![Rc::new(UTC::now())];
-                                        a.override_time_data(&set_now);
-                                    }
+                                    let t = time_data.clone();
+                                    t.replace_last_val(a.get_value());
+                                    a.override_time_data(&t);
                                     self.up_membership(Rc::new(a))
                                 }
                             } else {
@@ -612,21 +608,20 @@ impl Representation {
 /// between 0 and 1. If the number is one, the object will always belong to
 /// the set, if it's zero, it will never belong to the set.
 ///
-/// For example, an object can belong to the set 'cold' with a degree of
+/// For example, an object can belong to the set "cold" with a degree of
 /// 0.9 (in natural language then it would be 'very cold') or 0.1
-/// (then it would be 'a bit cold', the subjective adjectives are defined
+/// (then it would be "a bit cold", the subjective adjectives are defined
 /// in the class itself).
 ///
 /// Attributes:
 ///
-///     * id -> Unique identifier for the object.
-///     * name -> Name of the unique object.
-///     * categ -> Categories to which the object belongs.
-///                Includes the degree of membership (ie. ('cold', 0.9)).
-///     * attr -> Implicit attributes of the object, unique to itself.
-///     * cog (opt) -> These are the cognitions/relations attributed to the
-///                    object by the agent owning this representation.
-///     * relations (opt) -> Functions between objects and/or classes.
+///     * name: unique name to identify the entity.
+///     * classes: categories to which the object belongs. Includes the degree of membership
+///       (ie. ("cold", 0.9)).
+///     * attr: implicit attributes of the object, unique to itself.
+///     * beliefs: hese are the cognitions attributed to the object by the agent owning this
+///       representation.
+///     * relations: Functions between objects and/or classes.
 ///
 #[derive(Debug)]
 pub struct Entity {

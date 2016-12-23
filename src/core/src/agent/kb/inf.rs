@@ -28,7 +28,7 @@ use std::rc::Rc;
 use scoped_threadpool::Pool;
 
 use lang;
-use lang::{GroundedClsMemb, GroundedFunc, LogSentence, ParseErrF, ParseTree, Date};
+use lang::{Date, GroundedClsMemb, GroundedFunc, LogSentence, ParseErrF, ParseTree};
 use super::repr::*;
 
 pub struct Inference<'a> {
@@ -235,12 +235,6 @@ impl<'a> Inference<'a> {
         fn query_cls<'a>(inf: &'a Inference<'a>, query: Rc<String>, actv_query: ActiveQuery<'a>) {
             let mut pass = Box::new(InfTrial::new(inf, actv_query));
             pass.get_rules(vec![query.clone()]);
-            {
-                let mut lock = inf.nodes.write().unwrap();
-                for nodes in lock.values_mut() {
-                    nodes.sort_by(|a, b| a.proof.created.cmp(&b.proof.created));
-                }
-            }
             // run the query, if there is no result and there is an update,
             // then loop again, else stop
             loop {
@@ -584,8 +578,8 @@ impl<'a> InfTrial<'a> {
         // add category/function to the object dictionary
         // and to results dict if is the result for the query
         let (query_obj, query_pred, is_func) = match self.actv {
-            ActiveQuery::Class(obj, query_pred, _) => (obj, query_pred, false),
-            ActiveQuery::Func(obj, query_pred, _) => (obj, query_pred, true),
+            ActiveQuery::Class(obj, query_pred, ..) => (obj, query_pred, false),
+            ActiveQuery::Func(obj, query_pred, ..) => (obj, query_pred, true),
         };
         if let Some(false) = context.result {
             self.results.add_grounded(query_obj, query_pred, Some((false, None)));
@@ -693,6 +687,9 @@ impl<'a> InfTrial<'a> {
                             .is_none() {
                             ls.push(node.clone());
                         }
+                        ls.sort_by(|a, b| a.proof.created.cmp(&b.proof.created).reverse());
+                        // println!("RULES: {:?}",
+                        //         ls.iter().map(|x| &x.antecedents).collect::<Vec<_>>());
                     }
                 }
             }
@@ -705,6 +702,9 @@ pub fn meet_sent_req(rep: &Representation,
                      -> Option<HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>>> {
     let mut results: HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>> = HashMap::new();
     for (var, asserts) in req.iter() {
+        if asserts.is_empty() {
+            continue;
+        }
         match var.kind {
             lang::VarKind::Time | lang::VarKind::TimeDecl => continue,
             _ => {}
@@ -1026,7 +1026,7 @@ impl<'a> QueryProcessed<'a> {
                                 query.push_to_clsquery_free(t.get_var(), t);
                             }
                             lang::Predicate::GroundedClsMemb(ref t) => {
-                                if let Some(dates) = cdecl.get_time_payload() {
+                                if let Some(dates) = cdecl.get_time_payload(t.get_value()) {
                                     t.override_time_data(&dates);
                                 }
                                 query.push_to_clsquery_grounded(t.get_name(), t);
@@ -1039,6 +1039,9 @@ impl<'a> QueryProcessed<'a> {
                     for a in cdecl.get_args() {
                         match *a {
                             lang::Predicate::FreeClsOwner(ref t) => {
+                                if let Some(dates) = cdecl.get_time_payload(None) {
+                                    t.override_time_data(&dates);
+                                }
                                 query.ask_class_memb(t);
                             }
                             _ => return Err(()), // not happening ever
@@ -1164,22 +1167,6 @@ mod test {
     use std::collections::HashSet;
 
     #[test]
-    fn _temp() {
-        let test_04 = String::from("
-            (( let x, y, t1:time, t2:time=\"Now\" )
-             (( dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x] && fn::time_calc(t1<t2) )
-              |> fat(time=t2)[x,u=1] ))
-            ( dog[$Pancho,u=1] )
-            ( meat[$M1,u=1] )
-            ( fn::eat(time=\"2014-07-05T10:25:00Z\")[$M1,u=1;$Pancho] )
-        ");
-        let q04_01 = "(fat(time='Now')[$Pancho,u=1])".to_string();
-        let rep = Representation::new();
-        rep.tell(test_04).unwrap();
-        assert_eq!(rep.ask(q04_01).get_results_single(), Some(true));
-    }
-
-    //#[test]
     fn ask_pred() {
         let test_01 = String::from("
             ( professor[$Lucy,u=1] )
@@ -1260,7 +1247,7 @@ mod test {
         assert_eq!(cnt, 2)
     }
 
-    //#[test]
+    #[test]
     fn ask_func() {
         let test_01 = String::from("
             ( professor[$Lucy,u=1] )
@@ -1347,9 +1334,9 @@ mod test {
         assert_eq!(cnt, 1);
     }
 
-    //#[test]
-    fn _time_calc() {
-        let test_04 = String::from("
+    #[test]
+    fn time_calc() {
+        let test_01 = String::from("
             (( let x, y, t1:time, t2:time=\"Now\" )
              (( dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x] && fn::time_calc(t1<t2) )
               |> fat(time=t2)[x,u=1] ))
@@ -1357,43 +1344,73 @@ mod test {
             ( meat[$M1,u=1] )
             ( fn::eat(time=\"2014-07-05T10:25:00Z\")[$M1,u=1;$Pancho] )
         ");
-        let q04_01 = "(fat(time='Now')[$Pancho,u=1])".to_string();
+        let q01_01 = "(fat(time='Now')[$Pancho,u=1])".to_string();
         let rep = Representation::new();
-        rep.tell(test_04).unwrap();
-        assert_eq!(rep.ask(q04_01).get_results_single(), Some(true));
+        rep.tell(test_01).unwrap();
+        assert_eq!(rep.ask(q01_01).get_results_single(), Some(true));
 
-        let _test_05 = String::from("
-            (( let x, y, t1:time, t2:time=\"2016.01.01\" )
-             (( (dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x]) && fn::time_calc(t1<t2) )
-              |> fat(time=t2)[x,u=1] ))
-            ( dog[$Pancho,u=1] )
-            ( meat[$M1,u=1] )
-            ( fn::eat(time=\"2015.07.05.10.25\")[$M1,u=1;$Pancho] )
-        ");
-        let _q05_01 = "(fat(t='Now')[$Pancho,u=1])".to_string();
-
-        let _test_05 = String::from("
-            (( let x, y, t1: time=\"2015.01.01\", t2: time=\"2015.02.01\" )
-             ( ( dog[x,u=1] && meat[y,u=1] && fat(time=t2)[x,u=1] && fn::time_calc(t1<t2) )
+        let test_02 = String::from("
+        	(( let x, y, t1: time=\"2015-07-05T10:25:00Z\", t2: time )
+             ( ( dog[x,u=1] && meat[y,u=1] && fat(t2=time)[x,u=1] && fn::time_calc(t2<t1) )
                |> fn::eat(time=t1)[y,u=1;x]
              )
             )
             ( dog[$Pancho,u=1] )
             ( meat[$M1,u=1] )
-            ( fat[$Pancho,u=1] )
+            ( fat(time=\"2014-07-05T10:25:00Z\")[$Pancho,u=1] )
         ");
-        let _q05_01 = "(fn::eat[$M1,u=1;$Pancho])".to_string();
+        let q02_01 = "(fn::eat(time='Now')[$M1,u=1;$Pancho])".to_string();
+        let rep = Representation::new();
+        rep.tell(test_02).unwrap();
+        assert_eq!(rep.ask(q02_01).get_results_single(), Some(true));
+    }
 
-        let _test_06 = String::from("
-        	(( let x, y, t1: time=\"2015.01.01\", t2: time )
-             ( ( dog[x,u=1] && meat[y,u=1] && fat(time=t2)[x,u=1] && fn::time_calc(t1<t2) )
-               |> fn::eat(time=t1)[y,u=1;x]
-             )
-            )
-            ( dog[$Pancho,u=1] )
-            ( meat[$M1,u=1] )
-            ( fat(time=\"2015.12.01\")[$Pancho,u=1] )
+    #[test]
+    fn temp() {
+        // Test 03
+        let rep = Representation::new();
+        let test_03_00 = String::from("
+            (meat[$M1,u=1])
+            (dog[$Pancho,u=1])
         ");
-        let _q06_01 = "(fn::eat[$M1,u=1;$Pancho])".to_string();
+        rep.tell(test_03_00).unwrap();
+
+        let test_03_01 = String::from("
+            (fn::eat(time='2015-01-01T00:00:00Z')[$M1,u=1;$Pancho])
+            ((let x, y)
+              ((dog[x,u=1] && meat[y,u=1] && fn::eat[y,u=1;x])
+                |> fat[x,u=1]))
+        ");
+        rep.tell(test_03_01).unwrap();
+        let q03_01 = "(fat[$Pancho,u=1])".to_string();
+        assert_eq!(rep.ask(q03_01).get_results_single(), Some(true));
+
+        let test_03_02 = String::from("
+            (run(time='2015-01-01T00:00:00Z')[$Pancho,u=1])
+            ((let x) (( dog[x,u=1] && run[x,u=1] ) |> fat[x,u=0]))
+        ");
+        rep.tell(test_03_02).unwrap();
+        let q03_02 = "(fat[$Pancho,u=0])".to_string();
+        assert_eq!(rep.ask(q03_02).get_results_single(), Some(true));
+
+        let test_03_03 = String::from("
+            (run(time='2015-01-01T00:00:00Z')[$Pancho,u=1])
+            (fn::eat(time='2015-02-01T00:00:00Z')[$M1,u=1;$Pancho])
+            ((let x, y, t1:time, t2:time)
+             (run(t1=time)[x,u=1] && fn::eat(t2=time)[y,u=1;x]
+              && dog[x,u=1] && meat[y,u=1] && fn::time_calc(t1<t2))
+             |> (fat[x,u=1] || fat[x,u=0]))
+        ");
+        rep.tell(test_03_03).unwrap();
+        let q03_03 = "(fat[$Pancho,u=1])".to_string();
+        assert_eq!(rep.ask(q03_03).get_results_single(), Some(true));
+
+        let test_03_04 = String::from("
+            (fn::eat(time='2015-01-01T00:00:00Z')[$M1,u=1;$Pancho])
+            (run(time='2015-01-02T00:00:00Z')[$Pancho,u=1])
+        ");
+        rep.tell(test_03_04).unwrap();
+        let q03_04 = "(fat[$Pancho,u=0])".to_string();
+        assert_eq!(rep.ask(q03_04).get_results_single(), Some(true));
     }
 }

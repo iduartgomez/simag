@@ -13,6 +13,7 @@ use std::fmt;
 use chrono::UTC;
 
 use agent;
+use agent::BmsWrapper;
 use lang::parser::*;
 use lang::common::*;
 use super::{Date, ParseErrF};
@@ -31,7 +32,6 @@ pub use self::errors::LogSentErr;
 #[derive(Debug)]
 pub struct LogSentence {
     particles: Vec<Rc<Particle>>,
-    produced: Vec<Rc<LogSentence>>,
     vars: Option<Vec<Rc<Var>>>,
     skolem: Option<Vec<Rc<Skolem>>>,
     root: Option<Rc<Particle>>,
@@ -45,7 +45,6 @@ impl<'a> LogSentence {
     pub fn new(ast: &Next, context: &mut Context) -> Result<LogSentence, LogSentErr> {
         let mut sent = LogSentence {
             particles: Vec::new(),
-            produced: Vec::new(),
             skolem: None,
             vars: None,
             root: None,
@@ -100,13 +99,13 @@ impl<'a> LogSentence {
                 .map(|p| p.pred_ref())
                 .collect();
             sent.predicates = (lhs_v, rhs_v);
-            sent.op_arg_validation()?;
+            sent.iexpr_op_arg_validation()?;
         }
         sent.generate_uid();
         Ok(sent)
     }
 
-    fn op_arg_validation(&self) -> Result<(), LogSentErr> {
+    fn iexpr_op_arg_validation(&self) -> Result<(), LogSentErr> {
         // check validity of optional arguments for predicates in the LHS:
         for decl in &self.predicates.0 {
             match **decl {
@@ -191,14 +190,14 @@ impl<'a> LogSentence {
                 if root.as_ref().unwrap().is_icond() {
                     root.as_ref()
                         .unwrap()
-                        .substitute(agent, &assignments, &time_assign, context, &true)
+                        .substitute(agent, &assignments, &time_assign, context, &false)
                 }
                 context.result = Some(true);
             } else {
                 if root.as_ref().unwrap().is_icond() {
                     root.as_ref()
                         .unwrap()
-                        .substitute(agent, &assignments, &time_assign, context, &false)
+                        .substitute(agent, &assignments, &time_assign, context, &true)
                 }
                 context.result = Some(false);
             }
@@ -210,7 +209,7 @@ impl<'a> LogSentence {
     fn get_time_assignments(&self,
                             agent: &agent::Representation,
                             var_assign: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
-                            -> HashMap<Rc<Var>, Vec<Rc<Date>>> {
+                            -> HashMap<Rc<Var>, Rc<BmsWrapper>> {
         let mut time_assign = HashMap::new();
         'outer: for var in self.vars.as_ref().unwrap() {
             match var.kind {
@@ -227,7 +226,7 @@ impl<'a> LogSentence {
                     }
                 }
                 VarKind::TimeDecl => {
-                    let dates = var.get_dates();
+                    let dates = Rc::new(var.get_dates());
                     time_assign.insert(var.clone(), dates);
                 }
                 _ => {}
@@ -538,7 +537,7 @@ impl LogicIndCond {
     fn solve(&self,
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>)
+             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>)
              -> Option<bool> {
         if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign) {
             if res {
@@ -555,7 +554,7 @@ impl LogicIndCond {
     fn substitute(&self,
                   agent: &agent::Representation,
                   assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                  time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>,
+                  time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
         self.next_rhs.substitute(agent, assignments, time_assign, context, rhs)
@@ -596,7 +595,7 @@ impl LogicEquivalence {
     fn solve(&self,
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>)
+             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>)
              -> Option<bool> {
         let n0_res;
         if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign) {
@@ -660,7 +659,7 @@ impl LogicImplication {
     fn solve(&self,
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>)
+             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>)
              -> Option<bool> {
         let n0_res;
         if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign) {
@@ -724,7 +723,7 @@ impl LogicConjunction {
     fn solve(&self,
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>)
+             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>)
              -> Option<bool> {
         if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign) {
             if !res {
@@ -747,7 +746,7 @@ impl LogicConjunction {
     fn substitute(&self,
                   agent: &agent::Representation,
                   assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                  time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>,
+                  time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
         self.next_rhs.substitute(agent, assignments, time_assign, context, rhs);
@@ -789,7 +788,7 @@ impl LogicDisjunction {
     fn solve(&self,
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>)
+             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>)
              -> Option<bool> {
         let n0_res;
         if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign) {
@@ -822,7 +821,7 @@ impl LogicDisjunction {
     fn substitute(&self,
                   agent: &agent::Representation,
                   assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                  time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>,
+                  time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
         if *rhs {
@@ -863,7 +862,7 @@ impl LogicAtom {
     fn solve(&self,
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>)
+             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>)
              -> Option<bool> {
         if let Some(res) = self.pred.equal_to_grounded(agent, assignments, time_assign) {
             if res {
@@ -880,7 +879,7 @@ impl LogicAtom {
     fn substitute(&self,
                   agent: &agent::Representation,
                   assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                  time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>,
+                  time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
                   context: &mut agent::ProofResult) {
         self.pred.substitute(agent, assignments, time_assign, context)
     }
@@ -916,7 +915,7 @@ impl Particle {
     fn solve(&self,
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>)
+             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>)
              -> Option<bool> {
         match *self {
             Particle::Conjunction(ref p) => p.solve(agent, assignments, time_assign),
@@ -932,7 +931,7 @@ impl Particle {
     fn substitute(&self,
                   agent: &agent::Representation,
                   assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                  time_assign: &HashMap<Rc<Var>, Vec<Rc<Date>>>,
+                  time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
         match *self {
@@ -1447,7 +1446,6 @@ mod errors {
 mod test {
     use super::Particle;
     use lang::parser::*;
-    use lang::ParseErrF;
     use std::rc::Rc;
 
     #[test]
