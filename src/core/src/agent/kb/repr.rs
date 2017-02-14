@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use float_cmp::ApproxEqUlps;
 
+use agent;
 use lang;
 use lang::{GroundedClsMemb, GroundedFunc, LogSentence, ParseErrF, ParseTree};
 use super::*;
@@ -69,11 +70,11 @@ impl Representation {
                                     let t = time_data.clone();
                                     t.replace_last_val(a.get_value());
                                     a.override_time_data(&t);
-                                    self.up_membership(Rc::new(a))
+                                    self.up_membership(Rc::new(a), None)
                                 }
                             } else {
                                 let a = Rc::new(assertion.unwrap_fn().into_grounded());
-                                self.up_relation(a)
+                                self.up_relation(a, None)
                             }
                         }
                     }
@@ -111,7 +112,7 @@ impl Representation {
         }
     }
 
-    fn ask_processed(&self, source: QueryInput, ignore_current: bool) -> Answer {
+    pub fn ask_processed(&self, source: QueryInput, ignore_current: bool) -> Answer {
         let mut inf = match Inference::new(self, source, ignore_current) {
             Ok(inf) => inf,
             Err(()) => return Answer::QueryErr,
@@ -123,7 +124,9 @@ impl Representation {
         inf.get_results()
     }
 
-    pub fn up_membership(&self, assert: Rc<lang::GroundedClsMemb>) {
+    pub fn up_membership(&self,
+                         assert: Rc<lang::GroundedClsMemb>,
+                         context: Option<&agent::ProofResult>) {
         let parent_exists = self.classes.read().unwrap().contains_key(&assert.get_parent());
         if !parent_exists {
             let class = Box::new(Class::new(assert.get_parent(), ClassKind::Membership));
@@ -136,11 +139,11 @@ impl Representation {
             if entity_exists {
                 let lock = self.entities.read().unwrap();
                 let entity = lock.get(&assert.get_name()).unwrap();
-                is_new = entity.add_class_membership(assert.clone());
+                is_new = entity.add_class_membership(self, assert.clone(), context);
                 decl = ClassMember::Entity(assert.clone());
             } else {
                 let entity = Box::new(Entity::new(assert.get_name()));
-                is_new = entity.add_class_membership(assert.clone());
+                is_new = entity.add_class_membership(self, assert.clone(), context);
                 self.entities.write().unwrap().insert(entity.name.clone(), entity);
                 decl = ClassMember::Entity(assert.clone());
             }
@@ -149,11 +152,11 @@ impl Representation {
             if class_exists {
                 let lock = self.classes.read().unwrap();
                 let class = lock.get(&assert.get_name()).unwrap();
-                is_new = class.add_class_membership(assert.clone());
+                is_new = class.add_class_membership(self, assert.clone(), context);
                 decl = ClassMember::Class(assert.clone());
             } else {
                 let class = Box::new(Class::new(assert.get_name(), ClassKind::Membership));
-                is_new = class.add_class_membership(assert.clone());
+                is_new = class.add_class_membership(self, assert.clone(), context);
                 self.classes.write().unwrap().insert(class.name.clone(), class);
                 decl = ClassMember::Class(assert.clone());
             }
@@ -165,7 +168,9 @@ impl Representation {
         }
     }
 
-    pub fn up_relation(&self, assert: Rc<lang::GroundedFunc>) {
+    pub fn up_relation(&self,
+                       assert: Rc<lang::GroundedFunc>,
+                       context: Option<&agent::ProofResult>) {
         // it doesn't matter this is overwritten, as if it exists, it exists for all
         let is_new = Rc::new(::std::cell::RefCell::new(true));
         let process_arg = |a: &GroundedClsMemb| {
@@ -176,10 +181,10 @@ impl Representation {
                 if entity_exists {
                     let lock = self.entities.read().unwrap();
                     let entity = lock.get(&subject).unwrap();
-                    is_new1 = entity.add_relationship(assert.clone());
+                    is_new1 = entity.add_relationship(self, assert.clone(), context);
                 } else {
                     let entity = Box::new(Entity::new(subject));
-                    is_new1 = entity.add_relationship(assert.clone());
+                    is_new1 = entity.add_relationship(self, assert.clone(), context);
                     self.entities.write().unwrap().insert(entity.name.clone(), entity);
                 }
             } else {
@@ -187,10 +192,10 @@ impl Representation {
                 if class_exists {
                     let lock = self.classes.read().unwrap();
                     let class = lock.get(&subject).unwrap();
-                    is_new1 = class.add_relationship(assert.clone());
+                    is_new1 = class.add_relationship(self, assert.clone(), context);
                 } else {
                     let class = Box::new(Class::new(subject, ClassKind::Membership));
-                    is_new1 = class.add_relationship(assert.clone());
+                    is_new1 = class.add_relationship(self, assert.clone(), context);
                     self.classes.write().unwrap().insert(class.name.clone(), class);
                 }
             }
@@ -319,15 +324,17 @@ impl Representation {
 
         let iter_cls_candidates = |cls_decl: &lang::ClassDecl,
                                    candidates: &HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>>| {
+            let f = HashMap::new();
             for a in cls_decl.get_args() {
                 match *a {
                     lang::Predicate::FreeClsMemb(ref free) => {
                         if let Some(ls) = candidates.get(&free.get_var()) {
                             for entity in ls {
-                                let grfact =
-                                    Rc::new(GroundedClsMemb::from_free(free, entity.name.clone()));
-                                self.ask_processed(QueryInput::AskClassMember(grfact.clone()),
-                                                   true);
+                                let grfact = Rc::new(GroundedClsMemb::from_free(free,
+                                                                                entity.name
+                                                                                    .clone(),
+                                                                                &f));
+                                self.ask_processed(QueryInput::AskClassMember(grfact), true);
                             }
                         }
                     }
@@ -339,13 +346,12 @@ impl Representation {
                                     candidates: &HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>>| {
             let mapped = ArgsProduct::product(candidates.clone());
             if let Some(mapped) = mapped {
+                let f = HashMap::new();
                 for args in mapped {
                     let args = HashMap::from_iter(args.iter()
                         .map(|&(ref v, ref a)| (v.clone(), &**a)));
-                    let f = HashMap::new();
                     if let Ok(grfunc) = GroundedFunc::from_free(func_decl, &args, &f) {
-                        let grfunc = Rc::new(grfunc);
-                        self.ask_processed(QueryInput::AskRelationalFunc(grfunc), true);
+                        self.ask_processed(QueryInput::AskRelationalFunc(Rc::new(grfunc)), true);
                     }
                 }
             }
@@ -654,13 +660,17 @@ impl Entity {
         lock.values().filter(|x| compare.filter_grounded(&**x)).cloned().collect::<Vec<_>>()
     }
 
-    fn add_class_membership(&self, grounded: Rc<GroundedClsMemb>) -> bool {
+    fn add_class_membership(&self,
+                            agent: &Representation,
+                            grounded: Rc<GroundedClsMemb>,
+                            context: Option<&agent::ProofResult>)
+                            -> bool {
         let mut lock = self.classes.write().unwrap();
         let name = grounded.get_parent();
         let stmt_exists = lock.contains_key(&name);
         if stmt_exists {
             let current = lock.get(&name).unwrap();
-            current.update(grounded);
+            GroundedClsMemb::update(current.clone(), agent, grounded, context);
             false
         } else {
             lock.insert(name, grounded);
@@ -718,7 +728,11 @@ impl Entity {
     /// Adds a new relationship for the entity.
     /// Returns 'true' in case the relationship didn't exist previously,
     /// 'false' otherwise. If it already existed, it's value is updated.
-    fn add_relationship(&self, func: Rc<GroundedFunc>) -> bool {
+    fn add_relationship(&self,
+                        agent: &Representation,
+                        func: Rc<GroundedFunc>,
+                        context: Option<&agent::ProofResult>)
+                        -> bool {
         let mut lock = self.relations.write().unwrap();
         let name = func.get_name();
         let stmt_exists = lock.contains_key(&name);
@@ -727,7 +741,7 @@ impl Entity {
             let mut found_rel = false;
             for f in funcs_type.iter_mut() {
                 if f.comparable(&*func) {
-                    f.update(func.clone());
+                    GroundedFunc::update(f.clone(), agent, func.clone(), context);
                     found_rel = true;
                     break;
                 }
@@ -833,13 +847,17 @@ impl Class {
     }
 
     /// Set a superclass of this class
-    fn add_class_membership(&self, grounded: Rc<GroundedClsMemb>) -> bool {
+    fn add_class_membership(&self,
+                            agent: &Representation,
+                            grounded: Rc<GroundedClsMemb>,
+                            context: Option<&agent::ProofResult>)
+                            -> bool {
         let mut lock = self.classes.write().unwrap();
         let name = grounded.get_parent();
         let stmt_exists = lock.contains_key(&name);
         if stmt_exists {
             let current = lock.get_mut(&name).unwrap();
-            current.update(grounded);
+            GroundedClsMemb::update(current.clone(), agent, grounded, context);
             false
         } else {
             lock.insert(name, grounded);
@@ -948,7 +966,11 @@ impl Class {
     /// Add a relationship this class has with other classes/entities.
     /// Returns 'true' in case the relationship didn't exist,
     /// 'false' otherwise. If it already existed it's value is updated.
-    fn add_relationship(&self, func: Rc<GroundedFunc>) -> bool {
+    fn add_relationship(&self,
+                        agent: &Representation,
+                        func: Rc<GroundedFunc>,
+                        context: Option<&agent::ProofResult>)
+                        -> bool {
         let mut lock = self.relations.write().unwrap();
         let name = func.get_name();
         let stmt_exists = lock.contains_key(&name);
@@ -957,7 +979,7 @@ impl Class {
             let mut found_rel = false;
             for f in funcs_type.iter_mut() {
                 if f.comparable(&*func) {
-                    f.update(func.clone());
+                    GroundedFunc::update(f.clone(), agent, func.clone(), context);
                     found_rel = true;
                     break;
                 }

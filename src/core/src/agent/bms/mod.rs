@@ -7,10 +7,13 @@
 #![allow(dead_code)]
 
 use std::sync::RwLock;
+use std::rc::Rc;
 
 use chrono::UTC;
 
-use lang::{Date, GroundedClsMemb, GroundedFunc};
+use lang::{Date, Grounded, GroundedClsMemb, GroundedFunc};
+use super::{ProofResult, Representation};
+use super::kb::QueryInput;
 
 #[derive(Debug)]
 pub struct BmsWrapper {
@@ -46,15 +49,62 @@ impl BmsWrapper {
         records.push(record);
     }
 
-    pub fn add_entry(&self, produced: Grounded) {
+    pub fn add_entry(&self, produced: Grounded, with_val: Option<f32>) {
         let mut records = self.records.write().unwrap();
-        records.last_mut().unwrap().produced.push(produced);
+        records.last_mut().unwrap().produced.push((produced, with_val));
     }
 
-    pub fn update(&self, data: &BmsWrapper) {
-        // stub: must check for inconsistencies and rollback if necessary
-        self.override_data(data);
-
+    pub fn update(&self,
+                  agent: &Representation,
+                  owner: Grounded,
+                  data: &BmsWrapper,
+                  context: Option<&ProofResult>) {
+        // self.override_data(data);
+        // check if there are any inconsistencies with the knowledge produced with
+        // the previous value
+        let lock = self.records.read().unwrap();
+        let last_record = lock.last().unwrap();
+        for record in &last_record.produced {
+            match *record {
+                (Grounded::Function(ref func), ..) => {
+                    // check if indeed the value was produced by this producer or is more recent
+                    let prod_date = (&*func).bms.last_date();
+                    if prod_date <= last_record.date {
+                        // if it was produced, run again a test against the kb to check
+                        // if it is still valid
+                        agent.ask_processed(QueryInput::AskRelationalFunc(func.clone()),
+                                            true);
+                    }
+                }
+                (Grounded::Terminal(ref cls), ..) => {
+                    // check if indeed the value was produced by this producer or is more recent
+                    let prod_date = (&*cls).bms.as_ref().unwrap().last_date();
+                    if prod_date <= last_record.date {
+                        // if it was produced, run again a test against the kb to check
+                        // if it is still valid
+                        agent.ask_processed(QueryInput::AskClassMember(cls.clone()), true);
+                    }
+                }
+            }
+        }
+        // add the produced knowledge to each producer
+        if let Some(context) = context {
+            for a in &context.antecedents {
+                match *a {
+                    Grounded::Terminal(ref cls) => {
+                        let value = cls.get_value();
+                        cls.bms
+                            .as_ref()
+                            .unwrap()
+                            .add_entry(owner.clone(), value)
+                    }
+                    Grounded::Function(ref func) => {
+                        let value = func.get_value();
+                        func.bms.add_entry(owner.clone(), Some(value))
+                    }
+                }
+            }
+        }
     }
 
     pub fn override_data(&self, other: &BmsWrapper) {
@@ -65,7 +115,7 @@ impl BmsWrapper {
         }
     }
 
-    pub fn last(&self) -> Date {
+    pub fn last_date(&self) -> Date {
         self.records.read().unwrap().last().unwrap().date.clone()
     }
 
@@ -77,23 +127,7 @@ impl BmsWrapper {
 
 #[derive(Debug, Clone)]
 struct BmsRecord {
-    produced: Vec<Grounded>,
+    produced: Vec<(Grounded, Option<f32>)>,
     date: Date,
     value: Option<f32>,
-}
-
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub enum Grounded {
-    Function(*const GroundedFunc),
-    Class(*const GroundedClsMemb),
-}
-
-impl Grounded {
-    pub fn from_grounded_func(func_ref: &GroundedFunc) -> Grounded {
-        Grounded::Function(func_ref as *const GroundedFunc)
-    }
-
-    pub fn from_grounded_cls(cls_ref: &GroundedClsMemb) -> Grounded {
-        Grounded::Class(cls_ref as *const GroundedClsMemb)
-    }
 }

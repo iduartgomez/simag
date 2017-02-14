@@ -185,7 +185,9 @@ impl<'a> LogSentence {
             context.result = None;
             return;
         }
-        if let Some(res) = root.as_ref().unwrap().solve(agent, &assignments, &time_assign) {
+        if let Some(res) = root.as_ref()
+            .unwrap()
+            .solve(agent, &assignments, &time_assign, context) {
             if res {
                 if root.as_ref().unwrap().is_icond() {
                     root.as_ref()
@@ -537,9 +539,10 @@ impl LogicIndCond {
     fn solve(&self,
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>)
+             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+             context: &mut agent::ProofResult)
              -> Option<bool> {
-        if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign) {
+        if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign, context) {
             if res {
                 Some(true)
             } else {
@@ -595,10 +598,11 @@ impl LogicEquivalence {
     fn solve(&self,
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>)
+             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+             context: &mut agent::ProofResult)
              -> Option<bool> {
         let n0_res;
-        if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign) {
+        if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign, context) {
             if res {
                 n0_res = true;
             } else {
@@ -608,7 +612,7 @@ impl LogicEquivalence {
             return None;
         }
         let n1_res;
-        if let Some(res) = self.next_rhs.solve(agent, assignments, time_assign) {
+        if let Some(res) = self.next_rhs.solve(agent, assignments, time_assign, context) {
             if res {
                 n1_res = true;
             } else {
@@ -659,10 +663,11 @@ impl LogicImplication {
     fn solve(&self,
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>)
+             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+             context: &mut agent::ProofResult)
              -> Option<bool> {
         let n0_res;
-        if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign) {
+        if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign, context) {
             if res {
                 n0_res = true;
             } else {
@@ -672,7 +677,7 @@ impl LogicImplication {
             return None;
         }
         let n1_res;
-        if let Some(res) = self.next_rhs.solve(agent, assignments, time_assign) {
+        if let Some(res) = self.next_rhs.solve(agent, assignments, time_assign, context) {
             if res {
                 n1_res = true;
             } else {
@@ -723,16 +728,17 @@ impl LogicConjunction {
     fn solve(&self,
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>)
+             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+             context: &mut agent::ProofResult)
              -> Option<bool> {
-        if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign) {
+        if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign, context) {
             if !res {
                 return Some(false);
             }
         } else {
             return None;
         }
-        if let Some(res) = self.next_rhs.solve(agent, assignments, time_assign) {
+        if let Some(res) = self.next_rhs.solve(agent, assignments, time_assign, context) {
             if !res {
                 return Some(false);
             }
@@ -788,10 +794,11 @@ impl LogicDisjunction {
     fn solve(&self,
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>)
+             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+             context: &mut agent::ProofResult)
              -> Option<bool> {
         let n0_res;
-        if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign) {
+        if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign, context) {
             if res {
                 n0_res = Some(true);
             } else {
@@ -801,7 +808,7 @@ impl LogicDisjunction {
             n0_res = None;
         }
         let n1_res;
-        if let Some(res) = self.next_rhs.solve(agent, assignments, time_assign) {
+        if let Some(res) = self.next_rhs.solve(agent, assignments, time_assign, context) {
             if res {
                 n1_res = Some(true);
             } else {
@@ -862,9 +869,10 @@ impl LogicAtom {
     fn solve(&self,
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>)
+             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+             context: &mut agent::ProofResult)
              -> Option<bool> {
-        if let Some(res) = self.pred.equal_to_grounded(agent, assignments, time_assign) {
+        if let Some(res) = self.pred.equal_to_grounded(agent, assignments, time_assign, context) {
             if res {
                 Some(true)
             } else {
@@ -915,15 +923,16 @@ impl Particle {
     fn solve(&self,
              agent: &agent::Representation,
              assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>)
+             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+             context: &mut agent::ProofResult)
              -> Option<bool> {
         match *self {
-            Particle::Conjunction(ref p) => p.solve(agent, assignments, time_assign),
-            Particle::Disjunction(ref p) => p.solve(agent, assignments, time_assign),
-            Particle::Implication(ref p) => p.solve(agent, assignments, time_assign),
-            Particle::Equivalence(ref p) => p.solve(agent, assignments, time_assign),
-            Particle::IndConditional(ref p) => p.solve(agent, assignments, time_assign),
-            Particle::Atom(ref p) => p.solve(agent, assignments, time_assign),
+            Particle::Conjunction(ref p) => p.solve(agent, assignments, time_assign, context),
+            Particle::Disjunction(ref p) => p.solve(agent, assignments, time_assign, context),
+            Particle::Implication(ref p) => p.solve(agent, assignments, time_assign, context),
+            Particle::Equivalence(ref p) => p.solve(agent, assignments, time_assign, context),
+            Particle::IndConditional(ref p) => p.solve(agent, assignments, time_assign, context),
+            Particle::Atom(ref p) => p.solve(agent, assignments, time_assign, context),
         }
     }
 
