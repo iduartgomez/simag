@@ -13,3 +13,5 @@ mod lang;
 mod agent;
 
 pub use agent::Agent;
+
+const TIME_EQ_DIFF: i64 = 1;

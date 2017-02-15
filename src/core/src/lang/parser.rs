@@ -326,6 +326,32 @@ fn get_blocks(input: &[u8]) -> IResult<&[u8], Vec<Next>> {
 // scope disambiguation infrastructure:
 #[allow(cyclomatic_complexity)]
 fn scope(input: &[u8]) -> IResult<&[u8], Next> {
+    fn take_vars(input: &[u8]) -> (usize, Option<Vec<VarDeclBorrowed>>) {
+        named!(tv(&[u8]) -> Vec<Vec<VarDeclBorrowed>>, many1!(chain!(
+            take_while!(is_multispace)? ~
+            v1: alt!(variable | skolem) ,
+            || { v1 }
+        )));
+        let output = tv(input);
+        let vars;
+        let mut offset = 0_usize;
+        if output.is_done() {
+            let (r, mut v) = output.unwrap();
+            offset = input.len() - r.len();
+            let mut v0 = Vec::new();
+            // flat vec
+            for ref mut v1 in v.drain(..) {
+                for v2 in v1.drain(..) {
+                    v0.push(v2);
+                }
+            }
+            vars = Some(v0);
+        } else {
+            vars = None;
+        }
+        (offset, vars)
+    }
+
     // check that it is indeed an scope
     let od = tuple!(input, opt!(take_while!(is_multispace)), char!('('));
     let input = match od {
@@ -453,32 +479,6 @@ fn scope(input: &[u8]) -> IResult<&[u8], Next> {
                   })))
 }
 
-fn take_vars(input: &[u8]) -> (usize, Option<Vec<VarDeclBorrowed>>) {
-    named!(tv(&[u8]) -> Vec<Vec<VarDeclBorrowed>>, many1!(chain!(
-        take_while!(is_multispace)? ~
-        v1: alt!(variable | skolem) ,
-        || { v1 }
-    )));
-    let output = tv(input);
-    let vars;
-    let mut offset = 0_usize;
-    if output.is_done() {
-        let (r, mut v) = output.unwrap();
-        offset = input.len() - r.len();
-        let mut v0 = Vec::new();
-        // flat vec
-        for ref mut v1 in v.drain(..) {
-            for v2 in v1.drain(..) {
-                v0.push(v2);
-            }
-        }
-        vars = Some(v0);
-    } else {
-        vars = None;
-    }
-    (offset, vars)
-}
-
 #[allow(type_complexity)]
 fn take_rest_scope(offset: usize,
                    input: &[u8])
@@ -567,6 +567,24 @@ fn take_rest_scope(offset: usize,
 }
 
 fn expand_side<'a>(input: &'a [u8]) -> IResult<&[u8], ASTNode<'a>> {
+    fn is_end_node(input: &[u8]) -> IResult<&[u8], Next> {
+        let f = func_decl(input);
+        if f.is_done() {
+            let (r, fun) = f.unwrap();
+            return IResult::Done(r, Next::Assert(AssertBorrowed::FuncDecl(fun)));
+        }
+        let c = class_decl(input);
+        if c.is_done() {
+            let (r, cls) = c.unwrap();
+            return IResult::Done(r, Next::Assert(AssertBorrowed::ClassDecl(cls)));
+        }
+        match f {
+            IResult::Error(err) => IResult::Error(err),
+            IResult::Incomplete(err) => IResult::Incomplete(err),
+            _ => panic!(),
+        }
+    }    
+
     let input = remove_multispace(input);
     let out1 = logic_operator(input);
     if out1.is_done() {
@@ -611,24 +629,7 @@ fn expand_side<'a>(input: &'a [u8]) -> IResult<&[u8], ASTNode<'a>> {
     }
     IResult::Error(nom::Err::Position(ErrorKind::Alt, input))
 }
-
-fn is_end_node(input: &[u8]) -> IResult<&[u8], Next> {
-    let f = func_decl(input);
-    if f.is_done() {
-        let (r, fun) = f.unwrap();
-        return IResult::Done(r, Next::Assert(AssertBorrowed::FuncDecl(fun)));
-    }
-    let c = class_decl(input);
-    if c.is_done() {
-        let (r, cls) = c.unwrap();
-        return IResult::Done(r, Next::Assert(AssertBorrowed::ClassDecl(cls)));
-    }
-    match f {
-        IResult::Error(err) => IResult::Error(err),
-        IResult::Incomplete(err) => IResult::Incomplete(err),
-        _ => panic!(),
-    }
-}
+// END of scope disambiguation
 
 // skol_decl = '(' 'exists' $(term[':'op_arg]),+ ')' ;
 #[derive(Debug)]
@@ -1253,7 +1254,6 @@ mod test {
             match $i {
                 IResult::Error(nom::Err::Position(ref t, ref v)) => {
                     println!("\n@error Err::{:?}: {:?}", t, unsafe{str::from_utf8_unchecked(v)});
-                    //println!("@error: {}", unsafe{str::from_utf8_unchecked(v)});
                 },
                 _ => {}
             }

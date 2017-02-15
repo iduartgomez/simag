@@ -6,18 +6,19 @@
 //! `LogSentence` types are akin to minimal working compiled programs formed
 //! by compounded expressions which will evaluate with the current knowledge
 //! when called and perform any subtitution in the knowledge base if pertinent.
-use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
-use std::fmt;
 
-use chrono::UTC;
+pub use self::errors::LogSentErr;
+use super::{Date, ParseErrF};
 
 use agent;
 use agent::BmsWrapper;
-use lang::parser::*;
+
+use chrono::UTC;
 use lang::common::*;
-use super::{Date, ParseErrF};
-pub use self::errors::LogSentErr;
+use lang::parser::*;
+use std::collections::{HashMap, HashSet};
+use std::fmt;
+use std::rc::Rc;
 
 /// Type to store a first-order logic complex sentence.
 ///
@@ -543,11 +544,7 @@ impl LogicIndCond {
              context: &mut agent::ProofResult)
              -> Option<bool> {
         if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign, context) {
-            if res {
-                Some(true)
-            } else {
-                Some(false)
-            }
+            if res { Some(true) } else { Some(false) }
         } else {
             None
         }
@@ -873,11 +870,7 @@ impl LogicAtom {
              context: &mut agent::ProofResult)
              -> Option<bool> {
         if let Some(res) = self.pred.equal_to_grounded(agent, assignments, time_assign, context) {
-            if res {
-                Some(true)
-            } else {
-                Some(false)
-            }
+            if res { Some(true) } else { Some(false) }
         } else {
             None
         }

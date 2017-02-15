@@ -1,21 +1,22 @@
-use std::str;
-use std::collections::HashMap;
-use std::rc::Rc;
-use std::sync::RwLock;
 
-use chrono::{Duration, UTC};
-use float_cmp::ApproxEqUlps;
 
-use lang::parser::*;
-use lang::logsent::*;
-use lang::errors::ParseErrF;
+pub use self::errors::TimeFnErr;
+
+use super::Date;
+use TIME_EQ_DIFF;
 use agent;
 use agent::{BmsWrapper, Representation};
 
-use super::Date;
+use chrono::{Duration, UTC};
+use float_cmp::ApproxEqUlps;
+use lang::errors::ParseErrF;
+use lang::logsent::*;
 
-pub use self::errors::TimeFnErr;
-const TIME_EQ_DIFF: i64 = 1;
+use lang::parser::*;
+use std::collections::HashMap;
+use std::rc::Rc;
+use std::str;
+use std::sync::RwLock;
 
 // Predicate types:
 
@@ -141,6 +142,15 @@ pub enum Grounded {
     Terminal(Rc<GroundedClsMemb>),
 }
 
+impl Grounded {
+    pub fn get_name(&self) -> String {
+        match *self {
+            Grounded::Function(ref func) => (&*func).get_name().to_string(),
+            Grounded::Terminal(ref cls) => (&*cls).get_parent().to_string(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct GroundedClsMemb {
     term: Rc<String>,
@@ -168,11 +178,13 @@ impl GroundedClsMemb {
             val = Some(RwLock::new(match val0 {
                 Number::UnsignedInteger(val) => {
                     if val == 0 || val == 1 {
-                        let t_bms = BmsWrapper::new(Some(val as f32));
+                        let t_bms = BmsWrapper::new(None);
                         if let Some(dates) = dates {
                             for (date, val) in dates {
-                                t_bms.new_record(Some(date), val)
+                                t_bms.new_record(Some(date), val);
                             }
+                        } else {
+                            t_bms.new_record(None, Some(val.clone() as f32));
                         }
                         bms = Some(Rc::new(t_bms));
                         val as f32
@@ -182,11 +194,13 @@ impl GroundedClsMemb {
                 }
                 Number::UnsignedFloat(val) => {
                     if val >= 0. && val <= 1. {
-                        let t_bms = BmsWrapper::new(Some(val as f32));
+                        let t_bms = BmsWrapper::new(None);
                         if let Some(dates) = dates {
                             for (date, val) in dates {
                                 t_bms.new_record(Some(date), val)
                             }
+                        } else {
+                            t_bms.new_record(None, Some(val.clone() as f32));
                         }
                         bms = Some(Rc::new(t_bms));
                         val
@@ -255,31 +269,27 @@ impl GroundedClsMemb {
         }
     }
 
-    pub fn update(self_ref: Rc<GroundedClsMemb>,
-                  agent: &Representation,
-                  data: Rc<GroundedClsMemb>,
-                  context: Option<&agent::ProofResult>) {
-        let data: &GroundedClsMemb = &*data;
-        let ref_copy = self_ref.clone();
-        let mut value_lock = (&*self_ref).value.as_ref().unwrap().write().unwrap();
-        *value_lock = *data.value.as_ref().unwrap().read().unwrap();
-        if let Some(ref bms) = (&*self_ref).bms {
+    pub fn update(&self, agent: &Representation, data: &GroundedClsMemb) {
+        let mut value_lock = self.value.as_ref().unwrap().write().unwrap();
+        let new_val = *data.value.as_ref().unwrap().read().unwrap();
+        *value_lock = new_val.clone();
+        if let Some(ref bms) = self.bms {
             if data.bms.is_some() {
-                bms.update(agent,
-                           Grounded::Terminal(ref_copy),
-                           &*data.bms.as_ref().unwrap(),
-                           context)
+                bms.update(agent, &*data.bms.as_ref().unwrap())
+            } else {
+                let data = BmsWrapper::new(None);
+                data.new_record(None, Some(new_val.clone()));
+                bms.update(agent, &data)
             }
         }
     }
 
-    pub fn from_free(free: &FreeClsMemb,
-                     assignment: Rc<String>,
-                     time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>)
-                     -> GroundedClsMemb {
+    pub fn from_free(free: &FreeClsMemb, assignment: Rc<String>) -> GroundedClsMemb {
         let bms;
         let val = if free.value.is_some() {
-            bms = Some(Rc::new(BmsWrapper::new(free.value)));
+            let t_bms = BmsWrapper::new(None);
+            t_bms.new_record(None, free.value.clone());
+            bms = Some(Rc::new(t_bms));
             Some(RwLock::new(free.value.unwrap()))
         } else {
             bms = None;
@@ -290,7 +300,6 @@ impl GroundedClsMemb {
         } else {
             None
         };
-        // let time_data = free.get_own_time_data(time_assign, value);
         GroundedClsMemb {
             term: assignment,
             value: val,
@@ -317,8 +326,8 @@ impl GroundedClsMemb {
         true
     }
 
-    pub fn override_time_data(&self, data: &BmsWrapper) {
-        self.bms.as_ref().unwrap().override_data(data);
+    pub fn overwrite_time_data(&self, data: &BmsWrapper) {
+        self.bms.as_ref().unwrap().overwrite_data(data);
     }
 }
 
@@ -426,7 +435,7 @@ impl GroundedFunc {
             let n_a = match *a {
                 Predicate::FreeClsMemb(ref free) => {
                     if let Some(entity) = assignments.get(&free.term) {
-                        GroundedClsMemb::from_free(free, entity.name.clone(), time_assign)
+                        GroundedClsMemb::from_free(free, entity.name.clone())
                     } else {
                         return Err(());
                     }
@@ -458,8 +467,13 @@ impl GroundedFunc {
     }
 
     #[inline]
-    pub fn get_value(&self) -> f32 {
-        *self.args[0].value.as_ref().unwrap().read().unwrap()
+    pub fn get_value(&self) -> Option<f32> {
+        if let Some(ref guard) = self.args[0].value.as_ref() {
+            let val = guard.read().unwrap().clone();
+            Some(val)
+        } else {
+            None
+        }
     }
 
     #[inline]
@@ -503,18 +517,10 @@ impl GroundedFunc {
         }
     }
 
-    pub fn update(self_ref: Rc<GroundedFunc>,
-                  agent: &Representation,
-                  data: Rc<GroundedFunc>,
-                  context: Option<&agent::ProofResult>) {
-        let ref_copy = self_ref.clone();
-        let data: &GroundedFunc = &*data;
-        let mut value_lock = (&*self_ref).args[0].value.as_ref().unwrap().write().unwrap();
+    pub fn update(&self, agent: &Representation, data: &GroundedFunc) {
+        let mut value_lock = self.args[0].value.as_ref().unwrap().write().unwrap();
         *value_lock = *data.args[0].value.as_ref().unwrap().read().unwrap();
-        (&*self_ref).bms.update(agent,
-                        Grounded::Function(ref_copy),
-                        &*data.bms,
-                        context);
+        self.bms.update(agent, &*data.bms);
     }
 }
 
@@ -618,12 +624,14 @@ impl FreeClsOwner {
            parent: &Terminal)
            -> Result<FreeClsOwner, ParseErrF> {
         let (val, op) = match_uval(uval)?;
+        let t_bms = BmsWrapper::new(None);
+        t_bms.new_record(None, val.clone());
         Ok(FreeClsOwner {
             term: term,
             value: val,
             operator: op,
             parent: parent.get_var(),
-            dates: BmsWrapper::new(val),
+            dates: t_bms,
         })
     }
 
@@ -660,8 +668,8 @@ impl FreeClsOwner {
         }
     }
 
-    pub fn override_time_data(&self, data: &BmsWrapper) {
-        self.dates.override_data(data);
+    pub fn overwrite_time_data(&self, data: &BmsWrapper) {
+        self.dates.overwrite_data(data);
     }
 }
 
@@ -788,9 +796,7 @@ impl Assert {
             Assert::FuncDecl(ref f) => {
                 f.equal_to_grounded(agent, assignments, time_assign, context)
             }
-            Assert::ClassDecl(ref c) => {
-                c.equal_to_grounded(agent, assignments, time_assign, context)
-            }
+            Assert::ClassDecl(ref c) => c.equal_to_grounded(agent, assignments, context),
         }
     }
 
@@ -875,7 +881,8 @@ impl<'a> FuncDecl {
                 third = Some(n_a);
             }
         }
-        let time_data = BmsWrapper::new(val);
+        let mut time_data = BmsWrapper::new(None);
+        let mut ow: Option<bool> = None;
         if let Some(mut oargs) = op_args {
             for arg in oargs.drain(..) {
                 match arg {
@@ -885,10 +892,17 @@ impl<'a> FuncDecl {
                     OpArg::TimeDecl(TimeFn::Now) => {
                         time_data.new_record(Some(UTC::now()), val);
                     }
+                    OpArg::OverWrite => {
+                        ow = Some(true);
+                    }
                     _ => {}
                 }
             }
         }
+        if time_data.record_len() == 0 {
+            time_data.new_record(None, val);
+        }
+        time_data.overwrite = RwLock::new(ow);
         GroundedFunc {
             name: name,
             args: [first.unwrap(), second.unwrap()],
@@ -949,22 +963,32 @@ impl<'a> FuncDecl {
                              value: Option<f32>)
                              -> BmsWrapper {
         if self.op_args.is_none() {
-            return BmsWrapper::new(value);
+            let t_bms = BmsWrapper::new(None);
+            t_bms.new_record(None, value);
+            return t_bms;
         }
         let mut v = None;
+        let mut ow: Option<bool> = None;
         for arg in self.op_args.as_ref().unwrap() {
             match *arg {
                 OpArg::TimeDecl(_) |
                 OpArg::TimeVarAssign(_) => {
                     v = Some(arg.get_time_payload(assignments, value));
                 }
+                OpArg::OverWrite => {
+                    ow = Some(true);
+                }
                 _ => {}
             }
         }
         if v.is_none() {
-            BmsWrapper::new(value)
+            let bms = BmsWrapper::new(ow);
+            bms.new_record(None, value);
+            bms
         } else {
-            v.unwrap()
+            let mut bms = v.unwrap();
+            bms.overwrite = RwLock::new(ow);
+            bms
         }
     }
 
@@ -1314,23 +1338,32 @@ impl<'a> ClassDecl {
                              value: Option<f32>)
                              -> BmsWrapper {
         if self.op_args.is_none() {
-            return BmsWrapper::new(value);
+            let bms = BmsWrapper::new(None);
+            bms.new_record(None, value);
+            return bms;
         }
         let mut v = None;
+        let mut ow: Option<bool> = None;
         for arg in self.op_args.as_ref().unwrap() {
             match *arg {
                 OpArg::TimeDecl(_) |
                 OpArg::TimeVarAssign(_) => {
                     v = Some(arg.get_time_payload(assignments, value));
-                    break;
+                }
+                OpArg::OverWrite => {
+                    ow = Some(true);
                 }
                 _ => {}
             }
         }
         if v.is_none() {
-            BmsWrapper::new(value)
+            let bms = BmsWrapper::new(ow);
+            bms.new_record(None, value);
+            bms
         } else {
-            v.unwrap()
+            let mut bms = v.unwrap();
+            bms.overwrite = RwLock::new(ow);
+            bms
         }
     }
 
@@ -1450,7 +1483,6 @@ impl<'a> ClassDecl {
     fn equal_to_grounded(&self,
                          agent: &agent::Representation,
                          assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                         time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
                          context: &mut agent::ProofResult)
                          -> Option<bool> {
         for a in &self.args {
@@ -1499,7 +1531,7 @@ impl<'a> ClassDecl {
             let grfact = match *a {
                 Predicate::FreeClsMemb(ref free) => {
                     if let Some(entity) = assignments.as_ref().unwrap().get(&free.term) {
-                        GroundedClsMemb::from_free(free, entity.name.clone(), time_assign)
+                        GroundedClsMemb::from_free(free, entity.name.clone())
                     } else {
                         break;
                     }
@@ -1509,7 +1541,7 @@ impl<'a> ClassDecl {
             };
             let t = time_data.clone();
             t.replace_last_val(grfact.get_value());
-            grfact.override_time_data(&time_data);
+            grfact.overwrite_time_data(&time_data);
             let grfact = Rc::new(grfact);
             context.grounded.push((Grounded::Terminal(grfact.clone()), UTC::now()));
             agent.up_membership(grfact.clone(), Some(context))
@@ -1554,6 +1586,7 @@ impl<'a> ::std::iter::Iterator for DeclArgsIter<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum OpArg {
     Generic(OpArgTerm, Option<(CompOperator, OpArgTerm)>),
+    OverWrite,
     TimeDecl(TimeFn),
     TimeVar,
     TimeVarAssign(Rc<Var>),
@@ -1564,11 +1597,13 @@ impl<'a> OpArg {
     pub fn from(other: &OpArgBorrowed<'a>, context: &mut Context) -> Result<OpArg, ParseErrF> {
         let t0 = match OpArgTerm::from(&other.term, context) {
             Err(ParseErrF::ReservedKW(kw)) => {
-                if &kw == "time" {
-                    let targ = OpArg::ignore_kw(other, "time", context)?;
-                    return Ok(targ);
-                } else {
-                    return Err(ParseErrF::ReservedKW(kw));
+                match &*kw {
+                    "time" => {
+                        let targ = OpArg::ignore_kw(other, "time", context)?;
+                        return Ok(targ);
+                    }
+                    "overwrite" => return Ok(OpArg::OverWrite),
+                    _ => return Err(ParseErrF::ReservedKW(kw)),
                 }
             }
             Err(err) => return Err(err),
@@ -1635,6 +1670,7 @@ impl<'a> OpArg {
             OpArg::TimeVar => id.push(2),
             OpArg::TimeVarAssign(_) => id.push(3),
             OpArg::TimeVarFrom(_) => id.push(4),
+            OpArg::OverWrite => id.push(5),
         }
         id
     }
@@ -1643,14 +1679,16 @@ impl<'a> OpArg {
                         assignments: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
                         value: Option<f32>)
                         -> BmsWrapper {
-        let bms = BmsWrapper::new(value);
+        let bms = BmsWrapper::new(None);
         match *self {
             OpArg::TimeDecl(TimeFn::Date(ref payload)) => {
                 bms.new_record(Some(payload.clone()), value);
             }
-            OpArg::TimeDecl(TimeFn::Now) => {}
+            OpArg::TimeDecl(TimeFn::Now) => {
+                bms.new_record(None, value);
+            }
             OpArg::TimeVarAssign(ref var) => return (&**(assignments.get(var).unwrap())).clone(),
-            _ => {}
+            _ => panic!(),
         }
         bms
     }
@@ -1702,12 +1740,14 @@ impl TimeFn {
     }
 
     fn get_time_payload(&self, value: Option<f32>) -> BmsWrapper {
-        let bms = BmsWrapper::new(value);
+        let bms = BmsWrapper::new(None);
         match *self {
             TimeFn::Date(ref payload) => {
                 bms.new_record(Some(payload.clone()), value);
             }
-            TimeFn::Now => {}
+            TimeFn::Now => {
+                bms.new_record(None, value);
+            }
             _ => panic!(),
         }
         bms
@@ -1956,7 +1996,7 @@ impl<'a> Terminal {
 
 fn reserved(s: &str) -> bool {
     match s {
-        "let" | "time_calc" | "exists" | "fn" | "time" => true,
+        "let" | "time_calc" | "exists" | "fn" | "time" | "overwrite" => true,
         _ => false,
     }
 }

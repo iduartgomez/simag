@@ -19,17 +19,17 @@
 #![allow(or_fun_call)]
 #![allow(mutex_atomic)]
 
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::iter::FromIterator;
-use std::hash::{Hash, Hasher};
-use std::sync::{Mutex, RwLock};
-use std::rc::Rc;
-
-use scoped_threadpool::Pool;
+use super::repr::*;
 
 use lang;
 use lang::{Date, GroundedClsMemb, GroundedFunc, LogSentence, ParseErrF, ParseTree};
-use super::repr::*;
+
+use scoped_threadpool::Pool;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::hash::{Hash, Hasher};
+use std::iter::FromIterator;
+use std::rc::Rc;
+use std::sync::{Mutex, RwLock};
 
 pub struct Inference<'a> {
     query: QueryProcessed<'a>,
@@ -253,136 +253,124 @@ impl<'a> Inference<'a> {
         let inf_ptr = &*self as *const Inference as usize;
         let mut pool = Pool::new(*self.available_threads.lock().unwrap());
 
-        pool.scoped(|scope| {
-            for (obj, preds) in &self.query.cls_queries_grounded {
-                let obj: &str = &**obj;
-                for pred in preds {
-                    let pred_r = *pred as *const GroundedClsMemb as usize;
-                    let query = unsafe { &*(&*pred.get_parent() as *const String) as &'a str };
-                    scope.execute(move || unsafe {
-                        let inf: &Inference = &*(inf_ptr as *const Inference);
-                        let pred: &GroundedClsMemb = &*(pred_r as *const GroundedClsMemb);
-                        let result = if !inf.ignore_current {
-                            inf.kb.class_membership(pred)
-                        } else {
-                            None
-                        };
-                        if result.is_some() {
-                            inf.results.add_grounded(obj, query, Some((result.unwrap(), None)));
-                        } else {
-                            inf.results.add_grounded(obj, query, None);
-                            // if no result was found from the kb directly
-                            // make an inference from a grounded fact
-                            let actv_query = ActiveQuery::Class(obj, &*query, pred);
-                            query_cls(inf, pred.get_parent(), actv_query);
-                        }
-                    });
-                }
+        pool.scoped(|scope| for (obj, preds) in &self.query.cls_queries_grounded {
+            let obj: &str = &**obj;
+            for pred in preds {
+                let pred_r = *pred as *const GroundedClsMemb as usize;
+                let query = unsafe { &*(&*pred.get_parent() as *const String) as &'a str };
+                scope.execute(move || unsafe {
+                    let inf: &Inference = &*(inf_ptr as *const Inference);
+                    let pred: &GroundedClsMemb = &*(pred_r as *const GroundedClsMemb);
+                    let result = if !inf.ignore_current {
+                        inf.kb.class_membership(pred)
+                    } else {
+                        None
+                    };
+                    if result.is_some() {
+                        inf.results.add_grounded(obj, query, Some((result.unwrap(), None)));
+                    } else {
+                        inf.results.add_grounded(obj, query, None);
+                        // if no result was found from the kb directly
+                        // make an inference from a grounded fact
+                        let actv_query = ActiveQuery::Class(obj, &*query, pred);
+                        query_cls(inf, pred.get_parent(), actv_query);
+                    }
+                });
             }
         });
 
-        pool.scoped(|scope| {
-            for pred in &self.query.func_queries_grounded {
-                let pred_r = &**pred as *const GroundedFunc as usize;
+        pool.scoped(|scope| for pred in &self.query.func_queries_grounded {
+            let pred_r = &**pred as *const GroundedFunc as usize;
+            scope.execute(move || unsafe {
+                let inf: &Inference = &*(inf_ptr as *const Inference);
+                let pred: &GroundedFunc = &*(pred_r as *const GroundedFunc);
+                let query: &str = &*(&*pred.name as *const String) as &'a str;
+                let mut result = None;
+                for arg in &pred.args {
+                    let obj = &*(&*arg.get_name() as *const String) as &'a str;
+                    if !inf.ignore_current {
+                        result = inf.kb.has_relationship(pred, arg.get_name());
+                    }
+                    if result.is_some() {
+                        inf.results.add_grounded(&*obj, query, Some((result.unwrap(), None)));
+                    } else {
+                        inf.results.add_grounded(&*obj, query, None);
+                        let actv_query = ActiveQuery::Func(&*obj, &*query, pred);
+                        query_cls(inf, pred.get_name(), actv_query);
+                    }
+                }
+            });
+        });
+
+        pool.scoped(|scope| for (var, classes) in &self.query.cls_queries_free {
+            let var_r = &*var as *const Rc<lang::Var> as usize;
+            for cls in classes {
+                let cls_r = &**cls as *const lang::FreeClsMemb as usize;
                 scope.execute(move || unsafe {
                     let inf: &Inference = &*(inf_ptr as *const Inference);
-                    let pred: &GroundedFunc = &*(pred_r as *const GroundedFunc);
-                    let query: &str = &*(&*pred.name as *const String) as &'a str;
-                    let mut result = None;
-                    for arg in &pred.args {
-                        let obj = &*(&*arg.get_name() as *const String) as &'a str;
-                        if !inf.ignore_current {
-                            result = inf.kb.has_relationship(pred, arg.get_name());
-                        }
-                        if result.is_some() {
-                            inf.results.add_grounded(&*obj, query, Some((result.unwrap(), None)));
-                        } else {
-                            inf.results.add_grounded(&*obj, query, None);
-                            let actv_query = ActiveQuery::Func(&*obj, &*query, pred);
-                            query_cls(inf, pred.get_name(), actv_query);
+                    let cls: &lang::FreeClsMemb = &*(cls_r as *const lang::FreeClsMemb);
+                    let var: &Rc<lang::Var> = &*(var_r as *const Rc<lang::Var>);
+                    let cls_name = cls.get_parent();
+                    let lock = inf.kb.classes.read().unwrap();
+                    if let Some(cls_curr) = lock.get(&cls_name) {
+                        let members: Vec<Rc<GroundedClsMemb>> = cls_curr.get_members(cls);
+                        for m in members {
+                            let name = &*(&*m.get_name() as *const String) as &'a str;
+                            inf.results.add_membership(var.clone(), name, m);
                         }
                     }
                 });
             }
         });
 
-        pool.scoped(|scope| {
-            for (var, classes) in &self.query.cls_queries_free {
-                let var_r = &*var as *const Rc<lang::Var> as usize;
-                for cls in classes {
-                    let cls_r = &**cls as *const lang::FreeClsMemb as usize;
-                    scope.execute(move || unsafe {
-                        let inf: &Inference = &*(inf_ptr as *const Inference);
-                        let cls: &lang::FreeClsMemb = &*(cls_r as *const lang::FreeClsMemb);
-                        let var: &Rc<lang::Var> = &*(var_r as *const Rc<lang::Var>);
-                        let cls_name = cls.get_parent();
-                        let lock = inf.kb.classes.read().unwrap();
-                        if let Some(cls_curr) = lock.get(&cls_name) {
-                            let members: Vec<Rc<GroundedClsMemb>> = cls_curr.get_members(cls);
-                            for m in members {
-                                let name = &*(&*m.get_name() as *const String) as &'a str;
-                                inf.results.add_membership(var.clone(), name, m);
-                            }
-                        }
-                    });
-                }
+        pool.scoped(|scope| for (var, funcs) in &self.query.func_queries_free {
+            let var_r = &*var as *const Rc<lang::Var> as usize;
+            for func in funcs {
+                let func_r = func as *const Rc<lang::FuncDecl> as usize;
+                scope.execute(move || unsafe {
+                    let inf: &Inference = &*(inf_ptr as *const Inference);
+                    let func: &Rc<lang::FuncDecl> = &*(func_r as *const Rc<lang::FuncDecl>);
+                    let var: &Rc<lang::Var> = &*(var_r as *const Rc<lang::Var>);
+                    let func_name = func.get_name();
+                    let lock = inf.kb.classes.read().unwrap();
+                    if let Some(cls_curr) = lock.get(&func_name) {
+                        let members: Vec<Rc<GroundedFunc>> = cls_curr.get_funcs(func);
+                        inf.results.add_relationships(var.clone(), &members);
+                    }
+                });
             }
         });
 
-        pool.scoped(|scope| {
-            for (var, funcs) in &self.query.func_queries_free {
-                let var_r = &*var as *const Rc<lang::Var> as usize;
-                for func in funcs {
-                    let func_r = func as *const Rc<lang::FuncDecl> as usize;
-                    scope.execute(move || unsafe {
-                        let inf: &Inference = &*(inf_ptr as *const Inference);
-                        let func: &Rc<lang::FuncDecl> = &*(func_r as *const Rc<lang::FuncDecl>);
-                        let var: &Rc<lang::Var> = &*(var_r as *const Rc<lang::Var>);
-                        let func_name = func.get_name();
-                        let lock = inf.kb.classes.read().unwrap();
-                        if let Some(cls_curr) = lock.get(&func_name) {
-                            let members: Vec<Rc<GroundedFunc>> = cls_curr.get_funcs(func);
-                            inf.results.add_relationships(var.clone(), &members);
-                        }
-                    });
-                }
+        pool.scoped(|scope| for (var, objs) in &self.query.cls_memb_query {
+            let var_r = var as *const Rc<lang::Var> as usize;
+            for obj in objs {
+                let obj_r = *obj as *const lang::FreeClsOwner as usize;
+                scope.execute(move || unsafe {
+                    let inf: &Inference = &*(inf_ptr as *const Inference);
+                    let obj: &lang::FreeClsOwner = &*(obj_r as *const lang::FreeClsOwner);
+                    let var: Rc<lang::Var> = (&*(var_r as *const Rc<lang::Var>)).clone();
+                    let name = &*(&*obj.term as *const String) as &'a str;
+                    let member_of = inf.kb.get_class_membership(obj);
+                    for m in member_of {
+                        inf.results.add_membership(var.clone(), name, m);
+                    }
+                });
             }
         });
 
-        pool.scoped(|scope| {
-            for (var, objs) in &self.query.cls_memb_query {
-                let var_r = var as *const Rc<lang::Var> as usize;
-                for obj in objs {
-                    let obj_r = *obj as *const lang::FreeClsOwner as usize;
-                    scope.execute(move || unsafe {
-                        let inf: &Inference = &*(inf_ptr as *const Inference);
-                        let obj: &lang::FreeClsOwner = &*(obj_r as *const lang::FreeClsOwner);
-                        let var: Rc<lang::Var> = (&*(var_r as *const Rc<lang::Var>)).clone();
-                        let name = &*(&*obj.term as *const String) as &'a str;
-                        let member_of = inf.kb.get_class_membership(obj);
-                        for m in member_of {
-                            inf.results.add_membership(var.clone(), name, m);
-                        }
-                    });
-                }
-            }
-        });
-
-        pool.scoped(|scope| {
-            for (var, funcs) in &self.query.func_memb_query {
-                let var_r = &*var as *const Rc<lang::Var> as usize;
-                for func in funcs {
-                    let func_r = func as *const Rc<lang::FuncDecl> as usize;
-                    scope.execute(move || unsafe {
-                        let inf: &Inference = &*(inf_ptr as *const Inference);
-                        let func: &Rc<lang::FuncDecl> = &*(func_r as *const Rc<lang::FuncDecl>);
-                        let var: Rc<lang::Var> = (&*(var_r as *const Rc<lang::Var>)).clone();
-                        let relationships = inf.kb.get_relationships(func);
-                        for funcs in relationships.values() {
-                            inf.results.add_relationships(var.clone(), funcs);
-                        }
-                    });
-                }
+        pool.scoped(|scope| for (var, funcs) in &self.query.func_memb_query {
+            let var_r = &*var as *const Rc<lang::Var> as usize;
+            for func in funcs {
+                let func_r = func as *const Rc<lang::FuncDecl> as usize;
+                scope.execute(move || unsafe {
+                    let inf: &Inference = &*(inf_ptr as *const Inference);
+                    let func: &Rc<lang::FuncDecl> = &*(func_r as *const Rc<lang::FuncDecl>);
+                    let var: Rc<lang::Var> = (&*(var_r as *const Rc<lang::Var>)).clone();
+                    let relationships = inf.kb.get_relationships(func);
+                    for funcs in relationships.values() {
+                        inf.results.add_relationships(var.clone(), funcs);
+                    }
+                });
             }
         });
     }
@@ -690,8 +678,6 @@ impl<'a> InfTrial<'a> {
                             ls.push(node.clone());
                         }
                         ls.sort_by(|a, b| a.proof.created.cmp(&b.proof.created).reverse());
-                        // println!("RULES: {:?}",
-                        //         ls.iter().map(|x| &x.antecedents).collect::<Vec<_>>());
                     }
                 }
             }
@@ -1029,7 +1015,7 @@ impl<'a> QueryProcessed<'a> {
                             }
                             lang::Predicate::GroundedClsMemb(ref t) => {
                                 if let Some(dates) = cdecl.get_time_payload(t.get_value()) {
-                                    t.override_time_data(&dates);
+                                    t.overwrite_time_data(&dates);
                                 }
                                 query.push_to_clsquery_grounded(t.get_name(), t);
                             }
@@ -1042,7 +1028,7 @@ impl<'a> QueryProcessed<'a> {
                         match *a {
                             lang::Predicate::FreeClsOwner(ref t) => {
                                 if let Some(dates) = cdecl.get_time_payload(None) {
-                                    t.override_time_data(&dates);
+                                    t.overwrite_time_data(&dates);
                                 }
                                 query.ask_class_memb(t);
                             }
@@ -1408,8 +1394,8 @@ mod test {
         assert_eq!(rep.ask(q03_03).get_results_single(), Some(true));
 
         let test_03_04 = String::from("
-            (fn::eat(time='2015-01-01T00:00:00Z')[$M1,u=1;$Pancho])
-            (run(time='2015-01-02T00:00:00Z')[$Pancho,u=1])
+            (fn::eat(time='2015-01-01T00:00:00Z', overwrite)[$M1,u=1;$Pancho])
+            (run(time='2015-01-02T00:00:00Z', overwrite)[$Pancho,u=1])
         ");
         rep.tell(test_03_04).unwrap();
         let q03_04 = "(fat[$Pancho,u=0])".to_string();

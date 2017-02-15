@@ -1,14 +1,14 @@
-use std::collections::{HashMap, VecDeque};
-use std::iter::FromIterator;
-use std::sync::RwLock;
-use std::rc::Rc;
-
-use float_cmp::ApproxEqUlps;
+use super::*;
 
 use agent;
+
+use float_cmp::ApproxEqUlps;
 use lang;
-use lang::{GroundedClsMemb, GroundedFunc, LogSentence, ParseErrF, ParseTree};
-use super::*;
+use lang::{GroundedClsMemb, GroundedFunc, LogSentence, ParseErrF, ParseTree, Grounded};
+use std::collections::{HashMap, VecDeque};
+use std::iter::FromIterator;
+use std::rc::Rc;
+use std::sync::RwLock;
 
 /// This type is a container for internal agent's representations.
 /// An agent can have any number of such representations at any moment,
@@ -69,7 +69,7 @@ impl Representation {
                                 for a in cls_decl {
                                     let t = time_data.clone();
                                     t.replace_last_val(a.get_value());
-                                    a.override_time_data(&t);
+                                    a.overwrite_time_data(&t);
                                     self.up_membership(Rc::new(a), None)
                                 }
                             } else {
@@ -324,16 +324,13 @@ impl Representation {
 
         let iter_cls_candidates = |cls_decl: &lang::ClassDecl,
                                    candidates: &HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>>| {
-            let f = HashMap::new();
             for a in cls_decl.get_args() {
                 match *a {
                     lang::Predicate::FreeClsMemb(ref free) => {
                         if let Some(ls) = candidates.get(&free.get_var()) {
                             for entity in ls {
-                                let grfact = Rc::new(GroundedClsMemb::from_free(free,
-                                                                                entity.name
-                                                                                    .clone(),
-                                                                                &f));
+                                let grfact =
+                                    Rc::new(GroundedClsMemb::from_free(free, entity.name.clone()));
                                 self.ask_processed(QueryInput::AskClassMember(grfact), true);
                             }
                         }
@@ -670,10 +667,23 @@ impl Entity {
         let stmt_exists = lock.contains_key(&name);
         if stmt_exists {
             let current = lock.get(&name).unwrap();
-            GroundedClsMemb::update(current.clone(), agent, grounded, context);
+            current.update(agent, &*grounded);
+            if context.is_some() {
+                current.bms
+                    .as_ref()
+                    .unwrap()
+                    .update_producers(Grounded::Terminal(current.clone()), context.unwrap());
+            }
             false
         } else {
-            lock.insert(name, grounded);
+            lock.insert(name, grounded.clone());
+            if context.is_some() {
+                grounded.clone()
+                    .bms
+                    .as_ref()
+                    .unwrap()
+                    .update_producers(Grounded::Terminal(grounded), context.unwrap());
+            }
             true
         }
     }
@@ -704,17 +714,17 @@ impl Entity {
                     match op {
                         None => res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone()),
                         Some(lang::CompOperator::Equal) => {
-                            if f.get_value().approx_eq_ulps(val.as_ref().unwrap(), 2) {
+                            if f.get_value().unwrap().approx_eq_ulps(val.as_ref().unwrap(), 2) {
                                 res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
                             }
                         }
                         Some(lang::CompOperator::More) => {
-                            if *val.as_ref().unwrap() < f.get_value() {
+                            if *val.as_ref().unwrap() < f.get_value().unwrap() {
                                 res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
                             }
                         }
                         Some(lang::CompOperator::Less) => {
-                            if *val.as_ref().unwrap() > f.get_value() {
+                            if *val.as_ref().unwrap() > f.get_value().unwrap() {
                                 res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
                             }
                         }
@@ -741,19 +751,29 @@ impl Entity {
             let mut found_rel = false;
             for f in funcs_type.iter_mut() {
                 if f.comparable(&*func) {
-                    GroundedFunc::update(f.clone(), agent, func.clone(), context);
+                    f.update(agent, &*func);
+                    if context.is_some() {
+                        f.bms.update_producers(Grounded::Function(f.clone()),
+                                               context.as_ref().unwrap());
+                    }
                     found_rel = true;
                     break;
                 }
             }
             if !found_rel {
                 funcs_type.push(func.clone());
+                if context.is_some() {
+                    func.bms.update_producers(Grounded::Function(func.clone()), context.unwrap());
+                }
                 true
             } else {
                 false
             }
         } else {
             lock.insert(name, vec![func.clone()]);
+            if context.is_some() {
+                func.bms.update_producers(Grounded::Function(func.clone()), context.unwrap());
+            }
             true
         }
     }
@@ -857,10 +877,23 @@ impl Class {
         let stmt_exists = lock.contains_key(&name);
         if stmt_exists {
             let current = lock.get_mut(&name).unwrap();
-            GroundedClsMemb::update(current.clone(), agent, grounded, context);
+            current.update(agent, &*grounded);
+            if context.is_some() {
+                current.bms
+                    .as_ref()
+                    .unwrap()
+                    .update_producers(Grounded::Terminal(current.clone()), context.unwrap());
+            }
             false
         } else {
-            lock.insert(name, grounded);
+            lock.insert(name, grounded.clone());
+            if context.is_some() {
+                grounded.clone()
+                    .bms
+                    .as_ref()
+                    .unwrap()
+                    .update_producers(Grounded::Terminal(grounded), context.unwrap());
+            }
             true
         }
     }
@@ -904,17 +937,17 @@ impl Class {
                     match op {
                         None => res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone()),
                         Some(lang::CompOperator::Equal) => {
-                            if f.get_value().approx_eq_ulps(val.as_ref().unwrap(), 2) {
+                            if f.get_value().unwrap().approx_eq_ulps(val.as_ref().unwrap(), 2) {
                                 res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
                             }
                         }
                         Some(lang::CompOperator::More) => {
-                            if *val.as_ref().unwrap() < f.get_value() {
+                            if *val.as_ref().unwrap() < f.get_value().unwrap() {
                                 res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
                             }
                         }
                         Some(lang::CompOperator::Less) => {
-                            if *val.as_ref().unwrap() > f.get_value() {
+                            if *val.as_ref().unwrap() > f.get_value().unwrap() {
                                 res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
                             }
                         }
@@ -939,17 +972,17 @@ impl Class {
                 if i == 0 {
                     match func.get_uval() {
                         (lang::CompOperator::Equal, val) => {
-                            if !val.approx_eq_ulps(&curr_func.get_value(), 2) {
+                            if !val.approx_eq_ulps(&curr_func.get_value().unwrap(), 2) {
                                 process = false;
                             }
                         }
                         (lang::CompOperator::More, val) => {
-                            if val > curr_func.get_value() {
+                            if val > curr_func.get_value().unwrap() {
                                 process = false;
                             }
                         }
                         (lang::CompOperator::Less, val) => {
-                            if val < curr_func.get_value() {
+                            if val < curr_func.get_value().unwrap() {
                                 process = false;
                             }
                         }
@@ -979,19 +1012,29 @@ impl Class {
             let mut found_rel = false;
             for f in funcs_type.iter_mut() {
                 if f.comparable(&*func) {
-                    GroundedFunc::update(f.clone(), agent, func.clone(), context);
+                    f.update(agent, &*func);
+                    if context.is_some() {
+                        f.bms.update_producers(Grounded::Function(f.clone()),
+                                               context.as_ref().unwrap());
+                    }
                     found_rel = true;
                     break;
                 }
             }
             if !found_rel {
                 funcs_type.push(func.clone());
+                if context.is_some() {
+                    func.bms.update_producers(Grounded::Function(func.clone()), context.unwrap());
+                }
                 true
             } else {
                 false
             }
         } else {
             lock.insert(name, vec![func.clone()]);
+            if context.is_some() {
+                func.bms.update_producers(Grounded::Function(func.clone()), context.unwrap());
+            }
             true
         }
     }
