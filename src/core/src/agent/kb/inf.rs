@@ -20,11 +20,11 @@
 #![allow(mutex_atomic)]
 
 use super::repr::*;
+use lang;
+use lang::{Date, GroundedClsMemb, GroundedFunc, LogSentence, ParseErrF, ParseTree};
 
 use crossbeam;
 
-use lang;
-use lang::{Date, GroundedClsMemb, GroundedFunc, LogSentence, ParseErrF, ParseTree};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::iter::FromIterator;
@@ -1149,7 +1149,7 @@ mod test {
     use agent::kb::repr::Representation;
     use std::collections::HashSet;
 
-    //#[test]
+    #[test]
     fn ask_pred() {
         let test_01 = String::from("
             ( professor[$Lucy,u=1] )
@@ -1317,7 +1317,7 @@ mod test {
         assert_eq!(cnt, 1);
     }
 
-    //#[test]
+    #[test]
     fn time_calc() {
         let test_01 = String::from("
             (( let x, y, t1:time, t2:time=\"Now\" )
@@ -1348,7 +1348,7 @@ mod test {
         assert_eq!(rep.ask(q02_01).get_results_single(), Some(true));
     }
 
-    //#[test]
+    #[test]
     fn temp() {
         // Test 03
         let rep = Representation::new();
@@ -1389,8 +1389,8 @@ mod test {
         assert_eq!(rep.ask(q03_03).get_results_single(), Some(true));
 
         let test_03_04 = String::from("
-            (run(time='2015-01-02T00:00:00Z', overwrite)[$Pancho,u=1])
-            (fn::eat(time='2015-01-01T00:00:00Z', overwrite)[$M1,u=1;$Pancho])
+            (fn::eat(time='2015-01-02T00:00:00Z', overwrite)[$M1,u=1;$Pancho])
+            (run(time='2015-02-01T00:00:00Z', overwrite)[$Pancho,u=1])
         ");
         rep.tell(test_03_04).unwrap();
         let q03_04 = "(fat[$Pancho,u=0])".to_string();

@@ -1,21 +1,17 @@
-
-
 pub use self::errors::TimeFnErr;
 
-use super::Date;
 use FLOAT_EQ_ULPS;
-
 use TIME_EQ_DIFF;
 
+use super::Date;
 use agent;
 use agent::{BmsWrapper, Representation};
-
-use chrono::{Duration, UTC};
-use float_cmp::ApproxEqUlps;
-
 use lang::errors::ParseErrF;
 use lang::logsent::*;
 use lang::parser::*;
+
+use chrono::{Duration, UTC};
+use float_cmp::ApproxEqUlps;
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -1709,9 +1705,9 @@ impl<'a> OpArg {
             _ => return false,
         };
         let var0 = term.get_var();
-        let arg0 = assignments.get(&var0).unwrap().last_date();
+        let arg0 = assignments.get(&var0).unwrap().get_last_date();
         let var1 = comp.get_var();
-        let arg1 = assignments.get(&var1).unwrap().last_date();
+        let arg1 = assignments.get(&var1).unwrap().get_last_date();
         match *op {
             CompOperator::Equal => {
                 let comp_diff = Duration::seconds(TIME_EQ_DIFF);

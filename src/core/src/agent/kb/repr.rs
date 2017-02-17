@@ -1,11 +1,11 @@
-use super::*;
 use FLOAT_EQ_ULPS;
 
+use super::*;
 use agent;
-
-use float_cmp::ApproxEqUlps;
 use lang;
 use lang::{GroundedClsMemb, GroundedFunc, LogSentence, ParseErrF, ParseTree, Grounded};
+
+use float_cmp::ApproxEqUlps;
 
 use std::collections::{HashMap, VecDeque};
 use std::iter::FromIterator;
@@ -1026,7 +1026,7 @@ impl Class {
                         func: Rc<GroundedFunc>,
                         context: Option<&agent::ProofResult>)
                         -> bool {
-        let name = func.get_name();                 
+        let name = func.get_name();
         let stmt_exists = {
             let lock = self.relations.write().unwrap();
             lock.contains_key(&name)
