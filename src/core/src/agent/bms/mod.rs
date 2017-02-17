@@ -125,18 +125,18 @@ impl BmsWrapper {
         let update_rec = unsafe {
             let up_lock = data.records.read().unwrap();
             &**up_lock.last().unwrap() as &BmsRecord
+        };           
+        // create a new record with the new data and lock the last one
+        self.new_record(Some(update_rec.date.clone()), update_rec.value.clone());
+        // get a reference to the last record before the new one was inserted
+        let last_record = unsafe {
+            let lock = &*self.records.read().unwrap();
+            let l = lock.len() - 2;
+            &**lock.get(l).unwrap() as &BmsRecord
         };
-        let last_record = self.last_record();
         if (update_rec.date > last_record.date) && (update_rec.value != last_record.value) {
             // new value is more recent, check only the last produced values and
             // append a new entry to the end of the record
-            self.new_record(Some(update_rec.date.clone()), update_rec.value.clone());
-            {
-                let lock = &mut *self.records.write().unwrap();
-                let pos = lock.len() - 2;
-                let last = unsafe { &mut **lock.get_mut(pos).unwrap() as &mut BmsRecord };
-                last.lock();
-            }
             for entry in last_record.get_old_entries() {
                 ask_processed(entry, &last_record.date);
             }
@@ -185,13 +185,6 @@ impl BmsWrapper {
         }
         let mut lock = &mut *self.overwrite.write().unwrap();
         *lock = other.overwrite.read().unwrap().clone();
-    }
-
-    fn last_record<'a>(&'a self) -> &BmsRecord {
-        unsafe {
-            let records = self.records.read().unwrap();
-            &**records.last().unwrap() as &'a BmsRecord
-        }
     }
 
     pub fn record_len(&self) -> usize {

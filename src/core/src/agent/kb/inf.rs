@@ -1346,10 +1346,7 @@ mod test {
         let rep = Representation::new();
         rep.tell(test_02).unwrap();
         assert_eq!(rep.ask(q02_01).get_results_single(), Some(true));
-    }
 
-    #[test]
-    fn temp() {
         // Test 03
         let rep = Representation::new();
         let test_03_00 = String::from("

@@ -278,11 +278,13 @@ impl GroundedClsMemb {
         }
         if let Some(ref bms) = self.bms {
             if data.bms.is_some() {
-                bms.update(agent, &*data.bms.as_ref().unwrap())
+                let data_bms = data.bms.as_ref().unwrap();
+                //data_bms.new_record(, Some(new_val))
+                bms.update(agent, data_bms)
             } else {
-                let data = BmsWrapper::new(None);
-                data.new_record(None, Some(new_val));
-                bms.update(agent, &data)
+                let data_bms = BmsWrapper::new(None);
+                data_bms.new_record(None, Some(new_val));
+                bms.update(agent, &data_bms)
             }
         }
     }
@@ -524,7 +526,8 @@ impl GroundedFunc {
             let mut value_lock = self.args[0].value.as_ref().unwrap().write().unwrap();
             *value_lock = *data.args[0].value.as_ref().unwrap().read().unwrap();;
         }
-        self.bms.update(agent, &*data.bms);
+        let data_bms = &data.bms;
+        self.bms.update(agent, data_bms);
     }
 }
 
