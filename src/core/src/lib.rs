@@ -6,7 +6,7 @@
 #[macro_use]
 extern crate nom;
 extern crate chrono;
-extern crate scoped_threadpool;
+extern crate crossbeam;
 extern crate float_cmp;
 
 mod lang;
@@ -15,3 +15,4 @@ mod agent;
 pub use agent::Agent;
 
 const TIME_EQ_DIFF: i64 = 1;
+const FLOAT_EQ_ULPS: i32 = 2;

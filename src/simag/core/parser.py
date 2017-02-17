@@ -75,7 +75,7 @@ class ParserState(object):
     __instance = None
     def __new__(cls):
         if ParserState.__instance is None:
-            ParserState.__instance = object.__new__(cls){:?}
+            ParserState.__instance = object.__new__(cls)
         ParserState.__instance._state = 'tell'
         return ParserState.__instance
 

@@ -1,10 +1,12 @@
 use super::*;
+use FLOAT_EQ_ULPS;
 
 use agent;
 
 use float_cmp::ApproxEqUlps;
 use lang;
 use lang::{GroundedClsMemb, GroundedFunc, LogSentence, ParseErrF, ParseTree, Grounded};
+
 use std::collections::{HashMap, VecDeque};
 use std::iter::FromIterator;
 use std::rc::Rc;
@@ -662,10 +664,13 @@ impl Entity {
                             grounded: Rc<GroundedClsMemb>,
                             context: Option<&agent::ProofResult>)
                             -> bool {
-        let mut lock = self.classes.write().unwrap();
         let name = grounded.get_parent();
-        let stmt_exists = lock.contains_key(&name);
+        let stmt_exists = {
+            let lock = self.classes.read().unwrap();
+            lock.contains_key(&name)
+        };
         if stmt_exists {
+            let lock = self.classes.read().unwrap();
             let current = lock.get(&name).unwrap();
             current.update(agent, &*grounded);
             if context.is_some() {
@@ -676,6 +681,7 @@ impl Entity {
             }
             false
         } else {
+            let mut lock = self.classes.write().unwrap();
             lock.insert(name, grounded.clone());
             if context.is_some() {
                 grounded.clone()
@@ -714,7 +720,9 @@ impl Entity {
                     match op {
                         None => res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone()),
                         Some(lang::CompOperator::Equal) => {
-                            if f.get_value().unwrap().approx_eq_ulps(val.as_ref().unwrap(), 2) {
+                            if f.get_value()
+                                .unwrap()
+                                .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS) {
                                 res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
                             }
                         }
@@ -743,24 +751,31 @@ impl Entity {
                         func: Rc<GroundedFunc>,
                         context: Option<&agent::ProofResult>)
                         -> bool {
-        let mut lock = self.relations.write().unwrap();
         let name = func.get_name();
-        let stmt_exists = lock.contains_key(&name);
+        let stmt_exists = {
+            let lock = self.relations.write().unwrap();
+            lock.contains_key(&name)
+        };
         if stmt_exists {
-            let funcs_type = lock.get_mut(&name).unwrap();
             let mut found_rel = false;
-            for f in funcs_type.iter_mut() {
-                if f.comparable(&*func) {
-                    f.update(agent, &*func);
-                    if context.is_some() {
-                        f.bms.update_producers(Grounded::Function(f.clone()),
-                                               context.as_ref().unwrap());
+            {
+                let lock = self.relations.read().unwrap();
+                let funcs_type = lock.get(&name).unwrap();
+                for f in funcs_type {
+                    if f.comparable(&*func) {
+                        f.update(agent, &*func);
+                        if context.is_some() {
+                            f.bms.update_producers(Grounded::Function(f.clone()),
+                                                   context.as_ref().unwrap());
+                        }
+                        found_rel = true;
+                        break;
                     }
-                    found_rel = true;
-                    break;
                 }
             }
             if !found_rel {
+                let mut lock = self.relations.write().unwrap();
+                let funcs_type = lock.get_mut(&name).unwrap();
                 funcs_type.push(func.clone());
                 if context.is_some() {
                     func.bms.update_producers(Grounded::Function(func.clone()), context.unwrap());
@@ -770,6 +785,7 @@ impl Entity {
                 false
             }
         } else {
+            let mut lock = self.relations.write().unwrap();
             lock.insert(name, vec![func.clone()]);
             if context.is_some() {
                 func.bms.update_producers(Grounded::Function(func.clone()), context.unwrap());
@@ -872,11 +888,14 @@ impl Class {
                             grounded: Rc<GroundedClsMemb>,
                             context: Option<&agent::ProofResult>)
                             -> bool {
-        let mut lock = self.classes.write().unwrap();
         let name = grounded.get_parent();
-        let stmt_exists = lock.contains_key(&name);
+        let stmt_exists = {
+            let lock = self.classes.read().unwrap();
+            lock.contains_key(&name)
+        };
         if stmt_exists {
-            let current = lock.get_mut(&name).unwrap();
+            let lock = self.classes.read().unwrap();
+            let current = lock.get(&name).unwrap();
             current.update(agent, &*grounded);
             if context.is_some() {
                 current.bms
@@ -886,6 +905,7 @@ impl Class {
             }
             false
         } else {
+            let mut lock = self.classes.write().unwrap();
             lock.insert(name, grounded.clone());
             if context.is_some() {
                 grounded.clone()
@@ -937,7 +957,9 @@ impl Class {
                     match op {
                         None => res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone()),
                         Some(lang::CompOperator::Equal) => {
-                            if f.get_value().unwrap().approx_eq_ulps(val.as_ref().unwrap(), 2) {
+                            if f.get_value()
+                                .unwrap()
+                                .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS) {
                                 res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
                             }
                         }
@@ -972,7 +994,7 @@ impl Class {
                 if i == 0 {
                     match func.get_uval() {
                         (lang::CompOperator::Equal, val) => {
-                            if !val.approx_eq_ulps(&curr_func.get_value().unwrap(), 2) {
+                            if !val.approx_eq_ulps(&curr_func.get_value().unwrap(), FLOAT_EQ_ULPS) {
                                 process = false;
                             }
                         }
@@ -1004,24 +1026,31 @@ impl Class {
                         func: Rc<GroundedFunc>,
                         context: Option<&agent::ProofResult>)
                         -> bool {
-        let mut lock = self.relations.write().unwrap();
-        let name = func.get_name();
-        let stmt_exists = lock.contains_key(&name);
+        let name = func.get_name();                 
+        let stmt_exists = {
+            let lock = self.relations.write().unwrap();
+            lock.contains_key(&name)
+        };
         if stmt_exists {
-            let funcs_type = lock.get_mut(&name).unwrap();
             let mut found_rel = false;
-            for f in funcs_type.iter_mut() {
-                if f.comparable(&*func) {
-                    f.update(agent, &*func);
-                    if context.is_some() {
-                        f.bms.update_producers(Grounded::Function(f.clone()),
-                                               context.as_ref().unwrap());
+            {
+                let lock = self.relations.read().unwrap();
+                let funcs_type = lock.get(&name).unwrap();
+                for f in funcs_type {
+                    if f.comparable(&*func) {
+                        f.update(agent, &*func);
+                        if context.is_some() {
+                            f.bms.update_producers(Grounded::Function(f.clone()),
+                                                   context.as_ref().unwrap());
+                        }
+                        found_rel = true;
+                        break;
                     }
-                    found_rel = true;
-                    break;
                 }
             }
             if !found_rel {
+                let mut lock = self.relations.write().unwrap();
+                let funcs_type = lock.get_mut(&name).unwrap();
                 funcs_type.push(func.clone());
                 if context.is_some() {
                     func.bms.update_producers(Grounded::Function(func.clone()), context.unwrap());
@@ -1031,6 +1060,7 @@ impl Class {
                 false
             }
         } else {
+            let mut lock = self.relations.write().unwrap();
             lock.insert(name, vec![func.clone()]);
             if context.is_some() {
                 func.bms.update_producers(Grounded::Function(func.clone()), context.unwrap());

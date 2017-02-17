@@ -3,16 +3,20 @@
 pub use self::errors::TimeFnErr;
 
 use super::Date;
+use FLOAT_EQ_ULPS;
+
 use TIME_EQ_DIFF;
+
 use agent;
 use agent::{BmsWrapper, Representation};
 
 use chrono::{Duration, UTC};
 use float_cmp::ApproxEqUlps;
+
 use lang::errors::ParseErrF;
 use lang::logsent::*;
-
 use lang::parser::*;
+
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::str;
@@ -270,15 +274,18 @@ impl GroundedClsMemb {
     }
 
     pub fn update(&self, agent: &Representation, data: &GroundedClsMemb) {
-        let mut value_lock = self.value.as_ref().unwrap().write().unwrap();
-        let new_val = *data.value.as_ref().unwrap().read().unwrap();
-        *value_lock = new_val.clone();
+        let new_val: f32;
+        {
+            let mut value_lock = self.value.as_ref().unwrap().write().unwrap();
+            new_val = *data.value.as_ref().unwrap().read().unwrap();
+            *value_lock = new_val;
+        }
         if let Some(ref bms) = self.bms {
             if data.bms.is_some() {
                 bms.update(agent, &*data.bms.as_ref().unwrap())
             } else {
                 let data = BmsWrapper::new(None);
-                data.new_record(None, Some(new_val.clone()));
+                data.new_record(None, Some(new_val));
                 bms.update(agent, &data)
             }
         }
@@ -469,8 +476,7 @@ impl GroundedFunc {
     #[inline]
     pub fn get_value(&self) -> Option<f32> {
         if let Some(ref guard) = self.args[0].value.as_ref() {
-            let val = guard.read().unwrap().clone();
-            Some(val)
+            Some(*guard.read().unwrap())
         } else {
             None
         }
@@ -518,8 +524,10 @@ impl GroundedFunc {
     }
 
     pub fn update(&self, agent: &Representation, data: &GroundedFunc) {
-        let mut value_lock = self.args[0].value.as_ref().unwrap().write().unwrap();
-        *value_lock = *data.args[0].value.as_ref().unwrap().read().unwrap();
+        {
+            let mut value_lock = self.args[0].value.as_ref().unwrap().write().unwrap();
+            *value_lock = *data.args[0].value.as_ref().unwrap().read().unwrap();;
+        }
         self.bms.update(agent, &*data.bms);
     }
 }
@@ -590,11 +598,12 @@ impl FreeClsMemb {
         }
         if self.value.is_some() {
             let val_free = self.value.unwrap();
-            let val_grounded = *other.value.as_ref().unwrap().read().unwrap();
+            let val_grounded = other.value.as_ref().unwrap();
+            let val_grounded = *val_grounded.read().unwrap();
             match other.operator.unwrap() {
                 CompOperator::Equal => {
                     if self.operator.as_ref().unwrap().is_equal() {
-                        val_free.approx_eq_ulps(&val_grounded, 2)
+                        val_free.approx_eq_ulps(&val_grounded, FLOAT_EQ_ULPS)
                     } else if self.operator.as_ref().unwrap().is_more() {
                         val_grounded > val_free
                     } else {
@@ -658,7 +667,8 @@ impl FreeClsOwner {
             let val = self.value.as_ref().unwrap();
             match *self.operator.as_ref().unwrap() {
                 CompOperator::Equal => {
-                    val.approx_eq_ulps(&*other.value.as_ref().unwrap().read().unwrap(), 2)
+                    val.approx_eq_ulps(&*other.value.as_ref().unwrap().read().unwrap(),
+                                       FLOAT_EQ_ULPS)
                 }
                 CompOperator::Less => *other.value.as_ref().unwrap().read().unwrap() < *val,
                 CompOperator::More => *other.value.as_ref().unwrap().read().unwrap() > *val,
@@ -1541,7 +1551,7 @@ impl<'a> ClassDecl {
             };
             let t = time_data.clone();
             t.replace_last_val(grfact.get_value());
-            grfact.overwrite_time_data(&time_data);
+            grfact.overwrite_time_data(&t);
             let grfact = Rc::new(grfact);
             context.grounded.push((Grounded::Terminal(grfact.clone()), UTC::now()));
             agent.up_membership(grfact.clone(), Some(context))
@@ -1705,9 +1715,9 @@ impl<'a> OpArg {
         match *op {
             CompOperator::Equal => {
                 let comp_diff = Duration::seconds(TIME_EQ_DIFF);
-                let lower_bound = arg0 - comp_diff;
-                let upper_bound = arg0 + comp_diff;
-                if !(arg1 > lower_bound) || !(arg1 < upper_bound) {
+                let lower_bound = *arg0 - comp_diff;
+                let upper_bound = *arg0 + comp_diff;
+                if !(*arg1 > lower_bound) || !(*arg1 < upper_bound) {
                     false
                 } else {
                     true
