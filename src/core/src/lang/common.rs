@@ -178,7 +178,7 @@ impl GroundedClsMemb {
             val = Some(RwLock::new(match val0 {
                 Number::UnsignedInteger(val) => {
                     if val == 0 || val == 1 {
-                        let t_bms = BmsWrapper::new(None);
+                        let t_bms = BmsWrapper::new(false);
                         if let Some(dates) = dates {
                             for (date, val) in dates {
                                 t_bms.new_record(Some(date), val);
@@ -194,7 +194,7 @@ impl GroundedClsMemb {
                 }
                 Number::UnsignedFloat(val) => {
                     if val >= 0. && val <= 1. {
-                        let t_bms = BmsWrapper::new(None);
+                        let t_bms = BmsWrapper::new(false);
                         if let Some(dates) = dates {
                             for (date, val) in dates {
                                 t_bms.new_record(Some(date), val)
@@ -282,7 +282,7 @@ impl GroundedClsMemb {
                 //data_bms.new_record(, Some(new_val))
                 bms.update(agent, data_bms)
             } else {
-                let data_bms = BmsWrapper::new(None);
+                let data_bms = BmsWrapper::new(false);
                 data_bms.new_record(None, Some(new_val));
                 bms.update(agent, &data_bms)
             }
@@ -292,7 +292,7 @@ impl GroundedClsMemb {
     pub fn from_free(free: &FreeClsMemb, assignment: Rc<String>) -> GroundedClsMemb {
         let bms;
         let val = if free.value.is_some() {
-            let t_bms = BmsWrapper::new(None);
+            let t_bms = BmsWrapper::new(false);
             t_bms.new_record(None, free.value.clone());
             bms = Some(Rc::new(t_bms));
             Some(RwLock::new(free.value.unwrap()))
@@ -632,7 +632,7 @@ impl FreeClsOwner {
            parent: &Terminal)
            -> Result<FreeClsOwner, ParseErrF> {
         let (val, op) = match_uval(uval)?;
-        let t_bms = BmsWrapper::new(None);
+        let t_bms = BmsWrapper::new(false);
         t_bms.new_record(None, val.clone());
         Ok(FreeClsOwner {
             term: term,
@@ -890,8 +890,8 @@ impl<'a> FuncDecl {
                 third = Some(n_a);
             }
         }
-        let mut time_data = BmsWrapper::new(None);
-        let mut ow: Option<bool> = None;
+        let mut time_data = BmsWrapper::new(false);
+        let mut ow = false;
         if let Some(mut oargs) = op_args {
             for arg in oargs.drain(..) {
                 match arg {
@@ -902,7 +902,7 @@ impl<'a> FuncDecl {
                         time_data.new_record(Some(UTC::now()), val);
                     }
                     OpArg::OverWrite => {
-                        ow = Some(true);
+                        ow = true;
                     }
                     _ => {}
                 }
@@ -972,12 +972,12 @@ impl<'a> FuncDecl {
                              value: Option<f32>)
                              -> BmsWrapper {
         if self.op_args.is_none() {
-            let t_bms = BmsWrapper::new(None);
+            let t_bms = BmsWrapper::new(false);
             t_bms.new_record(None, value);
             return t_bms;
         }
         let mut v = None;
-        let mut ow: Option<bool> = None;
+        let mut ow = false;
         for arg in self.op_args.as_ref().unwrap() {
             match *arg {
                 OpArg::TimeDecl(_) |
@@ -985,7 +985,7 @@ impl<'a> FuncDecl {
                     v = Some(arg.get_time_payload(assignments, value));
                 }
                 OpArg::OverWrite => {
-                    ow = Some(true);
+                    ow = true;
                 }
                 _ => {}
             }
@@ -1347,12 +1347,12 @@ impl<'a> ClassDecl {
                              value: Option<f32>)
                              -> BmsWrapper {
         if self.op_args.is_none() {
-            let bms = BmsWrapper::new(None);
+            let bms = BmsWrapper::new(false);
             bms.new_record(None, value);
             return bms;
         }
         let mut v = None;
-        let mut ow: Option<bool> = None;
+        let mut ow = false;
         for arg in self.op_args.as_ref().unwrap() {
             match *arg {
                 OpArg::TimeDecl(_) |
@@ -1360,7 +1360,7 @@ impl<'a> ClassDecl {
                     v = Some(arg.get_time_payload(assignments, value));
                 }
                 OpArg::OverWrite => {
-                    ow = Some(true);
+                    ow = true;
                 }
                 _ => {}
             }
@@ -1688,7 +1688,7 @@ impl<'a> OpArg {
                         assignments: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
                         value: Option<f32>)
                         -> BmsWrapper {
-        let bms = BmsWrapper::new(None);
+        let bms = BmsWrapper::new(false);
         match *self {
             OpArg::TimeDecl(TimeFn::Date(ref payload)) => {
                 bms.new_record(Some(payload.clone()), value);
@@ -1749,7 +1749,7 @@ impl TimeFn {
     }
 
     fn get_time_payload(&self, value: Option<f32>) -> BmsWrapper {
-        let bms = BmsWrapper::new(None);
+        let bms = BmsWrapper::new(false);
         match *self {
             TimeFn::Date(ref payload) => {
                 bms.new_record(Some(payload.clone()), value);

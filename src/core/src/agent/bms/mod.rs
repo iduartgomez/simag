@@ -13,17 +13,17 @@ use chrono::UTC;
 
 use std::mem;
 use std::sync::RwLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 #[derive(Debug)]
 pub struct BmsWrapper {
     records: RwLock<Vec<*mut BmsRecord>>,
     read: AtomicBool,
-    pub overwrite: RwLock<Option<bool>>,
+    pub overwrite: RwLock<bool>,
 }
 
 impl BmsWrapper {
-    pub fn new(overwrite: Option<bool>) -> BmsWrapper {
+    pub fn new(overwrite: bool) -> BmsWrapper {
         let wrapper = BmsWrapper {
             records: RwLock::new(vec![]),
             read: AtomicBool::new(true),
@@ -42,6 +42,7 @@ impl BmsWrapper {
             produced: vec![],
             date: date,
             value: value,
+            refcnt: AtomicUsize::new(1),
         };
         let raw_rec = Box::into_raw(Box::new(record));
         let mut records = self.records.write().unwrap();
@@ -96,28 +97,31 @@ impl BmsWrapper {
             data.read.store(false, Ordering::Release);
         }
 
-        match *data.overwrite.read().unwrap() {
-            Some(val) if val => {
-                let mut recs: Vec<*mut BmsRecord> = vec![];
-                for rec in &*data.records.read().unwrap() {
-                    recs.push(rec.clone())
-                }
-                {
-                    let new_rec = &mut *self.records.write().unwrap();
-                    let pre_rec = &mut recs;
-                    mem::swap(pre_rec, new_rec);
-                    let last = unsafe { &mut **pre_rec.last_mut().unwrap() as &mut BmsRecord };
-                    last.lock();
-                }
-                for record in &recs {
-                    let record = unsafe { &**record as &BmsRecord };
-                    for entry in record.get_old_entries() {
-                        ask_processed(entry, &record.date);
+        if *data.overwrite.read().unwrap() {
+            let mut recs: Vec<*mut BmsRecord> = vec![];
+            for rec in &*data.records.read().unwrap() {
+                recs.push(rec.clone())
+            }
+            {
+                let new_rec = &mut *self.records.write().unwrap();
+                let pre_rec = &mut recs;
+                mem::swap(pre_rec, new_rec);
+                let last = unsafe { &mut **pre_rec.last_mut().unwrap() as &mut BmsRecord };
+                last.lock();
+            }
+            for rec in recs {
+                unsafe {
+                    let r =  &*rec as &BmsRecord;
+                    for entry in r.get_old_entries() {
+                        ask_processed(entry, &r.date);
+                    }
+                    // if the record is not owned by an other object, it's safe to drop
+                    if r.refcnt.load(Ordering::SeqCst) == 1 {
+                        Box::from_raw(rec);
                     }
                 }
-                return;
             }
-            _ => {}
+            return;
         }
 
         // check if there are any inconsistencies with the knowledge produced with
@@ -125,7 +129,7 @@ impl BmsWrapper {
         let update_rec = unsafe {
             let up_lock = data.records.read().unwrap();
             &**up_lock.last().unwrap() as &BmsRecord
-        };           
+        };
         // create a new record with the new data and lock the last one
         self.new_record(Some(update_rec.date.clone()), update_rec.value.clone());
         // get a reference to the last record before the new one was inserted
@@ -179,7 +183,16 @@ impl BmsWrapper {
 
     pub fn overwrite_data(&self, other: &BmsWrapper) {
         let mut lock = &mut *self.records.write().unwrap();
-        lock.truncate(0);
+        // drop previous records
+        for rec in lock.drain(..) {
+            unsafe {
+                let r = &*rec as &BmsRecord;             
+                if r.refcnt.fetch_sub(1, Ordering::SeqCst) == 0 {
+                    Box::from_raw(rec);
+                }
+            }
+        }
+        // insert new records
         for rec in &*other.records.read().unwrap() {
             lock.push(rec.clone())
         }
@@ -211,28 +224,35 @@ impl ::std::clone::Clone for BmsWrapper {
         let recs = self.records.read().unwrap();
         let mut data = vec![];
         for rec in &*recs {
-            let rec = unsafe { &**rec as &BmsRecord };
-            data.push(Box::into_raw(Box::new(rec.clone())));
+            unsafe {
+                let r = &**rec as &BmsRecord;
+                r.refcnt.fetch_add(1, Ordering::SeqCst);
+            }
+            data.push(rec.clone());
         }
-        let ow_value = self.overwrite.read().unwrap().clone();
+        let ow_value = *self.overwrite.read().unwrap();
         BmsWrapper {
-            read: AtomicBool::new(self.read.load(Ordering::SeqCst)),
+            read: AtomicBool::new(self.read.load(Ordering::Acquire)),
             records: RwLock::new(data),
             overwrite: RwLock::new(ow_value),
         }
     }
 }
 
-/*
 impl ::std::ops::Drop for BmsWrapper {
     fn drop(&mut self) {
-        let recs = self.records.write().unwrap();
-        for rec in &*recs {
-            unsafe { Box::from_raw(*rec) }; // drop each owned record
+        unsafe {
+            let mut lock = &mut *self.records.write().unwrap();
+            // drop previous records
+            for rec in lock.drain(..) {
+                let r = &*rec as &BmsRecord;             
+                if r.refcnt.fetch_sub(1, Ordering::SeqCst) == 0 {
+                    Box::from_raw(rec);
+                }
+            }
         }
     }
 }
-*/
 
 #[derive(Debug)]
 struct BmsRecord {
@@ -240,6 +260,7 @@ struct BmsRecord {
     produced: Vec<(Grounded, Option<f32>)>,
     date: Date,
     value: Option<f32>,
+    refcnt: AtomicUsize,
 }
 
 impl BmsRecord {
@@ -257,17 +278,6 @@ impl BmsRecord {
 
     fn lock(&mut self) {
         *self.locked.get_mut() = true;
-    }
-}
-
-impl ::std::clone::Clone for BmsRecord {
-    fn clone(&self) -> BmsRecord {
-        BmsRecord {
-            locked: AtomicBool::new(self.locked.load(Ordering::Acquire)),
-            produced: self.produced.clone(),
-            date: self.date.clone(),
-            value: self.value.clone(),
-        }
     }
 }
 
@@ -294,3 +304,6 @@ impl<'a> ::std::iter::Iterator for BmsRecIterator<'a> {
         out
     }
 }
+
+#[cfg(test)]
+mod test {}

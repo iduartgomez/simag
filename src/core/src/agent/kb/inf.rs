@@ -1150,7 +1150,7 @@ mod test {
     use std::collections::HashSet;
 
     #[test]
-    fn ask_pred() {
+    fn repr_inference_ask_pred() {
         let test_01 = String::from("
             ( professor[$Lucy,u=1] )
         ");
@@ -1231,7 +1231,7 @@ mod test {
     }
 
     #[test]
-    fn ask_func() {
+    fn repr_inference_ask_func() {
         let test_01 = String::from("
             ( professor[$Lucy,u=1] )
             ( dean[$John,u=1] )
@@ -1318,7 +1318,7 @@ mod test {
     }
 
     #[test]
-    fn time_calc() {
+    fn repr_inference_time_calc() {
         let test_01 = String::from("
             (( let x, y, t1:time, t2:time=\"Now\" )
              (( dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x] && fn::time_calc(t1<t2) )

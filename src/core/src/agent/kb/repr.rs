@@ -619,7 +619,6 @@ impl Representation {
 /// in the class itself).
 ///
 /// Attributes:
-///
 ///     * name: unique name to identify the entity.
 ///     * classes: categories to which the object belongs. Includes the degree of membership
 ///       (ie. ("cold", 0.9)).

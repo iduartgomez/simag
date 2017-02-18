@@ -1451,7 +1451,7 @@ mod test {
     use std::rc::Rc;
 
     #[test]
-    fn icond_exprs() {
+    fn parser_icond_exprs() {
         let source = String::from("
             # Err:
             ((let x y z)

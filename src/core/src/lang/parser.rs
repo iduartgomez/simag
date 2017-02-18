@@ -1129,7 +1129,7 @@ mod test {
     use nom;
 
     #[test]
-    fn ast() {
+    fn parser_ast_output() {
         // remove comments:
         let source = b"
             # one line comment
@@ -1262,7 +1262,7 @@ mod test {
     }
 
     #[test]
-    fn parse_predicate() {
+    fn parser_predicate() {
         let s1 = b"professor[$Lucy,u=1]";
         let s1_res = class_decl(s1);
         assert_done_or_err!(s1_res);
@@ -1309,7 +1309,7 @@ mod test {
     }
 
     #[test]
-    fn parse_function() {
+    fn parser_function() {
         let s1 = b"fn::criticize(t=\"now\")[$John,u=1;$Lucy]";
         let s1_res = func_decl(s1);
         assert_done_or_err!(s1_res);
