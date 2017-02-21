@@ -557,7 +557,11 @@ impl LogicIndCond {
                   time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
-        self.next_rhs.substitute(agent, assignments, time_assign, context, rhs)
+        if self.next_rhs.is_disjunction() {
+            self.next_rhs.substitute(agent, assignments, time_assign, context, rhs);
+        } else if !rhs {
+            self.next_rhs.substitute(agent, assignments, time_assign, context, rhs);
+        }
     }
 
     fn get_next(&self, pos: usize) -> Rc<Particle> {

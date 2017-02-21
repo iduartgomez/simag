@@ -78,10 +78,10 @@ impl<'a> Predicate {
     pub fn get_uval(&self) -> (Option<CompOperator>, Option<f32>) {
         match *self {
             Predicate::GroundedClsMemb(ref t) => {
-                if t.value.is_some() {
-                    let val = t.value.as_ref().unwrap().read().unwrap();
+                let o_val = t.value.read().unwrap();
+                if let Some(val) = *o_val {
                     let op = *t.operator.as_ref().unwrap();
-                    (Some(op), Some(*val))
+                    (Some(op), Some(val))
                 } else {
                     (None, None)
                 }
@@ -127,7 +127,7 @@ impl<'a> Predicate {
 
     pub fn has_uval(&self) -> bool {
         match *self {
-            Predicate::GroundedClsMemb(ref t) => t.value.is_some(),
+            Predicate::GroundedClsMemb(ref t) => t.value.read().unwrap().is_some(),
             Predicate::FreeClsMemb(ref t) => t.value.is_some(),
             Predicate::FreeClsOwner(ref t) => t.value.is_some(),
         }
@@ -139,14 +139,34 @@ impl<'a> Predicate {
 #[derive(Debug, Clone)]
 pub enum Grounded {
     Function(Rc<GroundedFunc>),
-    Terminal(Rc<GroundedClsMemb>),
+    Class(Rc<GroundedClsMemb>),
 }
 
 impl Grounded {
     pub fn get_name(&self) -> String {
         match *self {
             Grounded::Function(ref func) => (&*func).get_name().to_string(),
-            Grounded::Terminal(ref cls) => (&*cls).get_parent().to_string(),
+            Grounded::Class(ref cls) => (&*cls).get_parent().to_string(),
+        }
+    }
+}
+
+pub enum GroundedRef<'a> {
+    Function(&'a GroundedFunc),
+    Class(&'a GroundedClsMemb),
+}
+
+impl<'a> GroundedRef<'a> {
+    pub fn update_value(&self, val: Option<f32>) {
+        match *self {
+            GroundedRef::Function(func) => {
+                let mut original = func.args[0].value.write().unwrap();
+                *original = val;
+            }
+            GroundedRef::Class(cls) => {
+                let mut original = cls.value.write().unwrap();
+                *original = val;
+            }
         }
     }
 }
@@ -154,7 +174,7 @@ impl Grounded {
 #[derive(Debug)]
 pub struct GroundedClsMemb {
     term: Rc<String>,
-    value: Option<RwLock<f32>>,
+    value: RwLock<Option<f32>>,
     operator: Option<CompOperator>,
     parent: Rc<String>,
     pub bms: Option<Rc<BmsWrapper>>,
@@ -175,16 +195,16 @@ impl GroundedClsMemb {
         let bms;
         if let Some(uval) = uval {
             let UVal { val: val0, op: op0 } = uval;
-            val = Some(RwLock::new(match val0 {
+            val = Some(match val0 {
                 Number::UnsignedInteger(val) => {
                     if val == 0 || val == 1 {
                         let t_bms = BmsWrapper::new(false);
                         if let Some(dates) = dates {
                             for (date, val) in dates {
-                                t_bms.new_record(Some(date), val);
+                                t_bms.new_record(Some(date), val, None);
                             }
                         } else {
-                            t_bms.new_record(None, Some(val.clone() as f32));
+                            t_bms.new_record(None, Some(val.clone() as f32), None);
                         }
                         bms = Some(Rc::new(t_bms));
                         val as f32
@@ -197,10 +217,10 @@ impl GroundedClsMemb {
                         let t_bms = BmsWrapper::new(false);
                         if let Some(dates) = dates {
                             for (date, val) in dates {
-                                t_bms.new_record(Some(date), val)
+                                t_bms.new_record(Some(date), val, None)
                             }
                         } else {
-                            t_bms.new_record(None, Some(val.clone() as f32));
+                            t_bms.new_record(None, Some(val.clone() as f32), None);
                         }
                         bms = Some(Rc::new(t_bms));
                         val
@@ -210,7 +230,7 @@ impl GroundedClsMemb {
                 }
                 Number::SignedFloat(val) => return Err(ParseErrF::IUVal(val as f32)),
                 Number::SignedInteger(val) => return Err(ParseErrF::IUVal(val as f32)),
-            }));
+            });
             if context.in_assertion && context.is_tell {
                 op = match op0 {
                     CompOperator::Equal => Some(CompOperator::Equal),
@@ -226,7 +246,7 @@ impl GroundedClsMemb {
         }
         Ok(GroundedClsMemb {
             term: term,
-            value: val,
+            value: RwLock::new(val),
             operator: op,
             parent: parent,
             bms: bms,
@@ -243,8 +263,8 @@ impl GroundedClsMemb {
             Some(CompOperator::Less) => id.push(2),
             Some(CompOperator::More) => id.push(3),
         }
-        if let Some(ref val) = self.value {
-            let mut id_2 = format!("{}", *val.read().unwrap()).into_bytes();
+        if let Some(val) = *self.value.read().unwrap() {
+            let mut id_2 = format!("{}", val).into_bytes();
             id.append(&mut id_2);
         }
         id
@@ -262,40 +282,43 @@ impl GroundedClsMemb {
 
     #[inline]
     pub fn get_value(&self) -> Option<f32> {
-        if self.value.is_some() {
-            Some(*self.value.as_ref().unwrap().read().unwrap())
+        if let Some(val) = *self.value.read().unwrap() {
+            Some(val)
         } else {
             None
         }
     }
 
-    pub fn update(&self, agent: &Representation, data: &GroundedClsMemb) {
-        let new_val: f32;
+    pub fn update(&self, agent: &Representation, data: &GroundedClsMemb, was_produced: bool) {
+        let new_val: Option<f32>;
         {
-            let mut value_lock = self.value.as_ref().unwrap().write().unwrap();
-            new_val = *data.value.as_ref().unwrap().read().unwrap();
+            let mut value_lock = self.value.write().unwrap();
+            new_val = *data.value.read().unwrap();
             *value_lock = new_val;
         }
         if let Some(ref bms) = self.bms {
             if data.bms.is_some() {
                 let data_bms = data.bms.as_ref().unwrap();
-                //data_bms.new_record(, Some(new_val))
-                bms.update(agent, data_bms)
+                bms.update(GroundedRef::Class(self), agent, data_bms, was_produced)
             } else {
                 let data_bms = BmsWrapper::new(false);
-                data_bms.new_record(None, Some(new_val));
-                bms.update(agent, &data_bms)
+                data_bms.new_record(None, new_val, None);
+                bms.update(GroundedRef::Class(self), agent, &data_bms, was_produced)
             }
         }
+    }
+
+    pub fn update_value(&self, val: Option<f32>) {
+        *self.value.write().unwrap() = val;
     }
 
     pub fn from_free(free: &FreeClsMemb, assignment: Rc<String>) -> GroundedClsMemb {
         let bms;
         let val = if free.value.is_some() {
             let t_bms = BmsWrapper::new(false);
-            t_bms.new_record(None, free.value.clone());
+            t_bms.new_record(None, free.value.clone(), None);
             bms = Some(Rc::new(t_bms));
-            Some(RwLock::new(free.value.unwrap()))
+            Some(free.value.unwrap())
         } else {
             bms = None;
             None
@@ -307,7 +330,7 @@ impl GroundedClsMemb {
         };
         GroundedClsMemb {
             term: assignment,
-            value: val,
+            value: RwLock::new(val),
             operator: op,
             parent: free.parent.get_name(),
             bms: bms,
@@ -352,8 +375,11 @@ impl ::std::cmp::PartialEq for GroundedClsMemb {
         } else {
             return true;
         }
-        let val_lhs = &*self.value.as_ref().unwrap().read().unwrap();
-        let val_rhs = &*other.value.as_ref().unwrap().read().unwrap();
+        let val_lhs: &Option<f32> = &*self.value.read().unwrap();
+        let val_rhs: &Option<f32> = &*other.value.read().unwrap();
+        if (val_lhs.is_none() && val_rhs.is_some()) || (val_lhs.is_some() && val_rhs.is_none()) {
+            return false;
+        }
         match op_lhs {
             CompOperator::Equal => {
                 if op_rhs.is_equal() {
@@ -384,15 +410,9 @@ impl ::std::cmp::PartialEq for GroundedClsMemb {
 
 impl ::std::clone::Clone for GroundedClsMemb {
     fn clone(&self) -> GroundedClsMemb {
-        let value;
-        if let Some(ref lock) = self.value {
-            value = Some(RwLock::new(*lock.read().unwrap()));
-        } else {
-            value = None;
-        }
         GroundedClsMemb {
             term: self.term.clone(),
-            value: value,
+            value: RwLock::new(self.value.read().unwrap().clone()),
             operator: self.operator,
             parent: self.parent.clone(),
             bms: self.bms.clone(),
@@ -473,11 +493,7 @@ impl GroundedFunc {
 
     #[inline]
     pub fn get_value(&self) -> Option<f32> {
-        if let Some(ref guard) = self.args[0].value.as_ref() {
-            Some(*guard.read().unwrap())
-        } else {
-            None
-        }
+        self.args[0].value.read().unwrap().clone()
     }
 
     #[inline]
@@ -521,13 +537,18 @@ impl GroundedFunc {
         }
     }
 
-    pub fn update(&self, agent: &Representation, data: &GroundedFunc) {
+    pub fn update(&self, agent: &Representation, data: &GroundedFunc, was_produced: bool) {
         {
-            let mut value_lock = self.args[0].value.as_ref().unwrap().write().unwrap();
-            *value_lock = *data.args[0].value.as_ref().unwrap().read().unwrap();;
+            let mut value_lock = self.args[0].value.write().unwrap();
+            *value_lock = (&*data.args[0].value.read().unwrap()).clone();
         }
         let data_bms = &data.bms;
-        self.bms.update(agent, data_bms);
+        self.bms.update(GroundedRef::Function(self), agent, data_bms, was_produced);
+    }
+
+    pub fn update_value(&self, val: Option<f32>) {
+        let mut value_lock = self.args[0].value.write().unwrap();
+        *value_lock = val;
     }
 }
 
@@ -597,8 +618,13 @@ impl FreeClsMemb {
         }
         if self.value.is_some() {
             let val_free = self.value.unwrap();
-            let val_grounded = other.value.as_ref().unwrap();
-            let val_grounded = *val_grounded.read().unwrap();
+            let val_grounded = {
+                if let Some(val) = *other.value.read().unwrap() {
+                    val
+                } else {
+                    return false;
+                }
+            };
             match other.operator.unwrap() {
                 CompOperator::Equal => {
                     if self.operator.as_ref().unwrap().is_equal() {
@@ -633,7 +659,7 @@ impl FreeClsOwner {
            -> Result<FreeClsOwner, ParseErrF> {
         let (val, op) = match_uval(uval)?;
         let t_bms = BmsWrapper::new(false);
-        t_bms.new_record(None, val.clone());
+        t_bms.new_record(None, val.clone(), None);
         Ok(FreeClsOwner {
             term: term,
             value: val,
@@ -664,13 +690,15 @@ impl FreeClsOwner {
     pub fn filter_grounded(&self, other: &GroundedClsMemb) -> bool {
         if self.operator.is_some() {
             let val = self.value.as_ref().unwrap();
+            let o_val = if let Some(o_val) = *other.value.read().unwrap() {
+                o_val
+            } else {
+                return false;
+            };
             match *self.operator.as_ref().unwrap() {
-                CompOperator::Equal => {
-                    val.approx_eq_ulps(&*other.value.as_ref().unwrap().read().unwrap(),
-                                       FLOAT_EQ_ULPS)
-                }
-                CompOperator::Less => *other.value.as_ref().unwrap().read().unwrap() < *val,
-                CompOperator::More => *other.value.as_ref().unwrap().read().unwrap() > *val,
+                CompOperator::Equal => val.approx_eq_ulps(&o_val, FLOAT_EQ_ULPS),
+                CompOperator::Less => o_val < *val,
+                CompOperator::More => o_val > *val,
             }
         } else {
             true
@@ -896,10 +924,10 @@ impl<'a> FuncDecl {
             for arg in oargs.drain(..) {
                 match arg {
                     OpArg::TimeDecl(TimeFn::Date(ref date)) => {
-                        time_data.new_record(Some(date.clone()), val);
+                        time_data.new_record(Some(date.clone()), val, None);
                     }
                     OpArg::TimeDecl(TimeFn::Now) => {
-                        time_data.new_record(Some(UTC::now()), val);
+                        time_data.new_record(Some(UTC::now()), val, None);
                     }
                     OpArg::OverWrite => {
                         ow = true;
@@ -909,9 +937,9 @@ impl<'a> FuncDecl {
             }
         }
         if time_data.record_len() == 0 {
-            time_data.new_record(None, val);
+            time_data.new_record(None, val, None);
         }
-        time_data.overwrite = RwLock::new(ow);
+        time_data.overwrite = ow;
         GroundedFunc {
             name: name,
             args: [first.unwrap(), second.unwrap()],
@@ -973,7 +1001,7 @@ impl<'a> FuncDecl {
                              -> BmsWrapper {
         if self.op_args.is_none() {
             let t_bms = BmsWrapper::new(false);
-            t_bms.new_record(None, value);
+            t_bms.new_record(None, value, None);
             return t_bms;
         }
         let mut v = None;
@@ -992,11 +1020,11 @@ impl<'a> FuncDecl {
         }
         if v.is_none() {
             let bms = BmsWrapper::new(ow);
-            bms.new_record(None, value);
+            bms.new_record(None, value, None);
             bms
         } else {
             let mut bms = v.unwrap();
-            bms.overwrite = RwLock::new(ow);
+            bms.overwrite = ow;
             bms
         }
     }
@@ -1348,7 +1376,7 @@ impl<'a> ClassDecl {
                              -> BmsWrapper {
         if self.op_args.is_none() {
             let bms = BmsWrapper::new(false);
-            bms.new_record(None, value);
+            bms.new_record(None, value, None);
             return bms;
         }
         let mut v = None;
@@ -1367,11 +1395,11 @@ impl<'a> ClassDecl {
         }
         if v.is_none() {
             let bms = BmsWrapper::new(ow);
-            bms.new_record(None, value);
+            bms.new_record(None, value, None);
             bms
         } else {
             let mut bms = v.unwrap();
-            bms.overwrite = RwLock::new(ow);
+            bms.overwrite = ow;
             bms
         }
     }
@@ -1502,7 +1530,7 @@ impl<'a> ClassDecl {
                     }
                     if let Some(entity) = assignments.as_ref().unwrap().get(&free.term) {
                         if let Some(current) = entity.get_class(free.parent.get_name()) {
-                            context.antecedents.push(Grounded::Terminal(current.clone()));
+                            context.antecedents.push(Grounded::Class(current.clone()));
                             if !free.equal_to_grounded(current) {
                                 return Some(false);
                             }
@@ -1516,7 +1544,7 @@ impl<'a> ClassDecl {
                 Predicate::GroundedClsMemb(ref compare) => {
                     let entity = agent.get_entity_from_class(self.get_name(), compare.term.clone());
                     if let Some(current) = entity {
-                        context.antecedents.push(Grounded::Terminal(current.clone()));
+                        context.antecedents.push(Grounded::Class(current.clone()));
                         if *current != *compare {
                             return Some(false);
                         }
@@ -1552,7 +1580,7 @@ impl<'a> ClassDecl {
             t.replace_last_val(grfact.get_value());
             grfact.overwrite_time_data(&t);
             let grfact = Rc::new(grfact);
-            context.grounded.push((Grounded::Terminal(grfact.clone()), UTC::now()));
+            context.grounded.push((Grounded::Class(grfact.clone()), UTC::now()));
             agent.up_membership(grfact.clone(), Some(context))
         }
     }
@@ -1691,10 +1719,10 @@ impl<'a> OpArg {
         let bms = BmsWrapper::new(false);
         match *self {
             OpArg::TimeDecl(TimeFn::Date(ref payload)) => {
-                bms.new_record(Some(payload.clone()), value);
+                bms.new_record(Some(payload.clone()), value, None);
             }
             OpArg::TimeDecl(TimeFn::Now) => {
-                bms.new_record(None, value);
+                bms.new_record(None, value, None);
             }
             OpArg::TimeVarAssign(ref var) => return (&**(assignments.get(var).unwrap())).clone(),
             _ => panic!(),
@@ -1752,10 +1780,10 @@ impl TimeFn {
         let bms = BmsWrapper::new(false);
         match *self {
             TimeFn::Date(ref payload) => {
-                bms.new_record(Some(payload.clone()), value);
+                bms.new_record(Some(payload.clone()), value, None);
             }
             TimeFn::Now => {
-                bms.new_record(None, value);
+                bms.new_record(None, value, None);
             }
             _ => panic!(),
         }
@@ -2005,7 +2033,7 @@ impl<'a> Terminal {
 
 fn reserved(s: &str) -> bool {
     match s {
-        "let" | "time_calc" | "exists" | "fn" | "time" | "overwrite" => true,
+        "let" | "time_calc" | "exists" | "fn" | "time" | "overwrite" | "self" => true,
         _ => false,
     }
 }

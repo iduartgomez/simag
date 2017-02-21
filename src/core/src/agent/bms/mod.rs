@@ -7,7 +7,7 @@
 
 use super::{ProofResult, Representation};
 use super::kb::QueryInput;
-use lang::{Date, Grounded};
+use lang::{Date, Grounded, GroundedRef};
 
 use chrono::UTC;
 
@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 pub struct BmsWrapper {
     records: RwLock<Vec<*mut BmsRecord>>,
     read: AtomicBool,
-    pub overwrite: RwLock<bool>,
+    pub overwrite: bool,
 }
 
 impl BmsWrapper {
@@ -27,21 +27,26 @@ impl BmsWrapper {
         let wrapper = BmsWrapper {
             records: RwLock::new(vec![]),
             read: AtomicBool::new(true),
-            overwrite: RwLock::new(overwrite),
+            overwrite: overwrite,
         };
         wrapper
     }
 
-    pub fn new_record(&self, date: Option<Date>, value: Option<f32>) {
+    pub fn new_record(&self, date: Option<Date>, value: Option<f32>, was_produced: Option<bool>) {
         let date = match date {
             Some(date) => date,
             None => UTC::now(),
+        };
+        let was_produced = match was_produced {
+            Some(val) => val,
+            None => false,
         };
         let record = BmsRecord {
             locked: AtomicBool::new(false),
             produced: vec![],
             date: date,
             value: value,
+            was_produced: was_produced,
             refcnt: AtomicUsize::new(1),
         };
         let raw_rec = Box::into_raw(Box::new(record));
@@ -49,13 +54,17 @@ impl BmsWrapper {
         // if there is a previous record, lock it
         if records.len() > 0 {
             let raw = records.last_mut().unwrap();
-            let last = unsafe { &mut **raw as &mut BmsRecord };
+            let last = BmsRecord::ptr_as_mut(*raw);
             last.lock();
         }
         records.push(raw_rec);
     }
 
-    pub fn update(&self, agent: &Representation, data: &BmsWrapper) {
+    pub fn update(&self,
+                  owner: GroundedRef,
+                  agent: &Representation,
+                  data: &BmsWrapper,
+                  was_produced: bool) {
         let ask_processed = |entry: &(Grounded, Option<f32>), cmp_rec: &Date| {
             match *entry {
                 (Grounded::Function(ref func), ..) => {
@@ -63,7 +72,7 @@ impl BmsWrapper {
                     let mut ask = false;
                     {
                         let lock = func.bms.records.read().unwrap();
-                        let last = unsafe { &**lock.last().unwrap() as &BmsRecord };
+                        let last = BmsRecord::ptr_as_ref(*lock.last().unwrap());
                         if last.date > *cmp_rec {
                             // if it was produced, run again a test against the kb to check
                             // if it is still valid
@@ -71,20 +80,66 @@ impl BmsWrapper {
                         }
                     }
                     if ask {
-                        agent.ask_processed(QueryInput::AskRelationalFunc(func.clone()), true);
+                        let answ =
+                            agent.ask_processed(QueryInput::AskRelationalFunc(func.clone()),
+                                               0,
+                                               true)
+                                .get_results_single();
+                        if answ.is_none() {
+                            let ref bms = func.bms;
+                            let mut date: Option<Date> = None;
+                            let mut value: Option<f32> = None;
+                            {
+                                let lock = bms.records.read().unwrap();
+                                let recs = (*lock).iter();
+                                for rec in recs.rev() {
+                                    let r = BmsRecord::ptr_as_ref(*rec);
+                                    if !r.was_produced {
+                                        date = Some(r.date.clone());
+                                        value = r.value.clone();
+                                        break;
+                                    }
+                                }
+                            }
+                            bms.new_record(date, value, Some(false));
+                            func.update_value(value);
+                            // func.rollback(agent, date, value);
+                        }
                     }
                 }
-                (Grounded::Terminal(ref cls), ..) => {
+                (Grounded::Class(ref cls), ..) => {
                     let mut ask = false;
                     {
                         let lock = cls.bms.as_ref().unwrap().records.read().unwrap();
-                        let last = unsafe { &**lock.last().unwrap() as &BmsRecord };
+                        let last = BmsRecord::ptr_as_ref(*lock.last().unwrap());
                         if last.date > *cmp_rec {
                             ask = true;
                         }
                     }
                     if ask {
-                        agent.ask_processed(QueryInput::AskClassMember(cls.clone()), true);
+                        let answ =
+                            agent.ask_processed(QueryInput::AskClassMember(cls.clone()), 0, true)
+                                .get_results_single();
+                        if answ.is_none() {
+                            let bms = cls.bms.as_ref().unwrap();
+                            let mut date: Option<Date> = None;
+                            let mut value: Option<f32> = None;
+                            {
+                                let lock = bms.records.read().unwrap();
+                                let recs = (*lock).iter();
+                                for rec in recs.rev() {
+                                    let r = BmsRecord::ptr_as_ref(*rec);
+                                    if !r.was_produced {
+                                        date = Some(r.date.clone());
+                                        value = r.value.clone();
+                                        break;
+                                    }
+                                }
+                            }
+                            bms.new_record(date, value, Some(false));
+                            cls.update_value(value);
+                            // cls.rollback(agent, date, value);
+                        }
                     }
                 }
             }
@@ -97,7 +152,7 @@ impl BmsWrapper {
             data.read.store(false, Ordering::Release);
         }
 
-        if *data.overwrite.read().unwrap() {
+        if data.overwrite {
             let mut recs: Vec<*mut BmsRecord> = vec![];
             for rec in &*data.records.read().unwrap() {
                 recs.push(rec.clone())
@@ -106,19 +161,17 @@ impl BmsWrapper {
                 let new_rec = &mut *self.records.write().unwrap();
                 let pre_rec = &mut recs;
                 mem::swap(pre_rec, new_rec);
-                let last = unsafe { &mut **pre_rec.last_mut().unwrap() as &mut BmsRecord };
+                let last = BmsRecord::ptr_as_mut(*pre_rec.last_mut().unwrap());
                 last.lock();
             }
             for rec in recs {
-                unsafe {
-                    let r =  &*rec as &BmsRecord;
-                    for entry in r.get_old_entries() {
-                        ask_processed(entry, &r.date);
-                    }
-                    // if the record is not owned by an other object, it's safe to drop
-                    if r.refcnt.load(Ordering::SeqCst) == 1 {
-                        Box::from_raw(rec);
-                    }
+                let r = BmsRecord::ptr_as_ref(rec);
+                for entry in r.get_old_entries() {
+                    ask_processed(entry, &r.date);
+                }
+                // if the record is not owned by an other object, it's safe to drop
+                if r.refcnt.load(Ordering::SeqCst) == 1 {
+                    unsafe { Box::from_raw(rec) };
                 }
             }
             return;
@@ -126,17 +179,20 @@ impl BmsWrapper {
 
         // check if there are any inconsistencies with the knowledge produced with
         // the previous value
-        let update_rec = unsafe {
+        let update_rec = {
             let up_lock = data.records.read().unwrap();
-            &**up_lock.last().unwrap() as &BmsRecord
+            BmsRecord::ptr_as_ref(*up_lock.last().unwrap())
         };
         // create a new record with the new data and lock the last one
-        self.new_record(Some(update_rec.date.clone()), update_rec.value.clone());
+        let date = update_rec.date.clone();
+        let value = update_rec.value.clone();
+        self.new_record(Some(date), value, Some(was_produced));
+        owner.update_value(update_rec.value.clone());
         // get a reference to the last record before the new one was inserted
-        let last_record = unsafe {
+        let last_record = {
             let lock = &*self.records.read().unwrap();
             let l = lock.len() - 2;
-            &**lock.get(l).unwrap() as &BmsRecord
+            BmsRecord::ptr_as_ref(*lock.get(l).unwrap())
         };
         if (update_rec.date > last_record.date) && (update_rec.value != last_record.value) {
             // new value is more recent, check only the last produced values and
@@ -159,7 +215,7 @@ impl BmsWrapper {
         // from a logic sentence resolution
         for a in &context.antecedents {
             match *a {
-                Grounded::Terminal(ref cls) => {
+                Grounded::Class(ref cls) => {
                     let value = cls.get_value();
                     cls.bms
                         .as_ref()
@@ -177,7 +233,7 @@ impl BmsWrapper {
     fn add_entry(&self, produced: Grounded, with_val: Option<f32>) {
         let mut records = self.records.write().unwrap();
         let raw = records.last_mut().unwrap();
-        let record = unsafe { &mut **raw as &mut BmsRecord };
+        let record = BmsRecord::ptr_as_mut(*raw);
         record.add_entry((produced, with_val));
     }
 
@@ -185,19 +241,15 @@ impl BmsWrapper {
         let mut lock = &mut *self.records.write().unwrap();
         // drop previous records
         for rec in lock.drain(..) {
-            unsafe {
-                let r = &*rec as &BmsRecord;             
-                if r.refcnt.fetch_sub(1, Ordering::SeqCst) == 0 {
-                    Box::from_raw(rec);
-                }
+            let r = BmsRecord::ptr_as_ref(rec);
+            if r.refcnt.fetch_sub(1, Ordering::SeqCst) == 0 {
+                unsafe { Box::from_raw(rec) };
             }
         }
         // insert new records
         for rec in &*other.records.read().unwrap() {
             lock.push(rec.clone())
         }
-        let mut lock = &mut *self.overwrite.write().unwrap();
-        *lock = other.overwrite.read().unwrap().clone();
     }
 
     pub fn record_len(&self) -> usize {
@@ -205,17 +257,23 @@ impl BmsWrapper {
     }
 
     pub fn get_last_date(&self) -> &Date {
-        let rec = unsafe {
-            let records = self.records.read().unwrap();
-            &**records.last().unwrap() as &BmsRecord
+        let rec = {
+            let lock = self.records.read().unwrap();
+            BmsRecord::ptr_as_ref(*lock.last().unwrap())
         };
         &rec.date
     }
 
     pub fn replace_last_val(&self, val: Option<f32>) {
         let mut records = &mut self.records.write().unwrap();
-        let last = unsafe { &mut **records.last_mut().unwrap() as &mut BmsRecord };
+        let last = BmsRecord::ptr_as_mut(*records.last_mut().unwrap());
         last.value = val;
+    }
+
+    pub fn last_was_produced(&self) {
+        let mut records = &mut self.records.write().unwrap();
+        let last = BmsRecord::ptr_as_mut(*records.last_mut().unwrap());
+        last.was_produced = true;
     }
 }
 
@@ -224,31 +282,26 @@ impl ::std::clone::Clone for BmsWrapper {
         let recs = self.records.read().unwrap();
         let mut data = vec![];
         for rec in &*recs {
-            unsafe {
-                let r = &**rec as &BmsRecord;
-                r.refcnt.fetch_add(1, Ordering::SeqCst);
-            }
+            let r = BmsRecord::ptr_as_ref(*rec);
+            r.refcnt.fetch_add(1, Ordering::SeqCst);
             data.push(rec.clone());
         }
-        let ow_value = *self.overwrite.read().unwrap();
         BmsWrapper {
             read: AtomicBool::new(self.read.load(Ordering::Acquire)),
             records: RwLock::new(data),
-            overwrite: RwLock::new(ow_value),
+            overwrite: self.overwrite,
         }
     }
 }
 
 impl ::std::ops::Drop for BmsWrapper {
     fn drop(&mut self) {
-        unsafe {
-            let mut lock = &mut *self.records.write().unwrap();
-            // drop previous records
-            for rec in lock.drain(..) {
-                let r = &*rec as &BmsRecord;             
-                if r.refcnt.fetch_sub(1, Ordering::SeqCst) == 0 {
-                    Box::from_raw(rec);
-                }
+        let mut lock = &mut *self.records.write().unwrap();
+        // drop previous records
+        for rec in lock.drain(..) {
+            let r = BmsRecord::ptr_as_ref(rec);
+            if r.refcnt.fetch_sub(1, Ordering::SeqCst) == 0 {
+                unsafe { Box::from_raw(rec) };
             }
         }
     }
@@ -261,6 +314,7 @@ struct BmsRecord {
     date: Date,
     value: Option<f32>,
     refcnt: AtomicUsize,
+    was_produced: bool,
 }
 
 impl BmsRecord {
@@ -278,6 +332,14 @@ impl BmsRecord {
 
     fn lock(&mut self) {
         *self.locked.get_mut() = true;
+    }
+
+    fn ptr_as_ref<'a>(ptr: *mut BmsRecord) -> &'a BmsRecord {
+        unsafe { &*ptr as &BmsRecord }
+    }
+
+    fn ptr_as_mut<'a>(ptr: *mut BmsRecord) -> &'a mut BmsRecord {
+        unsafe { &mut *ptr as &mut BmsRecord }
     }
 }
 
@@ -336,10 +398,12 @@ mod test {
              ((run[x,u=1] && dog[x,u=1]) |> fat[x,u=0]))
         ");
         rep.tell(fol).unwrap();
-        let answ0 = rep.ask("(fat[$Pancho,u=0] && ugly[$Pancho,u=0])".to_string());
+        let answ0 = rep.ask("(fat[$Pancho,u=0])".to_string());
         assert_eq!(answ0.get_results_single(), Some(true));
-        let answ1 = rep.ask("(sad[$Pancho,u=0])".to_string());
-        assert_eq!(answ1.get_results_single(), None);
+        let answ1 = rep.ask("(ugly[$Pancho,u=0])".to_string());
+        assert_eq!(answ1.get_results_single(), Some(true));
+        let answ2 = rep.ask("(sad[$Pancho,u=0])".to_string());
+        assert_eq!(answ2.get_results_single(), None);
     }
 
     #[test]
@@ -368,6 +432,6 @@ mod test {
 
         rep.tell("(fn::eat[$M1,u=1;$Pancho])".to_string()).unwrap();
         let answ = rep.ask("(fat[$Pancho,u=1])".to_string());
-        assert_eq!(answ.get_results_single(), Some(true));
+        assert_eq!(answ.get_results_single(), Some(true)); // <--- fails
     }
 }

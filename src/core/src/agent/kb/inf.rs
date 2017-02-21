@@ -34,8 +34,9 @@ use std::sync::{Mutex, RwLock};
 pub struct Inference<'a> {
     query: QueryProcessed<'a>,
     kb: &'a Representation,
+    depth: usize,
     ignore_current: bool,
-    nodes: RwLock<HashMap<Rc<String>, Vec<Box<ProofNode>>>>,
+    nodes: RwLock<HashMap<Rc<String>, Vec<ProofNode>>>,
     queue: RwLock<HashMap<*const ProofNode, HashSet<PArgVal>>>,
     results: InfResults<'a>,
     args: RwLock<Vec<Rc<ProofArgs>>>,
@@ -205,12 +206,14 @@ impl<'a> Answer<'a> {
 impl<'a> Inference<'a> {
     pub fn new(agent: &'a Representation,
                query_input: QueryInput,
+               depth: usize,
                ignore_current: bool)
                -> Result<Box<Inference<'a>>, ()> {
         let query = QueryProcessed::new().get_query(query_input)?;
         Ok(Box::new(Inference {
             query: query,
             kb: agent,
+            depth: depth,
             ignore_current: ignore_current,
             nodes: RwLock::new(HashMap::new()),
             queue: RwLock::new(HashMap::new()),
@@ -232,8 +235,8 @@ impl<'a> Inference<'a> {
     /// knowledge is produced then it's passed to an other procedure for
     /// addition to the KB.
     pub fn infer_facts(&'a mut self) {
-        fn query_cls<'a>(inf: &'a Inference<'a>, query: Rc<String>, actv_query: ActiveQuery<'a>) {
-            let mut pass = Box::new(InfTrial::new(inf, actv_query));
+        fn queue_query<'a>(inf: &'a Inference<'a>, query: Rc<String>, actv_query: ActiveQuery<'a>) {
+            let mut pass = Box::new(InfTrial::new(inf, actv_query.clone()));
             pass.get_rules(vec![query.clone()]);
             // run the query, if there is no result and there is an update,
             // then loop again, else stop
@@ -248,6 +251,19 @@ impl<'a> Inference<'a> {
                 }
                 pass.updated = Mutex::new(vec![]);
             }
+            let (obj, pred) = match actv_query {
+                ActiveQuery::Class(obj, query_pred, ..) => (obj, query_pred),
+                ActiveQuery::Func(obj, query_pred, ..) => (obj, query_pred),
+            };
+            let mut add_none = true;
+            if let Some(res) = inf.results.grounded_queries.read().unwrap().get(pred) {
+                if let Some(_) = res.get(obj) {
+                    add_none = false;
+                } 
+            }
+            if add_none {
+                inf.results.add_grounded(obj, pred, None);
+            }  
         }
 
         let inf_ptr = &*self as *const Inference as usize;
@@ -272,7 +288,7 @@ impl<'a> Inference<'a> {
                         // if no result was found from the kb directly
                         // make an inference from a grounded fact
                         let actv_query = ActiveQuery::Class(obj, &*query, pred);
-                        query_cls(inf, pred.get_parent(), actv_query);
+                        queue_query(inf, pred.get_parent(), actv_query);
                     }
                 });
             }
@@ -295,7 +311,7 @@ impl<'a> Inference<'a> {
                     } else {
                         inf.results.add_grounded(&*obj, query, None);
                         let actv_query = ActiveQuery::Func(&*obj, &*query, pred);
-                        query_cls(inf, pred.get_name(), actv_query);
+                        queue_query(inf, pred.get_name(), actv_query);
                     }
                 }
             });
@@ -381,13 +397,16 @@ struct InfTrial<'a> {
     updated: Mutex<Vec<bool>>,
     feedback: Mutex<bool>,
     valid: Mutex<Option<(*const ProofNode, Rc<ProofArgs>)>>,
-    nodes: &'a RwLock<HashMap<Rc<String>, Vec<Box<ProofNode>>>>,
+    nodes: &'a RwLock<HashMap<Rc<String>, Vec<ProofNode>>>,
     queue: &'a RwLock<HashMap<*const ProofNode, HashSet<PArgVal>>>,
     results: &'a InfResults<'a>,
     args: &'a RwLock<Vec<Rc<ProofArgs>>>,
+    depth: usize,
+    depth_cnt: RwLock<usize>,
     _available_threads: RwLock<u32>,
 }
 
+#[derive(Clone)]
 enum ActiveQuery<'a> {
     // `(obj_name, pred_name, fn/cls decl)`
     Class(&'a str, &'a str, &'a GroundedClsMemb),
@@ -445,6 +464,8 @@ impl<'a> InfTrial<'a> {
             queue: &inf.queue,
             results: &inf.results,
             args: &inf.args,
+            depth: inf.depth,
+            depth_cnt: RwLock::new(0_usize),
             _available_threads: RwLock::new(4_u32),
         }
     }
@@ -521,7 +542,7 @@ impl<'a> InfTrial<'a> {
                         let mapped = ArgsProduct::product(assignments.unwrap());
                         if let Some(mapped) = mapped {
                             crossbeam::scope(|scope| {
-                                let node_r = &**node as *const ProofNode as usize;
+                                let node_r = &*node as *const ProofNode as usize;
                                 for args in mapped {
                                     {
                                         let lock = self.valid.lock().unwrap();
@@ -547,16 +568,18 @@ impl<'a> InfTrial<'a> {
                     }
                 }
             }
-            let lock = self.feedback.lock().unwrap();
-            if !*lock {
+            let feeback = self.feedback.lock().unwrap();
+            if !*feeback {
                 return;
             }
-            if !chk.is_empty() {
+            if !chk.is_empty() && (*self.depth_cnt.read().unwrap() < self.depth) {
                 done.insert(parent);
                 self.get_rules(Vec::from_iter(chk.iter().cloned()));
                 let p = chk.pop_front().unwrap();
                 parent = p;
             } else {
+                let mut c = self.depth_cnt.write().unwrap();
+                *c += 1;
                 return;
             }
         }
@@ -569,10 +592,6 @@ impl<'a> InfTrial<'a> {
             ActiveQuery::Class(obj, query_pred, ..) => (obj, query_pred, false),
             ActiveQuery::Func(obj, query_pred, ..) => (obj, query_pred, true),
         };
-        if let Some(false) = context.result {
-            self.results.add_grounded(query_obj, query_pred, Some((false, None)));
-            return;
-        }
         for subst in context.grounded.drain(..) {
             match subst {
                 (lang::Grounded::Function(gf), date) => {
@@ -609,7 +628,7 @@ impl<'a> InfTrial<'a> {
                         }
                     }
                 }
-                (lang::Grounded::Terminal(gt), date) => {
+                (lang::Grounded::Class(gt), date) => {
                     if !is_func {
                         let query_cls = self.actv.get_cls();
                         if query_cls.comparable(&gt) {
@@ -657,14 +676,19 @@ impl<'a> InfTrial<'a> {
         for cls in cls_ls {
             if let Some(stored) = self.kb.classes.read().unwrap().get(&cls) {
                 let lock = stored.beliefs.read().unwrap();
-                let a: HashSet<Rc<LogSentence>> =
-                    HashSet::from_iter(lock.get(&cls).unwrap().iter().cloned());
+                let a: HashSet<Rc<LogSentence>> = {
+                    if let Some(beliefs) = lock.get(&cls) {
+                        HashSet::from_iter(beliefs.iter().cloned())
+                    } else {
+                        HashSet::new()
+                    }
+                };                    
                 for sent in a.difference(&rules) {
                     let mut antecedents = vec![];
                     for p in sent.get_all_lhs_predicates() {
                         antecedents.push(p.get_name())
                     }
-                    let node = Box::new(ProofNode::new(sent.clone(), antecedents.clone()));
+                    let node = ProofNode::new(sent.clone(), antecedents);
                     for pred in sent.get_rhs_predicates() {
                         let name = pred.get_name();
                         let mut lock = self.nodes.write().unwrap();
