@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::str;
 use std::sync::RwLock;
+use std::sync::atomic::AtomicBool;
 
 // Predicate types:
 
@@ -935,7 +936,7 @@ impl<'a> FuncDecl {
         if time_data.record_len() == 0 {
             time_data.new_record(None, val, None);
         }
-        time_data.overwrite = ow;
+        time_data.overwrite = AtomicBool::new(ow);
         GroundedFunc {
             name: name,
             args: [first.unwrap(), second.unwrap()],
@@ -1020,7 +1021,7 @@ impl<'a> FuncDecl {
             bms
         } else {
             let mut bms = v.unwrap();
-            bms.overwrite = ow;
+            bms.overwrite = AtomicBool::new(ow);
             bms
         }
     }
@@ -1392,7 +1393,7 @@ impl<'a> ClassDecl {
             bms
         } else {
             let mut bms = v.unwrap();
-            bms.overwrite = ow;
+            bms.overwrite = AtomicBool::new(ow);
             bms
         }
     }

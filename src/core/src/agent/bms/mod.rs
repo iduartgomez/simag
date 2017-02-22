@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 pub struct BmsWrapper {
     records: RwLock<Vec<*mut BmsRecord>>,
     read: AtomicBool,
-    pub overwrite: bool,
+    pub overwrite: AtomicBool,
 }
 
 impl BmsWrapper {
@@ -27,7 +27,7 @@ impl BmsWrapper {
         BmsWrapper {
             records: RwLock::new(vec![]),
             read: AtomicBool::new(true),
-            overwrite: overwrite,
+            overwrite: AtomicBool::new(overwrite),
         }
     }
 
@@ -100,9 +100,8 @@ impl BmsWrapper {
                                     }
                                 }
                             }
-                            bms.new_record(date, value, Some(false));
                             func.update_value(value);
-                            // func.rollback(agent, date, value);
+                            bms.new_record(date, value, Some(false));
                         }
                     }
                 }
@@ -135,9 +134,8 @@ impl BmsWrapper {
                                     }
                                 }
                             }
-                            bms.new_record(date, value, Some(false));
                             cls.update_value(value);
-                            // cls.rollback(agent, date, value);
+                            bms.new_record(date, value, Some(false));
                         }
                     }
                 }
@@ -151,7 +149,7 @@ impl BmsWrapper {
             data.read.store(false, Ordering::Release);
         }
 
-        if data.overwrite {
+        if data.overwrite.load(Ordering::Acquire) {
             let mut recs: Vec<*mut BmsRecord> = vec![];
             for rec in &*data.records.read().unwrap() {
                 recs.push(*rec)
@@ -199,14 +197,18 @@ impl BmsWrapper {
             for entry in last_record.get_old_entries() {
                 ask_processed(entry, &last_record.date);
             }
-        } else if (update_rec.date > last_record.date) && (update_rec.value != last_record.value) {
+        } else if (update_rec.date < last_record.date) && (update_rec.value != last_record.value) {
             // new value is older, in face of new information all previously
             // produced knowledge must be checked to see if it still holds true
         } else if update_rec.value != last_record.value {
             // if both dates are the same there is an incongruency
             // replace previous record value and check that all produced knowledge
             // with that value still holds true
-        }
+        } else if (update_rec.value == last_record.value) && (update_rec.date > last_record.date) {
+            // there was't a change in the value but there was a change in the time it became true 
+            // therefor the validity of some derived knowledge could be challenged
+
+        } 
     }
 
     pub fn update_producers(&self, owner: Grounded, context: &ProofResult) {
@@ -249,6 +251,7 @@ impl BmsWrapper {
         for rec in &*other.records.read().unwrap() {
             lock.push(*rec)
         }
+        self.overwrite.store(other.overwrite.load(Ordering::Acquire), Ordering::Release);
     }
 
     pub fn record_len(&self) -> usize {
@@ -288,7 +291,7 @@ impl ::std::clone::Clone for BmsWrapper {
         BmsWrapper {
             read: AtomicBool::new(self.read.load(Ordering::Acquire)),
             records: RwLock::new(data),
-            overwrite: self.overwrite,
+            overwrite: AtomicBool::new(self.overwrite.load(Ordering::Acquire)),
         }
     }
 }
@@ -299,7 +302,7 @@ impl ::std::ops::Drop for BmsWrapper {
         // drop previous records
         for rec in lock.drain(..) {
             let r = BmsRecord::ptr_as_ref(rec);
-            if r.refcnt.fetch_sub(1, Ordering::SeqCst) == 0 {
+            if r.refcnt.load(Ordering::SeqCst) == 1 {
                 unsafe { Box::from_raw(rec) };
             }
         }
@@ -322,7 +325,7 @@ impl BmsRecord {
     }
 
     fn get_old_entries(&self) -> BmsRecIterator {
-        if self.locked.load(Ordering::Relaxed) {
+        if self.locked.load(Ordering::SeqCst) {
             BmsRecIterator::new(&self.produced)
         } else {
             panic!()
