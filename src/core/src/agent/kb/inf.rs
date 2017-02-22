@@ -17,7 +17,7 @@
 //! the compiler.
 
 #![allow(or_fun_call)]
-#![allow(mutex_atomic)]
+//#![allow(mutex_atomic)]
 
 use super::repr::*;
 use lang;
@@ -29,7 +29,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::iter::FromIterator;
 use std::rc::Rc;
-use std::sync::{Mutex, RwLock};
+use std::sync::{Mutex, RwLock, Arc};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub struct Inference<'a> {
     query: QueryProcessed<'a>,
@@ -235,7 +236,9 @@ impl<'a> Inference<'a> {
     /// knowledge is produced then it's passed to an other procedure for
     /// addition to the KB.
     pub fn infer_facts(&'a mut self) {
-        fn queue_query<'a>(inf: &'a Inference<'a>, query: Rc<String>, actv_query: ActiveQuery<'a>) {
+        fn queue_query<'a>(inf: &'a Inference<'a>,
+                           query: Rc<String>,
+                           actv_query: ActiveQuery<'a>) {
             let mut pass = Box::new(InfTrial::new(inf, actv_query.clone()));
             pass.get_rules(vec![query.clone()]);
             // run the query, if there is no result and there is an update,
@@ -244,26 +247,26 @@ impl<'a> Inference<'a> {
                 pass.unify(query.clone(), VecDeque::new(), HashSet::new());
                 {
                     let lock0 = pass.updated.lock().unwrap();
-                    let lock1 = pass.feedback.lock().unwrap();
-                    if !lock0.contains(&true) || !*lock1 {
+                    let lock1 = pass.feedback.load(Ordering::SeqCst);
+                    if !lock0.contains(&true) || !lock1 {
                         break;
                     }
                 }
                 pass.updated = Mutex::new(vec![]);
             }
             let (obj, pred) = match actv_query {
-                ActiveQuery::Class(obj, query_pred, ..) => (obj, query_pred),
+                ActiveQuery::Class(obj, query_pred, ..) |
                 ActiveQuery::Func(obj, query_pred, ..) => (obj, query_pred),
             };
             let mut add_none = true;
             if let Some(res) = inf.results.grounded_queries.read().unwrap().get(pred) {
-                if let Some(_) = res.get(obj) {
+                if res.get(obj).is_some() {
                     add_none = false;
-                } 
+                }
             }
             if add_none {
                 inf.results.add_grounded(obj, pred, None);
-            }  
+            }
         }
 
         let inf_ptr = &*self as *const Inference as usize;
@@ -395,7 +398,7 @@ struct InfTrial<'a> {
     kb: &'a Representation,
     actv: ActiveQuery<'a>,
     updated: Mutex<Vec<bool>>,
-    feedback: Mutex<bool>,
+    feedback: Arc<AtomicBool>,
     valid: Mutex<Option<(*const ProofNode, Rc<ProofArgs>)>>,
     nodes: &'a RwLock<HashMap<Rc<String>, Vec<ProofNode>>>,
     queue: &'a RwLock<HashMap<*const ProofNode, HashSet<PArgVal>>>,
@@ -458,7 +461,7 @@ impl<'a> InfTrial<'a> {
             kb: inf.kb,
             actv: actv_query,
             updated: Mutex::new(vec![]),
-            feedback: Mutex::new(true),
+            feedback: Arc::new(AtomicBool::new(true)),
             valid: Mutex::new(None),
             nodes: &inf.nodes,
             queue: &inf.queue,
@@ -557,8 +560,7 @@ impl<'a> InfTrial<'a> {
                                 }
                             });
                         }
-                        let lock = self.feedback.lock().unwrap();
-                        if *lock {
+                        if self.feedback.load(Ordering::SeqCst) {
                             for e in node.antecedents.clone() {
                                 if !done.contains(&e) && !chk.contains(&e) {
                                     chk.push_back(e);
@@ -568,8 +570,7 @@ impl<'a> InfTrial<'a> {
                     }
                 }
             }
-            let feeback = self.feedback.lock().unwrap();
-            if !*feeback {
+            if !self.feedback.load(Ordering::SeqCst) {
                 return;
             }
             if !chk.is_empty() && (*self.depth_cnt.read().unwrap() < self.depth) {
@@ -623,8 +624,7 @@ impl<'a> InfTrial<'a> {
                                 let mut lock = self.valid.lock().unwrap();
                                 *lock = Some((context.node, context.args.clone()));
                             }
-                            let mut lock = self.feedback.lock().unwrap();
-                            *lock = false;
+                            self.feedback.store(false, Ordering::SeqCst);
                         }
                     }
                 }
@@ -657,8 +657,7 @@ impl<'a> InfTrial<'a> {
                                 let mut lock = self.valid.lock().unwrap();
                                 *lock = Some((context.node, context.args.clone()));
                             }
-                            let mut lock = self.feedback.lock().unwrap();
-                            *lock = false;
+                            self.feedback.store(false, Ordering::SeqCst);
                         }
                     }
                 }
@@ -682,7 +681,7 @@ impl<'a> InfTrial<'a> {
                     } else {
                         HashSet::new()
                     }
-                };                    
+                };
                 for sent in a.difference(&rules) {
                     let mut antecedents = vec![];
                     for p in sent.get_all_lhs_predicates() {

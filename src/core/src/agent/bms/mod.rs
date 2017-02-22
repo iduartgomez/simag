@@ -12,7 +12,7 @@ use lang::{Date, Grounded, GroundedRef};
 use chrono::UTC;
 
 use std::mem;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 #[derive(Debug)]
@@ -24,12 +24,11 @@ pub struct BmsWrapper {
 
 impl BmsWrapper {
     pub fn new(overwrite: bool) -> BmsWrapper {
-        let wrapper = BmsWrapper {
+        BmsWrapper {
             records: RwLock::new(vec![]),
             read: AtomicBool::new(true),
             overwrite: overwrite,
-        };
-        wrapper
+        }
     }
 
     pub fn new_record(&self, date: Option<Date>, value: Option<f32>, was_produced: Option<bool>) {
@@ -42,12 +41,12 @@ impl BmsWrapper {
             None => false,
         };
         let record = BmsRecord {
-            locked: AtomicBool::new(false),
+            locked: Arc::new(AtomicBool::new(false)),
             produced: vec![],
             date: date,
             value: value,
             was_produced: was_produced,
-            refcnt: AtomicUsize::new(1),
+            refcnt: Arc::new(AtomicUsize::new(1)),
         };
         let raw_rec = Box::into_raw(Box::new(record));
         let mut records = self.records.write().unwrap();
@@ -86,7 +85,7 @@ impl BmsWrapper {
                                                true)
                                 .get_results_single();
                         if answ.is_none() {
-                            let ref bms = func.bms;
+                            let bms = &func.bms;
                             let mut date: Option<Date> = None;
                             let mut value: Option<f32> = None;
                             {
@@ -95,8 +94,8 @@ impl BmsWrapper {
                                 for rec in recs.rev() {
                                     let r = BmsRecord::ptr_as_ref(*rec);
                                     if !r.was_produced {
-                                        date = Some(r.date.clone());
-                                        value = r.value.clone();
+                                        date = Some(r.date);
+                                        value = r.value;
                                         break;
                                     }
                                 }
@@ -130,8 +129,8 @@ impl BmsWrapper {
                                 for rec in recs.rev() {
                                     let r = BmsRecord::ptr_as_ref(*rec);
                                     if !r.was_produced {
-                                        date = Some(r.date.clone());
-                                        value = r.value.clone();
+                                        date = Some(r.date);
+                                        value = r.value;
                                         break;
                                     }
                                 }
@@ -155,7 +154,7 @@ impl BmsWrapper {
         if data.overwrite {
             let mut recs: Vec<*mut BmsRecord> = vec![];
             for rec in &*data.records.read().unwrap() {
-                recs.push(rec.clone())
+                recs.push(*rec)
             }
             {
                 let new_rec = &mut *self.records.write().unwrap();
@@ -184,15 +183,15 @@ impl BmsWrapper {
             BmsRecord::ptr_as_ref(*up_lock.last().unwrap())
         };
         // create a new record with the new data and lock the last one
-        let date = update_rec.date.clone();
-        let value = update_rec.value.clone();
+        let date = update_rec.date;
+        let value = update_rec.value;
         self.new_record(Some(date), value, Some(was_produced));
-        owner.update_value(update_rec.value.clone());
+        owner.update_value(update_rec.value);
         // get a reference to the last record before the new one was inserted
         let last_record = {
             let lock = &*self.records.read().unwrap();
             let l = lock.len() - 2;
-            BmsRecord::ptr_as_ref(*lock.get(l).unwrap())
+            BmsRecord::ptr_as_ref(lock[l])
         };
         if (update_rec.date > last_record.date) && (update_rec.value != last_record.value) {
             // new value is more recent, check only the last produced values and
@@ -248,7 +247,7 @@ impl BmsWrapper {
         }
         // insert new records
         for rec in &*other.records.read().unwrap() {
-            lock.push(rec.clone())
+            lock.push(*rec)
         }
     }
 
@@ -284,7 +283,7 @@ impl ::std::clone::Clone for BmsWrapper {
         for rec in &*recs {
             let r = BmsRecord::ptr_as_ref(*rec);
             r.refcnt.fetch_add(1, Ordering::SeqCst);
-            data.push(rec.clone());
+            data.push(*rec);
         }
         BmsWrapper {
             read: AtomicBool::new(self.read.load(Ordering::Acquire)),
@@ -309,11 +308,11 @@ impl ::std::ops::Drop for BmsWrapper {
 
 #[derive(Debug)]
 struct BmsRecord {
-    locked: AtomicBool,
+    locked: Arc<AtomicBool>,
     produced: Vec<(Grounded, Option<f32>)>,
     date: Date,
     value: Option<f32>,
-    refcnt: AtomicUsize,
+    refcnt: Arc<AtomicUsize>,
     was_produced: bool,
 }
 
@@ -323,7 +322,7 @@ impl BmsRecord {
     }
 
     fn get_old_entries(&self) -> BmsRecIterator {
-        if self.locked.load(Ordering::Relaxed) == true {
+        if self.locked.load(Ordering::Relaxed) {
             BmsRecIterator::new(&self.produced)
         } else {
             panic!()
@@ -331,7 +330,7 @@ impl BmsRecord {
     }
 
     fn lock(&mut self) {
-        *self.locked.get_mut() = true;
+        self.locked.store(true, Ordering::SeqCst);
     }
 
     fn ptr_as_ref<'a>(ptr: *mut BmsRecord) -> &'a BmsRecord {
@@ -345,11 +344,11 @@ impl BmsRecord {
 
 struct BmsRecIterator<'a> {
     cnt: usize,
-    data: &'a Vec<(Grounded, Option<f32>)>,
+    data: &'a [(Grounded, Option<f32>)],
 }
 
 impl<'a> BmsRecIterator<'a> {
-    fn new(data: &'a Vec<(Grounded, Option<f32>)>) -> BmsRecIterator<'a> {
+    fn new(data: &'a [(Grounded, Option<f32>)]) -> BmsRecIterator<'a> {
         BmsRecIterator {
             data: data,
             cnt: 0,

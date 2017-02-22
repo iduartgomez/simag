@@ -24,6 +24,7 @@ use std::sync::RwLock;
 ///     | Entities are denoted with a $ symbol followed by an id.
 ///     classes -> Sets of objects (entities or subclasses) that share a common property.
 ///     | This includes 'classes of relationships' and other 'functions'.
+#[derive(Default)]
 pub struct Representation {
     pub entities: RwLock<HashMap<Rc<String>, Entity>>,
     pub classes: RwLock<HashMap<Rc<String>, Class>>,
@@ -649,8 +650,7 @@ impl Entity {
         let lock = self.classes.read().unwrap();
         match lock.get(&class_name) {
             Some(r) if r.get_value().is_some() => Some(r.clone()),
-            Some(_) => None,
-            None => None,
+            Some(_) | None => None,
         }
     }
 
@@ -877,8 +877,7 @@ impl Class {
         let lock = self.classes.read().unwrap();
         match lock.get(&class_name) {
             Some(r) if r.get_value().is_some() => Some(r.clone()),
-            Some(_) => None,
-            None => None,
+            Some(_) | None => None,
         }
     }
 

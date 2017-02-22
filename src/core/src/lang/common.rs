@@ -204,7 +204,7 @@ impl GroundedClsMemb {
                                 t_bms.new_record(Some(date), val, None);
                             }
                         } else {
-                            t_bms.new_record(None, Some(val.clone() as f32), None);
+                            t_bms.new_record(None, Some(val as f32), None);
                         }
                         bms = Some(Rc::new(t_bms));
                         val as f32
@@ -220,7 +220,7 @@ impl GroundedClsMemb {
                                 t_bms.new_record(Some(date), val, None)
                             }
                         } else {
-                            t_bms.new_record(None, Some(val.clone() as f32), None);
+                            t_bms.new_record(None, Some(val as f32), None);
                         }
                         bms = Some(Rc::new(t_bms));
                         val
@@ -316,7 +316,7 @@ impl GroundedClsMemb {
         let bms;
         let val = if free.value.is_some() {
             let t_bms = BmsWrapper::new(false);
-            t_bms.new_record(None, free.value.clone(), None);
+            t_bms.new_record(None, free.value, None);
             bms = Some(Rc::new(t_bms));
             Some(free.value.unwrap())
         } else {
@@ -412,7 +412,7 @@ impl ::std::clone::Clone for GroundedClsMemb {
     fn clone(&self) -> GroundedClsMemb {
         GroundedClsMemb {
             term: self.term.clone(),
-            value: RwLock::new(self.value.read().unwrap().clone()),
+            value: RwLock::new(*self.value.read().unwrap()),
             operator: self.operator,
             parent: self.parent.clone(),
             bms: self.bms.clone(),
@@ -430,11 +430,7 @@ pub struct GroundedFunc {
 
 impl ::std::cmp::PartialEq for GroundedFunc {
     fn eq(&self, other: &GroundedFunc) -> bool {
-        if self.name != other.name || self.args != other.args || self.third != other.third {
-            false
-        } else {
-            true
-        }
+        !(self.name != other.name || self.args != other.args || self.third != other.third)
     }
 }
 
@@ -493,7 +489,7 @@ impl GroundedFunc {
 
     #[inline]
     pub fn get_value(&self) -> Option<f32> {
-        self.args[0].value.read().unwrap().clone()
+        *self.args[0].value.read().unwrap()
     }
 
     #[inline]
@@ -540,7 +536,7 @@ impl GroundedFunc {
     pub fn update(&self, agent: &Representation, data: &GroundedFunc, was_produced: bool) {
         {
             let mut value_lock = self.args[0].value.write().unwrap();
-            *value_lock = (&*data.args[0].value.read().unwrap()).clone();
+            *value_lock = *data.args[0].value.read().unwrap();
         }
         let data_bms = &data.bms;
         self.bms.update(GroundedRef::Function(self), agent, data_bms, was_produced);
@@ -659,7 +655,7 @@ impl FreeClsOwner {
            -> Result<FreeClsOwner, ParseErrF> {
         let (val, op) = match_uval(uval)?;
         let t_bms = BmsWrapper::new(false);
-        t_bms.new_record(None, val.clone(), None);
+        t_bms.new_record(None, val, None);
         Ok(FreeClsOwner {
             term: term,
             value: val,
@@ -924,7 +920,7 @@ impl<'a> FuncDecl {
             for arg in oargs.drain(..) {
                 match arg {
                     OpArg::TimeDecl(TimeFn::Date(ref date)) => {
-                        time_data.new_record(Some(date.clone()), val, None);
+                        time_data.new_record(Some(*date), val, None);
                     }
                     OpArg::TimeDecl(TimeFn::Now) => {
                         time_data.new_record(Some(UTC::now()), val, None);
@@ -1034,11 +1030,8 @@ impl<'a> FuncDecl {
             return false;
         }
         for arg in self.op_args.as_ref().unwrap() {
-            match *arg {
-                OpArg::TimeVarFrom(ref var1) => {
-                    return var1.var_equality(var0);
-                }
-                _ => {}
+            if let OpArg::TimeVarFrom(ref var1) = *arg {
+                return var1.var_equality(var0);
             }
         }
         false
@@ -1409,11 +1402,8 @@ impl<'a> ClassDecl {
             return false;
         }
         for arg in self.op_args.as_ref().unwrap() {
-            match *arg {
-                OpArg::TimeVarFrom(ref var1) => {
-                    return var1.var_equality(var0);
-                }
-                _ => {}
+            if let OpArg::TimeVarFrom(ref var1) = *arg {
+                return var1.var_equality(var0);
             }
         }
         false
@@ -1461,11 +1451,8 @@ impl<'a> ClassDecl {
             return None;
         }
         for arg in self.op_args.as_ref().unwrap() {
-            match *arg {
-                OpArg::TimeDecl(ref decl) => {
-                    return Some(decl.get_time_payload(value));
-                }
-                _ => {}
+            if let OpArg::TimeDecl(ref decl) = *arg {
+                return Some(decl.get_time_payload(value));
             }
         }
         None
@@ -1693,7 +1680,7 @@ impl<'a> OpArg {
     #[inline]
     fn contains_var(&self, var1: &Var) -> bool {
         match *self {
-            OpArg::TimeVarAssign(ref var0) => &**var0 == var1,
+            OpArg::TimeVarAssign(ref var0) |
             OpArg::TimeVarFrom(ref var0) => &**var0 == var1,
             _ => false,
         }
@@ -1719,7 +1706,7 @@ impl<'a> OpArg {
         let bms = BmsWrapper::new(false);
         match *self {
             OpArg::TimeDecl(TimeFn::Date(ref payload)) => {
-                bms.new_record(Some(payload.clone()), value, None);
+                bms.new_record(Some(*payload), value, None);
             }
             OpArg::TimeDecl(TimeFn::Now) => {
                 bms.new_record(None, value, None);
@@ -1744,11 +1731,7 @@ impl<'a> OpArg {
                 let comp_diff = Duration::seconds(TIME_EQ_DIFF);
                 let lower_bound = *arg0 - comp_diff;
                 let upper_bound = *arg0 + comp_diff;
-                if !(*arg1 > lower_bound) || !(*arg1 < upper_bound) {
-                    false
-                } else {
-                    true
-                }
+                !((*arg1 < lower_bound) || (*arg1 > upper_bound))
             }
             CompOperator::More => arg0 > arg1,
             CompOperator::Less => arg0 < arg1,
@@ -1764,6 +1747,7 @@ pub enum TimeFn {
 }
 
 impl TimeFn {
+    #[allow(should_implement_trait)]
     fn from_str(slice: &[u8]) -> Result<TimeFn, ParseErrF> {
         if slice == b"Now" {
             Ok(TimeFn::Now)
@@ -1780,7 +1764,7 @@ impl TimeFn {
         let bms = BmsWrapper::new(false);
         match *self {
             TimeFn::Date(ref payload) => {
-                bms.new_record(Some(payload.clone()), value, None);
+                bms.new_record(Some(*payload), value, None);
             }
             TimeFn::Now => {
                 bms.new_record(None, value, None);
@@ -1830,7 +1814,7 @@ impl<'a> OpArgTerm {
                         if var.is_var() {
                             Ok((CompOperator::Equal, var))
                         } else {
-                            return Err(TimeFnErr::IsNotVar.into());
+                            Err(TimeFnErr::IsNotVar.into())
                         }
                     }
                 }

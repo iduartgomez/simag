@@ -557,9 +557,7 @@ impl LogicIndCond {
                   time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
-        if self.next_rhs.is_disjunction() {
-            self.next_rhs.substitute(agent, assignments, time_assign, context, rhs);
-        } else if !rhs {
+        if self.next_rhs.is_disjunction() || !rhs {
             self.next_rhs.substitute(agent, assignments, time_assign, context, rhs);
         }
     }
