@@ -609,7 +609,7 @@ impl FreeClsMemb {
 
     /// Compares a free term with a grounded term, assumes they are comparable
     /// (panics otherwise).
-    pub fn equal_to_grounded(&self, other: &GroundedClsMemb) -> bool {
+    pub fn grounded_eq(&self, other: &GroundedClsMemb) -> bool {
         if self.parent.get_name() != other.parent {
             panic!()
         }
@@ -820,17 +820,15 @@ impl Assert {
     }
 
     #[inline]
-    pub fn equal_to_grounded(&self,
-                             agent: &agent::Representation,
-                             assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
-                             context: &mut agent::ProofResult)
-                             -> Option<bool> {
+    pub fn grounded_eq(&self,
+                          agent: &agent::Representation,
+                          assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
+                          time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+                          context: &mut agent::ProofResult)
+                          -> Option<bool> {
         match *self {
-            Assert::FuncDecl(ref f) => {
-                f.equal_to_grounded(agent, assignments, time_assign, context)
-            }
-            Assert::ClassDecl(ref c) => c.equal_to_grounded(agent, assignments, context),
+            Assert::FuncDecl(ref f) => f.grounded_eq(agent, assignments, time_assign, context),
+            Assert::ClassDecl(ref c) => c.grounded_eq(agent, assignments, context),
         }
     }
 
@@ -1243,12 +1241,12 @@ impl<'a> FuncDecl {
 
     /// Compares two relational functions, if they include free terms variable values
     /// assignments must be provided or will return None or panic in worst case.
-    fn equal_to_grounded(&self,
-                         agent: &agent::Representation,
-                         assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                         time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
-                         context: &mut agent::ProofResult)
-                         -> Option<bool> {
+    fn grounded_eq(&self,
+                      agent: &agent::Representation,
+                      assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
+                      time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+                      context: &mut agent::ProofResult)
+                      -> Option<bool> {
         match self.variant {
             FuncVariants::Relational => {}
             FuncVariants::TimeCalc => return self.time_resolution(time_assign),
@@ -1269,6 +1267,10 @@ impl<'a> FuncDecl {
                         if let Some(entity) = assignments.get(&arg.term) {
                             if let Some(current) = entity.get_relationship(&grfunc) {
                                 context.antecedents.push(Grounded::Function(current.clone()));
+                                if let Some(date) = current.bms
+                                    .newest_date(&context.newest_grfact) {
+                                    context.newest_grfact = date;
+                                }
                                 if **current != grfunc {
                                     return Some(false);
                                 } else {
@@ -1302,7 +1304,7 @@ impl<'a> FuncDecl {
                                                     time_assign) {
             let grfunc = Rc::new(grfunc);
             agent.up_relation(grfunc.clone(), Some(context));
-            context.grounded.push((Grounded::Function(grfunc.clone()), UTC::now()))
+            context.grounded.push((Grounded::Function(grfunc.clone()), grfunc.bms.get_last_date()))
         }
     }
 }
@@ -1422,7 +1424,7 @@ impl<'a> ClassDecl {
                 }
                 if let Some(entity) = var_assign.as_ref().unwrap().get(&free.term) {
                     if let Some(grounded) = entity.get_class(free.parent.get_name()) {
-                        if free.equal_to_grounded(grounded) {
+                        if free.grounded_eq(grounded) {
                             return grounded.bms.clone();
                         }
                     } else {
@@ -1505,11 +1507,11 @@ impl<'a> ClassDecl {
 
     /// Compare each term of a class declaration if they are comparable, and returns
     /// the result of such comparison (or none in case they are not comparable).
-    fn equal_to_grounded(&self,
-                         agent: &agent::Representation,
-                         assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                         context: &mut agent::ProofResult)
-                         -> Option<bool> {
+    fn grounded_eq(&self,
+                      agent: &agent::Representation,
+                      assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
+                      context: &mut agent::ProofResult)
+                      -> Option<bool> {
         for a in &self.args {
             match *a {
                 Predicate::FreeClsMemb(ref free) => {
@@ -1519,7 +1521,13 @@ impl<'a> ClassDecl {
                     if let Some(entity) = assignments.as_ref().unwrap().get(&free.term) {
                         if let Some(current) = entity.get_class(free.parent.get_name()) {
                             context.antecedents.push(Grounded::Class(current.clone()));
-                            if !free.equal_to_grounded(current) {
+                            if let Some(date) = current.bms
+                                .as_ref()
+                                .unwrap()
+                                .newest_date(&context.newest_grfact) {
+                                context.newest_grfact = date;
+                            }
+                            if !free.grounded_eq(current) {
                                 return Some(false);
                             }
                         } else {
@@ -1533,6 +1541,12 @@ impl<'a> ClassDecl {
                     let entity = agent.get_entity_from_class(self.get_name(), compare.term.clone());
                     if let Some(current) = entity {
                         context.antecedents.push(Grounded::Class(current.clone()));
+                        if let Some(date) = current.bms
+                            .as_ref()
+                            .unwrap()
+                            .newest_date(&context.newest_grfact) {
+                            context.newest_grfact = date;
+                        }
                         if *current != *compare {
                             return Some(false);
                         }
@@ -1568,7 +1582,8 @@ impl<'a> ClassDecl {
             t.replace_last_val(grfact.get_value());
             grfact.overwrite_time_data(&t);
             let grfact = Rc::new(grfact);
-            context.grounded.push((Grounded::Class(grfact.clone()), UTC::now()));
+            context.grounded.push((Grounded::Class(grfact.clone()),
+                                   grfact.bms.as_ref().unwrap().get_last_date()));
             agent.up_membership(grfact.clone(), Some(context))
         }
     }
@@ -1730,9 +1745,9 @@ impl<'a> OpArg {
         match *op {
             CompOperator::Equal => {
                 let comp_diff = Duration::seconds(TIME_EQ_DIFF);
-                let lower_bound = *arg0 - comp_diff;
-                let upper_bound = *arg0 + comp_diff;
-                !((*arg1 < lower_bound) || (*arg1 > upper_bound))
+                let lower_bound = arg0 - comp_diff;
+                let upper_bound = arg0 + comp_diff;
+                !((arg1 < lower_bound) || (arg1 > upper_bound))
             }
             CompOperator::More => arg0 > arg1,
             CompOperator::Less => arg0 < arg1,

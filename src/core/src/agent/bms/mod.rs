@@ -12,7 +12,7 @@ use lang::{Date, Grounded, GroundedRef};
 use chrono::UTC;
 
 use std::mem;
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 #[derive(Debug)]
@@ -41,12 +41,12 @@ impl BmsWrapper {
             None => false,
         };
         let record = BmsRecord {
-            locked: Arc::new(AtomicBool::new(false)),
+            locked: AtomicBool::new(false),
             produced: vec![],
             date: date,
             value: value,
             was_produced: was_produced,
-            refcnt: Arc::new(AtomicUsize::new(1)),
+            refcnt: AtomicUsize::new(1),
         };
         let raw_rec = Box::into_raw(Box::new(record));
         let mut records = self.records.write().unwrap();
@@ -191,24 +191,19 @@ impl BmsWrapper {
             let l = lock.len() - 2;
             BmsRecord::ptr_as_ref(lock[l])
         };
-        if (update_rec.date > last_record.date) && (update_rec.value != last_record.value) {
-            // new value is more recent, check only the last produced values and
-            // append a new entry to the end of the record
+        if update_rec.date > last_record.date {
+            // new value is more recent, check only the last produced values
             for entry in last_record.get_old_entries() {
                 ask_processed(entry, &last_record.date);
             }
-        } else if (update_rec.date < last_record.date) && (update_rec.value != last_record.value) {
+        } else if update_rec.date < last_record.date {
             // new value is older, in face of new information all previously
             // produced knowledge must be checked to see if it still holds true
         } else if update_rec.value != last_record.value {
             // if both dates are the same there is an incongruency
             // replace previous record value and check that all produced knowledge
             // with that value still holds true
-        } else if (update_rec.value == last_record.value) && (update_rec.date > last_record.date) {
-            // there was't a change in the value but there was a change in the time it became true 
-            // therefor the validity of some derived knowledge could be challenged
-
-        } 
+        }
     }
 
     pub fn update_producers(&self, owner: Grounded, context: &ProofResult) {
@@ -258,12 +253,20 @@ impl BmsWrapper {
         self.records.read().unwrap().len()
     }
 
-    pub fn get_last_date(&self) -> &Date {
-        let rec = {
-            let lock = self.records.read().unwrap();
-            BmsRecord::ptr_as_ref(*lock.last().unwrap())
-        };
-        &rec.date
+    pub fn newest_date(&self, other: &Date) -> Option<Date> {
+        let lock = self.records.read().unwrap();
+        let rec = BmsRecord::ptr_as_ref(*lock.last().unwrap());
+        if &rec.date > other {
+            Some(rec.date)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_last_date(&self) -> Date {
+        let lock = self.records.read().unwrap();
+        let rec = BmsRecord::ptr_as_ref(*lock.last().unwrap());
+        rec.date
     }
 
     pub fn replace_last_val(&self, val: Option<f32>) {
@@ -302,7 +305,7 @@ impl ::std::ops::Drop for BmsWrapper {
         // drop previous records
         for rec in lock.drain(..) {
             let r = BmsRecord::ptr_as_ref(rec);
-            if r.refcnt.load(Ordering::SeqCst) == 1 {
+            if r.refcnt.fetch_sub(1, Ordering::SeqCst) == 0 {
                 unsafe { Box::from_raw(rec) };
             }
         }
@@ -311,11 +314,11 @@ impl ::std::ops::Drop for BmsWrapper {
 
 #[derive(Debug)]
 struct BmsRecord {
-    locked: Arc<AtomicBool>,
+    locked: AtomicBool,
     produced: Vec<(Grounded, Option<f32>)>,
     date: Date,
     value: Option<f32>,
-    refcnt: Arc<AtomicUsize>,
+    refcnt: AtomicUsize,
     was_produced: bool,
 }
 
@@ -434,6 +437,6 @@ mod test {
 
         rep.tell("(fn::eat[$M1,u=1;$Pancho])".to_string()).unwrap();
         let answ = rep.ask("(fat[$Pancho,u=1])".to_string());
-        assert_eq!(answ.get_results_single(), Some(true)); // <--- fails
+        assert_eq!(answ.get_results_single(), Some(true));
     }
 }

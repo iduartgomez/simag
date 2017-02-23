@@ -871,7 +871,7 @@ impl LogicAtom {
              time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
              context: &mut agent::ProofResult)
              -> Option<bool> {
-        if let Some(res) = self.pred.equal_to_grounded(agent, assignments, time_assign, context) {
+        if let Some(res) = self.pred.grounded_eq(agent, assignments, time_assign, context) {
             if res { Some(true) } else { Some(false) }
         } else {
             None

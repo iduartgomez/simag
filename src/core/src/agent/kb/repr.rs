@@ -931,7 +931,7 @@ impl Class {
         let lock = self.members.read().unwrap();
         lock.iter()
             .map(|x| x.unwrap_memb())
-            .filter(|m| comp.equal_to_grounded(m))
+            .filter(|m| comp.grounded_eq(m))
             .collect::<Vec<_>>()
     }
 

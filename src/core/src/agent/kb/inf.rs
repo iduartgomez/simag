@@ -17,7 +17,6 @@
 //! the compiler.
 
 #![allow(or_fun_call)]
-//#![allow(mutex_atomic)]
 
 use super::repr::*;
 use lang;
@@ -29,7 +28,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::iter::FromIterator;
 use std::rc::Rc;
-use std::sync::{Mutex, RwLock, Arc};
+use std::sync::{Mutex, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub struct Inference<'a> {
@@ -46,20 +45,19 @@ pub struct Inference<'a> {
 
 type PArgVal = Vec<usize>;
 type ObjName<'a> = &'a str;
-type QueryPredicate<'a> = &'a str;
-type QueryResult<'a> = HashMap<QueryPredicate<'a>,
-                               HashMap<ObjName<'a>, Option<(bool, Option<Date>)>>>;
-type QueryResMemb<'a> = HashMap<Rc<lang::Var>, HashMap<ObjName<'a>, Vec<Rc<GroundedClsMemb>>>>;
-type QueryResRels<'a> = HashMap<Rc<lang::Var>, HashMap<ObjName<'a>, Vec<Rc<GroundedFunc>>>>;
+type QueryPred<'a> = &'a str;
+type GroundedRes<'a> = HashMap<ObjName<'a>, Option<(bool, Option<Date>)>>;
+type QueryResMemb<'a> = HashMap<ObjName<'a>, Vec<Rc<GroundedClsMemb>>>;
+type QueryResRels<'a> = HashMap<ObjName<'a>, Vec<Rc<GroundedFunc>>>;
 
 /// A succesful query will return an `InfResult` which contains all the answer data.
 /// The data can be manipulated and filtered throught various methods returning
 /// whatever is requested by the consumer.
 #[derive(Debug)]
 pub struct InfResults<'a> {
-    grounded_queries: RwLock<QueryResult<'a>>,
-    membership: RwLock<QueryResMemb<'a>>,
-    relationships: RwLock<QueryResRels<'a>>,
+    grounded_queries: RwLock<HashMap<QueryPred<'a>, GroundedRes<'a>>>,
+    membership: RwLock<HashMap<Rc<lang::Var>, QueryResMemb<'a>>>,
+    relationships: RwLock<HashMap<Rc<lang::Var>, QueryResRels<'a>>>,
 }
 
 impl<'a> InfResults<'a> {
@@ -116,7 +114,7 @@ impl<'a> InfResults<'a> {
         Some(true)
     }
 
-    pub fn get_results_multiple(self) -> QueryResult<'a> {
+    pub fn get_results_multiple(self) -> HashMap<QueryPred<'a>, GroundedRes<'a>> {
         self.grounded_queries.into_inner().unwrap()
     }
 
@@ -175,7 +173,7 @@ impl<'a> Answer<'a> {
         }
     }
 
-    pub fn get_results_multiple(self) -> QueryResult<'a> {
+    pub fn get_results_multiple(self) -> HashMap<QueryPred<'a>, GroundedRes<'a>> {
         match self {
             Answer::Results(result) => result.get_results_multiple(),
             _ => panic!("simag: tried to unwrap a result from an error"),
@@ -255,17 +253,21 @@ impl<'a> Inference<'a> {
                 pass.updated = Mutex::new(vec![]);
             }
             let (obj, pred) = match actv_query {
-                ActiveQuery::Class(obj, query_pred, ..) |
-                ActiveQuery::Func(obj, query_pred, ..) => (obj, query_pred),
+                ActiveQuery::Class(obj, pred, ..) |
+                ActiveQuery::Func(obj, pred, ..) => (obj, pred),
             };
-            let mut add_none = true;
-            if let Some(res) = inf.results.grounded_queries.read().unwrap().get(pred) {
-                if res.get(obj).is_some() {
-                    add_none = false;
-                }
-            }
-            if add_none {
+            if pass.valid.lock().unwrap().is_none() {
                 inf.results.add_grounded(obj, pred, None);
+            } else {
+                let l = pass.valid.lock().unwrap();
+                let valid = l.as_ref().unwrap();
+                let mut args = HashMap::with_capacity(valid.args.len());
+                for &(ref k, ref v) in valid.args.iter() {
+                    args.insert(k.clone(), &**v);
+                }
+                let node: &ProofNode = unsafe { &*valid.node };
+                let mut context = ProofResult::new(valid.args.clone(), node);
+                node.proof.solve(inf.kb, Some(args), &mut context);
             }
         }
 
@@ -398,8 +400,8 @@ struct InfTrial<'a> {
     kb: &'a Representation,
     actv: ActiveQuery<'a>,
     updated: Mutex<Vec<bool>>,
-    feedback: Arc<AtomicBool>,
-    valid: Mutex<Option<(*const ProofNode, Rc<ProofArgs>)>>,
+    feedback: AtomicBool,
+    valid: Mutex<Option<ValidAnswer>>,
     nodes: &'a RwLock<HashMap<Rc<String>, Vec<ProofNode>>>,
     queue: &'a RwLock<HashMap<*const ProofNode, HashSet<PArgVal>>>,
     results: &'a InfResults<'a>,
@@ -411,7 +413,7 @@ struct InfTrial<'a> {
 
 #[derive(Clone)]
 enum ActiveQuery<'a> {
-    // `(obj_name, pred_name, fn/cls decl)`
+    // (obj_name, pred_name, fn/cls decl)
     Class(&'a str, &'a str, &'a GroundedClsMemb),
     Func(&'a str, &'a str, &'a GroundedFunc),
 }
@@ -434,13 +436,20 @@ impl<'a> ActiveQuery<'a> {
     }
 }
 
+struct ValidAnswer {
+    node: *const ProofNode,
+    args: Rc<ProofArgs>,
+    newest_grfact: Date,
+}
+
 #[derive(Debug)]
 pub struct ProofResult {
     pub result: Option<bool>,
-    args: Rc<ProofArgs>,
-    node: *const ProofNode,
+    pub newest_grfact: Date,
     pub antecedents: Vec<lang::Grounded>,
     pub grounded: Vec<(lang::Grounded, Date)>,
+    args: Rc<ProofArgs>,
+    node: *const ProofNode,
 }
 
 impl ProofResult {
@@ -449,6 +458,7 @@ impl ProofResult {
             result: None,
             args: args,
             node: node as *const ProofNode,
+            newest_grfact: ::chrono::date::MIN.and_hms(0, 0, 0),
             antecedents: vec![],
             grounded: vec![],
         }
@@ -461,7 +471,7 @@ impl<'a> InfTrial<'a> {
             kb: inf.kb,
             actv: actv_query,
             updated: Mutex::new(vec![]),
-            feedback: Arc::new(AtomicBool::new(true)),
+            feedback: AtomicBool::new(true),
             valid: Mutex::new(None),
             nodes: &inf.nodes,
             queue: &inf.queue,
@@ -547,9 +557,8 @@ impl<'a> InfTrial<'a> {
                             crossbeam::scope(|scope| {
                                 let node_r = &*node as *const ProofNode as usize;
                                 for args in mapped {
-                                    {
-                                        let lock = self.valid.lock().unwrap();
-                                        if lock.is_some() {
+                                    if let Some(ref valid) = *self.valid.lock().unwrap() {
+                                        if valid.node == &*node as *const ProofNode {
                                             break;
                                         }
                                     }
@@ -586,6 +595,32 @@ impl<'a> InfTrial<'a> {
         }
     }
 
+    fn add_as_last_valid(&self,
+                         context: &ProofResult,
+                         r_dict: &mut GroundedRes<'a>,
+                         date: Date,
+                         value: bool) {
+        let query_obj = match self.actv {
+            ActiveQuery::Class(obj, ..) |
+            ActiveQuery::Func(obj, ..) => obj,
+        };
+
+        let mut lock = self.valid.lock().unwrap();
+        if let Some(ref prev_answ) = *lock {
+            print!("PREV: {} | NEW: {}", prev_answ.newest_grfact, context.newest_grfact);
+            if prev_answ.newest_grfact >= context.newest_grfact {
+                return;
+            }
+        }
+        r_dict.insert(query_obj, Some((value, Some(date))));
+        let answ = ValidAnswer {
+            node: context.node,
+            args: context.args.clone(),
+            newest_grfact: context.newest_grfact,
+        };
+        *lock = Some(answ);
+    }
+
     fn add_result(&self, mut context: ProofResult) {
         // add category/function to the object dictionary
         // and to results dict if is the result for the query
@@ -593,7 +628,9 @@ impl<'a> InfTrial<'a> {
             ActiveQuery::Class(obj, query_pred, ..) => (obj, query_pred, false),
             ActiveQuery::Func(obj, query_pred, ..) => (obj, query_pred, true),
         };
-        for subst in context.grounded.drain(..) {
+
+        let grfacts: Vec<_> = context.grounded.drain(..).collect();
+        for subst in grfacts {
             match subst {
                 (lang::Grounded::Function(gf), date) => {
                     let gf: &GroundedFunc = &*gf;
@@ -602,10 +639,11 @@ impl<'a> InfTrial<'a> {
                         if query_func.comparable(gf) {
                             let val = query_func == gf;
                             let mut d = self.results.grounded_queries.write().unwrap();
-                            let mut d = d.entry(query_pred).or_insert(HashMap::new());
-                            if d.contains_key(query_obj) {
+                            let mut gr_results_dict = d.entry(query_pred).or_insert(HashMap::new());
+                            if gr_results_dict.contains_key(query_obj) {
                                 let cond_ok;
-                                if let Some(&Some((_, Some(ref cdate)))) = d.get(query_obj) {
+                                if let Some(&Some((_, Some(ref cdate)))) =
+                                    gr_results_dict.get(query_obj) {
                                     if &date >= cdate {
                                         cond_ok = true;
                                     } else {
@@ -615,14 +653,10 @@ impl<'a> InfTrial<'a> {
                                     cond_ok = true;
                                 }
                                 if cond_ok {
-                                    d.insert(query_obj, Some((val, Some(date))));
-                                    let mut lock = self.valid.lock().unwrap();
-                                    *lock = Some((context.node, context.args.clone()));
+                                    self.add_as_last_valid(&context, gr_results_dict, date, val);
                                 }
                             } else {
-                                d.insert(query_obj, Some((val, Some(date))));
-                                let mut lock = self.valid.lock().unwrap();
-                                *lock = Some((context.node, context.args.clone()));
+                                self.add_as_last_valid(&context, gr_results_dict, date, val);
                             }
                             self.feedback.store(false, Ordering::SeqCst);
                         }
@@ -635,10 +669,11 @@ impl<'a> InfTrial<'a> {
                             let gt: &GroundedClsMemb = &*gt;
                             let val = query_cls == gt;
                             let mut d = self.results.grounded_queries.write().unwrap();
-                            let mut d = d.entry(query_pred).or_insert(HashMap::new());
-                            if d.contains_key(query_obj) {
+                            let mut gr_results_dict = d.entry(query_pred).or_insert(HashMap::new());
+                            if gr_results_dict.contains_key(query_obj) {
                                 let cond_ok;
-                                if let Some(&Some((_, Some(ref cdate)))) = d.get(query_obj) {
+                                if let Some(&Some((_, Some(ref cdate)))) =
+                                    gr_results_dict.get(query_obj) {
                                     if &date >= cdate {
                                         cond_ok = true;
                                     } else {
@@ -648,14 +683,10 @@ impl<'a> InfTrial<'a> {
                                     cond_ok = true;
                                 }
                                 if cond_ok {
-                                    let mut lock = self.valid.lock().unwrap();
-                                    d.insert(query_obj, Some((val, Some(date))));
-                                    *lock = Some((context.node, context.args.clone()));
+                                    self.add_as_last_valid(&context, gr_results_dict, date, val);
                                 }
                             } else {
-                                d.insert(query_obj, Some((val, Some(date))));
-                                let mut lock = self.valid.lock().unwrap();
-                                *lock = Some((context.node, context.args.clone()));
+                                self.add_as_last_valid(&context, gr_results_dict, date, val);
                             }
                             self.feedback.store(false, Ordering::SeqCst);
                         }
@@ -1394,7 +1425,7 @@ mod test {
         ");
         rep.tell(test_03_02).unwrap();
         let q03_02 = "(fat[$Pancho,u=0])".to_string();
-        assert_eq!(rep.ask(q03_02).get_results_single(), Some(true));
+        assert_eq!(rep.ask(q03_02).get_results_single(), Some(true)); //<--
 
         let test_03_03 = String::from("
             (run(time='2015-01-01T00:00:00Z')[$Pancho,u=1])
