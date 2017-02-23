@@ -218,7 +218,7 @@ impl GroundedClsMemb {
                         let t_bms = BmsWrapper::new(false);
                         if let Some(dates) = dates {
                             for (date, val) in dates {
-                                t_bms.new_record(Some(date), val, None)
+                                t_bms.new_record(Some(date), val, None);
                             }
                         } else {
                             t_bms.new_record(None, Some(val as f32), None);
