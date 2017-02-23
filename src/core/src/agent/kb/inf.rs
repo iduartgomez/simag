@@ -607,7 +607,6 @@ impl<'a> InfTrial<'a> {
 
         let mut lock = self.valid.lock().unwrap();
         if let Some(ref prev_answ) = *lock {
-            print!("PREV: {} | NEW: {}", prev_answ.newest_grfact, context.newest_grfact);
             if prev_answ.newest_grfact >= context.newest_grfact {
                 return;
             }

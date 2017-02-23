@@ -150,18 +150,19 @@ impl BmsWrapper {
         }
 
         if data.overwrite.load(Ordering::Acquire) {
-            let mut recs: Vec<*mut BmsRecord> = vec![];
-            for rec in &*data.records.read().unwrap() {
-                recs.push(*rec)
-            }
+            let old_recs;
             {
-                let new_rec = &mut *self.records.write().unwrap();
-                let pre_rec = &mut recs;
-                mem::swap(pre_rec, new_rec);
-                let last = BmsRecord::ptr_as_mut(*pre_rec.last_mut().unwrap());
+                let mut new_recs: Vec<*mut BmsRecord> = vec![];
+                for rec in &*data.records.read().unwrap() {
+                    new_recs.push(*rec)
+                }
+                let prev_recs = &mut *self.records.write().unwrap();
+                let last = BmsRecord::ptr_as_mut(*prev_recs.last_mut().unwrap());
                 last.lock();
+                mem::swap(prev_recs, &mut new_recs);
+                old_recs = new_recs;
             }
-            for rec in recs {
+            for rec in old_recs {
                 let r = BmsRecord::ptr_as_ref(rec);
                 for entry in r.get_old_entries() {
                     ask_processed(entry, &r.date);
@@ -191,18 +192,33 @@ impl BmsWrapper {
             let l = lock.len() - 2;
             BmsRecord::ptr_as_ref(lock[l])
         };
-        if update_rec.date > last_record.date {
-            // new value is more recent, check only the last produced values
-            for entry in last_record.get_old_entries() {
-                ask_processed(entry, &last_record.date);
-            }
-        } else if update_rec.date < last_record.date {
+        if update_rec.date < last_record.date {
             // new value is older, in face of new information all previously
             // produced knowledge must be checked to see if it still holds true
-        } else if update_rec.value != last_record.value {
+            let old_recs;
+            {
+                let mut new_recs: Vec<*mut BmsRecord> = vec![];
+                let records = &mut *self.records.write().unwrap();
+                let newest_rec = records.pop().unwrap();
+                new_recs.push(newest_rec);
+                mem::swap(records, &mut new_recs);
+                old_recs = new_recs;
+            }
+            for rec in old_recs {
+                let rec = BmsRecord::ptr_as_ref(rec);
+                for entry in rec.get_old_entries() {
+                    ask_processed(entry, &last_record.date);
+                }
+            }
+        } else if update_rec.date > last_record.date || update_rec.value != last_record.value {
+            // new value is more recent, check only the last produced values
+            //
             // if both dates are the same there is an incongruency
             // replace previous record value and check that all produced knowledge
             // with that value still holds true
+            for entry in last_record.get_old_entries() {
+                ask_processed(entry, &last_record.date);
+            }
         }
     }
 
