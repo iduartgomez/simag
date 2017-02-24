@@ -39,7 +39,6 @@ pub struct Inference<'a> {
     nodes: RwLock<HashMap<Rc<String>, Vec<ProofNode>>>,
     queue: RwLock<HashMap<*const ProofNode, HashSet<PArgVal>>>,
     results: InfResults<'a>,
-    args: RwLock<Vec<Rc<ProofArgs>>>,
     _available_threads: RwLock<u32>,
 }
 
@@ -217,7 +216,6 @@ impl<'a> Inference<'a> {
             nodes: RwLock::new(HashMap::new()),
             queue: RwLock::new(HashMap::new()),
             results: InfResults::new(),
-            args: RwLock::new(vec![]),
             _available_threads: RwLock::new(4_u32),
         }))
     }
@@ -401,11 +399,10 @@ struct InfTrial<'a> {
     actv: ActiveQuery<'a>,
     updated: Mutex<Vec<bool>>,
     feedback: AtomicBool,
-    valid: Mutex<Option<ValidAnswer>>,
+    valid: Mutex<Option<ValidAnswer<'a>>>,
     nodes: &'a RwLock<HashMap<Rc<String>, Vec<ProofNode>>>,
     queue: &'a RwLock<HashMap<*const ProofNode, HashSet<PArgVal>>>,
     results: &'a InfResults<'a>,
-    args: &'a RwLock<Vec<Rc<ProofArgs>>>,
     depth: usize,
     depth_cnt: RwLock<usize>,
     _available_threads: RwLock<u32>,
@@ -436,24 +433,24 @@ impl<'a> ActiveQuery<'a> {
     }
 }
 
-struct ValidAnswer {
+struct ValidAnswer<'a> {
     node: *const ProofNode,
-    args: Rc<ProofArgs>,
+    args: Rc<ProofArgs<'a>>,
     newest_grfact: Date,
 }
 
 #[derive(Debug)]
-pub struct ProofResult {
+pub struct ProofResult<'a> {
     pub result: Option<bool>,
     pub newest_grfact: Date,
     pub antecedents: Vec<lang::Grounded>,
     pub grounded: Vec<(lang::Grounded, Date)>,
-    args: Rc<ProofArgs>,
+    args: Rc<ProofArgs<'a>>,
     node: *const ProofNode,
 }
 
-impl ProofResult {
-    fn new(args: Rc<ProofArgs>, node: &ProofNode) -> ProofResult {
+impl<'a> ProofResult<'a> {
+    fn new(args: Rc<ProofArgs<'a>>, node: &ProofNode) -> ProofResult<'a> {
         ProofResult {
             result: None,
             args: args,
@@ -476,7 +473,6 @@ impl<'a> InfTrial<'a> {
             nodes: &inf.nodes,
             queue: &inf.queue,
             results: &inf.results,
-            args: &inf.args,
             depth: inf.depth,
             depth_cnt: RwLock::new(0_usize),
             _available_threads: RwLock::new(4_u32),
@@ -502,7 +498,7 @@ impl<'a> InfTrial<'a> {
                 }
             };
             if !args_done {
-                let mut n_args: HashMap<Rc<lang::Var>, &VarAssignment> =
+                let mut n_args: HashMap<&lang::Var, &VarAssignment> =
                     HashMap::with_capacity(args.len());
                 for &(ref k, ref v) in args.iter() {
                     n_args.insert(k.clone(), &*v);
@@ -517,8 +513,6 @@ impl<'a> InfTrial<'a> {
                         lock1.entry(node_r)
                             .or_insert(HashSet::new())
                             .insert(arg_hash_val);
-                        let mut lock3 = inf.args.write().unwrap();
-                        lock3.push(args.clone());
                     }
                     inf.add_result(context);
                 }
@@ -604,17 +598,21 @@ impl<'a> InfTrial<'a> {
             ActiveQuery::Class(obj, ..) |
             ActiveQuery::Func(obj, ..) => obj,
         };
-
         let mut lock = self.valid.lock().unwrap();
         if let Some(ref prev_answ) = *lock {
             if prev_answ.newest_grfact >= context.newest_grfact {
                 return;
             }
         }
+        let mut n_args = vec![];
+        for &(ref v, ref a) in context.args.iter() {
+            let v = unsafe { &*(*v as *const lang::Var) as &'a lang::Var };
+            n_args.push((v, a.clone()));
+        }
         r_dict.insert(query_obj, Some((value, Some(date))));
         let answ = ValidAnswer {
             node: context.node,
-            args: context.args.clone(),
+            args: Rc::new(n_args),
             newest_grfact: context.newest_grfact,
         };
         *lock = Some(answ);
@@ -627,8 +625,8 @@ impl<'a> InfTrial<'a> {
             ActiveQuery::Class(obj, query_pred, ..) => (obj, query_pred, false),
             ActiveQuery::Func(obj, query_pred, ..) => (obj, query_pred, true),
         };
-
         let grfacts: Vec<_> = context.grounded.drain(..).collect();
+        let context_ref = &context;
         for subst in grfacts {
             match subst {
                 (lang::Grounded::Function(gf), date) => {
@@ -652,10 +650,10 @@ impl<'a> InfTrial<'a> {
                                     cond_ok = true;
                                 }
                                 if cond_ok {
-                                    self.add_as_last_valid(&context, gr_results_dict, date, val);
+                                    self.add_as_last_valid(context_ref, gr_results_dict, date, val);
                                 }
                             } else {
-                                self.add_as_last_valid(&context, gr_results_dict, date, val);
+                                self.add_as_last_valid(context_ref, gr_results_dict, date, val);
                             }
                             self.feedback.store(false, Ordering::SeqCst);
                         }
@@ -682,10 +680,10 @@ impl<'a> InfTrial<'a> {
                                     cond_ok = true;
                                 }
                                 if cond_ok {
-                                    self.add_as_last_valid(&context, gr_results_dict, date, val);
+                                    self.add_as_last_valid(context_ref, gr_results_dict, date, val);
                                 }
                             } else {
-                                self.add_as_last_valid(&context, gr_results_dict, date, val);
+                                self.add_as_last_valid(context_ref, gr_results_dict, date, val);
                             }
                             self.feedback.store(false, Ordering::SeqCst);
                         }
@@ -736,10 +734,10 @@ impl<'a> InfTrial<'a> {
     }
 }
 
-pub fn meet_sent_req(rep: &Representation,
-                     req: &HashMap<Rc<lang::Var>, Vec<&lang::Assert>>)
-                     -> Option<HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>>> {
-    let mut results: HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>> = HashMap::new();
+pub fn meet_sent_req<'a>(rep: &Representation,
+                         req: &HashMap<&'a lang::Var, Vec<&lang::Assert>>)
+                         -> Option<HashMap<&'a lang::Var, Vec<Rc<VarAssignment>>>> {
+    let mut results: HashMap<&lang::Var, Vec<Rc<VarAssignment>>> = HashMap::new();
     for (var, asserts) in req.iter() {
         if asserts.is_empty() {
             continue;
@@ -830,18 +828,18 @@ pub fn meet_sent_req(rep: &Representation,
     Some(results)
 }
 
-type ProofArgs = Vec<(Rc<lang::Var>, Rc<VarAssignment>)>;
+type ProofArgs<'a> = Vec<(&'a lang::Var, Rc<VarAssignment>)>;
 
 #[derive(Debug)]
-pub struct ArgsProduct {
-    indexes: HashMap<Rc<lang::Var>, (usize, bool)>,
-    input: HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>>,
-    curr: Rc<lang::Var>,
+pub struct ArgsProduct<'a> {
+    indexes: HashMap<&'a lang::Var, (usize, bool)>,
+    input: HashMap<&'a lang::Var, Vec<Rc<VarAssignment>>>,
+    curr: &'a lang::Var,
     done: HashSet<Vec<(*const lang::Var, Rc<String>)>>,
 }
 
-impl ArgsProduct {
-    pub fn product(input: HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>>) -> Option<ArgsProduct> {
+impl<'a> ArgsProduct<'a> {
+    pub fn product(input: HashMap<&'a lang::Var, Vec<Rc<VarAssignment>>>) -> Option<ArgsProduct> {
         let mut indexes = HashMap::new();
         let mut curr = None;
         let mut first = true;
@@ -865,17 +863,17 @@ impl ArgsProduct {
     }
 }
 
-impl ::std::iter::Iterator for ArgsProduct {
-    type Item = ProofArgs;
+impl<'a> ::std::iter::Iterator for ArgsProduct<'a> {
+    type Item = ProofArgs<'a>;
 
-    fn next(&mut self) -> Option<ProofArgs> {
+    fn next(&mut self) -> Option<ProofArgs<'a>> {
         loop {
             let mut row_0 = vec![];
             let mut val = vec![];
             for (k1, v1) in &self.input {
                 let idx_1 = self.indexes[k1];
                 let assign = v1[idx_1.0].clone();
-                val.push((&**k1 as *const lang::Var, assign.name.clone()));
+                val.push((*k1 as *const lang::Var, assign.name.clone()));
                 row_0.push((k1.clone(), assign));
             }
             if self.completed_iter() {
@@ -888,7 +886,7 @@ impl ::std::iter::Iterator for ArgsProduct {
     }
 }
 
-impl ArgsProduct {
+impl<'a> ArgsProduct<'a> {
     fn completed_iter(&mut self) -> bool {
         let mut max = 0;
         for v in self.indexes.values() {
@@ -941,10 +939,10 @@ impl ArgsProduct {
     }
 }
 
-fn arg_hash_val(input: &[(Rc<lang::Var>, Rc<VarAssignment>)]) -> Vec<usize> {
+fn arg_hash_val(input: &[(&lang::Var, Rc<VarAssignment>)]) -> Vec<usize> {
     let mut v = vec![];
-    for &(ref var, ref assigned) in input {
-        v.push(&**var as *const lang::Var as usize);
+    for &(var, ref assigned) in input {
+        v.push(var as *const lang::Var as usize);
         v.push(&*assigned.name as *const String as usize);
     }
     v
@@ -1027,19 +1025,19 @@ pub enum QueryInput {
 }
 
 #[derive(Debug)]
-struct QueryProcessed<'a> {
-    cls_queries_free: HashMap<Rc<lang::Var>, Vec<&'a lang::FreeClsMemb>>,
+struct QueryProcessed<'b> {
+    cls_queries_free: HashMap<Rc<lang::Var>, Vec<&'b lang::FreeClsMemb>>,
     cls_queries_grounded: HashMap<Rc<String>, Vec<Rc<lang::GroundedClsMemb>>>,
-    cls_memb_query: HashMap<Rc<lang::Var>, Vec<&'a lang::FreeClsOwner>>,
-    func_queries_free: HashMap<Rc<lang::Var>, Vec<&'a lang::FuncDecl>>,
+    cls_memb_query: HashMap<Rc<lang::Var>, Vec<&'b lang::FreeClsOwner>>,
+    func_queries_free: HashMap<Rc<lang::Var>, Vec<&'b lang::FuncDecl>>,
     func_queries_grounded: Vec<Rc<lang::GroundedFunc>>,
-    func_memb_query: HashMap<Rc<lang::Var>, Vec<&'a lang::FuncDecl>>,
+    func_memb_query: HashMap<Rc<lang::Var>, Vec<&'b lang::FuncDecl>>,
     cls: Vec<Rc<lang::ClassDecl>>,
     func: Vec<Rc<lang::FuncDecl>>,
 }
 
-impl<'a> QueryProcessed<'a> {
-    fn new() -> QueryProcessed<'a> {
+impl<'b> QueryProcessed<'b> {
+    fn new() -> QueryProcessed<'b> {
         QueryProcessed {
             cls_queries_free: HashMap::new(),
             cls_queries_grounded: HashMap::new(),
@@ -1052,7 +1050,7 @@ impl<'a> QueryProcessed<'a> {
         }
     }
 
-    fn get_query(mut self, prequery: QueryInput) -> Result<QueryProcessed<'a>, ()> {
+    fn get_query(mut self, prequery: QueryInput) -> Result<QueryProcessed<'b>, ()> {
 
         fn assert_memb(query: &mut QueryProcessed, cdecl: Rc<lang::ClassDecl>) -> Result<(), ()> {
             let cdecl = unsafe { &*(&*cdecl as *const lang::ClassDecl) as &lang::ClassDecl };
@@ -1172,7 +1170,7 @@ impl<'a> QueryProcessed<'a> {
     }
 
     #[inline]
-    fn push_to_clsquery_free(&mut self, term: Rc<lang::Var>, cls: &'a lang::FreeClsMemb) {
+    fn push_to_clsquery_free(&mut self, term: Rc<lang::Var>, cls: &'b lang::FreeClsMemb) {
         self.cls_queries_free.entry(term).or_insert(vec![]).push(cls);
     }
 
@@ -1182,17 +1180,17 @@ impl<'a> QueryProcessed<'a> {
     }
 
     #[inline]
-    fn push_to_fnquery_free(&mut self, term: Rc<lang::Var>, func: &'a lang::FuncDecl) {
+    fn push_to_fnquery_free(&mut self, term: Rc<lang::Var>, func: &'b lang::FuncDecl) {
         self.func_queries_free.entry(term).or_insert(vec![]).push(func);
     }
 
     #[inline]
-    fn ask_class_memb(&mut self, term: &'a lang::FreeClsOwner) {
+    fn ask_class_memb(&mut self, term: &'b lang::FreeClsOwner) {
         self.cls_memb_query.entry(term.parent.clone()).or_insert(vec![]).push(term);
     }
 
     #[inline]
-    fn ask_relationships(&mut self, term: &'a lang::FuncDecl) {
+    fn ask_relationships(&mut self, term: &'b lang::FuncDecl) {
         self.func_memb_query.entry(term.get_parent().get_var()).or_insert(vec![]).push(term);
     }
 }

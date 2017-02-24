@@ -102,12 +102,12 @@ impl<'a> LogSentence {
             let rhs_v: Vec<_> = rhs.difference(&lhs)
                 .map(|p| unsafe { &**p })
                 .filter(|p| p.is_atom())
-                .map(|p| p.pred_ref())
+                .map(|p| p.clone_pred())
                 .collect();
             let lhs_v: Vec<_> = lhs.iter()
                 .map(|p| unsafe { &**p })
                 .filter(|p| p.is_atom())
-                .map(|p| p.pred_ref())
+                .map(|p| p.clone_pred())
                 .collect();
             sent.predicates = (lhs_v, rhs_v);
             sent.iexpr_op_arg_validation()?;
@@ -188,7 +188,7 @@ impl<'a> LogSentence {
 
     pub fn solve(&self,
                  agent: &agent::Representation,
-                 assignments: Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
+                 assignments: Option<HashMap<&Var, &agent::VarAssignment>>,
                  context: &mut agent::ProofResult) {
         let root = self.root.clone();
         let time_assign = self.get_time_assignments(agent, &assignments);
@@ -221,8 +221,8 @@ impl<'a> LogSentence {
 
     fn get_time_assignments(&self,
                             agent: &agent::Representation,
-                            var_assign: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
-                            -> HashMap<Rc<Var>, Rc<BmsWrapper>> {
+                            var_assign: &Option<HashMap<&Var, &agent::VarAssignment>>)
+                            -> HashMap<&Var, Rc<BmsWrapper>> {
         let mut time_assign = HashMap::new();
         'outer: for var in self.vars.as_ref().unwrap() {
             match var.kind {
@@ -233,14 +233,14 @@ impl<'a> LogSentence {
                             if dates.is_none() {
                                 continue 'outer;
                             }
-                            time_assign.insert(var.clone(), dates.unwrap());
+                            time_assign.insert(&**var, dates.unwrap());
                             continue 'outer;
                         }
                     }
                 }
                 VarKind::TimeDecl => {
                     let dates = Rc::new(var.get_dates());
-                    time_assign.insert(var.clone(), dates);
+                    time_assign.insert(&**var, dates);
                 }
                 _ => {}
             }
@@ -253,7 +253,7 @@ impl<'a> LogSentence {
         let mut preds = vec![];
         for p in particles {
             if p.is_atom() {
-                preds.push(p.pred_ref())
+                preds.push(p.clone_pred());
             }
         }
         (vars.unwrap(), preds)
@@ -285,7 +285,7 @@ impl<'a> LogSentence {
     }
 
     pub fn get_lhs_predicates(&self) -> LhsPreds {
-        LhsPreds::new(self.root.as_ref().unwrap().get_next(0).unwrap(), self)
+        LhsPreds::new(&*self.root.as_ref().unwrap().get_next(0).unwrap(), self)
     }
 
     fn add_var(&mut self, var: Rc<Var>) {
@@ -328,7 +328,7 @@ impl<'a> LogSentence {
 }
 
 pub struct LhsPreds<'a> {
-    preds: Vec<Vec<Rc<Assert>>>,
+    preds: Vec<Vec<&'a Assert>>,
     index: Vec<(usize, bool)>,
     curr: usize,
     sent: &'a LogSentence,
@@ -336,7 +336,7 @@ pub struct LhsPreds<'a> {
 }
 
 impl<'a> LhsPreds<'a> {
-    fn new(lhs_root: Rc<Particle>, sent: &'a LogSentence) -> LhsPreds<'a> {
+    fn new(lhs_root: &'a Particle, sent: &'a LogSentence) -> LhsPreds<'a> {
         // visit each node and find the OR statements
         let mut f = vec![];
         let mut l = vec![];
@@ -354,18 +354,18 @@ impl<'a> LhsPreds<'a> {
         }
     }
 
-    fn dig(prev: Rc<Particle>, f: &mut Vec<Vec<Rc<Assert>>>, curr: &mut Vec<Rc<Assert>>) {
+    fn dig(prev: &'a Particle, f: &mut Vec<Vec<&'a Assert>>, curr: &mut Vec<&'a Assert>) {
         // break up all the assertments into groups of one or more members
         // depending on whether they are childs of an OR node or not
         if let Some(lhs) = prev.get_next(0) {
             if prev.is_disjunction() {
                 LhsPreds::dig(lhs, f, curr);
-                LhsPreds::dig(prev.get_next(1).unwrap(), f, curr);
+                LhsPreds::dig(&*prev.get_next(1).unwrap(), f, curr);
             } else {
                 let mut nlhs = vec![];
                 let mut nrhs = vec![];
                 LhsPreds::dig(lhs, f, &mut nlhs);
-                LhsPreds::dig(prev.get_next(1).unwrap(), f, &mut nrhs);
+                LhsPreds::dig(&*prev.get_next(1).unwrap(), f, &mut nrhs);
                 if !nrhs.is_empty() {
                     f.push(nrhs);
                 }
@@ -401,8 +401,7 @@ impl<'a> ::std::iter::Iterator for LhsPreds<'a> {
 
             let mut comb = vec![];
             let mut row = vec![];
-            let preds: &[Vec<Rc<Assert>>] = unsafe { &*(&*self.preds as *const [_]) as &'a [_] };
-            for (i, v) in preds.iter().enumerate() {
+            for (i, v) in self.preds.iter().enumerate() {
                 let idx = self.index[i].0;
                 comb.push(idx);
                 row.push(&*v[idx]);
@@ -441,10 +440,10 @@ pub struct SentVarReq<'a> {
 }
 
 impl<'a> ::std::iter::Iterator for SentVarReq<'a> {
-    type Item = HashMap<Rc<Var>, Vec<&'a Assert>>;
+    type Item = HashMap<&'a Var, Vec<&'a Assert>>;
     /// Iterates the permutations of the sentence variable requeriments.
     /// This just takes into consideration the LHS variables.
-    fn next(&mut self) -> Option<HashMap<Rc<Var>, Vec<&'a Assert>>> {
+    fn next(&mut self) -> Option<HashMap<&'a Var, Vec<&'a Assert>>> {
         if let Some(picks) = self.iter.next() {
             let mut requeriments = HashMap::new();
             if self.iter.sent.vars.is_none() {
@@ -457,7 +456,7 @@ impl<'a> ::std::iter::Iterator for SentVarReq<'a> {
                         var_req.push(*a)
                     }
                 }
-                requeriments.insert(var.clone(), var_req);
+                requeriments.insert(&**var, var_req);
             }
             Some(requeriments)
         } else {
@@ -549,8 +548,8 @@ impl LogicIndCond {
     #[inline]
     fn solve(&self,
              agent: &agent::Representation,
-             assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+             assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
+             time_assign: &HashMap<&Var, Rc<BmsWrapper>>,
              context: &mut agent::ProofResult)
              -> Option<bool> {
         if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign, context) {
@@ -563,8 +562,8 @@ impl LogicIndCond {
     #[inline]
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                  time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+                  assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
+                  time_assign: &HashMap<&Var, Rc<BmsWrapper>>,
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
         if self.next_rhs.is_disjunction() || !rhs {
@@ -572,11 +571,11 @@ impl LogicIndCond {
         }
     }
 
-    fn get_next(&self, pos: usize) -> Rc<Particle> {
+    fn get_next(&self, pos: usize) -> &Particle {
         if pos == 0 {
-            self.next_lhs.clone()
+            &*self.next_lhs
         } else {
-            self.next_rhs.clone()
+            &*self.next_rhs
         }
     }
 }
@@ -606,8 +605,8 @@ impl LogicEquivalence {
     #[inline]
     fn solve(&self,
              agent: &agent::Representation,
-             assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+             assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
+             time_assign: &HashMap<&Var, Rc<BmsWrapper>>,
              context: &mut agent::ProofResult)
              -> Option<bool> {
         let n0_res;
@@ -637,11 +636,11 @@ impl LogicEquivalence {
         }
     }
 
-    fn get_next(&self, pos: usize) -> Rc<Particle> {
+    fn get_next(&self, pos: usize) -> &Particle {
         if pos == 0 {
-            self.next_lhs.clone()
+            &*self.next_lhs
         } else {
-            self.next_rhs.clone()
+            &*self.next_rhs
         }
     }
 }
@@ -671,8 +670,8 @@ impl LogicImplication {
     #[inline]
     fn solve(&self,
              agent: &agent::Representation,
-             assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+             assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
+             time_assign: &HashMap<&Var, Rc<BmsWrapper>>,
              context: &mut agent::ProofResult)
              -> Option<bool> {
         let n0_res;
@@ -702,11 +701,11 @@ impl LogicImplication {
         }
     }
 
-    fn get_next(&self, pos: usize) -> Rc<Particle> {
+    fn get_next(&self, pos: usize) -> &Particle {
         if pos == 0 {
-            self.next_lhs.clone()
+            &*self.next_lhs
         } else {
-            self.next_rhs.clone()
+            &*self.next_rhs
         }
     }
 }
@@ -736,8 +735,8 @@ impl LogicConjunction {
     #[inline]
     fn solve(&self,
              agent: &agent::Representation,
-             assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+             assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
+             time_assign: &HashMap<&Var, Rc<BmsWrapper>>,
              context: &mut agent::ProofResult)
              -> Option<bool> {
         if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign, context) {
@@ -760,19 +759,19 @@ impl LogicConjunction {
     #[inline]
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                  time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+                  assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
+                  time_assign: &HashMap<&Var, Rc<BmsWrapper>>,
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
         self.next_rhs.substitute(agent, assignments, time_assign, context, rhs);
         self.next_lhs.substitute(agent, assignments, time_assign, context, rhs);
     }
 
-    fn get_next(&self, pos: usize) -> Rc<Particle> {
+    fn get_next(&self, pos: usize) -> &Particle {
         if pos == 0 {
-            self.next_lhs.clone()
+            &*self.next_lhs
         } else {
-            self.next_rhs.clone()
+            &*self.next_rhs
         }
     }
 }
@@ -802,8 +801,8 @@ impl LogicDisjunction {
     #[inline]
     fn solve(&self,
              agent: &agent::Representation,
-             assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+             assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
+             time_assign: &HashMap<&Var, Rc<BmsWrapper>>,
              context: &mut agent::ProofResult)
              -> Option<bool> {
         let n0_res;
@@ -836,8 +835,8 @@ impl LogicDisjunction {
     #[inline]
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                  time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+                  assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
+                  time_assign: &HashMap<&Var, Rc<BmsWrapper>>,
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
         if *rhs {
@@ -847,11 +846,11 @@ impl LogicDisjunction {
         }
     }
 
-    fn get_next(&self, pos: usize) -> Rc<Particle> {
+    fn get_next(&self, pos: usize) -> &Particle {
         if pos == 0 {
-            self.next_lhs.clone()
+            &*self.next_lhs
         } else {
-            self.next_rhs.clone()
+            &*self.next_rhs
         }
     }
 }
@@ -877,8 +876,8 @@ impl LogicAtom {
     #[inline]
     fn solve(&self,
              agent: &agent::Representation,
-             assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+             assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
+             time_assign: &HashMap<&Var, Rc<BmsWrapper>>,
              context: &mut agent::ProofResult)
              -> Option<bool> {
         if let Some(res) = self.pred.grounded_eq(agent, assignments, time_assign, context) {
@@ -891,8 +890,8 @@ impl LogicAtom {
     #[inline]
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                  time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+                  assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
+                  time_assign: &HashMap<&Var, Rc<BmsWrapper>>,
                   context: &mut agent::ProofResult) {
         self.pred.substitute(agent, assignments, time_assign, context)
     }
@@ -927,8 +926,8 @@ impl Particle {
     #[inline]
     fn solve(&self,
              agent: &agent::Representation,
-             assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-             time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+             assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
+             time_assign: &HashMap<&Var, Rc<BmsWrapper>>,
              context: &mut agent::ProofResult)
              -> Option<bool> {
         match *self {
@@ -944,8 +943,8 @@ impl Particle {
     #[inline]
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                  time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+                  assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
+                  time_assign: &HashMap<&Var, Rc<BmsWrapper>>,
                   context: &mut agent::ProofResult,
                   rhs: &bool) {
         match *self {
@@ -964,7 +963,7 @@ impl Particle {
     }
 
     #[inline]
-    fn get_next(&self, pos: usize) -> Option<Rc<Particle>> {
+    fn get_next(&self, pos: usize) -> Option<&Particle> {
         match *self {
             Particle::Conjunction(ref p) => Some(p.get_next(pos)),
             Particle::Disjunction(ref p) => Some(p.get_next(pos)),
@@ -975,8 +974,57 @@ impl Particle {
         }
     }
 
+    fn get_next_copy(&self, pos: usize) -> Option<Rc<Particle>> {
+        match *self {
+            Particle::Conjunction(ref p) => {
+                if pos == 0 {
+                    Some(p.next_lhs.clone())
+                } else {
+                    Some(p.next_rhs.clone())
+                }
+            } 
+            Particle::Disjunction(ref p) => {
+                if pos == 0 {
+                    Some(p.next_lhs.clone())
+                } else {
+                    Some(p.next_rhs.clone())
+                }
+            }
+            Particle::Implication(ref p) => {
+                if pos == 0 {
+                    Some(p.next_lhs.clone())
+                } else {
+                    Some(p.next_rhs.clone())
+                }
+            }
+            Particle::Equivalence(ref p) => {
+                if pos == 0 {
+                    Some(p.next_lhs.clone())
+                } else {
+                    Some(p.next_rhs.clone())
+                }
+            }
+            Particle::IndConditional(ref p) => {
+                if pos == 0 {
+                    Some(p.next_lhs.clone())
+                } else {
+                    Some(p.next_rhs.clone())
+                }
+            }
+            Particle::Atom(_) => None,
+        }
+    }
+
     #[inline]
-    fn pred_ref(&self) -> Rc<Assert> {
+    fn pred_ref(&self) -> &Assert {
+        match *self {
+            Particle::Atom(ref p) => &*p.pred,
+            _ => panic!(),
+        }
+    }
+
+    #[inline]
+    fn clone_pred(&self) -> Rc<Assert> {
         match *self {
             Particle::Atom(ref p) => p.pred.clone(),
             _ => panic!(),
@@ -1395,12 +1443,12 @@ fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), 
     }
 
     fn get_lhs_preds(p: Rc<Particle>, lhs: &mut Vec<Rc<Particle>>) {
-        if let Some(n1_0) = p.get_next(0) {
+        if let Some(n1_0) = p.get_next_copy(0) {
             if let Particle::Atom(_) = *n1_0 {
                 lhs.push(n1_0.clone());
             }
             get_lhs_preds(n1_0, lhs);
-            let n1_1 = p.get_next(1).unwrap();
+            let n1_1 = p.get_next_copy(1).unwrap();
             if let Particle::Atom(_) = *n1_1 {
                 lhs.push(n1_1.clone());
             }
@@ -1415,7 +1463,7 @@ fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), 
         Particle::IndConditional(_) => {}
         _ => return Err(LogSentErr::IExprNotIcond),
     }
-    if let Some(n1_0) = first.get_next(0) {
+    if let Some(n1_0) = first.get_next_copy(0) {
         if let Particle::IndConditional(_) = *n1_0 {
             return Err(LogSentErr::IExprICondLHS);
         }

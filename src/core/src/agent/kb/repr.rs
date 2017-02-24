@@ -30,6 +30,9 @@ pub struct Representation {
     pub classes: RwLock<HashMap<Rc<String>, Class>>,
 }
 
+unsafe impl ::std::marker::Sync for Representation {}
+unsafe impl ::std::marker::Send for Representation {}
+
 impl Representation {
     pub fn new() -> Representation {
         Representation {
@@ -324,11 +327,11 @@ impl Representation {
         }
 
         let iter_cls_candidates = |cls_decl: &lang::ClassDecl,
-                                   candidates: &HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>>| {
+                                   candidates: &HashMap<&lang::Var, Vec<Rc<VarAssignment>>>| {
             for a in cls_decl.get_args() {
                 match *a {
                     lang::Predicate::FreeClsMemb(ref free) => {
-                        if let Some(ls) = candidates.get(&free.get_var()) {
+                        if let Some(ls) = candidates.get(&*free.get_var()) {
                             for entity in ls {
                                 let grfact =
                                     Rc::new(GroundedClsMemb::from_free(free, entity.name.clone()));
@@ -341,7 +344,7 @@ impl Representation {
             }
         };
         let iter_func_candidates = |func_decl: &lang::FuncDecl,
-                                    candidates: &HashMap<Rc<lang::Var>, Vec<Rc<VarAssignment>>>| {
+                                    candidates: &HashMap<&lang::Var, Vec<Rc<VarAssignment>>>| {
             let mapped = ArgsProduct::product(candidates.clone());
             if let Some(mapped) = mapped {
                 let f = HashMap::new();

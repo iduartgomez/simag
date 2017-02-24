@@ -474,8 +474,8 @@ impl ::std::cmp::Eq for GroundedFunc {}
 
 impl GroundedFunc {
     pub fn from_free(free: &FuncDecl,
-                     assignments: &HashMap<Rc<Var>, &agent::VarAssignment>,
-                     time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>)
+                     assignments: &HashMap<&Var, &agent::VarAssignment>,
+                     time_assign: &HashMap<&Var, Rc<BmsWrapper>>)
                      -> Result<GroundedFunc, ()> {
         if !free.variant.is_relational() || free.args.as_ref().unwrap().len() < 2 {
             return Err(());
@@ -491,7 +491,7 @@ impl GroundedFunc {
         for (i, a) in free.args.as_ref().unwrap().iter().enumerate() {
             let n_a = match *a {
                 Predicate::FreeClsMemb(ref free) => {
-                    if let Some(entity) = assignments.get(&free.term) {
+                    if let Some(entity) = assignments.get(&*free.term) {
                         GroundedClsMemb::from_free(free, entity.name.clone())
                     } else {
                         return Err(());
@@ -808,7 +808,7 @@ impl Assert {
     #[inline]
     pub fn get_dates(&self,
                      agent: &agent::Representation,
-                     var_assign: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
+                     var_assign: &Option<HashMap<&Var, &agent::VarAssignment>>)
                      -> Option<Rc<BmsWrapper>> {
         match *self {
             Assert::FuncDecl(ref f) => f.get_dates(agent, var_assign),
@@ -867,8 +867,8 @@ impl Assert {
     #[inline]
     pub fn grounded_eq(&self,
                        agent: &agent::Representation,
-                       assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                       time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+                       assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
+                       time_assign: &HashMap<&Var, Rc<BmsWrapper>>,
                        context: &mut agent::ProofResult)
                        -> Option<bool> {
         match *self {
@@ -880,8 +880,8 @@ impl Assert {
     #[inline]
     pub fn substitute(&self,
                       agent: &agent::Representation,
-                      assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                      time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+                      assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
+                      time_assign: &HashMap<&Var, Rc<BmsWrapper>>,
                       context: &mut agent::ProofResult) {
         match *self {
             Assert::FuncDecl(ref f) => f.substitute(agent, assignments, time_assign, context),
@@ -1036,7 +1036,7 @@ impl<'a> FuncDecl {
     }
 
     pub fn get_own_time_data(&self,
-                             assignments: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+                             assignments: &HashMap<&Var, Rc<BmsWrapper>>,
                              value: Option<f32>)
                              -> BmsWrapper {
         if self.op_args.is_none() {
@@ -1083,7 +1083,7 @@ impl<'a> FuncDecl {
 
     fn get_dates(&self,
                  agent: &agent::Representation,
-                 var_assign: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
+                 var_assign: &Option<HashMap<&Var, &agent::VarAssignment>>)
                  -> Option<Rc<BmsWrapper>> {
         if self.is_grounded() {
             let sbj = self.args.as_ref().unwrap();
@@ -1102,7 +1102,7 @@ impl<'a> FuncDecl {
             if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, &f) {
                 for arg in self.get_args() {
                     if let Predicate::FreeClsMemb(ref arg) = *arg {
-                        if let Some(entity) = assignments.get(&arg.term) {
+                        if let Some(entity) = assignments.get(&*arg.term) {
                             if let Some(current) = entity.get_relationship(&grfunc) {
                                 return Some(current.bms.clone());
                             }
@@ -1288,8 +1288,8 @@ impl<'a> FuncDecl {
     /// assignments must be provided or will return None or panic in worst case.
     fn grounded_eq(&self,
                    agent: &agent::Representation,
-                   assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                   time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+                   assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
+                   time_assign: &HashMap<&Var, Rc<BmsWrapper>>,
                    context: &mut agent::ProofResult)
                    -> Option<bool> {
         match self.variant {
@@ -1309,7 +1309,7 @@ impl<'a> FuncDecl {
             if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, time_assign) {
                 for arg in self.get_args() {
                     if let Predicate::FreeClsMemb(ref arg) = *arg {
-                        if let Some(entity) = assignments.get(&arg.term) {
+                        if let Some(entity) = assignments.get(&*arg.term) {
                             if let Some(current) = entity.get_relationship(&grfunc) {
                                 context.antecedents.push(Grounded::Function(current.clone()));
                                 if let Some(date) = current.bms
@@ -1330,7 +1330,7 @@ impl<'a> FuncDecl {
         }
     }
 
-    fn time_resolution(&self, assignments: &HashMap<Rc<Var>, Rc<BmsWrapper>>) -> Option<bool> {
+    fn time_resolution(&self, assignments: &HashMap<&Var, Rc<BmsWrapper>>) -> Option<bool> {
         for arg in self.op_args.as_ref().unwrap() {
             if !arg.compare_time_args(assignments) {
                 return Some(false);
@@ -1341,8 +1341,8 @@ impl<'a> FuncDecl {
 
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                  time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+                  assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
+                  time_assign: &HashMap<&Var, Rc<BmsWrapper>>,
                   context: &mut agent::ProofResult) {
         if let Ok(grfunc) = GroundedFunc::from_free(self,
                                                     assignments.as_ref().unwrap(),
@@ -1412,7 +1412,7 @@ impl<'a> ClassDecl {
     }
 
     pub fn get_own_time_data(&self,
-                             assignments: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+                             assignments: &HashMap<&Var, Rc<BmsWrapper>>,
                              value: Option<f32>)
                              -> BmsWrapper {
         if self.op_args.is_none() {
@@ -1459,7 +1459,7 @@ impl<'a> ClassDecl {
 
     fn get_dates(&self,
                  agent: &agent::Representation,
-                 var_assign: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>)
+                 var_assign: &Option<HashMap<&Var, &agent::VarAssignment>>)
                  -> Option<Rc<BmsWrapper>> {
         let arg = &self.args[0];
         match *arg {
@@ -1467,7 +1467,7 @@ impl<'a> ClassDecl {
                 if var_assign.is_none() {
                     return None;
                 }
-                if let Some(entity) = var_assign.as_ref().unwrap().get(&free.term) {
+                if let Some(entity) = var_assign.as_ref().unwrap().get(&*free.term) {
                     if let Some(grounded) = entity.get_class(free.parent.get_name()) {
                         if free.grounded_eq(grounded) {
                             return grounded.bms.clone();
@@ -1554,7 +1554,7 @@ impl<'a> ClassDecl {
     /// the result of such comparison (or none in case they are not comparable).
     fn grounded_eq(&self,
                    agent: &agent::Representation,
-                   assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
+                   assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
                    context: &mut agent::ProofResult)
                    -> Option<bool> {
         for a in &self.args {
@@ -1563,7 +1563,7 @@ impl<'a> ClassDecl {
                     if assignments.is_none() {
                         return None;
                     }
-                    if let Some(entity) = assignments.as_ref().unwrap().get(&free.term) {
+                    if let Some(entity) = assignments.as_ref().unwrap().get(&*free.term) {
                         if let Some(current) = entity.get_class(free.parent.get_name()) {
                             context.antecedents.push(Grounded::Class(current.clone()));
                             if let Some(date) = current.bms
@@ -1607,14 +1607,14 @@ impl<'a> ClassDecl {
 
     fn substitute(&self,
                   agent: &agent::Representation,
-                  assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                  time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+                  assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
+                  time_assign: &HashMap<&Var, Rc<BmsWrapper>>,
                   context: &mut agent::ProofResult) {
         let time_data = self.get_own_time_data(time_assign, None);
         for a in &self.args {
             let grfact = match *a {
                 Predicate::FreeClsMemb(ref free) => {
-                    if let Some(entity) = assignments.as_ref().unwrap().get(&free.term) {
+                    if let Some(entity) = assignments.as_ref().unwrap().get(&*free.term) {
                         GroundedClsMemb::from_free(free, entity.name.clone())
                     } else {
                         break;
@@ -1761,7 +1761,7 @@ impl<'a> OpArg {
     }
 
     fn get_time_payload(&self,
-                        assignments: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+                        assignments: &HashMap<&Var, Rc<BmsWrapper>>,
                         value: Option<f32>)
                         -> BmsWrapper {
         let bms = BmsWrapper::new(false);
@@ -1772,21 +1772,21 @@ impl<'a> OpArg {
             OpArg::TimeDecl(TimeFn::Now) => {
                 bms.new_record(None, value, None);
             }
-            OpArg::TimeVarAssign(ref var) => return (&**(assignments.get(var).unwrap())).clone(),
+            OpArg::TimeVarAssign(ref var) => return (&**(assignments.get(&**var).unwrap())).clone(),
             _ => panic!(),
         }
         bms
     }
 
-    fn compare_time_args(&self, assignments: &HashMap<Rc<Var>, Rc<BmsWrapper>>) -> bool {
+    fn compare_time_args(&self, assignments: &HashMap<&Var, Rc<BmsWrapper>>) -> bool {
         let (term, op, comp) = match *self {
             OpArg::Generic(ref term, Some((ref op, ref comp))) => (term, op, comp),
             _ => return false,
         };
         let var0 = term.get_var();
-        let arg0 = assignments.get(&var0).unwrap().get_last_date();
+        let arg0 = assignments.get(&*var0).unwrap().get_last_date();
         let var1 = comp.get_var();
-        let arg1 = assignments.get(&var1).unwrap().get_last_date();
+        let arg1 = assignments.get(&*var1).unwrap().get_last_date();
         match *op {
             CompOperator::Equal => {
                 let comp_diff = Duration::seconds(TIME_EQ_DIFF);
@@ -1985,8 +1985,8 @@ impl Var {
 
 impl ::std::cmp::PartialEq for Var {
     fn eq(&self, other: &Var) -> bool {
-        let s_address = &*self as *const Var as usize;
-        let o_address = &*other as *const Var as usize;
+        let s_address = &*self as *const Var;
+        let o_address = &*other as *const Var;
         s_address == o_address
     }
 }
