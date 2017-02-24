@@ -736,6 +736,22 @@ impl Entity {
                                 res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
                             }
                         }
+                        Some(lang::CompOperator::LessEqual) => {
+                            if *val.as_ref().unwrap() > f.get_value().unwrap() ||
+                               f.get_value()
+                                .unwrap()
+                                .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS) {
+                                res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
+                            }
+                        }
+                        Some(lang::CompOperator::MoreEqual) => {
+                            if *val.as_ref().unwrap() < f.get_value().unwrap() ||
+                               f.get_value()
+                                .unwrap()
+                                .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS) {
+                                res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
+                            }
+                        } 
                     }
                 }
             }
@@ -977,6 +993,22 @@ impl Class {
                                 res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
                             }
                         }
+                        Some(lang::CompOperator::LessEqual) => {
+                            if *val.as_ref().unwrap() > f.get_value().unwrap() ||
+                               f.get_value()
+                                .unwrap()
+                                .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS) {
+                                res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
+                            }
+                        }
+                        Some(lang::CompOperator::MoreEqual) => {
+                            if *val.as_ref().unwrap() < f.get_value().unwrap() ||
+                               f.get_value()
+                                .unwrap()
+                                .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS) {
+                                res.entry(rel_name.clone()).or_insert(vec![]).push(f.clone())
+                            }
+                        }
                     }
                 }
             }
@@ -1009,6 +1041,18 @@ impl Class {
                         }
                         (lang::CompOperator::Less, val) => {
                             if val < curr_func.get_value().unwrap() {
+                                process = false;
+                            }
+                        }
+                        (lang::CompOperator::LessEqual, val) => {
+                            if val < curr_func.get_value().unwrap() ||
+                               !val.approx_eq_ulps(&curr_func.get_value().unwrap(), FLOAT_EQ_ULPS) {
+                                process = false;
+                            }
+                        }
+                        (lang::CompOperator::MoreEqual, val) => {
+                            if val > curr_func.get_value().unwrap() ||
+                               !val.approx_eq_ulps(&curr_func.get_value().unwrap(), FLOAT_EQ_ULPS) {
                                 process = false;
                             }
                         }
@@ -1095,5 +1139,109 @@ impl Class {
 
     fn add_rule(&self, rule: Rc<LogSentence>) {
         self.rules.write().unwrap().push(rule);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn repr_eval_fol() {
+        let rep = Representation::new();
+
+        // indicative conditional
+        // (true |> true)
+        let fol = String::from("
+            ( drugDealer[$West,u=1] |> ( scum[$West,u=1] && good[$West,u=0] ) )
+            ( drugDealer[$West,u=1] )
+        ");
+        let ask = "( scum[$West,u=1] && good[$West,u=0] )".to_string();
+
+        // (false |> none)
+        let fol = String::from("
+            ( drugDealer[$West,u=1] |> ( scum[$West,u=1] && good[$West,u=0] ) )
+            ( drugDealer[$West,u=0] )
+        ");
+        let ask = "( scum[$West,u=1] && good[$West,u=0] )".to_string();
+
+        // material implication statements
+        // none
+        let fol = String::from("
+            ( drugDealer[$West,u=1] => ( scum[$West,u=1] && good[$West,u=0] ) )
+        ");
+        let ask = "".to_string();
+
+        // true (true => true)
+        let fol = String::from("
+            ( drugDealer[$West,u=1] => ( scum[$West,u=1] && good[$West,u=0] ) )
+            ( drugDealer[$West,u=1] && scum[$West,u=1] && good[$West,u=0] )
+        ");
+        let ask = "".to_string();
+
+        // true (false => true)
+        let fol = String::from("
+            ( drugDealer[$West,u=1] => ( scum[$West,u=1] && good[$West,u=0] ) )
+            ( drugDealer[$West,u=0] && scum[$West,u=1] && good[$West,u=0] )
+        ");
+        let ask = "".to_string();
+
+        // false (true => false)
+        let fol = String::from("
+            ( drugDealer[$West,u=1] => ( scum[$West,u=1] && good[$West,u=0] ) )
+            ( drugDealer[$West,u=1] && scum[$West,u=0] && good[$West,u=1] )
+        ");
+        let ask = "".to_string();
+
+        // true (false => false)
+        let fol = String::from("
+            ( drugDealer[$West,u=1] => ( scum[$West,u=1] && good[$West,u=0] ) )
+            ( drugDealer[$West,u=0] && scum[$West,u=0] && good[$West,u=1] )
+        ");
+        let ask = "".to_string();
+
+        // equivalence statements
+        // none  (none <=> true)
+        let fol = String::from("
+            ( drugDealer[$West,u=1] <=> ( scum[$West,u=1] && good[$West,u=0] ) )
+            ( scum[$West,u=1] )
+        ");
+        let ask = "".to_string();
+
+        // is false (false <=> true )
+        let fol = String::from("
+            ( drugDealer[$West,u=1] <=> ( scum[$West,u=1] && good[$West,u=0] ) )
+            ( scum[$West,u=1] )
+            ( good[$West,u=0] )
+            ( drugDealer[$West,u=0] )
+        ");
+        let ask = "".to_string();
+
+        // is false (true <=> false )
+        let fol = String::from("
+            ( drugDealer[$West,u=1] <=> ( scum[$West,u=1] && good[$West,u=0] ) )
+            ( scum[$West,u=0] )
+            ( good[$West,u=1] )
+            ( drugDealer[$West,u=1] )
+        ");
+        let ask = "".to_string();
+
+        // is true ( true <=> true )
+        let fol = String::from("
+            ( drugDealer[$West,u=1] <=> ( scum[$West,u=1] && good[$West,u=0] ) )
+            ( scum[$West,u=1] )
+            ( good[$West,u=0] )
+            ( drugDealer[$West,u=1] )
+        ");
+        let ask = "".to_string();
+
+        // is true ( false <=> false )
+        let fol = String::from("
+            ( drugDealer[$West,u=1] <=> ( scum[$West,u=1] && good[$West,u=0] ) )
+            ( scum[$West,u=0] )
+            ( good[$West,u=1] )
+            ( drugDealer[$West,u=0] )
+        ");
+        let ask = "".to_string();
     }
 }

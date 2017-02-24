@@ -43,7 +43,7 @@ pub struct LogSentence {
 }
 
 impl<'a> LogSentence {
-    pub fn new(ast: &Next, context: &mut Context) -> Result<LogSentence, LogSentErr> {
+    pub fn new(ast: &Next, context: &mut ParseContext) -> Result<LogSentence, LogSentErr> {
         let mut sent = LogSentence {
             particles: Vec::new(),
             skolem: None,
@@ -65,8 +65,18 @@ impl<'a> LogSentence {
             if !context.iexpr() {
                 context.stype = SentType::Rule;
             } else {
-                return Err(LogSentErr::RuleInclICond(Box::into_raw(Box::new(sent)) as usize)
-                    .into());
+                // check out that all variables are time or spatial variables
+                let mut return_err = false;
+                for var in sent.vars.as_ref().unwrap() {
+                    if var.is_normal() {
+                        return_err = true;
+                    }
+                }
+                if return_err {
+                    return Err(LogSentErr::RuleInclICond(Box::into_raw(Box::new(sent)) as usize)
+                        .into());
+                }
+                context.stype = SentType::Rule;
             }
         } else if context.iexpr() {
             {
@@ -1013,7 +1023,7 @@ impl fmt::Display for Particle {
 
 // infrastructure to construct compiled logsentences:
 
-pub struct Context {
+pub struct ParseContext {
     pub stype: SentType,
     pub vars: Vec<Rc<Var>>,
     pub skols: Vec<Rc<Skolem>>,
@@ -1025,15 +1035,15 @@ pub struct Context {
     pub is_tell: bool,
 }
 
-impl Default for Context {
-    fn default() -> Context {
-        Context::new()
+impl Default for ParseContext {
+    fn default() -> ParseContext {
+        ParseContext::new()
     }
 }
 
-impl Context {
-    pub fn new() -> Context {
-        Context {
+impl ParseContext {
+    pub fn new() -> ParseContext {
+        ParseContext {
             vars: Vec::new(),
             skols: Vec::new(),
             stype: SentType::Expr,
@@ -1079,7 +1089,7 @@ impl PIntermediate {
         self.lhs = Some(p);
     }
 
-    fn into_final(self, context: &mut Context) -> Particle {
+    fn into_final(self, context: &mut ParseContext) -> Particle {
         if self.pred.is_some() {
             Particle::Atom(LogicAtom::new(self.pred.unwrap()))
         } else {
@@ -1122,7 +1132,7 @@ impl PIntermediate {
 
 fn walk_ast(ast: &Next,
             sent: &mut LogSentence,
-            context: &mut Context)
+            context: &mut ParseContext)
             -> Result<PIntermediate, LogSentErr> {
     match *ast {
         Next::Assert(ref decl) => {
@@ -1151,7 +1161,7 @@ fn walk_ast(ast: &Next,
             let mut swap_vars: Vec<(usize, Rc<Var>, Rc<Var>)> = Vec::new();
             let mut swap_skolem: Vec<(usize, Rc<Skolem>, Rc<Skolem>)> = Vec::new();
 
-            fn drop_local_vars(context: &mut Context, v_cnt: usize) {
+            fn drop_local_vars(context: &mut ParseContext, v_cnt: usize) {
                 let l = context.vars.len() - v_cnt;
                 let local_vars = context.vars.drain(l..).collect::<Vec<Rc<Var>>>();
                 for v in local_vars {
@@ -1162,7 +1172,7 @@ fn walk_ast(ast: &Next,
                 }
             }
 
-            fn drop_local_skolems(context: &mut Context, s_cnt: usize) {
+            fn drop_local_skolems(context: &mut ParseContext, s_cnt: usize) {
                 let l = context.skols.len() - s_cnt;
                 let local_skolem = context.skols.drain(l..).collect::<Vec<Rc<Skolem>>>();
                 for v in local_skolem {

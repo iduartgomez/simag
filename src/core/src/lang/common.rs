@@ -30,7 +30,7 @@ pub enum Predicate {
 
 impl<'a> Predicate {
     fn from(a: &'a ArgBorrowed<'a>,
-            context: &'a mut Context,
+            context: &'a mut ParseContext,
             name: &'a Terminal,
             is_func: bool)
             -> Result<Predicate, ParseErrF> {
@@ -189,7 +189,7 @@ impl GroundedClsMemb {
            uval: Option<UVal>,
            parent: Rc<String>,
            dates: Option<Vec<(Date, Option<f32>)>>,
-           context: &Context)
+           context: &ParseContext)
            -> Result<GroundedClsMemb, ParseErrF> {
         let val;
         let op;
@@ -263,6 +263,8 @@ impl GroundedClsMemb {
             Some(CompOperator::Equal) => id.push(1),
             Some(CompOperator::Less) => id.push(2),
             Some(CompOperator::More) => id.push(3),
+            Some(CompOperator::MoreEqual) => id.push(4),
+            Some(CompOperator::LessEqual) => id.push(5),
         }
         if let Some(val) = *self.value.read().unwrap() {
             let mut id_2 = format!("{}", val).into_bytes();
@@ -384,11 +386,30 @@ impl ::std::cmp::PartialEq for GroundedClsMemb {
         match op_lhs {
             CompOperator::Equal => {
                 if op_rhs.is_equal() {
-                    val_lhs == val_rhs
+                    if let Some(ref val_lhs) = *val_lhs {
+                        let val_rhs = val_rhs.as_ref().unwrap();
+                        val_lhs.approx_eq_ulps(&val_rhs, FLOAT_EQ_ULPS)
+                    } else {
+                        true
+                    }
                 } else if op_rhs.is_more() {
                     val_lhs > val_rhs
-                } else {
+                } else if op_rhs.is_less() {
                     val_lhs < val_rhs
+                } else if op_rhs.is_more_eq() {
+                    if let Some(ref val_lhs) = *val_lhs {
+                        let val_rhs = val_rhs.as_ref().unwrap();
+                        val_lhs.approx_eq_ulps(&val_rhs, FLOAT_EQ_ULPS) || val_lhs > val_rhs
+                    } else {
+                        true
+                    }
+                } else {
+                    if let Some(ref val_lhs) = *val_lhs {
+                        let val_rhs = val_rhs.as_ref().unwrap();
+                        val_lhs.approx_eq_ulps(&val_rhs, FLOAT_EQ_ULPS) || val_lhs < val_rhs
+                    } else {
+                        true
+                    }
                 }
             }
             CompOperator::More => {
@@ -401,6 +422,20 @@ impl ::std::cmp::PartialEq for GroundedClsMemb {
             CompOperator::Less => {
                 if op_rhs.is_equal() {
                     val_lhs > val_rhs
+                } else {
+                    panic!()
+                }
+            }
+            CompOperator::MoreEqual => {
+                if op_rhs.is_equal() {
+                    val_lhs <= val_rhs
+                } else {
+                    panic!()
+                }
+            }
+            CompOperator::LessEqual => {
+                if op_rhs.is_equal() {
+                    val_lhs >= val_rhs
                 } else {
                     panic!()
                 }
@@ -588,6 +623,8 @@ impl FreeClsMemb {
                 CompOperator::Equal => id.push(0),
                 CompOperator::Less => id.push(1),
                 CompOperator::More => id.push(2),
+                CompOperator::MoreEqual => id.push(4),
+                CompOperator::LessEqual => id.push(5),
             }
         }
         if let Some(value) = self.value {
@@ -675,6 +712,8 @@ impl FreeClsOwner {
             Some(CompOperator::Equal) => id.push(1),
             Some(CompOperator::Less) => id.push(2),
             Some(CompOperator::More) => id.push(3),
+            Some(CompOperator::MoreEqual) => id.push(4),
+            Some(CompOperator::LessEqual) => id.push(5),
         }
         if let Some(ref val) = self.value {
             let mut id_2 = format!("{}", *val).into_bytes();
@@ -696,6 +735,12 @@ impl FreeClsOwner {
                 CompOperator::Equal => val.approx_eq_ulps(&o_val, FLOAT_EQ_ULPS),
                 CompOperator::Less => o_val < *val,
                 CompOperator::More => o_val > *val,
+                CompOperator::MoreEqual => {
+                    val.approx_eq_ulps(&o_val, FLOAT_EQ_ULPS) || o_val > *val
+                }
+                CompOperator::LessEqual => {
+                    val.approx_eq_ulps(&o_val, FLOAT_EQ_ULPS) || o_val < *val
+                }
             }
         } else {
             true
@@ -821,11 +866,11 @@ impl Assert {
 
     #[inline]
     pub fn grounded_eq(&self,
-                          agent: &agent::Representation,
-                          assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                          time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
-                          context: &mut agent::ProofResult)
-                          -> Option<bool> {
+                       agent: &agent::Representation,
+                       assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
+                       time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+                       context: &mut agent::ProofResult)
+                       -> Option<bool> {
         match *self {
             Assert::FuncDecl(ref f) => f.grounded_eq(agent, assignments, time_assign, context),
             Assert::ClassDecl(ref c) => c.grounded_eq(agent, assignments, context),
@@ -863,7 +908,7 @@ pub struct FuncDecl {
 
 impl<'a> FuncDecl {
     pub fn from(other: &FuncDeclBorrowed<'a>,
-                context: &mut Context)
+                context: &mut ParseContext)
                 -> Result<FuncDecl, ParseErrF> {
         let mut variant = other.variant;
         let func_name = match Terminal::from(&other.name, context) {
@@ -1091,7 +1136,7 @@ impl<'a> FuncDecl {
     }
 
     fn decl_timecalc_fn(other: &FuncDeclBorrowed<'a>,
-                        context: &mut Context)
+                        context: &mut ParseContext)
                         -> Result<FuncDecl, ParseErrF> {
         if other.args.is_some() || other.op_args.is_none() {
             return Err(ParseErrF::WrongDef);
@@ -1132,7 +1177,7 @@ impl<'a> FuncDecl {
     }
 
     fn decl_relational_fn(other: &FuncDeclBorrowed<'a>,
-                          context: &mut Context,
+                          context: &mut ParseContext,
                           name: Terminal)
                           -> Result<FuncDecl, ParseErrF> {
         let op_args = match other.op_args {
@@ -1178,7 +1223,7 @@ impl<'a> FuncDecl {
     }
 
     fn decl_nonrelational_fn(other: &FuncDeclBorrowed<'a>,
-                             context: &mut Context,
+                             context: &mut ParseContext,
                              name: Terminal)
                              -> Result<FuncDecl, ParseErrF> {
         let op_args = match other.op_args {
@@ -1242,11 +1287,11 @@ impl<'a> FuncDecl {
     /// Compares two relational functions, if they include free terms variable values
     /// assignments must be provided or will return None or panic in worst case.
     fn grounded_eq(&self,
-                      agent: &agent::Representation,
-                      assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                      time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
-                      context: &mut agent::ProofResult)
-                      -> Option<bool> {
+                   agent: &agent::Representation,
+                   assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
+                   time_assign: &HashMap<Rc<Var>, Rc<BmsWrapper>>,
+                   context: &mut agent::ProofResult)
+                   -> Option<bool> {
         match self.variant {
             FuncVariants::Relational => {}
             FuncVariants::TimeCalc => return self.time_resolution(time_assign),
@@ -1318,7 +1363,7 @@ pub struct ClassDecl {
 
 impl<'a> ClassDecl {
     pub fn from(other: &ClassDeclBorrowed<'a>,
-                context: &mut Context)
+                context: &mut ParseContext)
                 -> Result<ClassDecl, ParseErrF> {
         let class_name = Terminal::from(&other.name, context)?;
         let op_args = match other.op_args {
@@ -1508,10 +1553,10 @@ impl<'a> ClassDecl {
     /// Compare each term of a class declaration if they are comparable, and returns
     /// the result of such comparison (or none in case they are not comparable).
     fn grounded_eq(&self,
-                      agent: &agent::Representation,
-                      assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
-                      context: &mut agent::ProofResult)
-                      -> Option<bool> {
+                   agent: &agent::Representation,
+                   assignments: &Option<HashMap<Rc<Var>, &agent::VarAssignment>>,
+                   context: &mut agent::ProofResult)
+                   -> Option<bool> {
         for a in &self.args {
             match *a {
                 Predicate::FreeClsMemb(ref free) => {
@@ -1634,7 +1679,7 @@ pub enum OpArg {
 }
 
 impl<'a> OpArg {
-    pub fn from(other: &OpArgBorrowed<'a>, context: &mut Context) -> Result<OpArg, ParseErrF> {
+    pub fn from(other: &OpArgBorrowed<'a>, context: &mut ParseContext) -> Result<OpArg, ParseErrF> {
         let t0 = match OpArgTerm::from(&other.term, context) {
             Err(ParseErrF::ReservedKW(kw)) => {
                 match &*kw {
@@ -1674,7 +1719,7 @@ impl<'a> OpArg {
 
     fn ignore_kw(other: &OpArgBorrowed<'a>,
                  kw: &str,
-                 context: &mut Context)
+                 context: &mut ParseContext)
                  -> Result<OpArg, ParseErrF> {
         match kw {
             "time" => {
@@ -1751,6 +1796,18 @@ impl<'a> OpArg {
             }
             CompOperator::More => arg0 > arg1,
             CompOperator::Less => arg0 < arg1,
+            CompOperator::MoreEqual => {
+                let comp_diff = Duration::seconds(TIME_EQ_DIFF);
+                let lower_bound = arg0 - comp_diff;
+                let upper_bound = arg0 + comp_diff;
+                !((arg1 < lower_bound) || (arg1 > upper_bound)) || arg0 > arg1
+            }
+            CompOperator::LessEqual => {
+                let comp_diff = Duration::seconds(TIME_EQ_DIFF);
+                let lower_bound = arg0 - comp_diff;
+                let upper_bound = arg0 + comp_diff;
+                !((arg1 < lower_bound) || (arg1 > upper_bound)) || arg0 < arg1
+            }
         }
     }
 }
@@ -1799,7 +1856,9 @@ pub enum OpArgTerm {
 }
 
 impl<'a> OpArgTerm {
-    fn from(other: &OpArgTermBorrowed<'a>, context: &mut Context) -> Result<OpArgTerm, ParseErrF> {
+    fn from(other: &OpArgTermBorrowed<'a>,
+            context: &mut ParseContext)
+            -> Result<OpArgTerm, ParseErrF> {
         match *other {
             OpArgTermBorrowed::Terminal(slice) => {
                 let t = Terminal::from_slice(slice, context)?;
@@ -1812,7 +1871,7 @@ impl<'a> OpArgTerm {
     }
 
     fn time_payload(other: Option<&(CompOperator, OpArgTermBorrowed<'a>)>,
-                    context: &mut Context)
+                    context: &mut ParseContext)
                     -> Result<(CompOperator, OpArgTerm), ParseErrF> {
         match other {
             None => Ok((CompOperator::Equal, OpArgTerm::TimePayload(TimeFn::IsVar))),
@@ -1870,7 +1929,7 @@ pub enum VarKind {
 }
 
 impl Var {
-    pub fn from<'a>(input: &VarBorrowed<'a>, context: &mut Context) -> Result<Var, ParseErrF> {
+    pub fn from<'a>(input: &VarBorrowed<'a>, context: &mut ParseContext) -> Result<Var, ParseErrF> {
         let &VarBorrowed { name: TerminalBorrowed(name), ref op_arg } = input;
         let mut kind = VarKind::Normal;
         let op_arg = match *op_arg {
@@ -1909,6 +1968,13 @@ impl Var {
         (&*v1 as *const Var) == (self as *const Var)
     }
 
+    pub fn is_normal(&self) -> bool {
+        match self.kind {
+            VarKind::Normal => true,
+            _ => false,
+        }
+    }
+
     fn is_time_var(&self) -> bool {
         match self.kind {
             VarKind::Time | VarKind::TimeDecl => true,
@@ -1942,7 +2008,7 @@ pub struct Skolem {
 
 impl Skolem {
     pub fn from<'a>(input: &SkolemBorrowed<'a>,
-                    context: &mut Context)
+                    context: &mut ParseContext)
                     -> Result<Skolem, ParseErrF> {
         let &SkolemBorrowed { name: TerminalBorrowed(name), ref op_arg } = input;
         let op_arg = match *op_arg {
@@ -1971,7 +2037,9 @@ pub enum Terminal {
 }
 
 impl<'a> Terminal {
-    fn from(other: &TerminalBorrowed<'a>, context: &mut Context) -> Result<Terminal, ParseErrF> {
+    fn from(other: &TerminalBorrowed<'a>,
+            context: &mut ParseContext)
+            -> Result<Terminal, ParseErrF> {
         let &TerminalBorrowed(slice) = other;
         let name = unsafe { String::from(str::from_utf8_unchecked(slice)) };
         if reserved(&name) {
@@ -1985,7 +2053,7 @@ impl<'a> Terminal {
         Ok(Terminal::GroundedTerm(Rc::new(name)))
     }
 
-    fn from_slice(slice: &[u8], context: &mut Context) -> Result<Terminal, ParseErrF> {
+    fn from_slice(slice: &[u8], context: &mut ParseContext) -> Result<Terminal, ParseErrF> {
         let name = unsafe { String::from(str::from_utf8_unchecked(slice)) };
         if reserved(&name) {
             return Err(ParseErrF::ReservedKW(name));
@@ -2033,7 +2101,7 @@ impl<'a> Terminal {
 
 fn reserved(s: &str) -> bool {
     match s {
-        "let" | "time_calc" | "exists" | "fn" | "time" | "overwrite" | "self" => true,
+        "let" | "time_calc" | "exists" | "fn" | "time" | "overwrite" | "self" | "none" => true,
         _ => false,
     }
 }

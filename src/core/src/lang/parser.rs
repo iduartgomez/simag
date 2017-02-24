@@ -24,7 +24,7 @@
 //! 		    |    '=>'
 //!             |    or_op
 //!             |	 and_op ;
-//! comp_op	= ('=' | '<' | '>') ;
+//! comp_op	= ('=' | '<' | '>' | '>=' | '<=' ) ;
 //! term = regex: \$?[a-zA-Z0-9_]+ ;
 //! number = regex: -?[0-9\.]+ ;
 //! string = regex: ".*?"|'.*?' ;
@@ -151,7 +151,7 @@ impl ParseTree {
         // return type is a hack to avoid compiling error due to not being 'Send' compatible
         // instead we return a raw pointer as usize and when unifying all the thread
         // results convert back to box and deref to the stack
-        let mut context = Context::new();
+        let mut context = ParseContext::new();
         context.in_assertion = true;
         context.is_tell = tell;
         if let Ok(Some(tree)) = input.is_assertion(&mut context) {
@@ -159,7 +159,7 @@ impl ParseTree {
             return Ok(ptr);
         }
         // it's an expression, make logic sentence from nested expressions
-        let mut context = Context::new();
+        let mut context = ParseContext::new();
         context.is_tell = tell;
         match LogSentence::new(&input, &mut context) {
             Ok(sent) => {
@@ -198,7 +198,7 @@ pub struct ASTNode<'a> {
 }
 
 impl<'a> ASTNode<'a> {
-    fn is_assertion(&self, context: &mut Context) -> Result<Option<ParseTree>, ParseErrF> {
+    fn is_assertion(&self, context: &mut ParseContext) -> Result<Option<ParseTree>, ParseErrF> {
         if self.vars.is_some() {
             return Ok(None);
         }
@@ -215,7 +215,7 @@ pub enum Next<'a> {
 }
 
 impl<'a> Next<'a> {
-    fn is_assertion(&self, context: &mut Context) -> Result<Option<ParseTree>, ParseErrF> {
+    fn is_assertion(&self, context: &mut ParseContext) -> Result<Option<ParseTree>, ParseErrF> {
         match *self {
             Next::Assert(ref decl) => {
                 match *decl {
@@ -583,7 +583,7 @@ fn expand_side<'a>(input: &'a [u8]) -> IResult<&[u8], ASTNode<'a>> {
             IResult::Incomplete(err) => IResult::Incomplete(err),
             _ => panic!(),
         }
-    }    
+    }
 
     let input = remove_multispace(input);
     let out1 = logic_operator(input);
@@ -820,7 +820,10 @@ named!(op_arg <OpArgBorrowed>, chain!(
     ) ~
     c1: chain!(
         take_while!(is_multispace)? ~
-        c2: map!(one_of!("=<>"), CompOperator::from_char) ~
+        c2: map!(
+            alt!(tag!(">=") | tag!("<=") | tag!("=") | tag!(">") | tag!("<")),
+                 CompOperator::from_chars
+        ) ~
         take_while!(is_multispace)? ~
         term: alt!(
             map!(string, OpArgTermBorrowed::is_string) |
@@ -872,8 +875,8 @@ named!(uval <UVal>, chain!(
     char!('u') ~
     take_while!(is_multispace)? ~
     op: map!(
-        one_of!("=<>"),
-        CompOperator::from_char
+        alt!(tag!(">=") | tag!("<=") | tag!("=") | tag!(">") | tag!("<")),
+             CompOperator::from_chars
     ) ~
     take_while!(is_multispace)? ~
     val: number ,
@@ -987,19 +990,26 @@ pub enum CompOperator {
     Equal,
     Less,
     More,
+    MoreEqual,
+    LessEqual,
 }
 
 impl CompOperator {
-    fn from_char(c: char) -> CompOperator {
-        if c == '<' {
+    fn from_chars(c: &[u8]) -> CompOperator {
+        if c == b"<" {
             CompOperator::Less
-        } else if c == '>' {
+        } else if c == b">" {
             CompOperator::More
-        } else {
+        } else if c == b"=" {
             CompOperator::Equal
+        } else if c == b"<=" {
+            CompOperator::LessEqual
+        } else {
+            CompOperator::MoreEqual
         }
     }
 
+    #[inline]
     pub fn is_equal(&self) -> bool {
         match *self {
             CompOperator::Equal => true,
@@ -1007,9 +1017,26 @@ impl CompOperator {
         }
     }
 
+    #[inline]
     pub fn is_more(&self) -> bool {
         match *self {
             CompOperator::More => true,
+            _ => false,
+        }
+    }
+
+    #[inline]
+    pub fn is_less(&self) -> bool {
+        match *self {
+            CompOperator::Less => true,
+            _ => false,
+        }
+    }
+
+    #[inline]
+    pub fn is_more_eq(&self) -> bool {
+        match *self {
+            CompOperator::MoreEqual => true,
             _ => false,
         }
     }
@@ -1164,14 +1191,14 @@ mod test {
         assert!(scanned.is_err());
 
         let source = b"
-            ( ( american[x,u=1] && hostile[z,u=1 ) && fn::criticize(t=\"now\")[$John,u=1;$Lucy] )
+            ( ( american[x,u=1] && hostile[z,u=1 ) && hostile[z,u=1] )
         ";
         let mut data = Vec::new();
         let scanned = Parser::feed(source, &mut data);
         assert!(scanned.is_ok());
 
         let source = b"
-            ( ( american[x,u=1] ) && fn::criticize(t=\"now\")[$John,u=1;$Lucy] && weapon[y,u=1] )
+            ( ( american[x,u=1] ) && hostile[z,u=1] && weapon[y,u=1] )
         ";
         let mut data = Vec::new();
         let scanned = Parser::feed(source, &mut data);
@@ -1306,6 +1333,9 @@ mod test {
             &vec![OpArgBorrowed{term: OpArgTermBorrowed::Terminal(b"t"),
                         comp: Some((CompOperator::Equal,
                                     OpArgTermBorrowed::String(b"2015.07.05.11.28")))}]);
+
+        let s5 = b"happy(time=t1, @t1->t2, overwrite)[x,u<=0.5]";
+        let s6 = b"happy(time=t1, @t1, overwrite)[x,u>=0.5]";
     }
 
     #[test]

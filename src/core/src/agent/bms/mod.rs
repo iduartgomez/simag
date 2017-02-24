@@ -355,7 +355,7 @@ mod test {
         let answ0 = rep.ask("(fat[$Pancho,u=0])".to_string());
         assert_eq!(answ0.get_results_single(), Some(true));
         let answ1 = rep.ask("(ugly[$Pancho,u=0])".to_string());
-        assert_eq!(answ1.get_results_single(), Some(true)); //<-- fails
+        assert_eq!(answ1.get_results_single(), Some(true));
         let answ2 = rep.ask("(sad[$Pancho,u=0])".to_string());
         assert_eq!(answ2.get_results_single(), None);
     }
@@ -386,6 +386,6 @@ mod test {
 
         rep.tell("(fn::eat[$M1,u=1;$Pancho])".to_string()).unwrap();
         let answ = rep.ask("(fat[$Pancho,u=1])".to_string());
-        assert_eq!(answ.get_results_single(), Some(true)); // <-- fails
+        assert_eq!(answ.get_results_single(), Some(true));
     }
 }
