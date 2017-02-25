@@ -16,7 +16,7 @@ use float_cmp::ApproxEqUlps;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::str;
-use std::sync::RwLock;
+use std::sync::{RwLock, Arc};
 use std::sync::atomic::AtomicBool;
 
 // Predicate types:
@@ -41,7 +41,11 @@ impl<'a> Predicate {
                     Ok(Predicate::FreeClsMemb(t))
                 }
                 Ok(Terminal::GroundedTerm(gt)) => {
-                    let t = GroundedClsMemb::new(gt, a.uval, name.get_name(), None, context)?;
+                    let t = GroundedClsMemb::new(gt,
+                                                 a.uval,
+                                                 name.get_name().to_string(),
+                                                 None,
+                                                 context)?;
                     Ok(Predicate::GroundedClsMemb(t))
                 }
                 Ok(Terminal::Keyword(kw)) => Err(ParseErrF::ReservedKW(String::from(kw))),
@@ -109,10 +113,10 @@ impl<'a> Predicate {
     }
 
     #[inline]
-    pub fn get_name(&self) -> Rc<String> {
+    pub fn get_name(&self) -> &str {
         match *self {
             Predicate::GroundedClsMemb(ref t) => t.get_name(),
-            Predicate::FreeClsOwner(ref t) => t.term.clone(),
+            Predicate::FreeClsOwner(ref t) => &t.term,
             _ => panic!(),
         }
     }
@@ -139,8 +143,8 @@ impl<'a> Predicate {
 
 #[derive(Debug, Clone)]
 pub enum Grounded {
-    Function(Rc<GroundedFunc>),
-    Class(Rc<GroundedClsMemb>),
+    Function(Arc<GroundedFunc>),
+    Class(Arc<GroundedClsMemb>),
 }
 
 impl Grounded {
@@ -174,20 +178,20 @@ impl<'a> GroundedRef<'a> {
 
 #[derive(Debug)]
 pub struct GroundedClsMemb {
-    term: Rc<String>,
+    term: String,
     value: RwLock<Option<f32>>,
     operator: Option<CompOperator>,
-    parent: Rc<String>,
-    pub bms: Option<Rc<BmsWrapper>>,
+    parent: String,
+    pub bms: Option<Arc<BmsWrapper>>,
 }
 
 impl GroundedClsMemb {
     //! Internally the mutable parts are wrapped in `RwLock` types, as they can be accessed
     //! from a multithreaded environment. This provides enough atomicity so the most
     //! time it won't be blocking other reads.
-    fn new(term: Rc<String>,
+    fn new(term: String,
            uval: Option<UVal>,
-           parent: Rc<String>,
+           parent: String,
            dates: Option<Vec<(Date, Option<f32>)>>,
            context: &ParseContext)
            -> Result<GroundedClsMemb, ParseErrF> {
@@ -207,7 +211,7 @@ impl GroundedClsMemb {
                         } else {
                             t_bms.new_record(None, Some(val as f32), None);
                         }
-                        bms = Some(Rc::new(t_bms));
+                        bms = Some(Arc::new(t_bms));
                         val as f32
                     } else {
                         return Err(ParseErrF::IUVal(val as f32));
@@ -223,7 +227,7 @@ impl GroundedClsMemb {
                         } else {
                             t_bms.new_record(None, Some(val as f32), None);
                         }
-                        bms = Some(Rc::new(t_bms));
+                        bms = Some(Arc::new(t_bms));
                         val
                     } else {
                         return Err(ParseErrF::IUVal(val as f32));
@@ -274,13 +278,13 @@ impl GroundedClsMemb {
     }
 
     #[inline]
-    pub fn get_name(&self) -> Rc<String> {
-        self.term.clone()
+    pub fn get_name(&self) -> &str {
+        &*self.term
     }
 
     #[inline]
-    pub fn get_parent(&self) -> Rc<String> {
-        self.parent.clone()
+    pub fn get_parent(&self) -> &str {
+        &*self.parent
     }
 
     #[inline]
@@ -315,12 +319,12 @@ impl GroundedClsMemb {
         *self.value.write().unwrap() = val;
     }
 
-    pub fn from_free(free: &FreeClsMemb, assignment: Rc<String>) -> GroundedClsMemb {
+    pub fn from_free(free: &FreeClsMemb, assignment: &str) -> GroundedClsMemb {
         let bms;
         let val = if free.value.is_some() {
             let t_bms = BmsWrapper::new(false);
             t_bms.new_record(None, free.value, None);
-            bms = Some(Rc::new(t_bms));
+            bms = Some(Arc::new(t_bms));
             Some(free.value.unwrap())
         } else {
             bms = None;
@@ -332,10 +336,10 @@ impl GroundedClsMemb {
             None
         };
         GroundedClsMemb {
-            term: assignment,
+            term: assignment.to_string(),
             value: RwLock::new(val),
             operator: op,
-            parent: free.parent.get_name(),
+            parent: free.parent.get_name().to_string(),
             bms: bms,
         }
     }
@@ -458,10 +462,10 @@ impl ::std::clone::Clone for GroundedClsMemb {
 
 #[derive(Debug)]
 pub struct GroundedFunc {
-    pub name: Rc<String>,
+    pub name: String,
     pub args: [GroundedClsMemb; 2],
     pub third: Option<GroundedClsMemb>,
-    pub bms: Rc<BmsWrapper>,
+    pub bms: Arc<BmsWrapper>,
 }
 
 impl ::std::cmp::PartialEq for GroundedFunc {
@@ -475,7 +479,7 @@ impl ::std::cmp::Eq for GroundedFunc {}
 impl GroundedFunc {
     pub fn from_free(free: &FuncDecl,
                      assignments: &HashMap<&Var, &agent::VarAssignment>,
-                     time_assign: &HashMap<&Var, Rc<BmsWrapper>>)
+                     time_assign: &HashMap<&Var, Arc<BmsWrapper>>)
                      -> Result<GroundedFunc, ()> {
         if !free.variant.is_relational() || free.args.as_ref().unwrap().len() < 2 {
             return Err(());
@@ -492,7 +496,7 @@ impl GroundedFunc {
             let n_a = match *a {
                 Predicate::FreeClsMemb(ref free) => {
                     if let Some(entity) = assignments.get(&*free.term) {
-                        GroundedClsMemb::from_free(free, entity.name.clone())
+                        GroundedClsMemb::from_free(free, &entity.name)
                     } else {
                         return Err(());
                     }
@@ -514,13 +518,13 @@ impl GroundedFunc {
             name: name,
             args: [first.unwrap(), second.unwrap()],
             third: third,
-            bms: Rc::new(time_data),
+            bms: Arc::new(time_data),
         })
     }
 
     #[inline]
-    pub fn get_name(&self) -> Rc<String> {
-        self.name.clone()
+    pub fn get_name(&self) -> &str {
+        &self.name
     }
 
     #[inline]
@@ -529,7 +533,7 @@ impl GroundedFunc {
     }
 
     #[inline]
-    pub fn get_args_names(&self) -> Vec<Rc<String>> {
+    pub fn get_args_names(&self) -> Vec<&str> {
         let mut v = Vec::with_capacity(3);
         v.push(self.args[0].get_name());
         v.push(self.args[1].get_name());
@@ -541,10 +545,10 @@ impl GroundedFunc {
 
     #[inline]
     pub fn name_in_pos(&self, name: &str, pos: &usize) -> bool {
-        if (*pos < 2) && (&**self.args[*pos].get_name() == name) {
+        if (*pos < 2) && (self.args[*pos].get_name() == name) {
             return true;
         }
-        if self.third.is_some() && &**self.third.as_ref().unwrap().get_name() == name {
+        if self.third.is_some() && self.third.as_ref().unwrap().get_name() == name {
             return true;
         }
         false
@@ -590,7 +594,7 @@ impl ::std::clone::Clone for GroundedFunc {
             name: self.name.clone(),
             args: [self.args[0].clone(), self.args[1].clone()],
             third: self.third.clone(),
-            bms: Rc::new((&*self.bms).clone()),
+            bms: Arc::new((&*self.bms).clone()),
         }
     }
 }
@@ -604,6 +608,9 @@ pub struct FreeClsMemb {
     operator: Option<CompOperator>,
     parent: Terminal,
 }
+
+unsafe impl ::std::marker::Sync for FreeClsMemb {}
+unsafe impl ::std::marker::Send for FreeClsMemb {}
 
 impl FreeClsMemb {
     fn new(term: Rc<Var>, uval: Option<UVal>, parent: &Terminal) -> Result<FreeClsMemb, ParseErrF> {
@@ -635,13 +642,12 @@ impl FreeClsMemb {
     }
 
     #[inline]
-    pub fn get_parent(&self) -> Rc<String> {
+    pub fn get_parent(&self) -> &str {
         self.parent.get_name()
     }
 
-    #[inline]
-    pub fn get_var(&self) -> Rc<Var> {
-        self.term.clone()
+    pub fn get_var_ref(&self) -> &Var {
+        &*self.term
     }
 
     /// Compares a free term with a grounded term, assumes they are comparable
@@ -679,18 +685,18 @@ impl FreeClsMemb {
 
 #[derive(Debug, Clone)]
 pub struct FreeClsOwner {
-    pub term: Rc<String>,
+    pub term: String,
     value: Option<f32>,
     operator: Option<CompOperator>,
     pub parent: Rc<Var>,
     pub dates: BmsWrapper,
 }
 
+unsafe impl ::std::marker::Sync for FreeClsOwner {}
+unsafe impl ::std::marker::Send for FreeClsOwner {}
+
 impl FreeClsOwner {
-    fn new(term: Rc<String>,
-           uval: Option<UVal>,
-           parent: &Terminal)
-           -> Result<FreeClsOwner, ParseErrF> {
+    fn new(term: String, uval: Option<UVal>, parent: &Terminal) -> Result<FreeClsOwner, ParseErrF> {
         let (val, op) = match_uval(uval)?;
         let t_bms = BmsWrapper::new(false);
         t_bms.new_record(None, val, None);
@@ -790,7 +796,7 @@ pub enum Assert {
 
 impl Assert {
     #[inline]
-    pub fn get_name(&self) -> Rc<String> {
+    pub fn get_name(&self) -> &str {
         match *self {
             Assert::FuncDecl(ref f) => f.get_name(),
             Assert::ClassDecl(ref c) => c.get_name(),
@@ -809,7 +815,7 @@ impl Assert {
     pub fn get_dates(&self,
                      agent: &agent::Representation,
                      var_assign: &Option<HashMap<&Var, &agent::VarAssignment>>)
-                     -> Option<Rc<BmsWrapper>> {
+                     -> Option<Arc<BmsWrapper>> {
         match *self {
             Assert::FuncDecl(ref f) => f.get_dates(agent, var_assign),
             Assert::ClassDecl(ref c) => c.get_dates(agent, var_assign),
@@ -868,7 +874,7 @@ impl Assert {
     pub fn grounded_eq(&self,
                        agent: &agent::Representation,
                        assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                       time_assign: &HashMap<&Var, Rc<BmsWrapper>>,
+                       time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
                        context: &mut agent::ProofResult)
                        -> Option<bool> {
         match *self {
@@ -881,7 +887,7 @@ impl Assert {
     pub fn substitute(&self,
                       agent: &agent::Representation,
                       assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                      time_assign: &HashMap<&Var, Rc<BmsWrapper>>,
+                      time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
                       context: &mut agent::ProofResult) {
         match *self {
             Assert::FuncDecl(ref f) => f.substitute(agent, assignments, time_assign, context),
@@ -905,6 +911,9 @@ pub struct FuncDecl {
     pub op_args: Option<Vec<OpArg>>,
     pub variant: FuncVariants,
 }
+
+unsafe impl ::std::marker::Sync for FuncDecl {}
+unsafe impl ::std::marker::Send for FuncDecl {}
 
 impl<'a> FuncDecl {
     pub fn from(other: &FuncDeclBorrowed<'a>,
@@ -984,7 +993,7 @@ impl<'a> FuncDecl {
             name: name,
             args: [first.unwrap(), second.unwrap()],
             third: third,
-            bms: Rc::new(time_data),
+            bms: Arc::new(time_data),
         }
     }
 
@@ -1009,11 +1018,11 @@ impl<'a> FuncDecl {
         }
     }
 
-    pub fn get_name(&self) -> Rc<String> {
+    pub fn get_name(&self) -> &str {
         match self.name {
-            Terminal::FreeTerm(ref var) => Rc::new(var.name.clone()),
-            Terminal::GroundedTerm(ref name) => name.clone(),
-            Terminal::Keyword(kw) => Rc::new(kw.to_string()),
+            Terminal::FreeTerm(ref var) => &var.name,
+            Terminal::GroundedTerm(ref name) => &name,
+            Terminal::Keyword(kw) => kw,
         }
     }
 
@@ -1036,7 +1045,7 @@ impl<'a> FuncDecl {
     }
 
     pub fn get_own_time_data(&self,
-                             assignments: &HashMap<&Var, Rc<BmsWrapper>>,
+                             assignments: &HashMap<&Var, Arc<BmsWrapper>>,
                              value: Option<f32>)
                              -> BmsWrapper {
         if self.op_args.is_none() {
@@ -1084,7 +1093,7 @@ impl<'a> FuncDecl {
     fn get_dates(&self,
                  agent: &agent::Representation,
                  var_assign: &Option<HashMap<&Var, &agent::VarAssignment>>)
-                 -> Option<Rc<BmsWrapper>> {
+                 -> Option<Arc<BmsWrapper>> {
         if self.is_grounded() {
             let sbj = self.args.as_ref().unwrap();
             let grfunc = self.clone().into_grounded();
@@ -1153,7 +1162,7 @@ impl<'a> FuncDecl {
                         // Generic(OpArgTerm, Option<(CompOperator, OpArgTerm)>)
                         OpArg::Generic(ref v0, Some((_, ref v1))) => {
                             if (!v0.is_var() | !v1.is_var()) ||
-                               (!v0.get_var().is_time_var() | !v1.get_var().is_time_var()) {
+                               (!v0.get_var_ref().is_time_var() | !v1.get_var_ref().is_time_var()) {
                                 return Err(TimeFnErr::IsNotVar.into());
                             }
                         }
@@ -1289,7 +1298,7 @@ impl<'a> FuncDecl {
     fn grounded_eq(&self,
                    agent: &agent::Representation,
                    assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                   time_assign: &HashMap<&Var, Rc<BmsWrapper>>,
+                   time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
                    context: &mut agent::ProofResult)
                    -> Option<bool> {
         match self.variant {
@@ -1330,7 +1339,7 @@ impl<'a> FuncDecl {
         }
     }
 
-    fn time_resolution(&self, assignments: &HashMap<&Var, Rc<BmsWrapper>>) -> Option<bool> {
+    fn time_resolution(&self, assignments: &HashMap<&Var, Arc<BmsWrapper>>) -> Option<bool> {
         for arg in self.op_args.as_ref().unwrap() {
             if !arg.compare_time_args(assignments) {
                 return Some(false);
@@ -1342,12 +1351,12 @@ impl<'a> FuncDecl {
     fn substitute(&self,
                   agent: &agent::Representation,
                   assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                  time_assign: &HashMap<&Var, Rc<BmsWrapper>>,
+                  time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
                   context: &mut agent::ProofResult) {
         if let Ok(grfunc) = GroundedFunc::from_free(self,
                                                     assignments.as_ref().unwrap(),
                                                     time_assign) {
-            let grfunc = Rc::new(grfunc);
+            let grfunc = Arc::new(grfunc);
             agent.up_relation(grfunc.clone(), Some(context));
             context.grounded.push((Grounded::Function(grfunc.clone()), grfunc.bms.get_last_date()))
         }
@@ -1399,10 +1408,10 @@ impl<'a> ClassDecl {
         }
     }
 
-    pub fn get_name(&self) -> Rc<String> {
+    pub fn get_name(&self) -> &str {
         match self.name {
-            Terminal::FreeTerm(ref var) => Rc::new(var.name.clone()),
-            Terminal::GroundedTerm(ref name) => name.clone(),
+            Terminal::FreeTerm(ref var) => &var.name,
+            Terminal::GroundedTerm(ref name) => name,
             Terminal::Keyword(_) => panic!(),
         }
     }
@@ -1412,7 +1421,7 @@ impl<'a> ClassDecl {
     }
 
     pub fn get_own_time_data(&self,
-                             assignments: &HashMap<&Var, Rc<BmsWrapper>>,
+                             assignments: &HashMap<&Var, Arc<BmsWrapper>>,
                              value: Option<f32>)
                              -> BmsWrapper {
         if self.op_args.is_none() {
@@ -1460,7 +1469,7 @@ impl<'a> ClassDecl {
     fn get_dates(&self,
                  agent: &agent::Representation,
                  var_assign: &Option<HashMap<&Var, &agent::VarAssignment>>)
-                 -> Option<Rc<BmsWrapper>> {
+                 -> Option<Arc<BmsWrapper>> {
         let arg = &self.args[0];
         match *arg {
             Predicate::FreeClsMemb(ref free) => {
@@ -1480,7 +1489,7 @@ impl<'a> ClassDecl {
                 }
             }
             Predicate::GroundedClsMemb(ref compare) => {
-                let entity = agent.get_entity_from_class(self.get_name(), compare.term.clone());
+                let entity = agent.get_entity_from_class(self.get_name(), &compare.term);
                 if let Some(grounded) = entity {
                     if *grounded == *compare {
                         return grounded.bms.clone();
@@ -1583,7 +1592,7 @@ impl<'a> ClassDecl {
                     }
                 }
                 Predicate::GroundedClsMemb(ref compare) => {
-                    let entity = agent.get_entity_from_class(self.get_name(), compare.term.clone());
+                    let entity = agent.get_entity_from_class(self.get_name(), &compare.term);
                     if let Some(current) = entity {
                         context.antecedents.push(Grounded::Class(current.clone()));
                         if let Some(date) = current.bms
@@ -1608,14 +1617,14 @@ impl<'a> ClassDecl {
     fn substitute(&self,
                   agent: &agent::Representation,
                   assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                  time_assign: &HashMap<&Var, Rc<BmsWrapper>>,
+                  time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
                   context: &mut agent::ProofResult) {
         let time_data = self.get_own_time_data(time_assign, None);
         for a in &self.args {
             let grfact = match *a {
                 Predicate::FreeClsMemb(ref free) => {
                     if let Some(entity) = assignments.as_ref().unwrap().get(&*free.term) {
-                        GroundedClsMemb::from_free(free, entity.name.clone())
+                        GroundedClsMemb::from_free(free, &entity.name)
                     } else {
                         break;
                     }
@@ -1626,7 +1635,7 @@ impl<'a> ClassDecl {
             let t = time_data.clone();
             t.replace_last_val(grfact.get_value());
             grfact.overwrite_time_data(&t);
-            let grfact = Rc::new(grfact);
+            let grfact = Arc::new(grfact);
             context.grounded.push((Grounded::Class(grfact.clone()),
                                    grfact.bms.as_ref().unwrap().get_last_date()));
             agent.up_membership(grfact.clone(), Some(context))
@@ -1761,7 +1770,7 @@ impl<'a> OpArg {
     }
 
     fn get_time_payload(&self,
-                        assignments: &HashMap<&Var, Rc<BmsWrapper>>,
+                        assignments: &HashMap<&Var, Arc<BmsWrapper>>,
                         value: Option<f32>)
                         -> BmsWrapper {
         let bms = BmsWrapper::new(false);
@@ -1778,14 +1787,14 @@ impl<'a> OpArg {
         bms
     }
 
-    fn compare_time_args(&self, assignments: &HashMap<&Var, Rc<BmsWrapper>>) -> bool {
+    fn compare_time_args(&self, assignments: &HashMap<&Var, Arc<BmsWrapper>>) -> bool {
         let (term, op, comp) = match *self {
             OpArg::Generic(ref term, Some((ref op, ref comp))) => (term, op, comp),
             _ => return false,
         };
-        let var0 = term.get_var();
+        let var0 = term.get_var_ref();
         let arg0 = assignments.get(&*var0).unwrap().get_last_date();
-        let var1 = comp.get_var();
+        let var1 = comp.get_var_ref();
         let arg1 = assignments.get(&*var1).unwrap().get_last_date();
         match *op {
             CompOperator::Equal => {
@@ -1912,6 +1921,14 @@ impl<'a> OpArgTerm {
             _ => panic!(),
         }
     }
+
+    #[inline]
+    fn get_var_ref(&self) -> &Var {
+        match *self {
+            OpArgTerm::Terminal(ref term) => term.get_var_ref(),
+            _ => panic!(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1920,6 +1937,9 @@ pub struct Var {
     op_arg: Option<OpArg>,
     pub kind: VarKind,
 }
+
+unsafe impl ::std::marker::Sync for Var {}
+unsafe impl ::std::marker::Send for Var {}
 
 #[derive(Debug, Clone)]
 pub enum VarKind {
@@ -2032,7 +2052,7 @@ impl Skolem {
 #[derive(Debug, PartialEq, Clone, Eq, Hash)]
 pub enum Terminal {
     FreeTerm(Rc<Var>),
-    GroundedTerm(Rc<String>),
+    GroundedTerm(String),
     Keyword(&'static str),
 }
 
@@ -2050,7 +2070,7 @@ impl<'a> Terminal {
                 return Ok(Terminal::FreeTerm(v.clone()));
             }
         }
-        Ok(Terminal::GroundedTerm(Rc::new(name)))
+        Ok(Terminal::GroundedTerm(name))
     }
 
     fn from_slice(slice: &[u8], context: &mut ParseContext) -> Result<Terminal, ParseErrF> {
@@ -2063,7 +2083,7 @@ impl<'a> Terminal {
                 return Ok(Terminal::FreeTerm(v.clone()));
             }
         }
-        Ok(Terminal::GroundedTerm(Rc::new(name)))
+        Ok(Terminal::GroundedTerm(name))
     }
 
     fn is_var(&self) -> bool {
@@ -2074,9 +2094,9 @@ impl<'a> Terminal {
         }
     }
 
-    fn get_name(&self) -> Rc<String> {
+    fn get_name(&self) -> &str {
         if let Terminal::GroundedTerm(ref name) = *self {
-            name.clone()
+            name
         } else {
             panic!()
         }
@@ -2090,7 +2110,15 @@ impl<'a> Terminal {
         }
     }
 
-    pub fn get_var(&self) -> Rc<Var> {
+    pub fn get_var_ref(&self) -> &Var {
+        if let Terminal::FreeTerm(ref var) = *self {
+            &*var
+        } else {
+            panic!()
+        }
+    }
+
+    fn get_var(&self) -> Rc<Var> {
         if let Terminal::FreeTerm(ref var) = *self {
             var.clone()
         } else {
