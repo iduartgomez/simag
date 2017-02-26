@@ -137,7 +137,7 @@ impl Representation {
         }
         let decl;
         let is_new: bool;
-        if (&assert.get_name()).starts_with('$') {
+        if (assert.get_name()).starts_with('$') {
             let entity_exists = self.entities.read().unwrap().contains_key(assert.get_name());
             if entity_exists {
                 let lock = self.entities.read().unwrap();
@@ -179,7 +179,7 @@ impl Representation {
         let process_arg = |a: &GroundedClsMemb| {
             let subject = a.get_name();
             let is_new1;
-            if (&subject).starts_with('$') {
+            if (subject).starts_with('$') {
                 let entity_exists = self.entities.read().unwrap().contains_key(subject);
                 if entity_exists {
                     let lock = self.entities.read().unwrap();
@@ -332,8 +332,8 @@ impl Representation {
                     lang::Predicate::FreeClsMemb(ref free) => {
                         if let Some(ls) = candidates.get(free.get_var_ref()) {
                             for entity in ls {
-                                let grfact =
-                                    Arc::new(GroundedClsMemb::from_free(free, entity.name.clone()));
+                                let grfact = Arc::new(GroundedClsMemb::from_free(free,
+                                                                                 entity.name));
                                 self.ask_processed(QueryInput::AskClassMember(grfact), 0, true);
                             }
                         }
@@ -349,7 +349,7 @@ impl Representation {
                 let f = HashMap::new();
                 for args in mapped {
                     let args = HashMap::from_iter(args.iter()
-                        .map(|&(ref v, ref a)| (v.clone(), &**a)));
+                        .map(|&(v, ref a)| (v, &**a)));
                     if let Ok(grfunc) = GroundedFunc::from_free(func_decl, &args, &f) {
                         self.ask_processed(QueryInput::AskRelationalFunc(Arc::new(grfunc)),
                                            0,
@@ -383,7 +383,7 @@ impl Representation {
         let preds = rule.get_all_predicates();
         for p in preds {
             let name = p.get_name();
-            n.push(name.clone());
+            n.push(name);
             let class_exists = self.classes.read().unwrap().contains_key(name);
             if class_exists {
                 let lock = self.classes.read().unwrap();
@@ -432,7 +432,7 @@ impl Representation {
                     _ => {}
                 }
             }
-            dict.insert(cls.clone(), v);
+            dict.insert(*cls, v);
         }
         dict
     }

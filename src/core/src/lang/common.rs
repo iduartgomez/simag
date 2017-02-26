@@ -367,6 +367,7 @@ impl GroundedClsMemb {
 }
 
 impl ::std::cmp::PartialEq for GroundedClsMemb {
+    #![allow(collapsible_if)]
     fn eq(&self, other: &GroundedClsMemb) -> bool {
         if self.term != other.term {
             panic!()
@@ -392,7 +393,7 @@ impl ::std::cmp::PartialEq for GroundedClsMemb {
                 if op_rhs.is_equal() {
                     if let Some(ref val_lhs) = *val_lhs {
                         let val_rhs = val_rhs.as_ref().unwrap();
-                        val_lhs.approx_eq_ulps(&val_rhs, FLOAT_EQ_ULPS)
+                        val_lhs.approx_eq_ulps(val_rhs, FLOAT_EQ_ULPS)
                     } else {
                         true
                     }
@@ -403,14 +404,14 @@ impl ::std::cmp::PartialEq for GroundedClsMemb {
                 } else if op_rhs.is_more_eq() {
                     if let Some(ref val_lhs) = *val_lhs {
                         let val_rhs = val_rhs.as_ref().unwrap();
-                        val_lhs.approx_eq_ulps(&val_rhs, FLOAT_EQ_ULPS) || val_lhs > val_rhs
+                        val_lhs.approx_eq_ulps(val_rhs, FLOAT_EQ_ULPS) || val_lhs > val_rhs
                     } else {
                         true
                     }
                 } else {
                     if let Some(ref val_lhs) = *val_lhs {
                         let val_rhs = val_rhs.as_ref().unwrap();
-                        val_lhs.approx_eq_ulps(&val_rhs, FLOAT_EQ_ULPS) || val_lhs < val_rhs
+                        val_lhs.approx_eq_ulps(val_rhs, FLOAT_EQ_ULPS) || val_lhs < val_rhs
                     } else {
                         true
                     }
@@ -496,7 +497,7 @@ impl GroundedFunc {
             let n_a = match *a {
                 Predicate::FreeClsMemb(ref free) => {
                     if let Some(entity) = assignments.get(&*free.term) {
-                        GroundedClsMemb::from_free(free, &entity.name)
+                        GroundedClsMemb::from_free(free, entity.name)
                     } else {
                         return Err(());
                     }
@@ -1021,7 +1022,7 @@ impl<'a> FuncDecl {
     pub fn get_name(&self) -> &str {
         match self.name {
             Terminal::FreeTerm(ref var) => &var.name,
-            Terminal::GroundedTerm(ref name) => &name,
+            Terminal::GroundedTerm(ref name) => name,
             Terminal::Keyword(kw) => kw,
         }
     }
@@ -1624,7 +1625,7 @@ impl<'a> ClassDecl {
             let grfact = match *a {
                 Predicate::FreeClsMemb(ref free) => {
                     if let Some(entity) = assignments.as_ref().unwrap().get(&*free.term) {
-                        GroundedClsMemb::from_free(free, &entity.name)
+                        GroundedClsMemb::from_free(free, entity.name)
                     } else {
                         break;
                     }

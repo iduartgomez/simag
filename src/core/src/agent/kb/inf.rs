@@ -129,21 +129,21 @@ impl<'b> InfResults<'b> {
         for relations in lock.values() {
             for relation_ls in relations.values() {
                 for grfunc in relation_ls {
-                    for _ in grfunc.get_args_names() {
-                        if res.contains_key(grfunc.get_name()) {
-                            let prev = res.get_mut(grfunc.get_name()).unwrap();
+                    for name in grfunc.get_args_names() {
+                        if res.contains_key(name) {
+                            let prev = res.get_mut(name).unwrap();
                             prev.insert(&**grfunc as *const GroundedFunc);
                         } else {
                             let mut new = HashSet::new();
                             new.insert(&**grfunc as *const GroundedFunc);
-                            res.insert(grfunc.get_name().to_string(), new);
+                            res.insert(name.to_string(), new);
                         }
                     }
                 }
             }
         }
-        HashMap::from_iter(res.iter().map(|(k, l)| {
-            (k.clone(), l.iter().map(|v| unsafe { &**v as &GroundedFunc }).collect::<Vec<_>>())
+        HashMap::from_iter(res.into_iter().map(|(k, l)| {
+            (k, l.into_iter().map(|v| unsafe { &*v as &GroundedFunc }).collect::<Vec<_>>())
         }))
     }
 }
@@ -244,7 +244,7 @@ impl<'a> Inference<'a> {
             let nodes = &inf.nodes as *const RwLock<_> as usize;
             let results = &inf.results as *const InfResults as usize;
             let mut pass = InfTrial {
-                kb: &inf.kb,
+                kb: inf.kb,
                 actv: actv_query.clone(),
                 updated: Mutex::new(vec![]),
                 feedback: AtomicBool::new(true),
@@ -261,7 +261,7 @@ impl<'a> Inference<'a> {
             // run the query, if there is no result and there is an update,
             // then loop again, else stop
             loop {
-                pass.unify(query.clone(), VecDeque::new(), HashSet::new());
+                pass.unify(query, VecDeque::new(), HashSet::new());
                 {
                     let lock0 = pass.updated.lock().unwrap();
                     let lock1 = pass.feedback.load(Ordering::SeqCst);
@@ -289,7 +289,7 @@ impl<'a> Inference<'a> {
                 let query = pred.get_parent();
                 scope.spawn(move || {
                     let result = if !self.ignore_current {
-                        self.kb.class_membership(&pred)
+                        self.kb.class_membership(pred)
                     } else {
                         None
                     };
@@ -313,7 +313,7 @@ impl<'a> Inference<'a> {
                 for arg in &pred.args {
                     let obj = arg.get_name();
                     if !self.ignore_current {
-                        result = self.kb.has_relationship(&pred, arg.get_name());
+                        result = self.kb.has_relationship(pred, arg.get_name());
                     }
                     if result.is_some() {
                         self.results.add_grounded(obj, query, Some((result.unwrap(), None)));
@@ -398,14 +398,14 @@ impl ActiveQuery {
 
     fn get_obj(&self) -> &str {
         match *self {
-            ActiveQuery::Class(ref obj, ..) => obj.as_str(),
+            ActiveQuery::Class(ref obj, ..) |
             ActiveQuery::Func(ref obj, ..) => obj.as_str(),
         }
     }
 
     fn get_pred(&self) -> &str {
         match *self {
-            ActiveQuery::Class(_, ref pred, ..) => pred.as_str(),
+            ActiveQuery::Class(_, ref pred, ..) |
             ActiveQuery::Func(_, ref pred, ..) => pred.as_str(),
         }
     }
@@ -475,8 +475,8 @@ impl ProofArgs {
             &*data as &Vec<(&Var, Arc<VarAssignment>)>
         };
         let mut n_args = HashMap::with_capacity(data.len());
-        for &(ref k, ref v) in data {
-            n_args.insert(k.clone(), &**v);
+        for &(k, ref v) in data {
+            n_args.insert(k, &**v);
         }
         n_args
     }
@@ -829,10 +829,10 @@ pub fn meet_sent_req<'a>(rep: &'a Representation,
         let i2: Vec<_>;
         let cls_filter = i0.iter()
             .filter(|&(_, cnt)| *cnt == class_list.len())
-            .map(|(k, _)| k.clone());
+            .map(|(k, _)| *k);
         let func_filter = i1.iter()
             .filter(|&(_, cnt)| *cnt == funcs_list.len())
-            .map(|(k, _)| k.clone());
+            .map(|(k, _)| *k);
         if !meet_func_req.is_empty() && !meet_cls_req.is_empty() {
             let c1: HashSet<&str> = cls_filter.collect();
             i2 = func_filter.filter_map(|n0| c1.get(&n0)).cloned().collect();
@@ -859,7 +859,7 @@ pub fn meet_sent_req<'a>(rep: &'a Representation,
             if results.contains_key(var) {
                 let v = results.get_mut(var).unwrap();
                 v.push(Arc::new(VarAssignment {
-                    name: name.clone(),
+                    name: name,
                     classes: gr_memb,
                     funcs: gr_relations,
                 }))
@@ -923,8 +923,8 @@ impl<'a> ::std::iter::Iterator for ArgsProduct<'a> {
             for (k1, v1) in &self.input {
                 let idx_1 = self.indexes[k1];
                 let assign = v1[idx_1.0].clone();
-                val.push((*k1 as *const Var, assign.name.clone()));
-                row_0.push((k1.clone(), assign));
+                val.push((*k1 as *const Var, assign.name));
+                row_0.push((*k1, assign));
             }
             if self.completed_iter() {
                 return None;
@@ -976,7 +976,7 @@ impl<'a> ArgsProduct<'a> {
             } else {
                 for (k, v) in &self.indexes {
                     if *k != self.curr && !v.1 {
-                        self.curr = k.clone();
+                        self.curr = k;
                         break;
                     }
                 }
@@ -1388,8 +1388,8 @@ mod test {
         rep.tell(test_04).unwrap();
         let answ = rep.ask(q04_01);
         let a04_01 = answ.get_relationships();
-        assert!(a04_01.contains_key("$Lulu"));
         assert!(a04_01.contains_key("$Lucy"));
+        assert!(a04_01.contains_key("$Lulu"));
         assert!(a04_01.contains_key("$Vicky"));
 
         let test_05 = String::from("
