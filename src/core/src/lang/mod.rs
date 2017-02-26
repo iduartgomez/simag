@@ -55,7 +55,6 @@ mod errors {
     impl<'a> From<ParseErrB<'a>> for ParseErrF {
         fn from(err: ParseErrB<'a>) -> ParseErrF {
             println!("@err: {:?}", err);
-            // TODO: implement err messag building
             ParseErrF::Msg(String::from("failed"))
         }
     }

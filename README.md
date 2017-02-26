@@ -1,5 +1,5 @@
 # README #
-An experimental agent-based AI framework/library. Work in progres.
+An experimental agent-based AI framework/library. Work in progress.
 
 # LICENSE #
 Copyright 2017 Ignacio Duart Gómez

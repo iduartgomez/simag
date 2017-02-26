@@ -461,18 +461,6 @@ impl Representation {
                             let e: &mut Vec<_> = m.entry(name).or_insert(Vec::new());
                             e.push(f.clone());
                         }
-                        /*
-                        for gr in &f.args[..] {
-                            let t = unsafe { &*(gr as *const GroundedClsMemb) };
-                            let e: &mut Vec<_> = m.entry(t.get_name()).or_insert(Vec::new());
-                            e.push(f.clone());
-                        }
-                        if let Some(ref gr) = f.third {
-                            let t = unsafe { &*(gr as *const GroundedClsMemb) };
-                            let e: &mut Vec<_> = m.entry(t.get_name()).or_insert(Vec::new());
-                            e.push(f.clone());
-                        }
-                        */
                     }
                 }
             }
@@ -1178,15 +1166,15 @@ mod test {
 
     #[test]
     fn repr_eval_fol() {
-        let rep = Representation::new();
-
         // indicative conditional
         // (true |> true)
+        let rep = Representation::new();
         let fol = String::from("
             ( drugDealer[$West,u=1] |> ( scum[$West,u=1] && good[$West,u=0] ) )
             ( drugDealer[$West,u=1] )
         ");
-        let ask = "( scum[$West,u=1] && good[$West,u=0] )".to_string();
+        let q = "( scum[$West,u=1] && good[$West,u=0] )".to_string();
+        rep.tell(fol);
 
         // (false |> none)
         let fol = String::from("

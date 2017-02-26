@@ -533,7 +533,16 @@ impl GroundedFunc {
         *self.args[0].value.read().unwrap()
     }
 
-    #[inline]
+    pub fn get_args(&self) -> Vec<&GroundedClsMemb> {
+        let mut v = Vec::with_capacity(3);
+        v.push(&self.args[0]);
+        v.push(&self.args[1]);
+        if let Some(ref arg) = self.third {
+            v.push(arg);
+        }
+        v
+    }
+
     pub fn get_args_names(&self) -> Vec<&str> {
         let mut v = Vec::with_capacity(3);
         v.push(self.args[0].get_name());
@@ -544,7 +553,20 @@ impl GroundedFunc {
         v
     }
 
-    #[inline]
+    pub fn get_arg_name(&self, pos: usize) -> &str {
+        match pos {
+            0 => self.args[0].get_name(),
+            1 => self.args[1].get_name(),
+            _ => {
+                if let Some(ref arg) = self.third {
+                    arg.get_name()
+                } else {
+                    panic!()
+                }
+            }
+        }
+    }
+
     pub fn name_in_pos(&self, name: &str, pos: &usize) -> bool {
         if (*pos < 2) && (self.args[*pos].get_name() == name) {
             return true;

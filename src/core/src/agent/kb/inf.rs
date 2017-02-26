@@ -102,7 +102,8 @@ impl<'b> InfResults<'b> {
     }
 
     #[allow(type_complexity)]
-    pub fn get_results_multiple(self)
+    pub fn get_results_multiple
+        (self)
          -> HashMap<QueryPred, HashMap<String, Option<(bool, Option<Date>)>>> {
         // WARNING: ObjName<'a> may (truly) outlive the content, own the &str first
         let orig: &mut HashMap<QueryPred, HashMap<ObjName<'b>, Option<(bool, Option<Date>)>>> =
@@ -256,23 +257,7 @@ impl<'a> Inference<'a> {
     /// addition to the KB.
     pub fn infer_facts(&self) {
         fn queue_query(inf: &Inference, query: &str, actv_query: ActiveQuery) {
-            //let inf = &*(inf as *const Inference);
-            //let mut pass = InfTrial::new(inf, actv_query.clone());
-            let nodes = &inf.nodes as *const RwLock<_> as usize;
-            let results = &inf.results as *const InfResults as usize;
-            let mut pass = InfTrial {
-                kb: inf.kb,
-                actv: actv_query.clone(),
-                updated: Mutex::new(vec![]),
-                feedback: AtomicBool::new(true),
-                valid: Mutex::new(None),
-                nodes: nodes,
-                queue: &inf.queue,
-                results: results,
-                depth: inf.depth,
-                depth_cnt: RwLock::new(0_usize),
-                _available_threads: RwLock::new(4_u32),
-            };
+            let mut pass = InfTrial::new(inf, actv_query.clone());
             //let pass = unsafe { &mut *(&mut t as *mut InfTrial) as &mut InfTrial };
             pass.get_rules(vec![query.clone()]);
             // run the query, if there is no result and there is an update,
@@ -316,8 +301,8 @@ impl<'a> Inference<'a> {
                         self.results.add_grounded(obj, query, None);
                         // if no result was found from the kb directly
                         // make an inference from a grounded fact
-                        let actv_query = ActiveQuery::new_with_class(obj, query, pred.clone());
-                        queue_query(self, pred.get_parent(), actv_query);
+                        let actv_query = ActiveQuery::new_with_class(pred.clone());
+                        queue_query(self, query, actv_query);
                     }
                 });
             }
@@ -325,19 +310,19 @@ impl<'a> Inference<'a> {
 
         crossbeam::scope(|scope| for pred in &self.query.func_queries_grounded {
             scope.spawn(move || {
-                let query: &str = &pred.name;
+                let query: &str = pred.get_name();
                 let mut result = None;
-                for arg in &pred.args {
+                for (i, arg) in pred.get_args().iter().enumerate() {
                     let obj = arg.get_name();
                     if !self.ignore_current {
-                        result = self.kb.has_relationship(pred, arg.get_name());
+                        result = self.kb.has_relationship(pred, obj);
                     }
                     if result.is_some() {
                         self.results.add_grounded(obj, query, Some((result.unwrap(), None)));
                     } else {
                         self.results.add_grounded(obj, query, None);
-                        let actv_query = ActiveQuery::new_with_func(obj, query, pred.clone());
-                        queue_query(self, pred.get_name(), actv_query);
+                        let actv_query = ActiveQuery::new_with_func(i, pred.clone());
+                        queue_query(self, query, actv_query);
                     }
                 }
             });
@@ -400,34 +385,36 @@ impl<'a> Inference<'a> {
 #[derive(Clone)]
 enum ActiveQuery {
     // (obj_name, pred_name, fn/cls decl)
-    Class(String, String, Arc<GroundedClsMemb>),
-    Func(String, String, Arc<GroundedFunc>),
+    Class(Arc<GroundedClsMemb>),
+    Func(usize, Arc<GroundedFunc>),
 }
 
 impl ActiveQuery {
-    fn new_with_func(obj: &str, query: &str, decl: Arc<GroundedFunc>) -> ActiveQuery {
-        ActiveQuery::Func(obj.to_string(), query.to_string(), decl)
+    fn new_with_func(obj_arg: usize, decl: Arc<GroundedFunc>) -> ActiveQuery {
+        ActiveQuery::Func(obj_arg, decl)
     }
 
-    fn new_with_class(obj: &str, query: &str, decl: Arc<GroundedClsMemb>) -> ActiveQuery {
-        ActiveQuery::Class(obj.to_string(), query.to_string(), decl)
+    fn new_with_class(decl: Arc<GroundedClsMemb>) -> ActiveQuery {
+        ActiveQuery::Class(decl)
     }
 
+    #[inline]
     fn get_obj(&self) -> &str {
         match *self {
-            ActiveQuery::Class(ref obj, ..) |
-            ActiveQuery::Func(ref obj, ..) => obj.as_str(),
+            ActiveQuery::Class(ref decl) => decl.get_name(), 
+            ActiveQuery::Func(pos, ref decl) => decl.get_arg_name(pos),
         }
     }
 
+    #[inline]
     fn get_pred(&self) -> &str {
         match *self {
-            ActiveQuery::Class(_, ref pred, ..) |
-            ActiveQuery::Func(_, ref pred, ..) => pred.as_str(),
+            ActiveQuery::Class(ref decl) => decl.get_parent(),
+            ActiveQuery::Func(_, ref decl) => decl.get_name(),
         }
     }
 
-
+    #[inline]
     fn is_func(&self) -> bool {
         match *self {
             ActiveQuery::Class(..) => false,
@@ -438,7 +425,7 @@ impl ActiveQuery {
     #[inline]
     fn get_func(&self) -> &GroundedFunc {
         match *self {
-            ActiveQuery::Func(_, _, ref gf) => &*gf,
+            ActiveQuery::Func(_, ref gf) => &*gf,
             _ => panic!(),
         }
     }
@@ -446,7 +433,7 @@ impl ActiveQuery {
     #[inline]
     fn get_cls(&self) -> &GroundedClsMemb {
         match *self {
-            ActiveQuery::Class(_, _, ref gt) => &*gt,
+            ActiveQuery::Class(ref gt) => &*gt,
             _ => panic!(),
         }
     }
@@ -543,6 +530,24 @@ struct InfTrial<'a> {
 }
 
 impl<'a> InfTrial<'a> {
+    fn new(inf: &'a Inference, actv_query: ActiveQuery) -> InfTrial<'a> {
+        let nodes = &inf.nodes as *const RwLock<_> as usize;
+        let results = &inf.results as *const InfResults as usize;
+        InfTrial {
+            kb: inf.kb,
+            actv: actv_query.clone(),
+            updated: Mutex::new(vec![]),
+            feedback: AtomicBool::new(true),
+            valid: Mutex::new(None),
+            nodes: nodes,
+            queue: &inf.queue,
+            results: results,
+            depth: inf.depth,
+            depth_cnt: RwLock::new(0_usize),
+            _available_threads: RwLock::new(4_u32),
+        }
+    }
+
     fn unify(&self, mut parent: &'a str, mut chk: VecDeque<&'a str>, mut done: HashSet<&'a str>) {
 
         fn scoped_exec(inf: &InfTrial, node: &ProofNode, args: ProofArgs) {
@@ -1498,7 +1503,7 @@ mod test {
         ");
         rep.tell(test_03_02).unwrap();
         let q03_02 = "(fat[$Pancho,u=0])".to_string();
-        assert_eq!(rep.ask(q03_02).get_results_single(), Some(true)); //<--
+        assert_eq!(rep.ask(q03_02).get_results_single(), Some(true));
 
         let test_03_03 = String::from("
             (run(time='2015-01-01T00:00:00Z')[$Pancho,u=1])
