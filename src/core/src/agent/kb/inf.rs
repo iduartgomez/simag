@@ -22,25 +22,26 @@ use crossbeam;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::iter::FromIterator;
+use std::mem;
 use std::rc::Rc;
 use std::sync::{Mutex, RwLock, Arc};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 type PArgVal = Vec<usize>;
-type ObjName = String;
+type ObjName<'a> = &'a str;
 type QueryPred = String;
-type GroundedRes = HashMap<ObjName, Option<(bool, Option<Date>)>>;
-type QueryResMemb = HashMap<ObjName, Vec<Arc<GroundedClsMemb>>>;
-type QueryResRels = HashMap<ObjName, Vec<Arc<GroundedFunc>>>;
+type GroundedRes<'a> = HashMap<ObjName<'a>, Option<(bool, Option<Date>)>>;
+type QueryResMemb<'a> = HashMap<ObjName<'a>, Vec<Arc<GroundedClsMemb>>>;
+type QueryResRels<'a> = HashMap<ObjName<'a>, Vec<Arc<GroundedFunc>>>;
 
 /// A succesful query will return an `InfResult` which contains all the answer data.
 /// The data can be manipulated and filtered throught various methods returning
 /// whatever is requested by the consumer.
 #[derive(Debug)]
 pub struct InfResults<'b> {
-    grounded_queries: RwLock<HashMap<QueryPred, GroundedRes>>,
-    membership: RwLock<HashMap<&'b Var, QueryResMemb>>,
-    relationships: RwLock<HashMap<&'b Var, QueryResRels>>,
+    grounded_queries: RwLock<HashMap<QueryPred, GroundedRes<'b>>>,
+    membership: RwLock<HashMap<&'b Var, QueryResMemb<'b>>>,
+    relationships: RwLock<HashMap<&'b Var, QueryResRels<'b>>>,
     query: Arc<QueryProcessed<'b>>,
 }
 
@@ -58,7 +59,7 @@ impl<'b> InfResults<'b> {
         let mut lock = self.membership.write().unwrap();
         lock.entry(var)
             .or_insert(HashMap::new())
-            .entry(name.to_string())
+            .entry(name)
             .or_insert(vec![])
             .push(membership);
     }
@@ -67,9 +68,10 @@ impl<'b> InfResults<'b> {
         let mut lock = self.relationships.write().unwrap();
         for func in rel {
             for obj in func.get_args_names() {
+                let obj = unsafe { ::std::mem::transmute::<&str, &'b str>(obj) };
                 lock.entry(var)
                     .or_insert(HashMap::new())
-                    .entry(obj.to_string())
+                    .entry(obj)
                     .or_insert(vec![])
                     .push(func.clone());
             }
@@ -77,8 +79,9 @@ impl<'b> InfResults<'b> {
     }
 
     fn add_grounded(&self, obj: &str, pred: &str, res: Option<(bool, Option<Date>)>) {
+        let obj = unsafe { ::std::mem::transmute::<&str, &'b str>(obj) };
         let mut lock = self.grounded_queries.write().unwrap();
-        lock.entry(pred.to_string()).or_insert(HashMap::new()).insert(obj.to_string(), res);
+        lock.entry(pred.to_string()).or_insert(HashMap::new()).insert(obj, res);
     }
 
     pub fn get_results_single(&self) -> Option<bool> {
@@ -98,13 +101,23 @@ impl<'b> InfResults<'b> {
         Some(true)
     }
 
-    pub fn get_results_multiple(self) -> HashMap<QueryPred, GroundedRes> {
-        self.grounded_queries.into_inner().unwrap()
+    #[allow(type_complexity)]
+    pub fn get_results_multiple(self)
+         -> HashMap<QueryPred, HashMap<String, Option<(bool, Option<Date>)>>> {
+        // WARNING: ObjName<'a> may (truly) outlive the content, own the &str first
+        let orig: &mut HashMap<QueryPred, HashMap<ObjName<'b>, Option<(bool, Option<Date>)>>> =
+            &mut *self.grounded_queries.write().unwrap();
+        let mut res = HashMap::new();
+        for (qpred, r) in orig.drain() {
+            let r = HashMap::from_iter(r.into_iter().map(|(k, v)| (k.to_string(), v)));
+            res.insert(qpred, r);
+        }
+        res
     }
 
-    pub fn get_memberships(&self) -> HashMap<ObjName, Vec<&GroundedClsMemb>> {
+    pub fn get_memberships(&self) -> HashMap<ObjName<'b>, Vec<&GroundedClsMemb>> {
         let lock = self.membership.read().unwrap();
-        let mut res: HashMap<ObjName, Vec<&GroundedClsMemb>> = HashMap::new();
+        let mut res: HashMap<ObjName<'b>, Vec<&GroundedClsMemb>> = HashMap::new();
         for preds in lock.values() {
             for members in preds.values() {
                 for gr in members {
@@ -115,7 +128,7 @@ impl<'b> InfResults<'b> {
                     } else {
                         let mut new = vec![];
                         new.push(gr);
-                        res.insert(gr.get_name().to_string(), new);
+                        res.insert(gr.get_name(), new);
                     }
                 }
             }
@@ -123,20 +136,21 @@ impl<'b> InfResults<'b> {
         res
     }
 
-    pub fn get_relationships(&self) -> HashMap<ObjName, Vec<&GroundedFunc>> {
+    pub fn get_relationships(&self) -> HashMap<ObjName<'b>, Vec<&GroundedFunc>> {
         let lock = self.relationships.read().unwrap();
-        let mut res: HashMap<ObjName, HashSet<*const GroundedFunc>> = HashMap::new();
+        let mut res: HashMap<ObjName<'b>, HashSet<*const GroundedFunc>> = HashMap::new();
         for relations in lock.values() {
             for relation_ls in relations.values() {
                 for grfunc in relation_ls {
                     for name in grfunc.get_args_names() {
+                        let name = unsafe { mem::transmute::<&str, &'b str>(name) };
                         if res.contains_key(name) {
                             let prev = res.get_mut(name).unwrap();
                             prev.insert(&**grfunc as *const GroundedFunc);
                         } else {
                             let mut new = HashSet::new();
                             new.insert(&**grfunc as *const GroundedFunc);
-                            res.insert(name.to_string(), new);
+                            res.insert(name, new);
                         }
                     }
                 }
@@ -167,21 +181,24 @@ impl<'a> Answer<'a> {
         }
     }
 
-    pub fn get_results_multiple(self) -> HashMap<QueryPred, GroundedRes> {
+    #[allow(type_complexity)]
+    pub fn get_results_multiple
+        (self)
+         -> HashMap<QueryPred, HashMap<String, Option<(bool, Option<Date>)>>> {
         match self {
             Answer::Results(result) => result.get_results_multiple(),
             _ => panic!("simag: tried to unwrap a result from an error"),
         }
     }
 
-    pub fn get_memberships(&'a self) -> HashMap<ObjName, Vec<&'a GroundedClsMemb>> {
+    pub fn get_memberships(&'a self) -> HashMap<ObjName<'a>, Vec<&'a GroundedClsMemb>> {
         match *self {
             Answer::Results(ref result) => result.get_memberships(),
             _ => panic!("simag: tried to unwrap a result from an error"),
         }
     }
 
-    pub fn get_relationships(&'a self) -> HashMap<ObjName, Vec<&'a GroundedFunc>> {
+    pub fn get_relationships(&'a self) -> HashMap<ObjName<'a>, Vec<&'a GroundedFunc>> {
         match *self {
             Answer::Results(ref result) => result.get_relationships(),
             _ => panic!("simag: tried to unwrap a result from an error"),
@@ -622,17 +639,20 @@ impl<'a> InfTrial<'a> {
 
     fn add_as_last_valid(&self,
                          context: &ProofResult,
-                         r_dict: &mut GroundedRes,
+                         r_dict: &mut GroundedRes<'a>,
                          date: Date,
                          value: bool) {
-        let query_obj = self.actv.get_obj();
+        let query_obj = unsafe {
+            let obj = self.actv.get_obj();
+            ::std::mem::transmute::<&str, &'a str>(obj)
+        };
         let mut lock = self.valid.lock().unwrap();
         if let Some(ref prev_answ) = *lock {
             if prev_answ.newest_grfact >= context.newest_grfact {
                 return;
             }
         }
-        r_dict.insert(query_obj.to_string(), Some((value, Some(date))));
+        r_dict.insert(query_obj, Some((value, Some(date))));
         let answ = ValidAnswer {
             node: context.node,
             args: context.args.clone(),
@@ -778,7 +798,6 @@ impl<'a> InfTrial<'a> {
 pub fn meet_sent_req<'a>(rep: &'a Representation,
                          req: &'a HashMap<&Var, Vec<&'a lang::Assert>>)
                          -> Option<HashMap<&'a Var, Vec<Arc<VarAssignment<'a>>>>> {
-    use std::mem::transmute;
     let mut results: HashMap<&Var, Vec<Arc<VarAssignment>>> = HashMap::new();
     for (var, asserts) in req.iter() {
         if asserts.is_empty() {
@@ -801,8 +820,8 @@ pub fn meet_sent_req<'a>(rep: &'a Representation,
             }
         }
         let (class_list, funcs_list) = unsafe {
-            let cl = transmute::<&[&str], &'a [&'a str]>(&cl[..]);
-            let fl = transmute::<&[&lang::FuncDecl], &'a [&'a lang::FuncDecl]>(&fl[..]);
+            let cl = mem::transmute::<&[&str], &'a [&'a str]>(&cl[..]);
+            let fl = mem::transmute::<&[&lang::FuncDecl], &'a [&'a lang::FuncDecl]>(&fl[..]);
             (cl, fl)
         };
         // meet_cls_req: HashMap<&str, Vec<Arc<GroundedClsMemb>>>
