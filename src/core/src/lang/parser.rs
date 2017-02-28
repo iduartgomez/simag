@@ -49,7 +49,7 @@ const OR_OP: &'static [u8] = b"||";
 const IFF_OP: &'static [u8] = b"<=>";
 const IMPL_OP: &'static [u8] = b"=>";
 
-const DONE_ARR: &'static [u8] = b" ";
+const EMPTY: &'static [u8] = b" ";
 
 pub struct Parser;
 impl Parser {
@@ -113,7 +113,7 @@ impl Parser {
                         (ErrorKind::Custom(1), p) => Err(ParseErrB::NonNumber(p)),
                         (ErrorKind::Custom(11), p) => Err(ParseErrB::NotScope(p)),
                         (ErrorKind::Custom(12), p) => Err(ParseErrB::UnbalDelim(p)),
-                        (ErrorKind::Custom(15), p) => Err(ParseErrB::IllegalChain(p)),
+                        (ErrorKind::Custom(13), p) => Err(ParseErrB::IllegalChain(p)),
                         (_, p) => Err(ParseErrB::SyntaxErrorPos(p)),
                     }
                 }
@@ -128,12 +128,11 @@ impl Parser {
 
 #[derive(Debug)]
 pub enum ParseErrB<'a> {
-    SyntaxError(Box<ParseErrB<'a>>),
     SyntaxErrorU,
+    SyntaxError(Box<ParseErrB<'a>>),
     SyntaxErrorPos(&'a [u8]),
     NotScope(&'a [u8]),
     UnbalDelim(&'a [u8]),
-    ExpectOpenDelim(&'a [u8]),
     IllegalChain(&'a [u8]),
     NonTerminal(&'a [u8]),
     NonNumber(&'a [u8]),
@@ -197,6 +196,10 @@ impl<'a> ASTNode<'a> {
         if self.vars.is_some() {
             return Ok(None);
         }
+        match self.logic_op {
+            Some(LogicOperator::And) => {}
+            _ => return Ok(None),
+        }
         self.next.is_assertion(context)
     }
 }
@@ -213,6 +216,20 @@ impl<'a> Next<'a> {
     #[inline]
     fn from_assert(input: AssertBorrowed) -> Next {
         Next::Assert(input)
+    }
+
+    pub fn get_op(&self) -> LogicOperator {
+        match *self {
+            Next::ASTNode(ref node) => *node.logic_op.as_ref().unwrap(),
+            _ => panic!(),
+        }
+    }
+
+    pub fn would_assert(&self) -> bool {
+        match *self {
+            Next::Assert(_) => true,
+            _ => false,
+        }
     }
 
     fn is_assertion(&self, context: &mut ParseContext) -> Result<Option<ParseTree>, ParseErrF> {
@@ -278,7 +295,7 @@ fn get_blocks(input: &[u8]) -> IResult<&[u8], Vec<Next>> {
     let input = remove_multispace(input);
     if input.len() == 0 {
         // empty program
-        return IResult::Done(&DONE_ARR[..], vec![]);
+        return IResult::Done(EMPTY, vec![]);
     }
     // find the positions of the closing delimiters and try until it fails
     let mut mcd = ::std::collections::VecDeque::new();
@@ -329,7 +346,7 @@ fn get_blocks(input: &[u8]) -> IResult<&[u8], Vec<Next>> {
     if results.is_empty() {
         return IResult::Error(nom::Err::Position(ErrorKind::Custom(11), input));
     }
-    IResult::Done(&DONE_ARR[..], results)
+    IResult::Done(EMPTY, results)
 }
 
 named!(scope0(&[u8]) -> IResult<&[u8], Next>, ws!(
@@ -337,62 +354,105 @@ named!(scope0(&[u8]) -> IResult<&[u8], Next>, ws!(
         map!(
             do_parse!(
                 tag!("(") >>
-                vars: opt!(scope_decl) >>
+                vars: opt!(scope_var_decl) >>
                 decl: decl_alt >>
                 op: opt!(map!(logic_operator, LogicOperator::from_bytes)) >>
                 next: alt!(assertions | scope0) >>
                 tag!(")") >>
-                (vars, decl, op, next)
-            ), expr
+                (vars, decl, op, next, true)
+            ), expr0
         ) | 
         map!(
             do_parse!(
                 tag!("(") >>
-                vars: opt!(scope_decl) >>
+                vars: opt!(scope_var_decl) >>
                 next: alt!(assertions | scope0) >>
                 op: opt!(map!(logic_operator, LogicOperator::from_bytes)) >>
                 decl: decl_alt >>
                 tag!(")") >>
-                (vars, decl, op, next)
-            ), expr
+                (vars, decl, op, next, false)
+            ), expr0
         ) |
         map!(
             do_parse!(
                 tag!("(") >>
-                vars: opt!(scope_decl) >>
+                vars: opt!(scope_var_decl) >>
+                lhs: alt!(assertions | scope0) >> 
+                op: map!(logic_operator, LogicOperator::from_bytes) >> 
+                rhs: alt!(assertions | scope0) >>
+                tag!(")") >>
+                (vars, lhs, op, rhs)
+            ), expr1 
+        ) |
+        map!(
+            do_parse!(
+                tag!("(") >>
+                vars: opt!(scope_var_decl) >>
                 next: opt!(alt!(assertions | scope0)) >>
                 tag!(")") >>
                 (vars, next)
             ), empty_scope 
-        ) 
+        ) |
+        map!(
+            map!(decl_alt, Next::from_assert), 
+            |decl| {
+                IResult::Done(EMPTY, decl)
+            }
+        )
     ) 
 ));
 
 type ScopeOutA<'a> = (Option<DeclVars<'a>>,
                       AssertBorrowed<'a>,
                       Option<LogicOperator>,
-                      IResult<&'a [u8], Next<'a>>);
+                      IResult<&'a [u8], Next<'a>>,
+                      bool);
 
-fn expr<'a>(input: ScopeOutA<'a>) -> IResult<&'a [u8], Next<'a>> {
-    let (vars, decl, op, next) = input;
+fn expr0<'a>(input: ScopeOutA<'a>) -> IResult<&'a [u8], Next<'a>> {
+    let (vars, decl, op, next, is_lhs) = input;
     let (rest, next) = match next {
         IResult::Done(rest, next) => (rest, next), 
         IResult::Error(err) => return IResult::Error(err),
         IResult::Incomplete(_) => return IResult::Error(nom::Err::Code(ErrorKind::Custom(11))),
     };
-    let curr = Next::ASTNode(Box::new(ASTNode {
-        next: Next::Assert(decl),
-        vars: None,
+    let assert = Next::Assert(decl);
+    let chained = if is_lhs {
+        Next::Chain(vec![assert, next])
+    } else {
+        Next::Chain(vec![next, assert])
+    };
+    let mut curr = ASTNode {
+        next: chained,
+        vars: flat_vars(vars),
         logic_op: op,
-    }));
-    let chained = Next::Chain(vec![curr, next]);
-    let vars = flat_vars(vars);
-    IResult::Done(rest,
-                  Next::ASTNode(Box::new(ASTNode {
-                      next: chained,
-                      vars: vars,
-                      logic_op: None,
-                  })))
+    };
+    let curr = Next::ASTNode(Box::new(curr));
+    IResult::Done(rest, curr)
+}
+
+type ScopeOutB<'a> = (Option<DeclVars<'a>>,
+                      IResult<&'a [u8], Next<'a>>,
+                      LogicOperator,
+                      IResult<&'a [u8], Next<'a>>);
+
+fn expr1<'a>(input: ScopeOutB<'a>) -> IResult<&'a [u8], Next<'a>> {
+    let (vars, lhs, op, rhs) = input;
+    let lhs = match lhs {
+        IResult::Done(_, next) => next, 
+        IResult::Error(err) => return IResult::Error(err),
+        IResult::Incomplete(_) => return IResult::Error(nom::Err::Code(ErrorKind::Custom(11))),
+    };
+    let rhs = match rhs {
+        IResult::Done(_, next) => next, 
+        IResult::Error(err) => return IResult::Error(err),
+        IResult::Incomplete(_) => return IResult::Error(nom::Err::Code(ErrorKind::Custom(11))),
+    };
+    let next = ASTNode {
+        vars: flat_vars(vars),
+        logic_op: Some(op),
+        next: Next::Chain(vec![lhs, rhs]),
+    };
+    IResult::Done(EMPTY, Next::ASTNode(Box::new(next)))
 }
 
 fn empty_scope<'a>(input: (Option<DeclVars<'a>>, Option<IResult<&'a [u8], Next<'a>>>))
@@ -400,13 +460,11 @@ fn empty_scope<'a>(input: (Option<DeclVars<'a>>, Option<IResult<&'a [u8], Next<'
     let (vars, next) = input;
     if let Some(vars) = flat_vars(vars) {
         if let Some(next) = next {
-            let (rest, next) = {
-                match next {
-                    IResult::Done(rest, next) => (rest, next), 
-                    IResult::Error(err) => return IResult::Error(err),
-                    IResult::Incomplete(_) => {
-                        return IResult::Error(nom::Err::Code(ErrorKind::Custom(11)))
-                    }
+            let (rest, next) = match next {
+                IResult::Done(rest, next) => (rest, next), 
+                IResult::Error(err) => return IResult::Error(err),
+                IResult::Incomplete(_) => {
+                    return IResult::Error(nom::Err::Code(ErrorKind::Custom(11)))
                 }
             };
             IResult::Done(rest,
@@ -416,7 +474,7 @@ fn empty_scope<'a>(input: (Option<DeclVars<'a>>, Option<IResult<&'a [u8], Next<'
                               next: next,
                           })))
         } else {
-            IResult::Done(&DONE_ARR[..], Next::None)
+            IResult::Done(EMPTY, Next::None)
         }
     } else if next.is_some() {
         match next {
@@ -425,10 +483,10 @@ fn empty_scope<'a>(input: (Option<DeclVars<'a>>, Option<IResult<&'a [u8], Next<'
             Some(IResult::Incomplete(_)) => {
                 return IResult::Error(nom::Err::Code(ErrorKind::Custom(11)))
             }
-            None => IResult::Done(&DONE_ARR[..], Next::None), 
+            None => IResult::Done(EMPTY, Next::None), 
         }
     } else {
-        IResult::Done(&DONE_ARR[..], Next::None)
+        IResult::Done(EMPTY, Next::None)
     }
 }
 
@@ -436,7 +494,7 @@ named!(assertions(&[u8]) -> IResult<&[u8], Next>,
     map!(ws!(
         do_parse!(
             tag!("(") >>
-            vars: opt!(scope_decl) >>
+            vars: opt!(scope_var_decl) >>
             decl: many0!(
                 map!(
                     do_parse!(
@@ -458,7 +516,7 @@ type AssertOne<'a> = (LogicOperator, AssertBorrowed<'a>);
 #[inline]
 fn assert_one(input: AssertOne) -> IResult<&[u8], Next> {
     let (op, assertion) = input;
-    IResult::Done(&DONE_ARR[..],
+    IResult::Done(EMPTY,
                   Next::ASTNode(Box::new(ASTNode {
                       next: Next::Assert(assertion),
                       vars: None,
@@ -477,9 +535,15 @@ fn assert_many(input: AssertMany) -> IResult<&[u8], Next> {
         match e {
             IResult::Done(_, e) => fd.push(e),
             IResult::Error(err) => return IResult::Error(err),
-            IResult::Incomplete(_) => return IResult::Error(nom::Err::Code(ErrorKind::Custom(15))),
+            IResult::Incomplete(_) => return IResult::Error(nom::Err::Code(ErrorKind::Custom(13))),
         };
     }
+
+    let last = Next::ASTNode(Box::new(ASTNode {
+        vars: None,
+        logic_op: None,
+        next: last,
+    }));
 
     if !fd.is_empty() {
         fd.push(last);
@@ -492,7 +556,7 @@ fn assert_many(input: AssertMany) -> IResult<&[u8], Next> {
         } else {
             Next::Chain(fd)
         };
-        IResult::Done(&DONE_ARR[..], f)
+        IResult::Done(EMPTY, f)
     } else {
         let f = if let Some(vars) = flat_vars(vars) {
             Next::ASTNode(Box::new(ASTNode {
@@ -503,7 +567,7 @@ fn assert_many(input: AssertMany) -> IResult<&[u8], Next> {
         } else {
             last
         };
-        IResult::Done(&DONE_ARR[..], f)
+        IResult::Done(EMPTY, f)
     }
 }
 
@@ -517,7 +581,7 @@ fn decl_alt(input: &[u8]) -> IResult<&[u8], AssertBorrowed> {
 type DeclVars<'a> = Vec<Vec<VarDeclBorrowed<'a>>>;
 
 #[inline]
-named!(scope_decl(&[u8]) -> DeclVars, 
+named!(scope_var_decl(&[u8]) -> DeclVars, 
     ws!(many1!(alt!(variable | skolem)))
 );
 
@@ -878,15 +942,6 @@ fn terminal(input: &[u8]) -> IResult<&[u8], &[u8]> {
     IResult::Done(&input[idx..], &input[0..idx])
 }
 
-#[allow(needless_bool)]
-fn is_term_char(c: u8) -> bool {
-    if is_alphanumeric(c) | (c == b'_') | (c == b'$') {
-        true
-    } else {
-        false
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum CompOperator {
     Equal,
@@ -976,6 +1031,13 @@ impl LogicOperator {
             _ => false,
         }
     }
+
+    pub fn is_or(&self) -> bool {
+        match *self {
+            LogicOperator::Or => true,
+            _ => false,
+        }
+    }
 }
 
 named!(logic_operator, 
@@ -1024,7 +1086,7 @@ fn comment_tag(input: &[u8]) -> IResult<&[u8], &[u8]> {
         }
     }
     if idx == 0 {
-        IResult::Done(&DONE_ARR[..], &input[0..])
+        IResult::Done(EMPTY, &input[0..])
     } else {
         IResult::Done(&input[idx..], &input[0..idx])
     }
@@ -1117,47 +1179,6 @@ mod test {
         assert!(scanned.is_err());
 
         let source = b"
-            (   ( let x y z )
-                (
-                    ( american[x,u=1] && weapon[y,u=1] && fn::sells[y,u>0.5;x;z] && hostile[z,u=1] )
-                    |> criminal[x,u=1]
-                )
-            )
-        ";
-        let mut data = Vec::new();
-        let scanned = Parser::feed(source, &mut data);
-        assert!(scanned.is_ok());
-        let s0 = scanned.unwrap().pop().unwrap();
-        let s0 = match s0 {
-            Next::ASTNode(val) => *val,
-            _ => panic!(),
-        };
-        assert!(s0.vars.is_some());
-        match s0.next 
-            Next::Chain(s1) => {
-                assert_eq!(s1.len(), 2);
-                match s1[0] {
-                    Next::Chain(ref s2_0) => {
-                        assert_eq!(s2_0.len(), 4);
-                    }
-                    _ => panic!(),
-                }
-                match s1[1] {
-                    Next::ASTNode(ref s2_1) => {
-                        assert_eq!(s2_1.logic_op.as_ref().unwrap(),
-                                   &LogicOperator::ICond);
-                        match s2_1.next {
-                            Next::Assert(AssertBorrowed::ClassDecl(_)) => {}
-                            _ => panic!(),
-                        }
-                    }
-                    _ => panic!(),
-                };
-            }
-            _ => panic!(),
-        }
-
-        let source = b"
         ((let x y) (american[x,u=1] && hostile[z,u=1]) |> criminal[x,u=1])
         ((let x y) ((american[x,u=1] && hostile[z,u=1]) |> criminal[x,u=1]))
         ((let x y) (american[x,u=1] && hostile[z,u=1]) |> criminal[x,u=1])
@@ -1172,7 +1193,9 @@ mod test {
         ($i:ident) => {{
             match $i {
                 IResult::Error(nom::Err::Position(ref t, ref v)) => {
-                    println!("\n@error Err::{:?}: {:?}", t, unsafe{str::from_utf8_unchecked(v)});
+                    println!(
+                        "\n@error Err::{:?}: {:?}", 
+                        t, unsafe { str::from_utf8_unchecked(v) } );
                 },
                 _ => {}
             }

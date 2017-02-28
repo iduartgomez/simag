@@ -54,7 +54,13 @@ mod errors {
 
     impl<'a> From<ParseErrB<'a>> for ParseErrF {
         fn from(err: ParseErrB<'a>) -> ParseErrF {
-            println!("@err: {:?}", err);
+            match err {
+                ParseErrB::SyntaxErrorPos(arr) => {
+                    use std::str;
+                    println!("@err: {:?}", unsafe { str::from_utf8_unchecked(arr) });
+                }
+                _ => {}
+            }
             ParseErrF::Msg(String::from("failed"))
         }
     }

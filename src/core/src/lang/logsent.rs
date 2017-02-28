@@ -16,6 +16,8 @@ use agent::BmsWrapper;
 use chrono::UTC;
 use lang::common::*;
 use lang::parser::*;
+
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
@@ -58,9 +60,13 @@ impl<'a> LogSentence {
             created: UTC::now(),
             id: vec![],
         };
-        let root = match walk_ast(ast, &mut sent, context) {
+        let first = PIntermediate::new(None, None);
+        let root = match walk_ast(ast, &mut sent, context, first) {
             Err(err) => return Err(err),
-            Ok(root) => Rc::new(root.into_final(context)),
+            Ok(root) => {
+                let PIntermediate { rhs: root, .. } = root;
+                root.unwrap()
+            }
         };
         sent.particles.push(root.clone());
         sent.root = Some(root);
@@ -1081,7 +1087,6 @@ pub struct ParseContext {
     pub skols: Vec<Arc<Skolem>>,
     shadowing_vars: HashMap<Arc<Var>, (usize, Arc<Var>)>,
     shadowing_skols: HashMap<Arc<Skolem>, (usize, Arc<Skolem>)>,
-    from_chain: bool,
     in_rhs: bool,
     pub in_assertion: bool,
     pub is_tell: bool,
@@ -1100,7 +1105,6 @@ impl ParseContext {
             skols: Vec::new(),
             stype: SentType::Expr,
             in_rhs: true,
-            from_chain: false,
             shadowing_vars: HashMap::new(),
             shadowing_skols: HashMap::new(),
             in_assertion: false,
@@ -1116,6 +1120,7 @@ impl ParseContext {
     }
 }
 
+#[derive(Debug)]
 struct PIntermediate {
     cond: Option<LogicOperator>,
     lhs: Option<Rc<Particle>>,
@@ -1184,8 +1189,25 @@ impl PIntermediate {
 
 fn walk_ast(ast: &Next,
             sent: &mut LogSentence,
-            context: &mut ParseContext)
+            context: &mut ParseContext,
+            mut parent: PIntermediate)
             -> Result<PIntermediate, LogSentErr> {
+
+    fn add_particle(particle: PIntermediate,
+                    parent: &mut PIntermediate,
+                    context: &mut ParseContext,
+                    sent: &mut LogSentence) {
+        if context.in_rhs {
+            let p = Rc::new(particle.into_final(context));
+            parent.add_rhs(p.clone());
+            sent.add_particle(p);
+        } else {
+            let p = Rc::new(particle.into_final(context));
+            parent.add_lhs(p.clone());
+            sent.add_particle(p);
+        }
+    }
+
     match *ast {
         Next::Assert(ref decl) => {
             let particle = match *decl {
@@ -1204,8 +1226,8 @@ fn walk_ast(ast: &Next,
                     PIntermediate::new(None, Some(Assert::FuncDecl(func)))
                 }
             };
-            context.from_chain = false;
-            Ok(particle)
+            add_particle(particle, &mut parent, context, sent);
+            Ok(parent)
         }
         Next::ASTNode(ref ast) => {
             let mut v_cnt = 0;
@@ -1281,124 +1303,94 @@ fn walk_ast(ast: &Next,
             }
             if ast.logic_op.is_some() {
                 let mut op = PIntermediate::new(ast.logic_op, None);
-                let next = match walk_ast(&ast.next, sent, context) {
-                    Ok(opt) => opt,
-                    Err(err) => return Err(err),
-                };
+                let next = walk_ast(&ast.next, sent, context, op)?;
                 drop_local_vars(context, v_cnt);
                 drop_local_skolems(context, s_cnt);
-                let next = Rc::new(next.into_final(context));
-                sent.add_particle(next.clone());
-                if context.in_rhs {
-                    op.add_rhs(next);
-                } else {
-                    op.add_lhs(next);
-                }
-                context.from_chain = false;
-                Ok(op)
+                add_particle(next, &mut parent, context, sent);
+                Ok(parent)
             } else {
-                let res = walk_ast(&ast.next, sent, context);
+                let res = walk_ast(&ast.next, sent, context, parent)?;
                 drop_local_vars(context, v_cnt);
                 drop_local_skolems(context, s_cnt);
-                res
+                Ok(res)
             }
         }
         Next::Chain(ref nodes) => {
+            let in_side = context.in_rhs;
             if nodes.len() == 2 {
-                let in_side = context.in_rhs;
-                // walk lhs
+                if let Next::ASTNode(ref node) = nodes[0] {
+                    let ASTNode { vars: ref vars, logic_op: ref op, next: ref next } = **node;
+                    if op.is_some() && next.would_assert() {
+                        context.in_rhs = false;
+                        let new_op = PIntermediate::new(*op, None);
+                        let new_op = walk_ast(next, sent, context, new_op)?;
+                        context.in_rhs = true;
+                        let new_op = walk_ast(&nodes[1], sent, context, new_op)?;
+                        context.in_rhs = in_side;
+                        add_particle(new_op, &mut parent, context, sent);
+                        return Ok(parent);
+                    }
+                }
+                if let Next::ASTNode(ref node) = nodes[1] {
+                    let ASTNode { vars: ref vars, logic_op: ref op, next: ref next } = **node;
+                    if op.is_some() && next.would_assert() {
+                        context.in_rhs = true;
+                        let new_op = PIntermediate::new(*op, None);
+                        let new_op = walk_ast(next, sent, context, new_op)?;
+                        context.in_rhs = false;
+                        let new_op = walk_ast(&nodes[1], sent, context, new_op)?;
+                        context.in_rhs = in_side;
+                        add_particle(new_op, &mut parent, context, sent);
+                        return Ok(parent);
+                    }
+                }
                 context.in_rhs = false;
-                let mut lhs = match walk_ast(&nodes[0], sent, context) {
-                    Ok(ptr) => ptr,
-                    Err(err) => return Err(err),
-
-                };
-                let lhs_is_atom = lhs.pred.is_some();
-                // walk rhs
+                let mut parent = walk_ast(&nodes[0], sent, context, parent)?;
                 context.in_rhs = true;
-                let mut rhs = match walk_ast(&nodes[1], sent, context) {
-                    Ok(ptr) => ptr,
-                    Err(err) => return Err(err),
-                };
-                let rhs_is_atom = rhs.pred.is_some();
-                // lhs is connective and rhs isn't
+                let mut parent = walk_ast(&nodes[1], sent, context, parent)?;
                 context.in_rhs = in_side;
-                if !lhs_is_atom && rhs_is_atom {
-                    context.from_chain = true;
-                    let rhs = Rc::new(rhs.into_final(context));
-                    sent.add_particle(rhs.clone());
-                    lhs.add_rhs(rhs);
-                    return Ok(lhs);
-                } else if lhs_is_atom && !rhs_is_atom {
-                    context.from_chain = true;
-                    // lhs comes from a chain, parent is rhs op
-                    let lhs = Rc::new(lhs.into_final(context));
-                    sent.add_particle(lhs.clone());
-                    rhs.add_lhs(lhs);
-                    return Ok(rhs);
-                }
-                if context.from_chain {
-                    context.from_chain = true;
-                    // rhs comes from a chain, parent is lhs op
-                    let rhs = Rc::new(rhs.into_final(context));
-                    sent.add_particle(rhs.clone());
-                    lhs.add_rhs(rhs);
-                    Ok(lhs)
-                } else {
-                    context.from_chain = true;
-                    // lhs comes from a chain, parent is rhs op
-                    let lhs = Rc::new(lhs.into_final(context));
-                    sent.add_particle(lhs.clone());
-                    rhs.add_lhs(lhs);
-                    Ok(rhs)
-                }
+                Ok(parent)
             } else {
-                let in_side = context.in_rhs;
-                context.in_rhs = false;
-                let len = nodes.len() - 1;
-                let mut first = walk_ast(&nodes[0], sent, context)?;
-                let operator;
-                if first.is_conjunction() {
-                    operator = LogicOperator::And;
-                } else if first.is_disjunction() {
-                    operator = LogicOperator::Or;
-                } else {
+                let op = nodes[0].get_op();
+                if !op.is_and() && !op.is_or() {
                     return Err(LogSentErr::IConnectInChain);
                 }
-                let mut prev = walk_ast(&nodes[len], sent, context)?;
-                if operator.is_and() {
-                    for i in 1..len {
-                        let i = len - i;
-                        let mut p = walk_ast(&nodes[i], sent, context)?;
-                        if !p.is_conjunction() {
-                            return Err(LogSentErr::IConnectAfterOr);
-                        } else {
-                            let lr = Rc::new(prev.into_final(context));
-                            sent.add_particle(lr.clone());
-                            p.add_rhs(lr);
-                            prev = p;
+                let mut prev_op = PIntermediate::new(Some(op), None);
+                context.in_rhs = true;
+                prev_op = walk_ast(nodes.last().unwrap(), sent, context, prev_op)?;
+                context.in_rhs = false;
+                let mut new_op = PIntermediate::new(Some(op), None);
+                let mut last = PIntermediate::new(None, None);
+                for i in 1..nodes.len() {
+                    let i = nodes.len() - (1 + i);
+                    new_op = PIntermediate::new(Some(op), None);
+                    match *(&nodes[i]) {
+                        Next::ASTNode(ref assert) => {
+                            if let Some(ref cop) = assert.logic_op {
+                                if cop != &op {
+                                    return Err(LogSentErr::IConnectInChain);
+                                }
+                            }
+                            prev_op = walk_ast(&assert.next, sent, context, prev_op)?;
+                            let c = Rc::new(prev_op.into_final(context));
+                            sent.add_particle(c.clone());
+                            if i != 0 {
+                                new_op.add_rhs(c.clone());
+                            } else {
+                                context.in_rhs = in_side;
+                                if context.in_rhs {
+                                    parent.add_rhs(c.clone());
+                                } else {
+                                    parent.add_lhs(c.clone());
+                                }
+                                break;
+                            }
+                            prev_op = new_op;
                         }
-                    }
-                } else {
-                    for i in 1..len {
-                        let i = len - i;
-                        let mut p = walk_ast(&nodes[i], sent, context)?;
-                        if !p.is_disjunction() {
-                            return Err(LogSentErr::IConnectAfterOr);
-                        } else {
-                            let lr = Rc::new(prev.into_final(context));
-                            sent.add_particle(lr.clone());
-                            p.add_rhs(lr);
-                            prev = p;
-                        }
+                        _ => return Err(LogSentErr::WrongDef),
                     }
                 }
-                context.from_chain = true;
-                context.in_rhs = in_side;
-                let prev = Rc::new(prev.into_final(context));
-                sent.add_particle(prev.clone());
-                first.add_rhs(prev);
-                Ok(first)
+                Ok(parent)
             }
         }
         Next::None => Err(LogSentErr::WrongDef),
@@ -1516,6 +1508,18 @@ mod test {
     #[test]
     fn parser_icond_exprs() {
         let source = String::from("
+            # Ok:
+            (( let x y z )
+             (( cde[x,u=1] && hij[y,u=1] && fn::fgh[y,u>0.5;x;z] ) |> abc[x,u=1]))
+        ");
+        let tree = Parser::parse(source, true);
+        let mut tree = tree.unwrap();
+        let sent = match tree.pop_front().unwrap() {
+            ParseTree::IExpr(sent) => sent,
+            _ => panic!(),
+        };
+
+        let source = String::from("
             # Err:
             ((let x y z)
              ( ( cde[x,u=1] |> fn::fgh[y,u>0.5;x;z] ) |> hij[y,u=1] )
@@ -1534,9 +1538,8 @@ mod test {
 
             # Ok:
             (( let x y z )
-             (( american[x,u=1] && weapon[y,u=1] && fn::sells[y,u>0.5;x;z] ) |> criminal[x,u=1]))
+             (( cde[x,u=1] && hij[y,u=1] && fn::fgh[y,u>0.5;x;z] ) |> abc[x,u=1]))
         ");
-
         let tree = Parser::parse(source, true);
         assert!(tree.is_ok());
         let mut tree = tree.unwrap();
@@ -1556,21 +1559,19 @@ mod test {
                     &Particle::Conjunction(ref op) => {
                         match &*op.next_lhs {
                             &Particle::Atom(ref atm) => {
-                                assert_eq!(atm.get_name(), "american");
+                                assert_eq!(atm.get_name(), "cde");
                             }
                             _ => panic!(),
                         };
                         match &*op.next_rhs {
                             &Particle::Conjunction(ref op) => {
                                 match &*op.next_lhs {
-                                    &Particle::Atom(ref atm) => {
-                                        assert_eq!(atm.get_name(), "weapon")
-                                    }
+                                    &Particle::Atom(ref atm) => assert_eq!(atm.get_name(), "hij"),
                                     _ => panic!(),
                                 };
                                 match &*op.next_rhs {
                                     &Particle::Atom(ref atm) => {
-                                        assert_eq!(atm.get_name(), "sells");
+                                        assert_eq!(atm.get_name(), "fgh");
                                     }
                                     _ => panic!(),
                                 };
@@ -1581,9 +1582,7 @@ mod test {
                     _ => panic!(),
                 }
                 match &*p.next_rhs {
-                    &Particle::Atom(ref atm) => {
-                        assert_eq!(atm.get_name(), "criminal")
-                    }
+                    &Particle::Atom(ref atm) => assert_eq!(atm.get_name(), "abc"),
                     _ => panic!(),
                 }
             }
