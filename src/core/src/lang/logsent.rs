@@ -34,8 +34,8 @@ use std::sync::Arc;
 #[derive(Debug)]
 pub struct LogSentence {
     particles: Vec<Rc<Particle>>,
-    vars: Option<Vec<Rc<Var>>>,
-    skolem: Option<Vec<Rc<Skolem>>>,
+    vars: Option<Vec<Arc<Var>>>,
+    skolem: Option<Vec<Arc<Skolem>>>,
     root: Option<Rc<Particle>>,
     predicates: (Vec<Rc<Assert>>, Vec<Rc<Assert>>),
     has_time_vars: usize,
@@ -194,7 +194,7 @@ impl<'a> LogSentence {
                  agent: &agent::Representation,
                  assignments: Option<HashMap<&Var, &agent::VarAssignment>>,
                  context: &mut agent::ProofResult) {
-        let root = self.root.clone();
+        let root = &self.root;
         let time_assign = self.get_time_assignments(agent, &assignments);
         if self.has_time_vars != time_assign.len() {
             context.result = None;
@@ -252,7 +252,7 @@ impl<'a> LogSentence {
         time_assign
     }
 
-    pub fn extract_all_predicates(self) -> (Vec<Rc<Var>>, Vec<Rc<Assert>>) {
+    pub fn extract_all_predicates(self) -> (Vec<Arc<Var>>, Vec<Rc<Assert>>) {
         let LogSentence { vars, particles, .. } = self;
         let mut preds = vec![];
         for p in particles {
@@ -292,7 +292,7 @@ impl<'a> LogSentence {
         LhsPreds::new(&*self.root.as_ref().unwrap().get_next(0).unwrap(), self)
     }
 
-    fn add_var(&mut self, var: Rc<Var>) {
+    fn add_var(&mut self, var: Arc<Var>) {
         if self.vars.is_none() {
             self.vars = Some(Vec::new());
         }
@@ -303,7 +303,7 @@ impl<'a> LogSentence {
         &self.id
     }
 
-    fn add_skolem(&mut self, skolem: Rc<Skolem>) {
+    fn add_skolem(&mut self, skolem: Arc<Skolem>) {
         if self.skolem.is_none() {
             self.vars = Some(Vec::new());
         }
@@ -1077,10 +1077,10 @@ impl fmt::Display for Particle {
 
 pub struct ParseContext {
     pub stype: SentType,
-    pub vars: Vec<Rc<Var>>,
-    pub skols: Vec<Rc<Skolem>>,
-    shadowing_vars: HashMap<Rc<Var>, (usize, Rc<Var>)>,
-    shadowing_skols: HashMap<Rc<Skolem>, (usize, Rc<Skolem>)>,
+    pub vars: Vec<Arc<Var>>,
+    pub skols: Vec<Arc<Skolem>>,
+    shadowing_vars: HashMap<Arc<Var>, (usize, Arc<Var>)>,
+    shadowing_skols: HashMap<Arc<Skolem>, (usize, Arc<Skolem>)>,
     from_chain: bool,
     in_rhs: bool,
     pub in_assertion: bool,
@@ -1210,12 +1210,12 @@ fn walk_ast(ast: &Next,
         Next::ASTNode(ref ast) => {
             let mut v_cnt = 0;
             let mut s_cnt = 0;
-            let mut swap_vars: Vec<(usize, Rc<Var>, Rc<Var>)> = Vec::new();
-            let mut swap_skolem: Vec<(usize, Rc<Skolem>, Rc<Skolem>)> = Vec::new();
+            let mut swap_vars: Vec<(usize, Arc<Var>, Arc<Var>)> = Vec::new();
+            let mut swap_skolem: Vec<(usize, Arc<Skolem>, Arc<Skolem>)> = Vec::new();
 
             fn drop_local_vars(context: &mut ParseContext, v_cnt: usize) {
                 let l = context.vars.len() - v_cnt;
-                let local_vars = context.vars.drain(l..).collect::<Vec<Rc<Var>>>();
+                let local_vars = context.vars.drain(l..).collect::<Vec<Arc<Var>>>();
                 for v in local_vars {
                     if context.shadowing_vars.contains_key(&v) {
                         let (idx, shadowed) = context.shadowing_vars.remove(&v).unwrap();
@@ -1226,7 +1226,7 @@ fn walk_ast(ast: &Next,
 
             fn drop_local_skolems(context: &mut ParseContext, s_cnt: usize) {
                 let l = context.skols.len() - s_cnt;
-                let local_skolem = context.skols.drain(l..).collect::<Vec<Rc<Skolem>>>();
+                let local_skolem = context.skols.drain(l..).collect::<Vec<Arc<Skolem>>>();
                 for v in local_skolem {
                     if context.shadowing_skols.contains_key(&v) {
                         let (idx, shadowed) = context.shadowing_skols.remove(&v).unwrap();
@@ -1243,7 +1243,7 @@ fn walk_ast(ast: &Next,
                         VarDeclBorrowed::Var(ref v) => {
                             let var = match Var::from(v, context) {
                                 Err(err) => return Err(LogSentErr::Boxed(Box::new(err))),
-                                Ok(val) => Rc::new(val),
+                                Ok(val) => Arc::new(val),
                             };
                             for (i, v) in context.vars.iter().enumerate() {
                                 if v.name == var.name {
@@ -1257,7 +1257,7 @@ fn walk_ast(ast: &Next,
                         VarDeclBorrowed::Skolem(ref s) => {
                             let skolem = match Skolem::from(s, context) {
                                 Err(err) => return Err(LogSentErr::Boxed(Box::new(err))),
-                                Ok(val) => Rc::new(val),
+                                Ok(val) => Arc::new(val),
                             };
                             for (i, v) in context.skols.iter().enumerate() {
                                 if v.name == skolem.name {

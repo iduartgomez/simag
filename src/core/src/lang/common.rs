@@ -14,7 +14,6 @@ use chrono::{Duration, UTC};
 use float_cmp::ApproxEqUlps;
 
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::str;
 use std::sync::{RwLock, Arc};
 use std::sync::atomic::AtomicBool;
@@ -626,17 +625,14 @@ impl ::std::clone::Clone for GroundedFunc {
 
 #[derive(Debug, Clone)]
 pub struct FreeClsMemb {
-    term: Rc<Var>,
+    term: Arc<Var>,
     value: Option<f32>,
     operator: Option<CompOperator>,
     parent: Terminal,
 }
 
-unsafe impl ::std::marker::Sync for FreeClsMemb {}
-unsafe impl ::std::marker::Send for FreeClsMemb {}
-
 impl FreeClsMemb {
-    fn new(term: Rc<Var>, uval: Option<UVal>, parent: &Terminal) -> Result<FreeClsMemb, ParseErrF> {
+    fn new(term: Arc<Var>, uval: Option<UVal>, parent: &Terminal) -> Result<FreeClsMemb, ParseErrF> {
         let (val, op) = match_uval(uval)?;
         Ok(FreeClsMemb {
             term: term,
@@ -711,12 +707,9 @@ pub struct FreeClsOwner {
     pub term: String,
     value: Option<f32>,
     operator: Option<CompOperator>,
-    pub parent: Rc<Var>,
+    pub parent: Arc<Var>,
     pub dates: BmsWrapper,
 }
-
-unsafe impl ::std::marker::Sync for FreeClsOwner {}
-unsafe impl ::std::marker::Send for FreeClsOwner {}
 
 impl FreeClsOwner {
     fn new(term: String, uval: Option<UVal>, parent: &Terminal) -> Result<FreeClsOwner, ParseErrF> {
@@ -934,9 +927,6 @@ pub struct FuncDecl {
     pub op_args: Option<Vec<OpArg>>,
     pub variant: FuncVariants,
 }
-
-unsafe impl ::std::marker::Sync for FuncDecl {}
-unsafe impl ::std::marker::Send for FuncDecl {}
 
 impl<'a> FuncDecl {
     pub fn from(other: &FuncDeclBorrowed<'a>,
@@ -1706,8 +1696,8 @@ pub enum OpArg {
     OverWrite,
     TimeDecl(TimeFn),
     TimeVar,
-    TimeVarAssign(Rc<Var>),
-    TimeVarFrom(Rc<Var>),
+    TimeVarAssign(Arc<Var>),
+    TimeVarFrom(Arc<Var>),
 }
 
 impl<'a> OpArg {
@@ -1938,7 +1928,7 @@ impl<'a> OpArgTerm {
     }
 
     #[inline]
-    fn get_var(&self) -> Rc<Var> {
+    fn get_var(&self) -> Arc<Var> {
         match *self {
             OpArgTerm::Terminal(ref term) => term.get_var(),
             _ => panic!(),
@@ -1960,9 +1950,6 @@ pub struct Var {
     op_arg: Option<OpArg>,
     pub kind: VarKind,
 }
-
-unsafe impl ::std::marker::Sync for Var {}
-unsafe impl ::std::marker::Send for Var {}
 
 #[derive(Debug, Clone)]
 pub enum VarKind {
@@ -2074,7 +2061,7 @@ impl Skolem {
 
 #[derive(Debug, PartialEq, Clone, Eq, Hash)]
 pub enum Terminal {
-    FreeTerm(Rc<Var>),
+    FreeTerm(Arc<Var>),
     GroundedTerm(String),
     Keyword(&'static str),
 }
@@ -2141,7 +2128,7 @@ impl<'a> Terminal {
         }
     }
 
-    fn get_var(&self) -> Rc<Var> {
+    fn get_var(&self) -> Arc<Var> {
         if let Terminal::FreeTerm(ref var) = *self {
             var.clone()
         } else {

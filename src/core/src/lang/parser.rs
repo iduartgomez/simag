@@ -49,6 +49,8 @@ const OR_OP: &'static [u8] = b"||";
 const IFF_OP: &'static [u8] = b"<=>";
 const IMPL_OP: &'static [u8] = b"=>";
 
+const DONE_ARR: &'static [u8] = b" ";
+
 pub struct Parser;
 impl Parser {
     /// Lexerless (mostly) recursive descent parser. Takes a string and outputs a correct ParseTree.
@@ -58,10 +60,10 @@ impl Parser {
         fn extend_lifetime<'b, T>(r: &'b mut T) -> &'static mut T {
             unsafe { ::std::mem::transmute::<&'b mut T, &'static mut T>(r) }
         }
-        let input = extend_lifetime(&mut input);
+        let input_ref = extend_lifetime(&mut input);
         let mut store = vec![];
         let store_ref = extend_lifetime(&mut store);
-        let scopes = match Self::feed(input.as_bytes(), store_ref) {
+        let scopes = match Self::feed(input_ref.as_bytes(), store_ref) {
             Ok(scopes) => scopes,
             Err(err) => return Err(ParseErrF::from(err)),
         };
@@ -75,7 +77,7 @@ impl Parser {
             .map(|res| {
                 let res = res.join();
                 match res.unwrap() {
-                    Ok(ptr) => unsafe { *Box::from_raw(ptr as *mut ParseTree) },
+                    Ok(parsed) => parsed,
                     Err(err) => ParseTree::ParseErr(err),
                 }
             })
@@ -147,7 +149,7 @@ pub enum ParseTree {
 }
 
 impl ParseTree {
-    fn process_ast(input: Next, tell: bool) -> Result<usize, ParseErrF> {
+    fn process_ast(input: Next, tell: bool) -> Result<ParseTree, ParseErrF> {
         // return type is a hack to avoid compiling error due to not being 'Send' compatible
         // instead we return a raw pointer as usize and when unifying all the thread
         // results convert back to box and deref to the stack
@@ -155,8 +157,7 @@ impl ParseTree {
         context.in_assertion = true;
         context.is_tell = tell;
         if let Ok(Some(tree)) = input.is_assertion(&mut context) {
-            let ptr = Box::into_raw(Box::new(tree)) as usize;
-            return Ok(ptr);
+            return Ok(tree);
         }
         // it's an expression, make logic sentence from nested expressions
         let mut context = ParseContext::new();
@@ -164,17 +165,11 @@ impl ParseTree {
         match LogSentence::new(&input, &mut context) {
             Ok(sent) => {
                 match context.stype {
-                    SentType::IExpr => {
-                        let ptr = Box::into_raw(Box::new(ParseTree::IExpr(sent))) as usize;
-                        Ok(ptr)
-                    }
+                    SentType::IExpr => Ok(ParseTree::IExpr(sent)),
                     SentType::Expr if context.is_tell => {
                         Err(ParseErrF::ExprWithVars(format!("{}", sent)))
                     }
-                    SentType::Rule | SentType::Expr => {
-                        let ptr = Box::into_raw(Box::new(ParseTree::Expr(sent))) as usize;
-                        Ok(ptr)
-                    }
+                    SentType::Rule | SentType::Expr => Ok(ParseTree::Expr(sent)),
                 }
             }
             Err(err) => Err(ParseErrF::LogSentErr(err)),
@@ -192,9 +187,9 @@ impl ParseTree {
 
 #[derive(Debug)]
 pub struct ASTNode<'a> {
-    pub next: Next<'a>,
     pub vars: Option<Vec<VarDeclBorrowed<'a>>>,
     pub logic_op: Option<LogicOperator>,
+    pub next: Next<'a>,
 }
 
 impl<'a> ASTNode<'a> {
@@ -215,6 +210,11 @@ pub enum Next<'a> {
 }
 
 impl<'a> Next<'a> {
+    #[inline]
+    fn from_assert(input: AssertBorrowed) -> Next {
+        Next::Assert(input)
+    }
+
     fn is_assertion(&self, context: &mut ParseContext) -> Result<Option<ParseTree>, ParseErrF> {
         match *self {
             Next::Assert(ref decl) => {
@@ -278,10 +278,9 @@ fn get_blocks(input: &[u8]) -> IResult<&[u8], Vec<Next>> {
     let input = remove_multispace(input);
     if input.len() == 0 {
         // empty program
-        return IResult::Done(&b" "[..], vec![]);
+        return IResult::Done(&DONE_ARR[..], vec![]);
     }
     // find the positions of the closing delimiters and try until it fails
-    let mut results = Vec::new();
     let mut mcd = ::std::collections::VecDeque::new();
     let mut lp = 0;
     let mut rp = 0;
@@ -309,10 +308,20 @@ fn get_blocks(input: &[u8]) -> IResult<&[u8], Vec<Next>> {
     } else if mcd.is_empty() {
         return IResult::Error(nom::Err::Position(ErrorKind::Custom(11), input));
     }
+
+    let mut results: Vec<Next> = Vec::new();
     for _ in 0..mcd.len() {
         let (lp, rp) = mcd.pop_front().unwrap();
-        match scope(&input[lp..rp]) {
-            IResult::Done(_, done) => results.push(done),
+        match scope0(&input[lp..rp]) {
+            IResult::Done(_, done) => {
+                match done {
+                    IResult::Done(_, done) => results.push(done),
+                    IResult::Error(err) => return IResult::Error(err),
+                    IResult::Incomplete(_) => {
+                        return IResult::Error(nom::Err::Code(ErrorKind::Count))
+                    } 
+                }
+            }
             IResult::Error(err) => return IResult::Error(err),
             IResult::Incomplete(_) => return IResult::Error(nom::Err::Code(ErrorKind::Count)),
         }
@@ -320,316 +329,206 @@ fn get_blocks(input: &[u8]) -> IResult<&[u8], Vec<Next>> {
     if results.is_empty() {
         return IResult::Error(nom::Err::Position(ErrorKind::Custom(11), input));
     }
-    IResult::Done(&b" "[..], results)
+    IResult::Done(&DONE_ARR[..], results)
 }
 
-// scope disambiguation infrastructure:
-#[allow(cyclomatic_complexity)]
-fn scope(input: &[u8]) -> IResult<&[u8], Next> {
-    fn take_vars(input: &[u8]) -> (usize, Option<Vec<VarDeclBorrowed>>) {
-        named!(tv(&[u8]) -> Vec<Vec<VarDeclBorrowed>>, many1!(chain!(
-            take_while!(is_multispace)? ~
-            v1: alt!(variable | skolem) ,
-            || { v1 }
-        )));
-        let output = tv(input);
-        let vars;
-        let mut offset = 0_usize;
-        if output.is_done() {
-            let (r, mut v) = output.unwrap();
-            offset = input.len() - r.len();
-            let mut v0 = Vec::new();
-            // flat vec
-            for ref mut v1 in v.drain(..) {
-                for v2 in v1.drain(..) {
-                    v0.push(v2);
-                }
-            }
-            vars = Some(v0);
-        } else {
-            vars = None;
-        }
-        (offset, vars)
-    }
+named!(scope0(&[u8]) -> IResult<&[u8], Next>, ws!(
+    alt!(
+        map!(
+            do_parse!(
+                tag!("(") >>
+                vars: opt!(scope_decl) >>
+                decl: decl_alt >>
+                op: opt!(map!(logic_operator, LogicOperator::from_bytes)) >>
+                next: alt!(assertions | scope0) >>
+                tag!(")") >>
+                (vars, decl, op, next)
+            ), expr
+        ) | 
+        map!(
+            do_parse!(
+                tag!("(") >>
+                vars: opt!(scope_decl) >>
+                next: alt!(assertions | scope0) >>
+                op: opt!(map!(logic_operator, LogicOperator::from_bytes)) >>
+                decl: decl_alt >>
+                tag!(")") >>
+                (vars, decl, op, next)
+            ), expr
+        ) |
+        map!(
+            do_parse!(
+                tag!("(") >>
+                vars: opt!(scope_decl) >>
+                next: opt!(alt!(assertions | scope0)) >>
+                tag!(")") >>
+                (vars, next)
+            ), empty_scope 
+        ) 
+    ) 
+));
 
-    // check that it is indeed an scope
-    let od = tuple!(input, opt!(take_while!(is_multispace)), char!('('));
-    let input = match od {
-        IResult::Done(rest, _) => rest,
-        _ => return IResult::Error(nom::Err::Position(ErrorKind::Custom(11), input)),
-    };
-    // try to get scope vars
-    let (offset, vars) = take_vars(input);
-    // check for inner scopes, fail if unbalanced
-    let (rest, rest_l, rest_r, is_endnode) = match take_rest_scope(offset, input) {
-        Err(err) => return IResult::Error(err),
-        Ok((rest, rest_l, rest_r, is_endnode)) => (rest, rest_l, rest_r, is_endnode),
-    };
-    // try to get terminal nodes from input[0..], check if it's lhs
-    let subnodes: IResult<&[u8], Vec<ASTNode>> = many1!(rest, expand_side);
-    if let IResult::Done(r, mut d) = subnodes {
-        // lhs node
-        if !is_endnode {
-            let subnodes_r: IResult<&[u8], Vec<ASTNode>> = many1!(rest_r, expand_side);
-            if subnodes_r.is_done() {
-                return IResult::Error(nom::Err::Position(ErrorKind::Custom(15), rest_r));
-            } else {
-                // chek if the rhs is a multi decl or legal end node
-                let out1 = logic_operator(rest_r);
-                if out1.is_done() {
-                    let (i2, op) = out1.unwrap();
-                    let mut lhs = vec![];
-                    for e in d {
-                        lhs.push(Next::ASTNode(Box::new(e)))
-                    }
-                    let lhs = Next::ASTNode(Box::new(ASTNode {
-                        next: Next::Chain(lhs),
-                        logic_op: Some(LogicOperator::from_bytes(op)),
-                        vars: None,
-                    }));
-                    let (r, rhs) = match scope(i2) {
-                        IResult::Done(r, next) => (r, next),
-                        IResult::Error(err) => return IResult::Error(err),
-                        IResult::Incomplete(err) => return IResult::Incomplete(err),
-                    };
-                    return IResult::Done(r, Next::Chain(vec![lhs, rhs]));
-                }
-            }
-        }
-        if d.len() > 1 {
-            // multiple declarations, cannot have inner scopes
-            let rest_l = remove_multispace(rest_l);
-            if rest_l.len() > 0 {
-                return IResult::Error(nom::Err::Position(ErrorKind::Custom(15), rest_l));
-            }
-            let mut v0 = Vec::new();
-            for e in d.drain(..) {
-                v0.push(Next::ASTNode(Box::new(e)))
-            }
-            return IResult::Done(r, Next::Chain(v0));
-        } else {
-            // single decl, test for rest
-            let decl = d.pop().unwrap();
-            let rest_l = remove_multispace(rest_l);
-            if rest_l.len() > 0 {
-                match scope(rest_l) {
-                    IResult::Done(r, next) => {
-                        let d = Next::Chain(vec![Next::ASTNode(Box::new(decl)), next]);
-                        return IResult::Done(r, d);
-                    }
-                    IResult::Error(err) => return IResult::Error(err),
-                    IResult::Incomplete(err) => return IResult::Incomplete(err),
-                }
-            } else {
-                return IResult::Done(r, Next::ASTNode(Box::new(decl)));
-            }
-        }
-    }
-    // parsing from beginning failed... check if it's a rhs
-    // try to get terminal nodes from input[pcd..] // pcd = previous closing delimiter
-    let subnodes: IResult<&[u8], Vec<ASTNode>> = many1!(rest_r, expand_side);
-    if let IResult::Done(r0, mut d) = subnodes {
-        // rhs node
-        if d.len() > 1 {
-            // multiple declarations, cannot have inner scopes
-            let trial = scope(rest_l);
-            if trial.is_done() {
-                return IResult::Error(nom::Err::Position(ErrorKind::Custom(15), rest_l));
-            }
-            let mut v0 = Vec::new();
-            for e in d.drain(..) {
-                v0.push(Next::ASTNode(Box::new(e)))
-            }
-            return IResult::Done(r0, Next::Chain(v0));
-        } else {
-            let decl = d.pop().unwrap();
-            // single decl, test for lhs
-            let (r1, next) = match scope(rest_l) {
-                IResult::Done(r, d) => (r, Next::Chain(vec![d, Next::ASTNode(Box::new(decl))])),
-                IResult::Error(nom::Err::Position(ErrorKind::Custom(11), _)) => {
-                    (r0, Next::ASTNode(Box::new(decl)))
-                }
-                IResult::Error(err) => return IResult::Error(err),
-                IResult::Incomplete(err) => return IResult::Incomplete(err),
-            };
-            return IResult::Done(r1, next);
-        }
-    }
-    // not a terminal node, keep going
-    let rest = remove_multispace(rest);
-    if rest.len() == 0 {
-        // empty scope, will ignore further down
-        return IResult::Done(rest,
-                             Next::ASTNode(Box::new(ASTNode {
-                                 next: Next::None,
-                                 vars: None,
-                                 logic_op: None,
-                             })));
-    }
-    let (rest, next) = match scope(rest_l) {
-        IResult::Done(r, n) => (r, n),
+type ScopeOutA<'a> = (Option<DeclVars<'a>>,
+                      AssertBorrowed<'a>,
+                      Option<LogicOperator>,
+                      IResult<&'a [u8], Next<'a>>);
+
+fn expr<'a>(input: ScopeOutA<'a>) -> IResult<&'a [u8], Next<'a>> {
+    let (vars, decl, op, next) = input;
+    let (rest, next) = match next {
+        IResult::Done(rest, next) => (rest, next), 
         IResult::Error(err) => return IResult::Error(err),
-        _ => return IResult::Error(nom::Err::Position(ErrorKind::Complete, input)),
+        IResult::Incomplete(_) => return IResult::Error(nom::Err::Code(ErrorKind::Custom(11))),
     };
+    let curr = Next::ASTNode(Box::new(ASTNode {
+        next: Next::Assert(decl),
+        vars: None,
+        logic_op: op,
+    }));
+    let chained = Next::Chain(vec![curr, next]);
+    let vars = flat_vars(vars);
     IResult::Done(rest,
                   Next::ASTNode(Box::new(ASTNode {
-                      next: next,
+                      next: chained,
                       vars: vars,
                       logic_op: None,
                   })))
 }
 
-#[allow(type_complexity)]
-fn take_rest_scope(offset: usize,
-                   input: &[u8])
-                   -> Result<(&[u8], &[u8], &[u8], bool), nom::Err<&[u8]>> {
-    let mut lp = 0;
-    let mut rp = 0;
-    let mut cd = 0;
-    let mut nod = 0;
-    let mut pcd = 0;
-    let mut in_func = false;
-    for (i, c) in input.iter().enumerate() {
-        if *c == b'(' {
-            if i > 0 && is_term_char(input[i - 1]) {
-                in_func = true;
-                continue;
-            }
-            lp += 1;
-            if lp == 1 {
-                nod = i;
-            }
-        }
-        if *c == b')' && !in_func {
-            rp += 1;
-            pcd = cd;
-            cd = i;
-        } else if *c == b')' && in_func {
-            in_func = false;
-        }
-    }
-    let is_endnode;
-    if offset > 0 {
-        // scope has var decl
-        lp -= 1;
-        rp -= 1;
-    }
-    if (lp == 0 && rp == 0) | (lp == 0 && rp == 1) {
-        is_endnode = true;
-    } else {
-        is_endnode = false;
-    }
-    // if there were vars, offset input slice to ignore them
-    let rest_r;
-    let rest_l;
-    let mut rest;
-    if offset > 0 {
-        rest = &input[offset..cd];
-        if (nod > pcd) && (pcd > offset) {
-            rest = &input[offset..];
-            rest_r = &input[pcd + 1..];
-            rest_l = &input[offset..pcd + 1];
-        } else if (nod > offset) && (offset > pcd) {
-            rest = &input[0..];
-            rest_r = &input[pcd + 1..];
-            rest_l = &input[0..pcd + 1];
-        } else if is_endnode {
-            rest_r = &input[offset..cd];
-            rest_l = &input[0..0];
-        } else {
-            if offset < pcd {
-                rest_r = &input[pcd + 1..cd];
-            } else if offset > cd {
-                rest_r = &b" "[..]
-            } else {
-                rest_r = &input[offset..cd];
-            }
-            if offset < nod {
-                rest_l = &input[nod..pcd + 1];
-            } else {
-                rest_l = &input[offset..pcd + 1];
-            }
-        }
-    } else if nod > pcd {
-        rest = &input[0..];
-        rest_r = &input[pcd + 1..];
-        rest_l = &input[0..pcd + 1];
-    } else if is_endnode {
-        rest = &input[0..cd];
-        rest_r = &input[0..cd];
-        rest_l = &input[0..0];
-    } else {
-        rest = &input[0..cd];
-        rest_r = &input[pcd + 1..cd];
-        rest_l = &input[nod..pcd + 1];
-    }
-    Ok((rest, rest_l, rest_r, is_endnode))
-}
-
-fn expand_side<'a>(input: &'a [u8]) -> IResult<&[u8], ASTNode<'a>> {
-    fn is_end_node(input: &[u8]) -> IResult<&[u8], Next> {
-        let f = func_decl(input);
-        if f.is_done() {
-            let (r, fun) = f.unwrap();
-            return IResult::Done(r, Next::Assert(AssertBorrowed::FuncDecl(fun)));
-        }
-        let c = class_decl(input);
-        if c.is_done() {
-            let (r, cls) = c.unwrap();
-            return IResult::Done(r, Next::Assert(AssertBorrowed::ClassDecl(cls)));
-        }
-        match f {
-            IResult::Error(err) => IResult::Error(err),
-            IResult::Incomplete(err) => IResult::Incomplete(err),
-            _ => panic!(),
-        }
-    }
-
-    let input = remove_multispace(input);
-    let out1 = logic_operator(input);
-    if out1.is_done() {
-        let (i2, op) = out1.unwrap();
-        let out2 = is_end_node(i2);
-        if out2.is_done() {
-            // is 'op' + 'decl'
-            let (r, decl) = out2.unwrap();
-            let result = ASTNode {
-                next: decl,
-                logic_op: Some(LogicOperator::from_bytes(op)),
-                vars: None,
+fn empty_scope<'a>(input: (Option<DeclVars<'a>>, Option<IResult<&'a [u8], Next<'a>>>))
+                   -> IResult<&'a [u8], Next<'a>> {
+    let (vars, next) = input;
+    if let Some(vars) = flat_vars(vars) {
+        if let Some(next) = next {
+            let (rest, next) = {
+                match next {
+                    IResult::Done(rest, next) => (rest, next), 
+                    IResult::Error(err) => return IResult::Error(err),
+                    IResult::Incomplete(_) => {
+                        return IResult::Error(nom::Err::Code(ErrorKind::Custom(11)))
+                    }
+                }
             };
-            return IResult::Done(r, result);
+            IResult::Done(rest,
+                          Next::ASTNode(Box::new(ASTNode {
+                              vars: Some(vars),
+                              logic_op: None,
+                              next: next,
+                          })))
         } else {
-            return IResult::Error(nom::Err::Position(ErrorKind::Alt, input));
+            IResult::Done(&DONE_ARR[..], Next::None)
+        }
+    } else if next.is_some() {
+        match next {
+            Some(IResult::Done(rest, next)) => IResult::Done(rest, next), 
+            Some(IResult::Error(err)) => return IResult::Error(err),
+            Some(IResult::Incomplete(_)) => {
+                return IResult::Error(nom::Err::Code(ErrorKind::Custom(11)))
+            }
+            None => IResult::Done(&DONE_ARR[..], Next::None), 
         }
     } else {
-        let out1 = is_end_node(input);
-        if out1.is_done() {
-            let (i2, decl) = out1.unwrap();
-            let out2 = logic_operator(i2);
-            if out2.is_done() {
-                // is 'decl' + 'op'
-                let (r, op) = out2.unwrap();
-                let result = ASTNode {
-                    next: decl,
-                    logic_op: Some(LogicOperator::from_bytes(op)),
-                    vars: None,
-                };
-                return IResult::Done(r, result);
-            } else {
-                // is 'decl'
-                let result = ASTNode {
-                    next: decl,
-                    logic_op: None,
-                    vars: None,
-                };
-                return IResult::Done(i2, result);
-            }
-        }
+        IResult::Done(&DONE_ARR[..], Next::None)
     }
-    IResult::Error(nom::Err::Position(ErrorKind::Alt, input))
 }
-// END of scope disambiguation
+
+named!(assertions(&[u8]) -> IResult<&[u8], Next>,
+    map!(ws!(
+        do_parse!(
+            tag!("(") >>
+            vars: opt!(scope_decl) >>
+            decl: many0!(
+                map!(
+                    do_parse!(
+                        decl: decl_alt >> 
+                        op: map!(logic_operator, LogicOperator::from_bytes) >>
+                        (op, decl)
+                    ),  assert_one
+                )
+            ) >>
+            last: map!(decl_alt, Next::from_assert) >>
+            tag!(")") >>
+            (vars, decl, last)
+        )
+    ), assert_many)
+);
+
+type AssertOne<'a> = (LogicOperator, AssertBorrowed<'a>);
+
+#[inline]
+fn assert_one(input: AssertOne) -> IResult<&[u8], Next> {
+    let (op, assertion) = input;
+    IResult::Done(&DONE_ARR[..],
+                  Next::ASTNode(Box::new(ASTNode {
+                      next: Next::Assert(assertion),
+                      vars: None,
+                      logic_op: Some(op),
+                  })))
+}
+
+type AssertMany<'a> = (Option<DeclVars<'a>>, Vec<IResult<&'a [u8], Next<'a>>>, Next<'a>);
+
+#[inline]
+fn assert_many(input: AssertMany) -> IResult<&[u8], Next> {
+    let (vars, mut decl, last) = input;
+
+    let mut fd = vec![];
+    for e in decl.drain(..) {
+        match e {
+            IResult::Done(_, e) => fd.push(e),
+            IResult::Error(err) => return IResult::Error(err),
+            IResult::Incomplete(_) => return IResult::Error(nom::Err::Code(ErrorKind::Custom(15))),
+        };
+    }
+
+    if !fd.is_empty() {
+        fd.push(last);
+        let f = if let Some(vars) = flat_vars(vars) {
+            Next::ASTNode(Box::new(ASTNode {
+                vars: Some(vars),
+                logic_op: None,
+                next: Next::Chain(fd),
+            }))
+        } else {
+            Next::Chain(fd)
+        };
+        IResult::Done(&DONE_ARR[..], f)
+    } else {
+        let f = if let Some(vars) = flat_vars(vars) {
+            Next::ASTNode(Box::new(ASTNode {
+                vars: Some(vars),
+                logic_op: None,
+                next: last,
+            }))
+        } else {
+            last
+        };
+        IResult::Done(&DONE_ARR[..], f)
+    }
+}
+
+#[inline]
+fn decl_alt(input: &[u8]) -> IResult<&[u8], AssertBorrowed> {
+    alt!(input,
+         map!(class_decl, ClassDeclBorrowed::into_assert) |
+         map!(func_decl, FuncDeclBorrowed::into_assert))
+}
+
+type DeclVars<'a> = Vec<Vec<VarDeclBorrowed<'a>>>;
+
+#[inline]
+named!(scope_decl(&[u8]) -> DeclVars, 
+    ws!(many1!(alt!(variable | skolem)))
+);
+
+#[inline]
+fn flat_vars<'a>(input: Option<DeclVars<'a>>) -> Option<Vec<VarDeclBorrowed<'a>>> {
+    if let Some(vars) = input {
+        Some(vars.into_iter().flat_map(|x| x.into_iter()).collect::<Vec<_>>())
+    } else {
+        None
+    }
+}
 
 // skol_decl = '(' 'exists' $(term[':'op_arg]),+ ')' ;
 #[derive(Debug)]
@@ -638,18 +537,22 @@ pub struct SkolemBorrowed<'a> {
     pub op_arg: Option<OpArgBorrowed<'a>>,
 }
 
-named!(skolem(&[u8]) -> Vec<VarDeclBorrowed>, chain!(
-    tag!("(") ~
-    take_while!(is_multispace)? ~
-    tag!("exists ") ~
+named!(skolem(&[u8]) -> Vec<VarDeclBorrowed>, do_parse!(
+    tag!("(") >> 
+    opt!(take_while!(is_multispace)) >>
+    tag!("exists ") >> 
     vars: fold_many1!(
-        chain!(
-            take_while!(is_multispace)? ~
-            name: terminal ~
-            oa: chain!(tag!(":") ~ oa: op_arg, ||{oa})? ~
-            take_while!(is_multispace)? ~
-            tag!(",")?,
-            || { (name, oa) }
+        do_parse!(
+            opt!(take_while!(is_multispace)) >>
+            name: terminal >>
+            oa: opt!(do_parse!(
+                tag!(":") >> 
+                oa: op_arg >>
+                (oa) 
+            )) >>
+            opt!(take_while!(is_multispace)) >>
+            opt!(tag!(",")) >>
+            (name, oa)
         ), Vec::new(), |mut vec: Vec<_>, (name, oa)| {
             let v = SkolemBorrowed {
                 name: TerminalBorrowed::from_slice(name),
@@ -658,10 +561,10 @@ named!(skolem(&[u8]) -> Vec<VarDeclBorrowed>, chain!(
             vec.push(VarDeclBorrowed::Skolem(v));
             vec
         }
-    ) ~
-    take_while!(is_multispace)? ~
-    tag!(")") ,
-    || { vars }
+    ) >>
+    opt!(take_while!(is_multispace)) >>
+    tag!(")") >> 
+    (vars)
 ));
 
 // var_decl = '(' 'let' $(term[':'op_arg]),+ ')' ;
@@ -671,18 +574,22 @@ pub struct VarBorrowed<'a> {
     pub op_arg: Option<OpArgBorrowed<'a>>,
 }
 
-named!(variable(&[u8]) -> Vec<VarDeclBorrowed>, chain!(
-    tag!("(") ~
-    take_while!(is_multispace)? ~
-    tag!("let ") ~
+named!(variable(&[u8]) -> Vec<VarDeclBorrowed>, do_parse!(
+    tag!("(") >> 
+    opt!(take_while!(is_multispace)) >>
+    tag!("let ") >>
     vars: fold_many1!(
-        chain!(
-            take_while!(is_multispace)? ~
-            name: terminal ~
-            oa: chain!(tag!(":") ~ oa: op_arg, ||{oa})? ~
-            take_while!(is_multispace)? ~
-            tag!(",")?,
-            || { (name, oa) }
+        do_parse!(
+            opt!(take_while!(is_multispace)) >>
+            name: terminal >>
+            oa: opt!(do_parse!(
+                tag!(":") >> 
+                oa: op_arg >>
+                (oa) 
+            )) >>
+            opt!(take_while!(is_multispace)) >>
+            opt!(tag!(",")) >>
+            (name, oa)
         ), Vec::new(), |mut vec: Vec<_>, (name, oa)| {
             let v = VarBorrowed {
                 name: TerminalBorrowed::from_slice(name),
@@ -691,10 +598,10 @@ named!(variable(&[u8]) -> Vec<VarDeclBorrowed>, chain!(
             vec.push(VarDeclBorrowed::Var(v));
             vec
         }
-    ) ~
-    take_while!(is_multispace)? ~
-    tag!(")") ,
-    || { vars }
+    ) >> 
+    opt!(take_while!(is_multispace)) >>
+    tag!(")") >>
+    (vars)
 ));
 
 // func_decl = 'fn::' term ['(' op_args ')'] args
@@ -705,6 +612,12 @@ pub struct FuncDeclBorrowed<'a> {
     pub args: Option<Vec<ArgBorrowed<'a>>>,
     pub op_args: Option<Vec<OpArgBorrowed<'a>>>,
     pub variant: FuncVariants,
+}
+
+impl<'a> FuncDeclBorrowed<'a> {
+    fn into_assert(decl: FuncDeclBorrowed<'a>) -> AssertBorrowed<'a> {
+        AssertBorrowed::FuncDecl(decl)
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -724,37 +637,31 @@ impl FuncVariants {
 }
 
 named!(func_decl(&[u8]) -> FuncDeclBorrowed,
-    alt_complete!(
-        chain!(
-            take_while!(is_multispace)? ~
-            tag!("fn::") ~
-            name: map!(terminal, TerminalBorrowed::from_slice) ~
-            op1: op_args? ~
-            a1: args,
-            || {
-                FuncDeclBorrowed {
-                    name: name,
-                    args: Some(a1),
-                    op_args: op1,
-                    variant: FuncVariants::Relational
-                }
-            }
+    ws!(alt_complete!(
+        do_parse!(
+            tag!("fn::") >> 
+            name: map!(terminal, TerminalBorrowed::from_slice) >>
+            op1: opt!(op_args) >>
+            a1: args >>
+            (FuncDeclBorrowed {
+                name: name,
+                args: Some(a1),
+                op_args: op1,
+                variant: FuncVariants::Relational
+            })
         ) |
-        chain!(
-            take_while!(is_multispace)? ~
-            tag!("fn::") ~
-            name: map!(terminal, TerminalBorrowed::from_slice) ~
-            op1: op_args,
-            || {
-                FuncDeclBorrowed {
-                    name: name,
-                    args: None,
-                    op_args: Some(op1),
-                    variant: FuncVariants::NonRelational
-                }
-            }
+        do_parse!(
+            tag!("fn::") >> 
+            name: map!(terminal, TerminalBorrowed::from_slice) >>
+            op1: op_args >>
+            (FuncDeclBorrowed {
+                name: name,
+                args: None,
+                op_args: Some(op1),
+                variant: FuncVariants::NonRelational
+            })
         )
-    )
+    ))
 );
 
 // class_decl = term ['(' op_args ')'] args ;
@@ -765,12 +672,18 @@ pub struct ClassDeclBorrowed<'a> {
     pub op_args: Option<Vec<OpArgBorrowed<'a>>>,
 }
 
-named!(class_decl(&[u8]) -> ClassDeclBorrowed, chain!(
-    name: map!(terminal, TerminalBorrowed::from_slice) ~
-    op1: op_args? ~
-    a1: args ,
-    || { ClassDeclBorrowed{name: name, op_args: op1, args: a1} }
-));
+impl<'a> ClassDeclBorrowed<'a> {
+    fn into_assert(decl: ClassDeclBorrowed<'a>) -> AssertBorrowed<'a> {
+        AssertBorrowed::ClassDecl(decl)
+    }
+}
+
+named!(class_decl(&[u8]) -> ClassDeclBorrowed, ws!(do_parse!(
+    name: map!(terminal, TerminalBorrowed::from_slice) >> 
+    op1: opt!(op_args) >>
+    a1: args >>
+    (ClassDeclBorrowed{name: name, op_args: op1, args: a1})
+)));
 
 // arg	= term [',' uval] ;
 #[derive(Debug, PartialEq)]
@@ -779,19 +692,15 @@ pub struct ArgBorrowed<'a> {
     pub uval: Option<UVal>,
 }
 
-named!(arg <ArgBorrowed>, chain!(
-    take_while!(is_multispace)? ~
-    term: map!(terminal, TerminalBorrowed::from_slice) ~
-    u0: chain!(
-        take_while!(is_multispace)? ~
-        char!(',') ~
-        take_while!(is_multispace)? ~
-        u1: uval ,
-        ||{u1}
-    )? ~
-    take_while!(is_multispace)? ,
-    || { ArgBorrowed{term: term, uval: u0} }
-));
+named!(arg <ArgBorrowed>, ws!(do_parse!(
+    term: map!(terminal, TerminalBorrowed::from_slice) >>
+    u0: opt!(do_parse!(
+        char!(',') >> 
+        u1: uval >>
+        (u1)
+    )) >>
+    ({ ArgBorrowed{term: term, uval: u0} })
+)));
 
 // args	= '[' arg $(arg);* ']';
 named!(args(&[u8]) -> Vec<ArgBorrowed>, delimited!(
@@ -812,28 +721,24 @@ pub struct OpArgBorrowed<'a> {
     pub comp: Option<(CompOperator, OpArgTermBorrowed<'a>)>,
 }
 
-named!(op_arg <OpArgBorrowed>, chain!(
-    take_while!(is_multispace)? ~
+named!(op_arg <OpArgBorrowed>, ws!(do_parse!(
     term: alt!(
         map!(string, OpArgTermBorrowed::is_string) |
         map!(terminal, OpArgTermBorrowed::is_terminal )
-    ) ~
-    c1: chain!(
-        take_while!(is_multispace)? ~
+    ) >>
+    c1: opt!(do_parse!(
         c2: map!(
             alt!(tag!(">=") | tag!("<=") | tag!("=") | tag!(">") | tag!("<")),
                  CompOperator::from_chars
-        ) ~
-        take_while!(is_multispace)? ~
+        ) >>
         term: alt!(
             map!(string, OpArgTermBorrowed::is_string) |
             map!(terminal, OpArgTermBorrowed::is_terminal )
-        ) ~
-        take_while!(is_multispace)? ,
-        || { (c2, term) }
-    )? ,
-    || { OpArgBorrowed{term: term, comp: c1} }
-));
+        ) >>
+        (c2, term) 
+    )) >>
+    (OpArgBorrowed{term: term, comp: c1})
+)));
 
 // op_args = $(op_arg),+ ;
 named!(op_args(&[u8]) -> Vec<OpArgBorrowed>, delimited!(
@@ -870,18 +775,15 @@ pub struct UVal {
     pub val: Number,
 }
 
-named!(uval <UVal>, chain!(
-    take_while!(is_multispace)? ~
-    char!('u') ~
-    take_while!(is_multispace)? ~
+named!(uval <UVal>, ws!(do_parse!(
+    char!('u') >>
     op: map!(
         alt!(tag!(">=") | tag!("<=") | tag!("=") | tag!(">") | tag!("<")),
              CompOperator::from_chars
-    ) ~
-    take_while!(is_multispace)? ~
-    val: number ,
-    || { UVal{op: op, val: val} }
-));
+    ) >>
+    val: number >>
+    (UVal{op: op, val: val}) 
+)));
 
 // number = -?[0-9\.]+
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -1076,25 +978,20 @@ impl LogicOperator {
     }
 }
 
-named!(logic_operator, chain!(
-    take_while!(is_multispace)? ~
-    op: alt!(tag!("|>") | tag!("&&") | tag!("||") | tag!("=>") | tag!("<=>")) ~
-    take_while!(is_multispace)? ,
-    || { op }
-));
+named!(logic_operator, 
+    ws!(alt!(tag!("|>") | tag!("&&") | tag!("||") | tag!("=>") | tag!("<=>")))
+);
 
 // comment parsing tools:
 named!(remove_comments(&[u8]) -> Vec<&[u8]>,
     many1!(
-        chain!(
-            before: comment_tag ~
-            alt!(
+        do_parse!(
+            before: comment_tag >>
+            opt!(alt!(
                 recognize!(delimited!(char!('#'), is_not!("\n"), alt!(is_a!("\n") | eof ))) |
                 recognize!(delimited!(tag!("/*"), take_until!("*/"), tag!("*/")))
-            )? ,
-            || {
-                before
-             }
+            )) >>
+            (before)
         )
     )
 );
@@ -1127,7 +1024,7 @@ fn comment_tag(input: &[u8]) -> IResult<&[u8], &[u8]> {
         }
     }
     if idx == 0 {
-        IResult::Done(&b" "[..], &input[0..])
+        IResult::Done(&DONE_ARR[..], &input[0..])
     } else {
         IResult::Done(&input[idx..], &input[0..idx])
     }
@@ -1142,6 +1039,7 @@ fn remove_multispace(input: &[u8]) -> &[u8] {
     }
 }
 
+#[inline]
 fn is_multispace(chr: u8) -> bool {
     chr == b' ' || chr == b'\t' || chr == b'\r' || chr == b'\n'
 }
@@ -1177,7 +1075,14 @@ mod test {
 
         // split per scopes and declarations
         let source = b"
-            ( american[x,u=1] && ( weapon[y,u=1] && hostile[z,u=1 ) )
+            ( american[x,u=1] && ( weapon[y,u=1] && hostile[z,u=1] ) )
+        ";
+        let mut data = Vec::new();
+        let scanned = Parser::feed(source, &mut data);
+        assert!(scanned.is_ok());
+
+        let source = b"
+            ( ( american[x,u=1] && hostile[z,u=1] ) && hostile[z,u=1] )
         ";
         let mut data = Vec::new();
         let scanned = Parser::feed(source, &mut data);
@@ -1191,13 +1096,6 @@ mod test {
         assert!(scanned.is_err());
 
         let source = b"
-            ( ( american[x,u=1] && hostile[z,u=1 ) && hostile[z,u=1] )
-        ";
-        let mut data = Vec::new();
-        let scanned = Parser::feed(source, &mut data);
-        assert!(scanned.is_ok());
-
-        let source = b"
             ( ( american[x,u=1] ) && hostile[z,u=1] && weapon[y,u=1] )
         ";
         let mut data = Vec::new();
@@ -1209,20 +1107,14 @@ mod test {
         ";
         let mut data = Vec::new();
         let scanned = Parser::feed(source, &mut data);
-        match scanned.unwrap_err() {
-            ParseErrB::IllegalChain(_) => {}
-            _ => panic!(),
-        }
+        assert!(scanned.is_err());
 
         let source = b"
             ( american[x,u=1] && ( ( hostile[z,u=1] ) ) && weapon[y,u=1] )
         ";
         let mut data = Vec::new();
         let scanned = Parser::feed(source, &mut data);
-        match scanned.unwrap_err() {
-            ParseErrB::IllegalChain(_) => {}
-            _ => panic!(),
-        }
+        assert!(scanned.is_err());
 
         let source = b"
             (   ( let x y z )
@@ -1241,7 +1133,7 @@ mod test {
             _ => panic!(),
         };
         assert!(s0.vars.is_some());
-        match s0.next {
+        match s0.next 
             Next::Chain(s1) => {
                 assert_eq!(s1.len(), 2);
                 match s1[0] {

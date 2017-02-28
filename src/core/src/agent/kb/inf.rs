@@ -258,7 +258,6 @@ impl<'a> Inference<'a> {
     pub fn infer_facts(&self) {
         fn queue_query(inf: &Inference, query: &str, actv_query: ActiveQuery) {
             let mut pass = InfTrial::new(inf, actv_query.clone());
-            //let pass = unsafe { &mut *(&mut t as *mut InfTrial) as &mut InfTrial };
             pass.get_rules(vec![query.clone()]);
             // run the query, if there is no result and there is an update,
             // then loop again, else stop
