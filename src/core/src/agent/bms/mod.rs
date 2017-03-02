@@ -7,7 +7,7 @@
 
 use super::{ProofResult, Representation};
 use super::kb::QueryInput;
-use lang::{Date, Grounded, GroundedRef};
+use lang::{Date, Grounded, GroundedRef, SentID};
 
 use chrono::UTC;
 
@@ -29,14 +29,10 @@ impl BmsWrapper {
         }
     }
 
-    pub fn new_record(&self, date: Option<Date>, value: Option<f32>, was_produced: Option<bool>) {
+    pub fn new_record(&self, date: Option<Date>, value: Option<f32>, was_produced: Option<SentID>) {
         let date = match date {
             Some(date) => date,
             None => UTC::now(),
-        };
-        let was_produced = match was_produced {
-            Some(val) => val,
-            None => false,
         };
         let record = BmsRecord {
             produced: vec![],
@@ -52,7 +48,7 @@ impl BmsWrapper {
                   owner: GroundedRef,
                   agent: &Representation,
                   data: &BmsWrapper,
-                  was_produced: bool) {
+                  was_produced: Option<SentID>) {
         let ask_processed = |entry: &(Grounded, Option<f32>), cmp_rec: &Date| {
             match *entry {
                 (Grounded::Function(ref func), ..) => {
@@ -81,7 +77,7 @@ impl BmsWrapper {
                                 let lock = bms.records.read().unwrap();
                                 let recs = (*lock).iter();
                                 for rec in recs.rev() {
-                                    if !rec.was_produced {
+                                    if !rec.was_produced.is_some() {
                                         date = Some(rec.date);
                                         value = rec.value;
                                         break;
@@ -89,7 +85,7 @@ impl BmsWrapper {
                                 }
                             }
                             func.update_value(value);
-                            bms.new_record(date, value, Some(false));
+                            bms.new_record(date, value, None);
                         }
                     }
                 }
@@ -114,7 +110,7 @@ impl BmsWrapper {
                                 let lock = bms.records.read().unwrap();
                                 let recs = (*lock).iter();
                                 for rec in recs.rev() {
-                                    if !rec.was_produced {
+                                    if !rec.was_produced.is_some() {
                                         date = Some(rec.date);
                                         value = rec.value;
                                         break;
@@ -123,7 +119,7 @@ impl BmsWrapper {
                             }
 
                             cls.update_value(value);
-                            bms.new_record(date, value, Some(false));
+                            bms.new_record(date, value, None);
                         }
                     }
                 }
@@ -166,7 +162,7 @@ impl BmsWrapper {
 
         // create a new record with the new data
         owner.update_value(up_rec_value);
-        self.new_record(Some(up_rec_date), up_rec_value, Some(was_produced));
+        self.new_record(Some(up_rec_date), up_rec_value, was_produced);
 
         // check if there are any inconsistencies with the knowledge produced with
         // the previous value
@@ -217,7 +213,7 @@ impl BmsWrapper {
         let l = records.len() - 2;
         let mut remove_ls: Vec<usize> = vec![];
         for (i, rec) in records[..l].iter().enumerate() {
-            if rec.produced.is_empty() && rec.was_produced {
+            if rec.produced.is_empty() && rec.was_produced.is_some() {
                 remove_ls.push(i);
             }
         }
@@ -290,10 +286,10 @@ impl BmsWrapper {
         last.value = val;
     }
 
-    pub fn last_was_produced(&self) {
+    pub fn last_was_produced(&self, produced: Option<SentID>) {
         let records = &mut *self.records.write().unwrap();
         let last = records.last_mut().unwrap();
-        last.was_produced = true;
+        last.was_produced = produced;
     }
 }
 
@@ -312,7 +308,7 @@ struct BmsRecord {
     produced: Vec<(Grounded, Option<f32>)>,
     date: Date,
     value: Option<f32>,
-    was_produced: bool,
+    was_produced: Option<SentID>,
 }
 
 impl BmsRecord {

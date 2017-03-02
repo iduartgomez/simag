@@ -14,6 +14,7 @@ use chrono::{Duration, UTC};
 use float_cmp::ApproxEqUlps;
 
 use std::collections::HashMap;
+use std::iter::FromIterator;
 use std::str;
 use std::sync::{RwLock, Arc};
 use std::sync::atomic::AtomicBool;
@@ -121,11 +122,11 @@ impl<'a> Predicate {
     }
 
     #[inline]
-    fn get_id(&self) -> Vec<u8> {
+    fn generate_uid(&self) -> Vec<u8> {
         match *self {
-            Predicate::FreeClsMemb(ref t) => t.get_id(),
-            Predicate::GroundedClsMemb(ref t) => t.get_id(),
-            Predicate::FreeClsOwner(ref t) => t.get_id(),
+            Predicate::FreeClsMemb(ref t) => t.generate_uid(),
+            Predicate::GroundedClsMemb(ref t) => t.generate_uid(),
+            Predicate::FreeClsOwner(ref t) => t.generate_uid(),
         }
     }
 
@@ -257,17 +258,11 @@ impl GroundedClsMemb {
         })
     }
 
-    fn get_id(&self) -> Vec<u8> {
+    fn generate_uid(&self) -> Vec<u8> {
         let mut id: Vec<u8> = vec![];
-        let mut id_1 = Vec::from(self.term.as_bytes());
-        id.append(&mut id_1);
-        match self.operator {
-            None => id.push(0),
-            Some(CompOperator::Equal) => id.push(1),
-            Some(CompOperator::Less) => id.push(2),
-            Some(CompOperator::More) => id.push(3),
-            Some(CompOperator::MoreEqual) => id.push(4),
-            Some(CompOperator::LessEqual) => id.push(5),
+        id.append(&mut Vec::from(self.term.as_bytes()));
+        if let Some(ref cmp) = self.operator {
+            cmp.generate_uid(&mut id);
         }
         if let Some(val) = *self.value.read().unwrap() {
             let mut id_2 = format!("{}", val).into_bytes();
@@ -295,7 +290,10 @@ impl GroundedClsMemb {
         }
     }
 
-    pub fn update(&self, agent: &Representation, data: &GroundedClsMemb, was_produced: bool) {
+    pub fn update(&self,
+                  agent: &Representation,
+                  data: &GroundedClsMemb,
+                  was_produced: Option<SentID>) {
         let new_val: Option<f32>;
         {
             let mut value_lock = self.value.write().unwrap();
@@ -595,7 +593,10 @@ impl GroundedFunc {
         }
     }
 
-    pub fn update(&self, agent: &Representation, data: &GroundedFunc, was_produced: bool) {
+    pub fn update(&self,
+                  agent: &Representation,
+                  data: &GroundedFunc,
+                  was_produced: Option<SentID>) {
         {
             let mut value_lock = self.args[0].value.write().unwrap();
             *value_lock = *data.args[0].value.read().unwrap();
@@ -645,21 +646,21 @@ impl FreeClsMemb {
         })
     }
 
-    fn get_id(&self) -> Vec<u8> {
+    fn generate_uid(&self) -> Vec<u8> {
         let mut id: Vec<u8> = vec![];
-        if let Some(op) = self.operator {
-            match op {
-                CompOperator::Equal => id.push(0),
-                CompOperator::Less => id.push(1),
-                CompOperator::More => id.push(2),
-                CompOperator::MoreEqual => id.push(4),
-                CompOperator::LessEqual => id.push(5),
-            }
-        }
+        let mut var = Vec::from_iter(format!("{:?}", &*self.term as *const Var)
+            .as_bytes()
+            .iter()
+            .map(|x| *x));
+        id.append(&mut var);
         if let Some(value) = self.value {
             let mut id_2 = format!("{}", value).into_bytes();
             id.append(&mut id_2);
         }
+        if let Some(ref cmp) = self.operator {
+            cmp.generate_uid(&mut id);
+        }
+        id.append(&mut self.parent.generate_uid());
         id
     }
 
@@ -728,22 +729,21 @@ impl FreeClsOwner {
         })
     }
 
-    fn get_id(&self) -> Vec<u8> {
+    fn generate_uid(&self) -> Vec<u8> {
         let mut id: Vec<u8> = vec![];
-        let mut id_1 = Vec::from(self.term.as_bytes());
-        id.append(&mut id_1);
-        match self.operator {
-            None => id.push(0),
-            Some(CompOperator::Equal) => id.push(1),
-            Some(CompOperator::Less) => id.push(2),
-            Some(CompOperator::More) => id.push(3),
-            Some(CompOperator::MoreEqual) => id.push(4),
-            Some(CompOperator::LessEqual) => id.push(5),
-        }
+        id.append(&mut Vec::from(self.term.as_bytes()));
         if let Some(ref val) = self.value {
             let mut id_2 = format!("{}", *val).into_bytes();
             id.append(&mut id_2);
         }
+        if let Some(ref cmp) = self.operator {
+            cmp.generate_uid(&mut id);
+        }
+        let mut var = Vec::from_iter(format!("{:?}", &*self.parent as *const Var)
+            .as_bytes()
+            .iter()
+            .map(|x| *x));
+        id.append(&mut var);
         id
     }
 
@@ -915,10 +915,10 @@ impl Assert {
     }
 
     #[inline]
-    pub fn get_id(&self) -> Vec<u8> {
+    pub fn generate_uid(&self) -> Vec<u8> {
         match *self {
-            Assert::FuncDecl(ref f) => f.get_id(),
-            Assert::ClassDecl(ref c) => c.get_id(),
+            Assert::FuncDecl(ref f) => f.generate_uid(),
+            Assert::ClassDecl(ref c) => c.generate_uid(),
         }
     }
 }
@@ -1139,21 +1139,18 @@ impl<'a> FuncDecl {
         }
     }
 
-    fn get_id(&self) -> Vec<u8> {
+    fn generate_uid(&self) -> Vec<u8> {
         let mut id = vec![];
-        if self.name.is_grounded() {
-            let mut id_1 = Vec::from(self.name.get_name().as_bytes());
-            id.append(&mut id_1);
-        }
+        id.append(&mut self.name.generate_uid());
         if let Some(ref args) = self.args {
             for a in args {
-                let mut id_2 = a.get_id();
+                let mut id_2 = a.generate_uid();
                 id.append(&mut id_2)
             }
         }
         if let Some(ref args) = self.op_args {
             for a in args {
-                let mut id_2 = a.get_id();
+                let mut id_2 = a.generate_uid();
                 id.append(&mut id_2)
             }
         }
@@ -1473,19 +1470,16 @@ impl<'a> ClassDecl {
         None
     }
 
-    fn get_id(&self) -> Vec<u8> {
+    fn generate_uid(&self) -> Vec<u8> {
         let mut id = vec![];
-        if self.name.is_grounded() {
-            let mut id_1 = Vec::from(self.name.get_name().as_bytes());
-            id.append(&mut id_1);
-        }
+        id.append(&mut self.name.generate_uid());
         for a in &self.args {
-            let mut id_2 = a.get_id();
+            let mut id_2 = a.generate_uid();
             id.append(&mut id_2)
         }
         if let Some(ref args) = self.op_args {
             for a in args {
-                let mut id_2 = a.get_id();
+                let mut id_2 = a.generate_uid();
                 id.append(&mut id_2)
             }
         }
@@ -1631,17 +1625,33 @@ impl<'a> OpArg {
         }
     }
 
-    fn get_id(&self) -> Vec<u8> {
-        let mut id = vec![];
+    fn generate_uid(&self) -> Vec<u8> {
         match *self {
-            OpArg::Generic(_, _) => id.push(0),
-            OpArg::TimeDecl(_) => id.push(1),
-            OpArg::TimeVar => id.push(2),
-            OpArg::TimeVarAssign(_) => id.push(3),
-            OpArg::TimeVarFrom(_) => id.push(4),
-            OpArg::OverWrite => id.push(5),
+            OpArg::Generic(ref a0, ref a1) => {
+                let mut id = vec![];
+                id.append(&mut a0.generate_uid());
+                if let Some((ref cmp, ref a1)) = *a1 {
+                    cmp.generate_uid(&mut id);
+                    id.append(&mut a1.generate_uid());
+                }
+                id
+            }
+            OpArg::TimeDecl(ref decl) => decl.generate_uid(),
+            OpArg::TimeVar => vec![2],
+            OpArg::TimeVarAssign(ref var) => {
+                return Vec::from_iter(format!("{:?}", &**var as *const Var)
+                    .as_bytes()
+                    .iter()
+                    .map(|x| *x))
+            }
+            OpArg::TimeVarFrom(ref var) => {
+                return Vec::from_iter(format!("{:?}", &**var as *const Var)
+                    .as_bytes()
+                    .iter()
+                    .map(|x| *x))
+            }
+            OpArg::OverWrite => vec![5],
         }
-        id
     }
 
     fn get_time_payload(&self,
@@ -1730,6 +1740,16 @@ impl TimeFn {
         }
         bms
     }
+
+    fn generate_uid(&self) -> Vec<u8> {
+        let mut id = vec![];
+        match *self {
+            TimeFn::Date(ref date) => id.append(&mut format!("{}", date).into_bytes()), 
+            TimeFn::Now => id.push(2),
+            TimeFn::IsVar => id.push(3),
+        }
+        id
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1778,6 +1798,14 @@ impl<'a> OpArgTerm {
                     }
                 }
             }
+        }
+    }
+
+    fn generate_uid(&self) -> Vec<u8> {
+        match *self {
+            OpArgTerm::Terminal(ref t) => t.generate_uid(),
+            OpArgTerm::String(ref s) => Vec::from_iter(s.as_bytes().iter().map(|x| *x)), 
+            OpArgTerm::TimePayload(ref t) => t.generate_uid(),
         }
     }
 
@@ -1956,6 +1984,16 @@ impl<'a> Terminal {
             }
         }
         Ok(Terminal::GroundedTerm(name))
+    }
+
+    fn generate_uid(&self) -> Vec<u8> {
+        match *self {
+            Terminal::FreeTerm(ref var) => {
+                Vec::from_iter(format!("{:?}", &**var as *const Var).as_bytes().iter().map(|x| *x))
+            }
+            Terminal::GroundedTerm(ref name) => Vec::from_iter(name.as_bytes().iter().map(|x| *x)),
+            Terminal::Keyword(name) => Vec::from_iter(name.as_bytes().iter().map(|x| *x)),
+        }
     }
 
     fn is_var(&self) -> bool {

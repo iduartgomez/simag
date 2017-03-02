@@ -688,22 +688,22 @@ impl Entity {
         if stmt_exists {
             let lock = self.classes.read().unwrap();
             let current = lock.get(name).unwrap();
-            if context.is_some() {
-                current.update(agent, &*grounded, true);
+            if let Some(context) = context {
+                current.update(agent, &*grounded, Some(context.sent_id.clone()));
                 current.bms
                     .as_ref()
                     .unwrap()
-                    .update_producers(Grounded::Class(current.clone()), context.unwrap());
+                    .update_producers(Grounded::Class(current.clone()), context);
             } else {
-                current.update(agent, &*grounded, false);
+                current.update(agent, &*grounded, None);
             }
             false
         } else {
             let mut lock = self.classes.write().unwrap();
-            if context.is_some() {
+            if let Some(context) = context {
                 let bms = grounded.bms.as_ref().unwrap();
-                bms.last_was_produced();
-                bms.update_producers(Grounded::Class(grounded.clone()), context.unwrap());
+                bms.last_was_produced(Some(context.sent_id.clone()));
+                bms.update_producers(Grounded::Class(grounded.clone()), context);
             }
             lock.insert(name.to_string(), grounded.clone());
             true
@@ -796,12 +796,11 @@ impl Entity {
                 let funcs_type = lock.get(name).unwrap();
                 for f in funcs_type {
                     if f.comparable(&*func) {
-                        if context.is_some() {
-                            f.update(agent, &*func, true);
-                            f.bms.update_producers(Grounded::Function(f.clone()),
-                                                   context.as_ref().unwrap());
+                        if let Some(ref context) = context {
+                            f.update(agent, &*func, Some(context.sent_id.clone()));
+                            f.bms.update_producers(Grounded::Function(f.clone()), context);
                         } else {
-                            f.update(agent, &*func, false);
+                            f.update(agent, &*func, None);
                         }
                         found_rel = true;
                         break;
@@ -810,9 +809,9 @@ impl Entity {
             }
             if !found_rel {
                 let mut lock = self.relations.write().unwrap();
-                if context.is_some() {
-                    func.bms.last_was_produced();
-                    func.bms.update_producers(Grounded::Function(func.clone()), context.unwrap());
+                if let Some(context) = context {
+                    func.bms.last_was_produced(Some(context.sent_id.clone()));
+                    func.bms.update_producers(Grounded::Function(func.clone()), context);
                 }
                 let funcs_type = lock.get_mut(name).unwrap();
                 funcs_type.push(func.clone());
@@ -822,9 +821,9 @@ impl Entity {
             }
         } else {
             let mut lock = self.relations.write().unwrap();
-            if context.is_some() {
-                func.bms.last_was_produced();
-                func.bms.update_producers(Grounded::Function(func.clone()), context.unwrap());
+            if let Some(context) = context {
+                func.bms.last_was_produced(Some(context.sent_id.clone()));
+                func.bms.update_producers(Grounded::Function(func.clone()), context);
             }
             lock.insert(name.to_string(), vec![func.clone()]);
             true
@@ -933,22 +932,22 @@ impl Class {
         if stmt_exists {
             let lock = self.classes.read().unwrap();
             let current = lock.get(name).unwrap();
-            if context.is_some() {
-                current.update(agent, &*grounded, true);
+            if let Some(context) = context {
+                current.update(agent, &*grounded, Some(context.sent_id.clone()));
                 current.bms
                     .as_ref()
                     .unwrap()
-                    .update_producers(Grounded::Class(current.clone()), context.unwrap());
+                    .update_producers(Grounded::Class(current.clone()), context);
             } else {
-                current.update(agent, &*grounded, false);
+                current.update(agent, &*grounded, None);
             }
             false
         } else {
             let mut lock = self.classes.write().unwrap();
-            if context.is_some() {
+            if let Some(context) = context {
                 let bms = grounded.bms.as_ref().unwrap();
-                bms.last_was_produced();
-                bms.update_producers(Grounded::Class(grounded.clone()), context.unwrap());
+                bms.last_was_produced(Some(context.sent_id.clone()));
+                bms.update_producers(Grounded::Class(grounded.clone()), context);
             }
             lock.insert(name.to_string(), grounded.clone());
             true
@@ -1104,12 +1103,11 @@ impl Class {
                 let funcs_type = lock.get(name).unwrap();
                 for f in funcs_type {
                     if f.comparable(&*func) {
-                        if context.is_some() {
-                            f.update(agent, &*func, true);
-                            f.bms.update_producers(Grounded::Function(f.clone()),
-                                                   context.as_ref().unwrap());
+                        if let Some(ref context) = context {
+                            f.update(agent, &*func, Some(context.sent_id.clone()));
+                            f.bms.update_producers(Grounded::Function(f.clone()), context);
                         } else {
-                            f.update(agent, &*func, false);
+                            f.update(agent, &*func, None);
                         }
                         found_rel = true;
                         break;
@@ -1118,9 +1116,9 @@ impl Class {
             }
             if !found_rel {
                 let mut lock = self.relations.write().unwrap();
-                if context.is_some() {
-                    func.bms.last_was_produced();
-                    func.bms.update_producers(Grounded::Function(func.clone()), context.unwrap());
+                if let Some(context) = context {
+                    func.bms.last_was_produced(Some(context.sent_id.clone()));
+                    func.bms.update_producers(Grounded::Function(func.clone()), context);
                 }
                 let funcs_type = lock.get_mut(name).unwrap();
                 funcs_type.push(func.clone());
@@ -1130,9 +1128,9 @@ impl Class {
             }
         } else {
             let mut lock = self.relations.write().unwrap();
-            if context.is_some() {
-                func.bms.last_was_produced();
-                func.bms.update_producers(Grounded::Function(func.clone()), context.unwrap());
+            if let Some(context) = context {
+                func.bms.last_was_produced(Some(context.sent_id.clone()));
+                func.bms.update_producers(Grounded::Function(func.clone()), context);
             }
             lock.insert(name.to_string(), vec![func.clone()]);
             true

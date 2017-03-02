@@ -27,7 +27,6 @@ use std::rc::Rc;
 use std::sync::{Mutex, RwLock, Arc};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-type PArgVal = Vec<usize>;
 type ObjName<'a> = &'a str;
 type QueryPred = String;
 type GroundedRes<'a> = HashMap<ObjName<'a>, Option<(bool, Option<Date>)>>;
@@ -239,7 +238,7 @@ impl<'a> Inference<'a> {
             ignore_current: ignore_current,
             nodes: RwLock::new(HashMap::new()),
             queue: RwLock::new(HashMap::new()),
-            results: InfResults::new(query.clone()),
+            results: InfResults::new(query),
             _available_threads: RwLock::new(4_u32),
         }))
     }
@@ -258,7 +257,7 @@ impl<'a> Inference<'a> {
     pub fn infer_facts(&self) {
         fn queue_query(inf: &Inference, query: &str, actv_query: ActiveQuery) {
             let mut pass = InfTrial::new(inf, actv_query.clone());
-            pass.get_rules(vec![query.clone()]);
+            pass.get_rules(vec![query]);
             // run the query, if there is no result and there is an update,
             // then loop again, else stop
             loop {
@@ -441,7 +440,49 @@ impl ActiveQuery {
 #[derive(Debug)]
 struct ProofArgs {
     ptr: usize, // *mut Vec<(&'a Var, Arc<VarAssignment<'a>>)
-    hash_val: Vec<usize>,
+    hash_val: usize,
+}
+
+type PArgVal = usize;
+
+impl ProofArgs {
+    fn new<'a>(input: Vec<(&Var, Arc<VarAssignment<'a>>)>) -> ProofArgs {
+        let hash_val = ProofArgs::arg_hash_val(&input[..]);
+        let ptr = Box::into_raw(Box::new(input));
+        ProofArgs {
+            ptr: ptr as usize,
+            hash_val: hash_val,
+        }
+    }
+
+    fn arg_hash_val(input: &[(&Var, Arc<VarAssignment>)]) -> usize {
+        use std::collections::hash_map::DefaultHasher;
+        let mut v = vec![];
+        for &(var, ref assigned) in input {
+            let mut var = Vec::from_iter(format!("{:?}", var as *const Var)
+                .as_bytes()
+                .iter()
+                .map(|x| *x));
+            v.append(&mut var);
+            let mut s = Vec::from_iter(assigned.name.as_bytes().iter().map(|x| *x));
+            v.append(&mut s);
+        }
+        let mut s = DefaultHasher::new();
+        v.hash(&mut s);
+        s.finish() as usize
+    }
+
+    fn as_proof_input(&self) -> HashMap<&Var, &VarAssignment> {
+        let data = unsafe {
+            let data = self.ptr as *mut Vec<(&Var, Arc<VarAssignment>)>;
+            &*data as &Vec<(&Var, Arc<VarAssignment>)>
+        };
+        let mut n_args = HashMap::with_capacity(data.len());
+        for &(k, ref v) in data {
+            n_args.insert(k, &**v);
+        }
+        n_args
+    }
 }
 
 impl ::std::clone::Clone for ProofArgs {
@@ -462,29 +503,6 @@ impl ::std::ops::Drop for ProofArgs {
     }
 }
 
-impl ProofArgs {
-    fn new<'a>(input: Vec<(&Var, Arc<VarAssignment<'a>>)>) -> ProofArgs {
-        let hash_val = arg_hash_val(&input[..]);
-        let ptr = Box::into_raw(Box::new(input));
-        ProofArgs {
-            ptr: ptr as usize,
-            hash_val: hash_val,
-        }
-    }
-
-    fn as_proof_input(&self) -> HashMap<&Var, &VarAssignment> {
-        let data = unsafe {
-            let data = self.ptr as *mut Vec<(&Var, Arc<VarAssignment>)>;
-            &*data as &Vec<(&Var, Arc<VarAssignment>)>
-        };
-        let mut n_args = HashMap::with_capacity(data.len());
-        for &(k, ref v) in data {
-            n_args.insert(k, &**v);
-        }
-        n_args
-    }
-}
-
 struct ValidAnswer {
     node: usize, // *const ProofNode<'a>,
     args: ProofArgs,
@@ -497,6 +515,7 @@ pub struct ProofResult {
     pub newest_grfact: Date,
     pub antecedents: Vec<lang::Grounded>,
     pub grounded: Vec<(lang::Grounded, Date)>,
+    pub sent_id: lang::SentID,
     args: ProofArgs,
     node: usize, // *const ProofNode<'a>
 }
@@ -508,6 +527,7 @@ impl ProofResult {
             args: args,
             node: node as *const ProofNode as usize,
             newest_grfact: ::chrono::date::MIN.and_hms(0, 0, 0),
+            sent_id: node.proof.get_id(),
             antecedents: vec![],
             grounded: vec![],
         }
@@ -1010,17 +1030,6 @@ impl<'a> ArgsProduct<'a> {
             false
         }
     }
-}
-
-fn arg_hash_val(input: &[(&Var, Arc<VarAssignment>)]) -> Vec<usize> {
-    let mut v = vec![];
-    for &(var, ref assigned) in input {
-        v.push(var as *const Var as usize);
-        for c in assigned.name.as_bytes() {
-            v.push(*c as usize);
-        }
-    }
-    v
 }
 
 #[derive(Debug, Clone)]

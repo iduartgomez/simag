@@ -997,6 +997,16 @@ impl CompOperator {
             _ => false,
         }
     }
+
+    pub fn generate_uid(&self, id: &mut Vec<u8>) {
+        match *self {
+            CompOperator::Equal => id.push(1),
+            CompOperator::Less => id.push(2),
+            CompOperator::More => id.push(3),
+            CompOperator::MoreEqual => id.push(4),
+            CompOperator::LessEqual => id.push(5),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]

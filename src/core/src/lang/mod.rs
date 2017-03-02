@@ -5,7 +5,7 @@ mod logsent;
 pub use self::common::*;
 pub use self::errors::ParseErrF;
 pub use self::parser::{CompOperator, ParseTree};
-pub use self::logsent::LogSentence;
+pub use self::logsent::{LogSentence, SentID};
 
 use chrono::{DateTime, UTC};
 

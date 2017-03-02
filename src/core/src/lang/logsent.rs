@@ -22,6 +22,8 @@ use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
 
+pub type SentID = usize;
+
 /// Type to store a first-order logic complex sentence.
 ///
 /// This sentence is the result of parsing a sentence and compile
@@ -41,7 +43,7 @@ pub struct LogSentence {
     predicates: (Vec<Rc<Assert>>, Vec<Rc<Assert>>),
     has_time_vars: usize,
     pub created: Date,
-    id: Vec<u8>,
+    id: Option<SentID>,
 }
 
 unsafe impl ::std::marker::Sync for LogSentence {}
@@ -57,7 +59,7 @@ impl<'a> LogSentence {
             predicates: (vec![], vec![]),
             has_time_vars: 0,
             created: UTC::now(),
-            id: vec![],
+            id: None,
         };
         let first = PIntermediate::new(None, None);
         let root = match walk_ast(ast, &mut sent, context, first) {
@@ -249,11 +251,7 @@ impl<'a> LogSentence {
 
     pub fn extract_all_predicates(self) -> (Vec<Arc<Var>>, Vec<Rc<Assert>>) {
         let LogSentence { vars, particles, .. } = self;
-        let vars = if let Some(vars) = vars {
-            vars
-        } else {
-            vec![]
-        };
+        let vars = if let Some(vars) = vars { vars } else { vec![] };
         let mut preds = vec![];
         let mut checked: HashSet<*const Particle> = HashSet::new();
         for p in particles {
@@ -301,8 +299,8 @@ impl<'a> LogSentence {
         self.vars.as_mut().unwrap().push(var.clone())
     }
 
-    pub fn get_id(&self) -> &[u8] {
-        &self.id
+    pub fn get_id(&self) -> usize {
+        *self.id.as_ref().unwrap()
     }
 
     fn add_skolem(&mut self, skolem: Arc<Skolem>) {
@@ -317,19 +315,25 @@ impl<'a> LogSentence {
     }
 
     fn generate_uid(&mut self) {
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+        let mut id = vec![];
         for a in &self.particles {
             match **a {
-                Particle::Conjunction(_) => self.id.push(0),
-                Particle::Disjunction(_) => self.id.push(1),
-                Particle::Equivalence(_) => self.id.push(2),
-                Particle::Implication(_) => self.id.push(3),
-                Particle::IndConditional(_) => self.id.push(4),
+                Particle::Conjunction(_) => id.push(0),
+                Particle::Disjunction(_) => id.push(1),
+                Particle::Equivalence(_) => id.push(2),
+                Particle::Implication(_) => id.push(3),
+                Particle::IndConditional(_) => id.push(4),
                 Particle::Atom(ref p) => {
-                    let mut id_1 = p.get_id();
-                    self.id.append(&mut id_1)
+                    let mut id_1 = p.generate_uid();
+                    id.append(&mut id_1)
                 }
             }
         }
+        let mut s = DefaultHasher::new();
+        id.hash(&mut s);
+        self.id = Some(s.finish() as usize);
     }
 }
 
@@ -907,8 +911,8 @@ impl LogicAtom {
     }
 
     #[inline]
-    fn get_id(&self) -> Vec<u8> {
-        self.pred.get_id()
+    fn generate_uid(&self) -> Vec<u8> {
+        self.pred.generate_uid()
     }
 }
 
