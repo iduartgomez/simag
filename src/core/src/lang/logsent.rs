@@ -17,7 +17,6 @@ use chrono::UTC;
 use lang::common::*;
 use lang::parser::*;
 
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
@@ -71,36 +70,7 @@ impl<'a> LogSentence {
         sent.particles.push(root.clone());
         sent.root = Some(root);
         // classify the kind of sentence and check that are correct
-        if sent.vars.is_none() {
-            if !context.iexpr() {
-                context.stype = SentType::Rule;
-            } else {
-                // check out that all variables are time or spatial variables
-                let mut return_err = false;
-                for var in sent.vars.as_ref().unwrap() {
-                    if var.is_normal() {
-                        return_err = true;
-                    }
-                }
-                if return_err {
-                    return Err(LogSentErr::RuleInclICond(Box::into_raw(Box::new(sent)) as usize)
-                        .into());
-                }
-                context.stype = SentType::Rule;
-            }
-        } else if context.iexpr() {
-            {
-                let sent_r = &mut sent;
-                for var in sent_r.vars.as_ref().unwrap() {
-                    match var.kind {
-                        VarKind::Time | VarKind::TimeDecl => {
-                            sent_r.has_time_vars += 1;
-                            continue;
-                        }
-                        _ => {}
-                    }
-                }
-            }
+        if context.iexpr() {
             let mut lhs: Vec<Rc<Particle>> = vec![];
             correct_iexpr(&sent, &mut lhs)?;
             let lhs: HashSet<_> = lhs.iter().map(|x| &**x as *const Particle).collect();
@@ -121,6 +91,25 @@ impl<'a> LogSentence {
                 .collect();
             sent.predicates = (lhs_v, rhs_v);
             sent.iexpr_op_arg_validation()?;
+            if sent.vars.is_some() {
+                let mut is_normal = false;
+                let sent_r = &mut sent;
+                for var in sent_r.vars.as_ref().unwrap() {
+                    match var.kind {
+                        VarKind::Time | VarKind::TimeDecl => {
+                            sent_r.has_time_vars += 1;
+                            continue;
+                        }
+                        VarKind::Normal => is_normal = true,
+                    }
+                }
+                // check out that all variables are time or spatial variables
+                if !is_normal {
+                    context.stype = SentType::Rule;
+                }
+            }
+        } else {
+            context.stype = SentType::Rule;
         }
         sent.generate_uid();
         Ok(sent)
@@ -260,13 +249,20 @@ impl<'a> LogSentence {
 
     pub fn extract_all_predicates(self) -> (Vec<Arc<Var>>, Vec<Rc<Assert>>) {
         let LogSentence { vars, particles, .. } = self;
+        let vars = if let Some(vars) = vars {
+            vars
+        } else {
+            vec![]
+        };
         let mut preds = vec![];
+        let mut checked: HashSet<*const Particle> = HashSet::new();
         for p in particles {
-            if p.is_atom() {
+            if !checked.contains(&(&*p as *const Particle)) && p.is_atom() {
                 preds.push(p.clone_pred());
+                checked.insert(&*p as *const Particle);
             }
         }
-        (vars.unwrap(), preds)
+        (vars, preds)
     }
 
     pub fn get_all_predicates(&self) -> Vec<&Assert> {
@@ -1171,20 +1167,6 @@ impl PIntermediate {
             }
         }
     }
-
-    fn is_conjunction(&self) -> bool {
-        match self.cond {
-            Some(LogicOperator::And) => true,
-            _ => false,
-        }
-    }
-
-    fn is_disjunction(&self) -> bool {
-        match self.cond {
-            Some(LogicOperator::Or) => true,
-            _ => false,
-        }
-    }
 }
 
 fn walk_ast(ast: &Next,
@@ -1302,7 +1284,7 @@ fn walk_ast(ast: &Next,
                 }
             }
             if ast.logic_op.is_some() {
-                let mut op = PIntermediate::new(ast.logic_op, None);
+                let op = PIntermediate::new(ast.logic_op, None);
                 let next = walk_ast(&ast.next, sent, context, op)?;
                 drop_local_vars(context, v_cnt);
                 drop_local_skolems(context, s_cnt);
@@ -1319,7 +1301,7 @@ fn walk_ast(ast: &Next,
             let in_side = context.in_rhs;
             if nodes.len() == 2 {
                 if let Next::ASTNode(ref node) = nodes[0] {
-                    let ASTNode { vars: ref vars, logic_op: ref op, next: ref next } = **node;
+                    let ASTNode { ref vars, logic_op: ref op, ref next } = **node;
                     if op.is_some() && next.would_assert() {
                         context.in_rhs = false;
                         let new_op = PIntermediate::new(*op, None);
@@ -1332,7 +1314,7 @@ fn walk_ast(ast: &Next,
                     }
                 }
                 if let Next::ASTNode(ref node) = nodes[1] {
-                    let ASTNode { vars: ref vars, logic_op: ref op, next: ref next } = **node;
+                    let ASTNode { ref vars, logic_op: ref op, ref next } = **node;
                     if op.is_some() && next.would_assert() {
                         context.in_rhs = true;
                         let new_op = PIntermediate::new(*op, None);
@@ -1345,9 +1327,9 @@ fn walk_ast(ast: &Next,
                     }
                 }
                 context.in_rhs = false;
-                let mut parent = walk_ast(&nodes[0], sent, context, parent)?;
+                let parent = walk_ast(&nodes[0], sent, context, parent)?;
                 context.in_rhs = true;
-                let mut parent = walk_ast(&nodes[1], sent, context, parent)?;
+                let parent = walk_ast(&nodes[1], sent, context, parent)?;
                 context.in_rhs = in_side;
                 Ok(parent)
             } else {
@@ -1359,8 +1341,7 @@ fn walk_ast(ast: &Next,
                 context.in_rhs = true;
                 prev_op = walk_ast(nodes.last().unwrap(), sent, context, prev_op)?;
                 context.in_rhs = false;
-                let mut new_op = PIntermediate::new(Some(op), None);
-                let mut last = PIntermediate::new(None, None);
+                let mut new_op;
                 for i in 1..nodes.len() {
                     let i = nodes.len() - (1 + i);
                     new_op = PIntermediate::new(Some(op), None);
@@ -1500,6 +1481,21 @@ mod errors {
     }
 }
 
+pub trait LogSentResolution {
+    fn grounded_eq(&self,
+                   agent: &agent::Representation,
+                   assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
+                   time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+                   context: &mut agent::ProofResult)
+                   -> Option<bool>;
+
+    fn substitute(&self,
+                  agent: &agent::Representation,
+                  assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
+                  time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+                  context: &mut agent::ProofResult);
+}
+
 #[cfg(test)]
 mod test {
     use super::Particle;
@@ -1507,18 +1503,6 @@ mod test {
 
     #[test]
     fn parser_icond_exprs() {
-        let source = String::from("
-            # Ok:
-            (( let x y z )
-             (( cde[x,u=1] && hij[y,u=1] && fn::fgh[y,u>0.5;x;z] ) |> abc[x,u=1]))
-        ");
-        let tree = Parser::parse(source, true);
-        let mut tree = tree.unwrap();
-        let sent = match tree.pop_front().unwrap() {
-            ParseTree::IExpr(sent) => sent,
-            _ => panic!(),
-        };
-
         let source = String::from("
             # Err:
             ((let x y z)

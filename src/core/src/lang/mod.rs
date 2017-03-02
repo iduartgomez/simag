@@ -1,8 +1,6 @@
-mod logsent;
-mod parser;
 mod common;
-
-use std::collections::VecDeque;
+mod parser;
+mod logsent;
 
 pub use self::common::*;
 pub use self::errors::ParseErrF;
@@ -10,6 +8,8 @@ pub use self::parser::{CompOperator, ParseTree};
 pub use self::logsent::LogSentence;
 
 use chrono::{DateTime, UTC};
+
+use std::collections::VecDeque;
 
 /// Takes an owned String and returns the corresponding structured representing
 /// object program for the logic function. It can parse several statements

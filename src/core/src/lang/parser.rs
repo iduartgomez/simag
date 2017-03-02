@@ -421,7 +421,7 @@ fn expr0<'a>(input: ScopeOutA<'a>) -> IResult<&'a [u8], Next<'a>> {
     } else {
         Next::Chain(vec![next, assert])
     };
-    let mut curr = ASTNode {
+    let curr = ASTNode {
         next: chained,
         vars: flat_vars(vars),
         logic_op: op,
@@ -1186,7 +1186,8 @@ mod test {
         let mut data = Vec::new();
         let scanned = Parser::feed(source, &mut data);
         assert!(scanned.is_ok());
-        assert_eq!(scanned.unwrap().len(), 3);
+        let out = scanned.unwrap();
+        assert_eq!(out.len(), 3);
     }
 
     macro_rules! assert_done_or_err {

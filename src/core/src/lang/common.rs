@@ -1,7 +1,7 @@
-pub use self::errors::TimeFnErr;
-
 use FLOAT_EQ_ULPS;
 use TIME_EQ_DIFF;
+
+pub use self::errors::TimeFnErr;
 
 use super::Date;
 use agent;
@@ -632,7 +632,10 @@ pub struct FreeClsMemb {
 }
 
 impl FreeClsMemb {
-    fn new(term: Arc<Var>, uval: Option<UVal>, parent: &Terminal) -> Result<FreeClsMemb, ParseErrF> {
+    fn new(term: Arc<Var>,
+           uval: Option<UVal>,
+           parent: &Terminal)
+           -> Result<FreeClsMemb, ParseErrF> {
         let (val, op) = match_uval(uval)?;
         Ok(FreeClsMemb {
             term: term,
@@ -895,7 +898,7 @@ impl Assert {
                        -> Option<bool> {
         match *self {
             Assert::FuncDecl(ref f) => f.grounded_eq(agent, assignments, time_assign, context),
-            Assert::ClassDecl(ref c) => c.grounded_eq(agent, assignments, context),
+            Assert::ClassDecl(ref c) => c.grounded_eq(agent, assignments, time_assign, context),
         }
     }
 
@@ -1306,51 +1309,7 @@ impl<'a> FuncDecl {
         }
     }
 
-    /// Compares two relational functions, if they include free terms variable values
-    /// assignments must be provided or will return None or panic in worst case.
-    fn grounded_eq(&self,
-                   agent: &agent::Representation,
-                   assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                   time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
-                   context: &mut agent::ProofResult)
-                   -> Option<bool> {
-        match self.variant {
-            FuncVariants::Relational => {}
-            FuncVariants::TimeCalc => return self.time_resolution(time_assign),
-            _ => panic!(),
-        }
-        if self.is_grounded() {
-            let sbj = self.args.as_ref().unwrap();
-            let grfunc = self.clone().into_grounded();
-            agent.has_relationship(&grfunc, sbj[0].get_name())
-        } else {
-            if assignments.is_none() {
-                return None;
-            }
-            let assignments = assignments.as_ref().unwrap();
-            if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, time_assign) {
-                for arg in self.get_args() {
-                    if let Predicate::FreeClsMemb(ref arg) = *arg {
-                        if let Some(entity) = assignments.get(&*arg.term) {
-                            if let Some(current) = entity.get_relationship(&grfunc) {
-                                context.antecedents.push(Grounded::Function(current.clone()));
-                                if let Some(date) = current.bms
-                                    .newest_date(&context.newest_grfact) {
-                                    context.newest_grfact = date;
-                                }
-                                if **current != grfunc {
-                                    return Some(false);
-                                } else {
-                                    return Some(true);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            None
-        }
-    }
+
 
     fn time_resolution(&self, assignments: &HashMap<&Var, Arc<BmsWrapper>>) -> Option<bool> {
         for arg in self.op_args.as_ref().unwrap() {
@@ -1359,20 +1318,6 @@ impl<'a> FuncDecl {
             }
         }
         Some(true)
-    }
-
-    fn substitute(&self,
-                  agent: &agent::Representation,
-                  assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                  time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
-                  context: &mut agent::ProofResult) {
-        if let Ok(grfunc) = GroundedFunc::from_free(self,
-                                                    assignments.as_ref().unwrap(),
-                                                    time_assign) {
-            let grfunc = Arc::new(grfunc);
-            agent.up_relation(grfunc.clone(), Some(context));
-            context.grounded.push((Grounded::Function(grfunc.clone()), grfunc.bms.get_last_date()))
-        }
     }
 }
 
@@ -1569,89 +1514,6 @@ impl<'a> ClassDecl {
         match self.name {
             Terminal::GroundedTerm(_) => true,
             _ => false,
-        }
-    }
-
-    /// Compare each term of a class declaration if they are comparable, and returns
-    /// the result of such comparison (or none in case they are not comparable).
-    fn grounded_eq(&self,
-                   agent: &agent::Representation,
-                   assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                   context: &mut agent::ProofResult)
-                   -> Option<bool> {
-        for a in &self.args {
-            match *a {
-                Predicate::FreeClsMemb(ref free) => {
-                    if assignments.is_none() {
-                        return None;
-                    }
-                    if let Some(entity) = assignments.as_ref().unwrap().get(&*free.term) {
-                        if let Some(current) = entity.get_class(free.parent.get_name()) {
-                            context.antecedents.push(Grounded::Class(current.clone()));
-                            if let Some(date) = current.bms
-                                .as_ref()
-                                .unwrap()
-                                .newest_date(&context.newest_grfact) {
-                                context.newest_grfact = date;
-                            }
-                            if !free.grounded_eq(current) {
-                                return Some(false);
-                            }
-                        } else {
-                            return None;
-                        }
-                    } else {
-                        return None;
-                    }
-                }
-                Predicate::GroundedClsMemb(ref compare) => {
-                    let entity = agent.get_entity_from_class(self.get_name(), &compare.term);
-                    if let Some(current) = entity {
-                        context.antecedents.push(Grounded::Class(current.clone()));
-                        if let Some(date) = current.bms
-                            .as_ref()
-                            .unwrap()
-                            .newest_date(&context.newest_grfact) {
-                            context.newest_grfact = date;
-                        }
-                        if *current != *compare {
-                            return Some(false);
-                        }
-                    } else {
-                        return None;
-                    }
-                }
-                _ => return None, // this path won't be taken in any program
-            }
-        }
-        Some(true)
-    }
-
-    fn substitute(&self,
-                  agent: &agent::Representation,
-                  assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                  time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
-                  context: &mut agent::ProofResult) {
-        let time_data = self.get_own_time_data(time_assign, None);
-        for a in &self.args {
-            let grfact = match *a {
-                Predicate::FreeClsMemb(ref free) => {
-                    if let Some(entity) = assignments.as_ref().unwrap().get(&*free.term) {
-                        GroundedClsMemb::from_free(free, entity.name)
-                    } else {
-                        break;
-                    }
-                }
-                Predicate::GroundedClsMemb(ref grounded) => grounded.clone(),
-                _ => return, // this path won't be taken in any program
-            };
-            let t = time_data.clone();
-            t.replace_last_val(grfact.get_value());
-            grfact.overwrite_time_data(&t);
-            let grfact = Arc::new(grfact);
-            context.grounded.push((Grounded::Class(grfact.clone()),
-                                   grfact.bms.as_ref().unwrap().get_last_date()));
-            agent.up_membership(grfact.clone(), Some(context))
         }
     }
 }
@@ -2141,6 +2003,158 @@ fn reserved(s: &str) -> bool {
     match s {
         "let" | "time_calc" | "exists" | "fn" | "time" | "overwrite" | "self" | "none" => true,
         _ => false,
+    }
+}
+
+mod logsent {
+    use super::*;
+
+    impl LogSentResolution for FuncDecl {
+        /// Compares two relational functions, if they include free terms variable values
+        /// assignments must be provided or will return None or panic in worst case.
+        fn grounded_eq(&self,
+                       agent: &agent::Representation,
+                       assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
+                       time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+                       context: &mut agent::ProofResult)
+                       -> Option<bool> {
+            match self.variant {
+                FuncVariants::Relational => {}
+                FuncVariants::TimeCalc => return self.time_resolution(time_assign),
+                _ => panic!(),
+            }
+            if self.is_grounded() {
+                let sbj = self.args.as_ref().unwrap();
+                let grfunc = self.clone().into_grounded();
+                agent.has_relationship(&grfunc, sbj[0].get_name())
+            } else {
+                if assignments.is_none() {
+                    return None;
+                }
+                let assignments = assignments.as_ref().unwrap();
+                if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, time_assign) {
+                    for arg in self.get_args() {
+                        if let Predicate::FreeClsMemb(ref arg) = *arg {
+                            if let Some(entity) = assignments.get(&*arg.term) {
+                                if let Some(current) = entity.get_relationship(&grfunc) {
+                                    context.antecedents.push(Grounded::Function(current.clone()));
+                                    if let Some(date) = current.bms
+                                        .newest_date(&context.newest_grfact) {
+                                        context.newest_grfact = date;
+                                    }
+                                    if **current != grfunc {
+                                        return Some(false);
+                                    } else {
+                                        return Some(true);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                None
+            }
+        }
+        fn substitute(&self,
+                      agent: &agent::Representation,
+                      assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
+                      time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+                      context: &mut agent::ProofResult) {
+            if let Ok(grfunc) = GroundedFunc::from_free(self,
+                                                        assignments.as_ref().unwrap(),
+                                                        time_assign) {
+                let grfunc = Arc::new(grfunc);
+                agent.up_relation(grfunc.clone(), Some(context));
+                context.grounded
+                    .push((Grounded::Function(grfunc.clone()), grfunc.bms.get_last_date()))
+            }
+        }
+    }
+
+    impl LogSentResolution for ClassDecl {
+        /// Compare each term of a class declaration if they are comparable, and returns
+        /// the result of such comparison (or none in case they are not comparable).
+        fn grounded_eq(&self,
+                       agent: &agent::Representation,
+                       assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
+                       _: &HashMap<&Var, Arc<BmsWrapper>>,
+                       context: &mut agent::ProofResult)
+                       -> Option<bool> {
+            for a in &self.args {
+                match *a {
+                    Predicate::FreeClsMemb(ref free) => {
+                        if assignments.is_none() {
+                            return None;
+                        }
+                        if let Some(entity) = assignments.as_ref().unwrap().get(&*free.term) {
+                            if let Some(current) = entity.get_class(free.parent.get_name()) {
+                                context.antecedents.push(Grounded::Class(current.clone()));
+                                if let Some(date) = current.bms
+                                    .as_ref()
+                                    .unwrap()
+                                    .newest_date(&context.newest_grfact) {
+                                    context.newest_grfact = date;
+                                }
+                                if !free.grounded_eq(current) {
+                                    return Some(false);
+                                }
+                            } else {
+                                return None;
+                            }
+                        } else {
+                            return None;
+                        }
+                    }
+                    Predicate::GroundedClsMemb(ref compare) => {
+                        let entity = agent.get_entity_from_class(self.get_name(), &compare.term);
+                        if let Some(current) = entity {
+                            context.antecedents.push(Grounded::Class(current.clone()));
+                            if let Some(date) = current.bms
+                                .as_ref()
+                                .unwrap()
+                                .newest_date(&context.newest_grfact) {
+                                context.newest_grfact = date;
+                            }
+                            if *current != *compare {
+                                return Some(false);
+                            }
+                        } else {
+                            return None;
+                        }
+                    }
+                    _ => return None, // this path won't be taken in any program
+                }
+            }
+            Some(true)
+        }
+
+        fn substitute(&self,
+                      agent: &agent::Representation,
+                      assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
+                      time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+                      context: &mut agent::ProofResult) {
+            let time_data = self.get_own_time_data(time_assign, None);
+            for a in &self.args {
+                let grfact = match *a {
+                    Predicate::FreeClsMemb(ref free) => {
+                        if let Some(entity) = assignments.as_ref().unwrap().get(&*free.term) {
+                            GroundedClsMemb::from_free(free, entity.name)
+                        } else {
+                            break;
+                        }
+                    }
+                    Predicate::GroundedClsMemb(ref grounded) => grounded.clone(),
+                    _ => return, // this path won't be taken in any program
+                };
+                let t = time_data.clone();
+                t.replace_last_val(grfact.get_value());
+                grfact.overwrite_time_data(&t);
+                let grfact = Arc::new(grfact);
+                context.grounded.push((Grounded::Class(grfact.clone()),
+                                       grfact.bms.as_ref().unwrap().get_last_date()));
+                agent.up_membership(grfact.clone(), Some(context))
+            }
+        }
     }
 }
 

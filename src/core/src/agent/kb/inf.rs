@@ -1334,7 +1334,7 @@ mod test {
         let rep = Representation::new();
         rep.tell(test_04).unwrap();
         let answ = rep.ask(q04_01);
-        let a04_01 = answ.get_memberships();
+        let a04_01 = answ.get_memberships(); //<-- fails
         assert!(a04_01.contains_key("$Lucy"));
         assert!(a04_01.contains_key("$John"));
 
@@ -1352,13 +1352,11 @@ mod test {
         results.insert("person");
         let answ = rep.ask(q05_01);
         let a05_01 = answ.get_memberships();
-        let mut cnt = 0;
+        let mut cmp = HashSet::new();
         for a in a05_01.get("$Lucy").unwrap() {
-            cnt += 1;
-            assert!(results.contains(a.get_parent()));
-            assert!(a.get_parent() != "ugly");
+            cmp.insert(a.get_parent());
         }
-        assert_eq!(cnt, 2)
+        assert_eq!(results, cmp);
     }
 
     #[test]
@@ -1376,7 +1374,7 @@ mod test {
         let test_02 = String::from("
             ( animal[cow,u=1] )
             ( female[cow,u=1] )
-            ( (animal[cow,u=1] && female[cow,u=1]) |> fn::produce[milk,u=1;cow] )
+            ( (let x) (animal[x,u=1] && female[x,u=1]) |> fn::produce[milk,u=1;x] )
         ");
         let q02_01 = "(fn::produce[milk,u=1;cow])".to_string();
         let rep = Representation::new();

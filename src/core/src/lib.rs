@@ -3,8 +3,7 @@
 #![allow(or_fun_call)]
 #![allow(unknown_lints)]
 
-#[macro_use]
-extern crate nom;
+#[macro_use] extern crate nom;
 extern crate chrono;
 extern crate crossbeam;
 extern crate float_cmp;
