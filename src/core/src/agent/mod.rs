@@ -1,7 +1,7 @@
 mod kb;
 mod bms;
 
-pub use self::kb::{Class, Entity, ProofResult, Representation, VarAssignment};
+pub use self::kb::{Class, Entity, Representation, VarAssignment};
 pub use self::bms::{BmsWrapper};
 
 use lang::ParseErrF;

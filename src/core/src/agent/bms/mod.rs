@@ -5,9 +5,9 @@
 //! 2) Detecting inconsistences between new and old beliefs.
 //! 3) Fixing those inconsitences.
 
-use super::{ProofResult, Representation};
+use super::{Representation};
 use super::kb::QueryInput;
-use lang::{Date, Grounded, GroundedRef, SentID};
+use lang::{Date, Grounded, GroundedRef, SentID, ProofResContext};
 
 use chrono::UTC;
 
@@ -29,7 +29,10 @@ impl BmsWrapper {
         }
     }
 
-    pub fn new_record(&self, date: Option<Date>, value: Option<f32>, was_produced: Option<SentID>) {
+    pub fn new_record(&self,
+                      date: Option<Date>,
+                      value: Option<f32>,
+                      was_produced: Option<SentID>) {
         let date = match date {
             Some(date) => date,
             None => UTC::now(),
@@ -223,10 +226,10 @@ impl BmsWrapper {
         }
     }
 
-    pub fn update_producers(&self, owner: Grounded, context: &ProofResult) {
+    pub fn update_producers<T: ProofResContext>(&self, owner: Grounded, context: &T) {
         // add the produced knowledge to each producer in case it comes
         // from a logic sentence resolution
-        for a in &context.antecedents {
+        for a in context.get_antecedents() {
             match *a {
                 Grounded::Class(ref cls) => {
                     let value = cls.get_value();

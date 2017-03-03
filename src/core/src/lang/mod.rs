@@ -5,7 +5,7 @@ mod logsent;
 pub use self::common::*;
 pub use self::errors::ParseErrF;
 pub use self::parser::{CompOperator, ParseTree};
-pub use self::logsent::{LogSentence, SentID};
+pub use self::logsent::{LogSentence, SentID, ProofResContext};
 
 use chrono::{DateTime, UTC};
 
@@ -54,12 +54,10 @@ mod errors {
 
     impl<'a> From<ParseErrB<'a>> for ParseErrF {
         fn from(err: ParseErrB<'a>) -> ParseErrF {
-            match err {
-                ParseErrB::SyntaxErrorPos(arr) => {
-                    use std::str;
-                    println!("@err: {:?}", unsafe { str::from_utf8_unchecked(arr) });
-                }
-                _ => {}
+            if let ParseErrB::SyntaxErrorPos(arr) = err {
+                use std::str;
+                println!("@err: {:?}", unsafe { str::from_utf8_unchecked(arr) });
+
             }
             ParseErrF::Msg(String::from("failed"))
         }

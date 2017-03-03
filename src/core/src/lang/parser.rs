@@ -86,7 +86,7 @@ impl Parser {
     }
 
     /// First pass: will tokenize and output an AST
-    fn feed<'a>(input: &'a [u8], p2: &'a mut Vec<u8>) -> Result<Vec<Next<'a>>, ParseErrB<'a>> {
+    fn feed<'a>(input: &'a [u8], p2: &'a mut Vec<u8>) -> Result<Vec<ASTNode<'a>>, ParseErrB<'a>> {
         // clean up every comment to facilitate further parsing
         let p1 = match remove_comments(input) {
             IResult::Done(_, done) => done,
@@ -148,7 +148,7 @@ pub enum ParseTree {
 }
 
 impl ParseTree {
-    fn process_ast(input: Next, tell: bool) -> Result<ParseTree, ParseErrF> {
+    fn process_ast(input: ASTNode, tell: bool) -> Result<ParseTree, ParseErrF> {
         // return type is a hack to avoid compiling error due to not being 'Send' compatible
         // instead we return a raw pointer as usize and when unifying all the thread
         // results convert back to box and deref to the stack
@@ -185,56 +185,36 @@ impl ParseTree {
 }
 
 #[derive(Debug)]
-pub struct ASTNode<'a> {
-    pub vars: Option<Vec<VarDeclBorrowed<'a>>>,
-    pub logic_op: Option<LogicOperator>,
-    pub next: Next<'a>,
-}
-
-impl<'a> ASTNode<'a> {
-    fn is_assertion(&self, context: &mut ParseContext) -> Result<Option<ParseTree>, ParseErrF> {
-        if self.vars.is_some() {
-            return Ok(None);
-        }
-        match self.logic_op {
-            Some(LogicOperator::And) => {}
-            _ => return Ok(None),
-        }
-        self.next.is_assertion(context)
-    }
-}
-
-#[derive(Debug)]
-pub enum Next<'a> {
+pub enum ASTNode<'a> {
     Assert(AssertBorrowed<'a>),
-    ASTNode(Box<ASTNode<'a>>),
-    Chain(Vec<Next<'a>>),
+    Scope(Box<Scope<'a>>),
+    Chain(Vec<ASTNode<'a>>),
     None,
 }
 
-impl<'a> Next<'a> {
+impl<'a> ASTNode<'a> {
     #[inline]
-    fn from_assert(input: AssertBorrowed) -> Next {
-        Next::Assert(input)
+    fn from_assert(input: AssertBorrowed) -> ASTNode {
+        ASTNode::Assert(input)
     }
 
     pub fn get_op(&self) -> LogicOperator {
         match *self {
-            Next::ASTNode(ref node) => *node.logic_op.as_ref().unwrap(),
+            ASTNode::Scope(ref node) => *node.logic_op.as_ref().unwrap(),
             _ => panic!(),
         }
     }
 
     pub fn would_assert(&self) -> bool {
         match *self {
-            Next::Assert(_) => true,
+            ASTNode::Assert(_) => true,
             _ => false,
         }
     }
 
     fn is_assertion(&self, context: &mut ParseContext) -> Result<Option<ParseTree>, ParseErrF> {
         match *self {
-            Next::Assert(ref decl) => {
+            ASTNode::Assert(ref decl) => {
                 match *decl {
                     AssertBorrowed::ClassDecl(ref decl) => {
                         let cls = ClassDecl::from(decl, context)?;
@@ -246,7 +226,7 @@ impl<'a> Next<'a> {
                     }
                 }
             }
-            Next::Chain(ref multi_decl) => {
+            ASTNode::Chain(ref multi_decl) => {
                 let mut v0: Vec<Assert> = Vec::with_capacity(multi_decl.len());
                 // chek that indeed all elements are indeed assertions
                 // avoid creating declarations prematurely
@@ -264,7 +244,7 @@ impl<'a> Next<'a> {
                 }
                 Ok(Some(ParseTree::Assertion(v0)))
             }
-            Next::ASTNode(ref node) => {
+            ASTNode::Scope(ref node) => {
                 let a: Result<Option<ParseTree>, ParseErrF> = (**node).is_assertion(context);
                 match a {
                     Err(err) => Err(err),
@@ -274,8 +254,28 @@ impl<'a> Next<'a> {
                     _ => Ok(None),
                 }
             }
-            Next::None => Ok(None),
+            ASTNode::None => Ok(None),
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct Scope<'a> {
+    pub vars: Option<Vec<VarDeclBorrowed<'a>>>,
+    pub logic_op: Option<LogicOperator>,
+    pub next: ASTNode<'a>,
+}
+
+impl<'a> Scope<'a> {
+    fn is_assertion(&self, context: &mut ParseContext) -> Result<Option<ParseTree>, ParseErrF> {
+        if self.vars.is_some() {
+            return Ok(None);
+        }
+        match self.logic_op {
+            Some(LogicOperator::And) => {}
+            _ => return Ok(None),
+        }
+        self.next.is_assertion(context)
     }
 }
 
@@ -291,7 +291,7 @@ pub enum VarDeclBorrowed<'a> {
     Skolem(SkolemBorrowed<'a>),
 }
 
-fn get_blocks(input: &[u8]) -> IResult<&[u8], Vec<Next>> {
+fn get_blocks(input: &[u8]) -> IResult<&[u8], Vec<ASTNode>> {
     let input = remove_multispace(input);
     if input.len() == 0 {
         // empty program
@@ -326,7 +326,7 @@ fn get_blocks(input: &[u8]) -> IResult<&[u8], Vec<Next>> {
         return IResult::Error(nom::Err::Position(ErrorKind::Custom(11), input));
     }
 
-    let mut results: Vec<Next> = Vec::new();
+    let mut results: Vec<ASTNode> = Vec::new();
     for _ in 0..mcd.len() {
         let (lp, rp) = mcd.pop_front().unwrap();
         match scope0(&input[lp..rp]) {
@@ -349,7 +349,7 @@ fn get_blocks(input: &[u8]) -> IResult<&[u8], Vec<Next>> {
     IResult::Done(EMPTY, results)
 }
 
-named!(scope0(&[u8]) -> IResult<&[u8], Next>, ws!(
+named!(scope0(&[u8]) -> IResult<&[u8], ASTNode>, ws!(
     alt!(
         map!(
             do_parse!(
@@ -394,7 +394,7 @@ named!(scope0(&[u8]) -> IResult<&[u8], Next>, ws!(
             ), empty_scope 
         ) |
         map!(
-            map!(decl_alt, Next::from_assert), 
+            map!(decl_alt, ASTNode::from_assert), 
             |decl| {
                 IResult::Done(EMPTY, decl)
             }
@@ -405,37 +405,37 @@ named!(scope0(&[u8]) -> IResult<&[u8], Next>, ws!(
 type ScopeOutA<'a> = (Option<DeclVars<'a>>,
                       AssertBorrowed<'a>,
                       Option<LogicOperator>,
-                      IResult<&'a [u8], Next<'a>>,
+                      IResult<&'a [u8], ASTNode<'a>>,
                       bool);
 
-fn expr0<'a>(input: ScopeOutA<'a>) -> IResult<&'a [u8], Next<'a>> {
+fn expr0(input: ScopeOutA) -> IResult<&[u8], ASTNode> {
     let (vars, decl, op, next, is_lhs) = input;
     let (rest, next) = match next {
         IResult::Done(rest, next) => (rest, next), 
         IResult::Error(err) => return IResult::Error(err),
         IResult::Incomplete(_) => return IResult::Error(nom::Err::Code(ErrorKind::Custom(11))),
     };
-    let assert = Next::Assert(decl);
+    let assert = ASTNode::Assert(decl);
     let chained = if is_lhs {
-        Next::Chain(vec![assert, next])
+        ASTNode::Chain(vec![assert, next])
     } else {
-        Next::Chain(vec![next, assert])
+        ASTNode::Chain(vec![next, assert])
     };
-    let curr = ASTNode {
+    let curr = Scope {
         next: chained,
         vars: flat_vars(vars),
         logic_op: op,
     };
-    let curr = Next::ASTNode(Box::new(curr));
+    let curr = ASTNode::Scope(Box::new(curr));
     IResult::Done(rest, curr)
 }
 
 type ScopeOutB<'a> = (Option<DeclVars<'a>>,
-                      IResult<&'a [u8], Next<'a>>,
+                      IResult<&'a [u8], ASTNode<'a>>,
                       LogicOperator,
-                      IResult<&'a [u8], Next<'a>>);
+                      IResult<&'a [u8], ASTNode<'a>>);
 
-fn expr1<'a>(input: ScopeOutB<'a>) -> IResult<&'a [u8], Next<'a>> {
+fn expr1(input: ScopeOutB) -> IResult<&[u8], ASTNode> {
     let (vars, lhs, op, rhs) = input;
     let lhs = match lhs {
         IResult::Done(_, next) => next, 
@@ -447,16 +447,16 @@ fn expr1<'a>(input: ScopeOutB<'a>) -> IResult<&'a [u8], Next<'a>> {
         IResult::Error(err) => return IResult::Error(err),
         IResult::Incomplete(_) => return IResult::Error(nom::Err::Code(ErrorKind::Custom(11))),
     };
-    let next = ASTNode {
+    let next = Scope {
         vars: flat_vars(vars),
         logic_op: Some(op),
-        next: Next::Chain(vec![lhs, rhs]),
+        next: ASTNode::Chain(vec![lhs, rhs]),
     };
-    IResult::Done(EMPTY, Next::ASTNode(Box::new(next)))
+    IResult::Done(EMPTY, ASTNode::Scope(Box::new(next)))
 }
 
-fn empty_scope<'a>(input: (Option<DeclVars<'a>>, Option<IResult<&'a [u8], Next<'a>>>))
-                   -> IResult<&'a [u8], Next<'a>> {
+fn empty_scope<'a>(input: (Option<DeclVars<'a>>, Option<IResult<&'a [u8], ASTNode<'a>>>))
+                   -> IResult<&'a [u8], ASTNode<'a>> {
     let (vars, next) = input;
     if let Some(vars) = flat_vars(vars) {
         if let Some(next) = next {
@@ -468,13 +468,13 @@ fn empty_scope<'a>(input: (Option<DeclVars<'a>>, Option<IResult<&'a [u8], Next<'
                 }
             };
             IResult::Done(rest,
-                          Next::ASTNode(Box::new(ASTNode {
+                          ASTNode::Scope(Box::new(Scope {
                               vars: Some(vars),
                               logic_op: None,
                               next: next,
                           })))
         } else {
-            IResult::Done(EMPTY, Next::None)
+            IResult::Done(EMPTY, ASTNode::None)
         }
     } else if next.is_some() {
         match next {
@@ -483,14 +483,14 @@ fn empty_scope<'a>(input: (Option<DeclVars<'a>>, Option<IResult<&'a [u8], Next<'
             Some(IResult::Incomplete(_)) => {
                 return IResult::Error(nom::Err::Code(ErrorKind::Custom(11)))
             }
-            None => IResult::Done(EMPTY, Next::None), 
+            None => IResult::Done(EMPTY, ASTNode::None), 
         }
     } else {
-        IResult::Done(EMPTY, Next::None)
+        IResult::Done(EMPTY, ASTNode::None)
     }
 }
 
-named!(assertions(&[u8]) -> IResult<&[u8], Next>,
+named!(assertions(&[u8]) -> IResult<&[u8], ASTNode>,
     map!(ws!(
         do_parse!(
             tag!("(") >>
@@ -504,7 +504,7 @@ named!(assertions(&[u8]) -> IResult<&[u8], Next>,
                     ),  assert_one
                 )
             ) >>
-            last: map!(decl_alt, Next::from_assert) >>
+            last: map!(decl_alt, ASTNode::from_assert) >>
             tag!(")") >>
             (vars, decl, last)
         )
@@ -514,20 +514,20 @@ named!(assertions(&[u8]) -> IResult<&[u8], Next>,
 type AssertOne<'a> = (LogicOperator, AssertBorrowed<'a>);
 
 #[inline]
-fn assert_one(input: AssertOne) -> IResult<&[u8], Next> {
+fn assert_one(input: AssertOne) -> IResult<&[u8], ASTNode> {
     let (op, assertion) = input;
     IResult::Done(EMPTY,
-                  Next::ASTNode(Box::new(ASTNode {
-                      next: Next::Assert(assertion),
+                  ASTNode::Scope(Box::new(Scope {
+                      next: ASTNode::Assert(assertion),
                       vars: None,
                       logic_op: Some(op),
                   })))
 }
 
-type AssertMany<'a> = (Option<DeclVars<'a>>, Vec<IResult<&'a [u8], Next<'a>>>, Next<'a>);
+type AssertMany<'a> = (Option<DeclVars<'a>>, Vec<IResult<&'a [u8], ASTNode<'a>>>, ASTNode<'a>);
 
 #[inline]
-fn assert_many(input: AssertMany) -> IResult<&[u8], Next> {
+fn assert_many(input: AssertMany) -> IResult<&[u8], ASTNode> {
     let (vars, mut decl, last) = input;
 
     let mut fd = vec![];
@@ -539,7 +539,7 @@ fn assert_many(input: AssertMany) -> IResult<&[u8], Next> {
         };
     }
 
-    let last = Next::ASTNode(Box::new(ASTNode {
+    let last = ASTNode::Scope(Box::new(Scope {
         vars: None,
         logic_op: None,
         next: last,
@@ -548,18 +548,18 @@ fn assert_many(input: AssertMany) -> IResult<&[u8], Next> {
     if !fd.is_empty() {
         fd.push(last);
         let f = if let Some(vars) = flat_vars(vars) {
-            Next::ASTNode(Box::new(ASTNode {
+            ASTNode::Scope(Box::new(Scope {
                 vars: Some(vars),
                 logic_op: None,
-                next: Next::Chain(fd),
+                next: ASTNode::Chain(fd),
             }))
         } else {
-            Next::Chain(fd)
+            ASTNode::Chain(fd)
         };
         IResult::Done(EMPTY, f)
     } else {
         let f = if let Some(vars) = flat_vars(vars) {
-            Next::ASTNode(Box::new(ASTNode {
+            ASTNode::Scope(Box::new(Scope {
                 vars: Some(vars),
                 logic_op: None,
                 next: last,
@@ -574,8 +574,8 @@ fn assert_many(input: AssertMany) -> IResult<&[u8], Next> {
 #[inline]
 fn decl_alt(input: &[u8]) -> IResult<&[u8], AssertBorrowed> {
     alt!(input,
-         map!(class_decl, ClassDeclBorrowed::into_assert) |
-         map!(func_decl, FuncDeclBorrowed::into_assert))
+         map!(class_decl, ClassDeclBorrowed::convert_to_assert) |
+         map!(func_decl, FuncDeclBorrowed::convert_to_assert))
 }
 
 type DeclVars<'a> = Vec<Vec<VarDeclBorrowed<'a>>>;
@@ -586,7 +586,7 @@ named!(scope_var_decl(&[u8]) -> DeclVars,
 );
 
 #[inline]
-fn flat_vars<'a>(input: Option<DeclVars<'a>>) -> Option<Vec<VarDeclBorrowed<'a>>> {
+fn flat_vars(input: Option<DeclVars>) -> Option<Vec<VarDeclBorrowed>> {
     if let Some(vars) = input {
         Some(vars.into_iter().flat_map(|x| x.into_iter()).collect::<Vec<_>>())
     } else {
@@ -679,7 +679,7 @@ pub struct FuncDeclBorrowed<'a> {
 }
 
 impl<'a> FuncDeclBorrowed<'a> {
-    fn into_assert(decl: FuncDeclBorrowed<'a>) -> AssertBorrowed<'a> {
+    fn convert_to_assert(decl: FuncDeclBorrowed<'a>) -> AssertBorrowed<'a> {
         AssertBorrowed::FuncDecl(decl)
     }
 }
@@ -737,7 +737,7 @@ pub struct ClassDeclBorrowed<'a> {
 }
 
 impl<'a> ClassDeclBorrowed<'a> {
-    fn into_assert(decl: ClassDeclBorrowed<'a>) -> AssertBorrowed<'a> {
+    fn convert_to_assert(decl: ClassDeclBorrowed<'a>) -> AssertBorrowed<'a> {
         AssertBorrowed::ClassDecl(decl)
     }
 }
