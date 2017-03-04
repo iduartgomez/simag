@@ -55,6 +55,7 @@ impl BmsWrapper {
         let ask_processed = |entry: &(Grounded, Option<f32>), cmp_rec: &Date| {
             match *entry {
                 (Grounded::Function(ref func), ..) => {
+                    let func = func.upgrade().unwrap();
                     // check if indeed the value was produced by this producer or is more recent
                     let mut ask = false;
                     {
@@ -93,6 +94,7 @@ impl BmsWrapper {
                     }
                 }
                 (Grounded::Class(ref cls), ..) => {
+                    let cls = cls.upgrade().unwrap();
                     let mut ask = false;
                     {
                         let lock = &*cls.bms.as_ref().unwrap().records.read().unwrap();
@@ -232,6 +234,7 @@ impl BmsWrapper {
         for a in context.get_antecedents() {
             match *a {
                 Grounded::Class(ref cls) => {
+                    let cls = cls.upgrade().unwrap();
                     let value = cls.get_value();
                     cls.bms
                         .as_ref()
@@ -239,6 +242,7 @@ impl BmsWrapper {
                         .add_entry(owner.clone(), value);
                 }
                 Grounded::Function(ref func) => {
+                    let func = func.upgrade().unwrap();
                     let value = func.get_value();
                     func.bms.add_entry(owner.clone(), value);
                 }

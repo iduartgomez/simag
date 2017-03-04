@@ -1,7 +1,6 @@
 use FLOAT_EQ_ULPS;
 
 use super::*;
-use agent;
 use lang::*;
 
 use float_cmp::ApproxEqUlps;
@@ -72,12 +71,12 @@ impl Representation {
                                     let t = time_data.clone();
                                     t.replace_last_val(a.get_value());
                                     a.overwrite_time_data(&t);
-                                    let x: Option<&super::ProofResult> = None;
+                                    let x: Option<&super::IExprResult> = None;
                                     self.up_membership(Arc::new(a), x)
                                 }
                             } else {
                                 let a = Arc::new(assertion.unwrap_fn().into_grounded());
-                                let x: Option<&super::ProofResult> = None;
+                                let x: Option<&super::IExprResult> = None;
                                 self.up_relation(a, x)
                             }
                         }
@@ -172,9 +171,7 @@ impl Representation {
         }
     }
 
-    pub fn up_relation<T: ProofResContext>(&self,
-                                           assert: Arc<GroundedFunc>,
-                                           context: Option<&T>) {
+    pub fn up_relation<T: ProofResContext>(&self, assert: Arc<GroundedFunc>, context: Option<&T>) {
         // it doesn't matter this is overwritten, as if it exists, it exists for all
         let is_new = Rc::new(::std::cell::RefCell::new(true));
         let process_arg = |a: &GroundedMemb| {
@@ -326,9 +323,9 @@ impl Representation {
             }
         }
 
-        let iter_cls_candidates = |cls_decl: &ClassDecl,
-                                   candidates: &HashMap<&Var, Vec<Arc<VarAssignment>>>| {
-            for a in cls_decl.get_args() {
+        let iter_cls_candidates =
+            |cls_decl: &ClassDecl, candidates: &HashMap<&Var, Vec<Arc<VarAssignment>>>| for a in
+                cls_decl.get_args() {
                 match *a {
                     Predicate::FreeClsMemb(ref free) => {
                         if let Some(ls) = candidates.get(free.get_var_ref()) {
@@ -340,8 +337,7 @@ impl Representation {
                     }
                     _ => continue,
                 }
-            }
-        };
+            };
         let iter_func_candidates = |func_decl: &FuncDecl,
                                     candidates: &HashMap<&Var, Vec<Arc<VarAssignment>>>| {
             let mapped = ArgsProduct::product(candidates.clone());
@@ -379,11 +375,16 @@ impl Representation {
     }
 
     fn add_rule(&self, rule: Arc<LogSentence>) {
-        let mut n = Vec::new();
+        let mut cls_names: Vec<&str> = Vec::new();
+        let mut func_names: Vec<&FuncDecl> = Vec::new();
         let preds = rule.get_all_predicates();
         for p in preds {
             let name = p.get_name();
-            n.push(name);
+            if p.is_class() {
+                cls_names.push(name);
+            } else {
+                func_names.push(p.unwrap_fn_as_ref());
+            }
             let class_exists = self.classes.read().unwrap().contains_key(name);
             if class_exists {
                 let lock = self.classes.read().unwrap();
@@ -391,22 +392,14 @@ impl Representation {
                 class.add_rule(rule.clone());
             } else {
                 let nc = match *p {
-                    Assert::ClassDecl(_) => {
-                        Class::new(name.to_string(), ClassKind::Membership)
-                    }
-                    Assert::FuncDecl(_) => {
-                        Class::new(name.to_string(), ClassKind::Relationship)
-                    }
+                    Assert::ClassDecl(_) => Class::new(name.to_string(), ClassKind::Membership),
+                    Assert::FuncDecl(_) => Class::new(name.to_string(), ClassKind::Relationship),
                 };
                 nc.add_rule(rule.clone());
                 self.classes.write().unwrap().insert(name.to_string(), nc);
             }
         }
-
-        let obj_dic = self.by_class(&n);
-        for _e in obj_dic {
-            panic!("not implemented: rule.call(self, e)")
-        }
+        super::rule_inf::rules_inference(self, &cls_names, &func_names);
     }
 
     /// Takes a vector of class names and returns a hash map with those classes as keys
@@ -584,9 +577,7 @@ impl Representation {
         None
     }
 
-    pub fn get_relationships(&self,
-                             func: &FuncDecl)
-                             -> HashMap<&str, Vec<Arc<GroundedFunc>>> {
+    pub fn get_relationships(&self, func: &FuncDecl) -> HashMap<&str, Vec<Arc<GroundedFunc>>> {
         let mut res = HashMap::new();
         for (pos, arg) in func.get_args().enumerate() {
             if !arg.is_var() {
@@ -691,7 +682,7 @@ impl Entity {
                 current.bms
                     .as_ref()
                     .unwrap()
-                    .update_producers(Grounded::Class(current.clone()), context);
+                    .update_producers(Grounded::Class(Arc::downgrade(&current.clone())), context);
             } else {
                 current.update(agent, &*grounded, None);
             }
@@ -701,7 +692,7 @@ impl Entity {
             if let Some(context) = context {
                 let bms = grounded.bms.as_ref().unwrap();
                 bms.last_was_produced(Some(context.get_id()));
-                bms.update_producers(Grounded::Class(grounded.clone()), context);
+                bms.update_producers(Grounded::Class(Arc::downgrade(&grounded.clone())), context);
             }
             lock.insert(name.to_string(), grounded.clone());
             true
@@ -796,7 +787,8 @@ impl Entity {
                     if f.comparable(&*func) {
                         if let Some(context) = context {
                             f.update(agent, &*func, Some(context.get_id()));
-                            f.bms.update_producers(Grounded::Function(f.clone()), context);
+                            f.bms.update_producers(Grounded::Function(Arc::downgrade(&f.clone())),
+                                                   context);
                         } else {
                             f.update(agent, &*func, None);
                         }
@@ -809,7 +801,8 @@ impl Entity {
                 let mut lock = self.relations.write().unwrap();
                 if let Some(context) = context {
                     func.bms.last_was_produced(Some(context.get_id()));
-                    func.bms.update_producers(Grounded::Function(func.clone()), context);
+                    func.bms.update_producers(Grounded::Function(Arc::downgrade(&func.clone())),
+                                              context);
                 }
                 let funcs_type = lock.get_mut(name).unwrap();
                 funcs_type.push(func.clone());
@@ -821,7 +814,8 @@ impl Entity {
             let mut lock = self.relations.write().unwrap();
             if let Some(context) = context {
                 func.bms.last_was_produced(Some(context.get_id()));
-                func.bms.update_producers(Grounded::Function(func.clone()), context);
+                func.bms
+                    .update_producers(Grounded::Function(Arc::downgrade(&func.clone())), context);
             }
             lock.insert(name.to_string(), vec![func.clone()]);
             true
@@ -935,7 +929,7 @@ impl Class {
                 current.bms
                     .as_ref()
                     .unwrap()
-                    .update_producers(Grounded::Class(current.clone()), context);
+                    .update_producers(Grounded::Class(Arc::downgrade(&current.clone())), context);
             } else {
                 current.update(agent, &*grounded, None);
             }
@@ -945,7 +939,7 @@ impl Class {
             if let Some(context) = context {
                 let bms = grounded.bms.as_ref().unwrap();
                 bms.last_was_produced(Some(context.get_id()));
-                bms.update_producers(Grounded::Class(grounded.clone()), context);
+                bms.update_producers(Grounded::Class(Arc::downgrade(&grounded.clone())), context);
             }
             lock.insert(name.to_string(), grounded.clone());
             true
@@ -1103,7 +1097,8 @@ impl Class {
                     if f.comparable(&*func) {
                         if let Some(context) = context {
                             f.update(agent, &*func, Some(context.get_id()));
-                            f.bms.update_producers(Grounded::Function(f.clone()), context);
+                            f.bms.update_producers(Grounded::Function(Arc::downgrade(&f.clone())),
+                                                   context);
                         } else {
                             f.update(agent, &*func, None);
                         }
@@ -1116,7 +1111,8 @@ impl Class {
                 let mut lock = self.relations.write().unwrap();
                 if let Some(context) = context {
                     func.bms.last_was_produced(Some(context.get_id()));
-                    func.bms.update_producers(Grounded::Function(func.clone()), context);
+                    func.bms.update_producers(Grounded::Function(Arc::downgrade(&func.clone())),
+                                              context);
                 }
                 let funcs_type = lock.get_mut(name).unwrap();
                 funcs_type.push(func.clone());
@@ -1128,7 +1124,8 @@ impl Class {
             let mut lock = self.relations.write().unwrap();
             if let Some(context) = context {
                 func.bms.last_was_produced(Some(context.get_id()));
-                func.bms.update_producers(Grounded::Function(func.clone()), context);
+                func.bms
+                    .update_producers(Grounded::Function(Arc::downgrade(&func.clone())), context);
             }
             lock.insert(name.to_string(), vec![func.clone()]);
             true

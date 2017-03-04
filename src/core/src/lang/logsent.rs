@@ -44,6 +44,7 @@ pub struct LogSentence {
     has_time_vars: usize,
     pub created: Date,
     id: Option<SentID>,
+    sent_kind: SentKind,
 }
 
 unsafe impl ::std::marker::Sync for LogSentence {}
@@ -60,6 +61,7 @@ impl<'a> LogSentence {
             has_time_vars: 0,
             created: UTC::now(),
             id: None,
+            sent_kind: context.stype,
         };
         let first = PIntermediate::new(None, None);
         let root = match walk_ast(ast, &mut sent, context, first) {
@@ -107,13 +109,18 @@ impl<'a> LogSentence {
                 }
                 // check out that all variables are time or spatial variables
                 if !is_normal {
-                    context.stype = SentType::Rule;
+                    context.stype = SentKind::Rule;
+                    sent_r.sent_kind = SentKind::Rule;
+                } else {
+                    sent_r.sent_kind = SentKind::IExpr;
                 }
             } else {
-                context.stype = SentType::Rule;
+                context.stype = SentKind::Rule;
+                sent.sent_kind = SentKind::Rule;
             }
         } else {
-            context.stype = SentType::Rule;
+            context.stype = SentKind::Rule;
+            sent.sent_kind = SentKind::Rule;
         }
         sent.generate_uid();
         Ok(sent)
@@ -537,7 +544,8 @@ impl fmt::Display for LogSentence {
     }
 }
 
-pub enum SentType {
+#[derive(Debug, Clone, Copy)]
+pub enum SentKind {
     IExpr,
     Expr,
     Rule,
@@ -1086,7 +1094,9 @@ pub trait ProofResContext {
 
     fn get_id(&self) -> SentID;
 
-    fn push_grounded(&mut self, grounded: Grounded, time: Date); 
+    fn push_grounded_func(&mut self, grounded: GroundedFunc, time: Date);
+
+    fn push_grounded_cls(&mut self, grounded: GroundedMemb, time: Date); 
 
     fn newest_grfact(&self) -> &Date;
 
@@ -1115,7 +1125,7 @@ pub trait LogSentResolution<T: ProofResContext> {
 // infrastructure to construct compiled logsentences:
 
 pub struct ParseContext {
-    pub stype: SentType,
+    pub stype: SentKind,
     pub vars: Vec<Arc<Var>>,
     pub skols: Vec<Arc<Skolem>>,
     shadowing_vars: HashMap<Arc<Var>, (usize, Arc<Var>)>,
@@ -1136,7 +1146,7 @@ impl ParseContext {
         ParseContext {
             vars: Vec::new(),
             skols: Vec::new(),
-            stype: SentType::Expr,
+            stype: SentKind::Expr,
             in_rhs: true,
             shadowing_vars: HashMap::new(),
             shadowing_skols: HashMap::new(),
@@ -1147,8 +1157,8 @@ impl ParseContext {
 
     fn iexpr(&self) -> bool {
         match self.stype {
-            SentType::IExpr => true,
-            SentType::Rule | SentType::Expr => false,
+            SentKind::IExpr => true,
+            SentKind::Rule | SentKind::Expr => false,
         }
     }
 }
@@ -1186,7 +1196,7 @@ impl PIntermediate {
             let PIntermediate { cond, rhs, lhs, .. } = self;
             match cond.unwrap() {
                 LogicOperator::ICond => {
-                    context.stype = SentType::IExpr;
+                    context.stype = SentKind::IExpr;
                     Particle::IndConditional(LogicIndCond::new(lhs.unwrap(), rhs.unwrap()))
                 }
                 LogicOperator::And => {

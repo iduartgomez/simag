@@ -16,7 +16,7 @@ use float_cmp::ApproxEqUlps;
 use std::collections::HashMap;
 use std::iter::FromIterator;
 use std::str;
-use std::sync::{RwLock, Arc};
+use std::sync::{RwLock, Arc, Weak};
 use std::sync::atomic::AtomicBool;
 
 // Predicate types:
@@ -140,17 +140,8 @@ impl<'a> Predicate {
 
 #[derive(Debug, Clone)]
 pub enum Grounded {
-    Function(Arc<GroundedFunc>),
-    Class(Arc<GroundedMemb>),
-}
-
-impl Grounded {
-    pub fn get_name(&self) -> String {
-        match *self {
-            Grounded::Function(ref func) => (&*func).get_name().to_string(),
-            Grounded::Class(ref cls) => (&*cls).get_parent().to_string(),
-        }
-    }
+    Function(Weak<GroundedFunc>),
+    Class(Weak<GroundedMemb>),
 }
 
 pub enum GroundedRef<'a> {
@@ -869,6 +860,14 @@ impl Assert {
     pub fn unwrap_fn(self) -> FuncDecl {
         match self {
             Assert::FuncDecl(f) => f,
+            Assert::ClassDecl(_) => panic!(),
+        }
+    }
+
+    #[inline]
+    pub fn unwrap_fn_as_ref(&self) -> &FuncDecl {
+        match *self {
+            Assert::FuncDecl(ref f) => f,
             Assert::ClassDecl(_) => panic!(),
         }
     }
@@ -2057,7 +2056,7 @@ mod logsent {
                         if let Predicate::FreeClsMemb(ref arg) = *arg {
                             if let Some(entity) = assignments.get(&*arg.term) {
                                 if let Some(current) = entity.get_relationship(&grfunc) {
-                                    context.push_antecedents(Grounded::Function(current.clone()));
+                                    context.push_antecedents(Grounded::Function(Arc::downgrade(&current.clone())));
                                     if let Some(date) = current.bms
                                         .newest_date(context.newest_grfact()) {
                                         context.set_newest_grfact(date);
@@ -2083,9 +2082,9 @@ mod logsent {
             if let Ok(grfunc) = GroundedFunc::from_free(self,
                                                         assignments.as_ref().unwrap(),
                                                         time_assign) {
+                context.push_grounded_func(grfunc.clone(), grfunc.bms.get_last_date());
                 let grfunc = Arc::new(grfunc);
                 agent.up_relation(grfunc.clone(), Some(context));
-                context.push_grounded(Grounded::Function(grfunc.clone()), grfunc.bms.get_last_date())
             }
         }
     }
@@ -2107,7 +2106,7 @@ mod logsent {
                         }
                         if let Some(entity) = assignments.as_ref().unwrap().get(&*free.term) {
                             if let Some(current) = entity.get_class(free.parent.get_name()) {
-                                context.push_antecedents(Grounded::Class(current.clone()));
+                                context.push_antecedents(Grounded::Class(Arc::downgrade(&current.clone())));
                                 if let Some(date) = current.bms
                                     .as_ref()
                                     .unwrap()
@@ -2127,7 +2126,7 @@ mod logsent {
                     Predicate::GroundedMemb(ref compare) => {
                         let entity = agent.get_entity_from_class(self.get_name(), &compare.term);
                         if let Some(current) = entity {
-                            context.push_antecedents(Grounded::Class(current.clone()));
+                            context.push_antecedents(Grounded::Class(Arc::downgrade(&current.clone())));
                             if let Some(date) = current.bms
                                 .as_ref()
                                 .unwrap()
@@ -2168,9 +2167,9 @@ mod logsent {
                 let t = time_data.clone();
                 t.replace_last_val(grfact.get_value());
                 grfact.overwrite_time_data(&t);
+                context.push_grounded_cls(grfact.clone(),
+                                          grfact.bms.as_ref().unwrap().get_last_date());
                 let grfact = Arc::new(grfact);
-                context.push_grounded(Grounded::Class(grfact.clone()),
-                                       grfact.bms.as_ref().unwrap().get_last_date());
                 agent.up_membership(grfact.clone(), Some(context))
             }
         }

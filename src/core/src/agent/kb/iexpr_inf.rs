@@ -1,9 +1,10 @@
-//! Inference infrastructure
+//! Inference infrastructure for indicative conditional expressions and
+//! representation querying.
 //!
 //! ## Safety
 //! There is some unsafe code on this module, the unsafe code performs to taks:
-//!     * Assure the compiler that data being referenced will have the proper lifetimes
-//!       to satisfy the compiler.
+//!     * Assure the compiler that data being referenced will have the proper
+//!       lifetimes to satisfy the compiler.
 //!     * Cheat the compiler on ```Send + Sync``` impl in certain types.
 //!
 //! Both of those are safe because a Representation owns, uniquely, all its
@@ -278,7 +279,7 @@ impl<'a> Inference<'a> {
                 let l = pass.valid.lock().unwrap();
                 let valid = l.as_ref().unwrap();
                 let node: &ProofNode = unsafe { &*(valid.node as *const ProofNode) };
-                let mut context = ProofResult::new(valid.args.clone(), node);
+                let mut context = IExprResult::new(valid.args.clone(), node);
                 node.proof.solve(inf.kb, Some(valid.args.as_proof_input()), &mut context);
             }
         }
@@ -505,17 +506,18 @@ struct ValidAnswer {
 }
 
 #[derive(Debug)]
-pub struct ProofResult {
+pub struct IExprResult {
     result: Option<bool>,
     newest_grfact: Date,
     antecedents: Vec<Grounded>,
-    grounded: Vec<(Grounded, Date)>,
+    grounded_func: Vec<(GroundedFunc, Date)>,
+    grounded_cls: Vec<(GroundedMemb, Date)>,
     sent_id: SentID,
     args: ProofArgs,
     node: usize, // *const ProofNode<'a>
 }
 
-impl ProofResContext for ProofResult {
+impl ProofResContext for IExprResult {
     fn set_result(&mut self, res: Option<bool>) {
         self.result = res;
     }
@@ -524,8 +526,12 @@ impl ProofResContext for ProofResult {
         self.sent_id
     }
 
-    fn push_grounded(&mut self, grounded: Grounded, time: Date) {
-        self.grounded.push((grounded, time));
+    fn push_grounded_func(&mut self, grounded: GroundedFunc, time: Date) {
+        self.grounded_func.push((grounded, time));
+    }
+
+    fn push_grounded_cls(&mut self, grounded: GroundedMemb, time: Date) {
+        self.grounded_cls.push((grounded, time));
     }
 
     fn newest_grfact(&self) -> &Date {
@@ -538,23 +544,24 @@ impl ProofResContext for ProofResult {
 
     fn get_antecedents(&self) -> &[Grounded] {
         &self.antecedents
-    }  
+    }
 
     fn push_antecedents(&mut self, grounded: Grounded) {
         self.antecedents.push(grounded);
     }
 }
 
-impl ProofResult {
-    fn new(args: ProofArgs, node: &ProofNode) -> ProofResult {
-        ProofResult {
+impl IExprResult {
+    fn new(args: ProofArgs, node: &ProofNode) -> IExprResult {
+        IExprResult {
             result: None,
             args: args,
             node: node as *const ProofNode as usize,
             newest_grfact: ::chrono::date::MIN.and_hms(0, 0, 0),
             sent_id: node.proof.get_id(),
             antecedents: vec![],
-            grounded: vec![],
+            grounded_func: vec![],
+            grounded_cls: vec![],
         }
     }
 }
@@ -605,7 +612,7 @@ impl<'a> InfTrial<'a> {
             };
             if !args_done {
                 let n_args = args.as_proof_input();
-                let mut context = ProofResult::new(args.clone(), node);
+                let mut context = IExprResult::new(args.clone(), node);
                 node.proof.solve(inf.kb, Some(n_args), &mut context);
                 if context.result.is_some() {
                     {
@@ -687,7 +694,7 @@ impl<'a> InfTrial<'a> {
     }
 
     fn add_as_last_valid(&self,
-                         context: &ProofResult,
+                         context: &IExprResult,
                          r_dict: &mut GroundedRes<'a>,
                          date: Date,
                          value: bool) {
@@ -710,91 +717,86 @@ impl<'a> InfTrial<'a> {
         *lock = Some(answ);
     }
 
-    fn add_result(&self, mut context: ProofResult) {
+    fn add_result(&self, mut context: IExprResult) {
         // add category/function to the object dictionary
         // and to results dict if is the result for the query
         let query_obj = self.actv.get_obj();
         let query_pred = self.actv.get_pred();
         let is_func = self.actv.is_func();
-        let grfacts: Vec<_> = context.grounded.drain(..).collect();
         let results = unsafe { &*(self.results as *const InfResults) };
-        for subst in grfacts {
-            match subst {
-                (Grounded::Function(gf), date) => {
-                    let gf: &GroundedFunc = &*gf;
-                    if is_func {
-                        let query_func = self.actv.get_func();
-                        if query_func.comparable(gf) {
-                            let val = query_func == gf;
-                            let mut d = results.grounded_queries.write().unwrap();
-                            let mut gr_results_dict = {
-                                if d.contains_key(query_pred) {
-                                    d.get_mut(query_pred).unwrap()
-                                } else {
-                                    let new = HashMap::new();
-                                    d.insert(query_pred.to_string(), new);
-                                    d.get_mut(query_pred).unwrap()
-                                }
-                            };
-                            if gr_results_dict.contains_key(query_obj) {
-                                let cond_ok;
-                                if let Some(&Some((_, Some(ref cdate)))) =
-                                    gr_results_dict.get(query_obj) {
-                                    if &date >= cdate {
-                                        cond_ok = true;
-                                    } else {
-                                        cond_ok = false;
-                                    }
-                                } else {
-                                    cond_ok = true;
-                                }
-                                if cond_ok {
-                                    self.add_as_last_valid(&context, gr_results_dict, date, val);
-                                }
-                            } else {
-                                self.add_as_last_valid(&context, gr_results_dict, date, val);
-                            }
-                            self.feedback.store(false, Ordering::SeqCst);
+
+        let gr_cls: Vec<_> = context.grounded_cls.drain(..).collect();
+        for (gt, date) in gr_cls {
+            if !is_func {
+                let query_cls = self.actv.get_cls();
+                if query_cls.comparable(&gt) {
+                    let val = query_cls == &gt;
+                    let mut d = results.grounded_queries.write().unwrap();
+                    let mut gr_results_dict = {
+                        if d.contains_key(query_pred) {
+                            d.get_mut(query_pred).unwrap()
+                        } else {
+                            let new = HashMap::new();
+                            d.insert(query_pred.to_string(), new);
+                            d.get_mut(query_pred).unwrap()
                         }
+                    };
+                    if gr_results_dict.contains_key(query_obj) {
+                        let cond_ok;
+                        if let Some(&Some((_, Some(ref cdate)))) = gr_results_dict.get(query_obj) {
+                            if &date >= cdate {
+                                cond_ok = true;
+                            } else {
+                                cond_ok = false;
+                            }
+                        } else {
+                            cond_ok = true;
+                        }
+                        if cond_ok {
+                            self.add_as_last_valid(&context, gr_results_dict, date, val);
+                        }
+                    } else {
+                        self.add_as_last_valid(&context, gr_results_dict, date, val);
                     }
+                    self.feedback.store(false, Ordering::SeqCst);
                 }
-                (Grounded::Class(gt), date) => {
-                    if !is_func {
-                        let query_cls = self.actv.get_cls();
-                        if query_cls.comparable(&gt) {
-                            let gt: &GroundedMemb = &*gt;
-                            let val = query_cls == gt;
-                            let mut d = results.grounded_queries.write().unwrap();
-                            let mut gr_results_dict = {
-                                if d.contains_key(query_pred) {
-                                    d.get_mut(query_pred).unwrap()
-                                } else {
-                                    let new = HashMap::new();
-                                    d.insert(query_pred.to_string(), new);
-                                    d.get_mut(query_pred).unwrap()
-                                }
-                            };
-                            if gr_results_dict.contains_key(query_obj) {
-                                let cond_ok;
-                                if let Some(&Some((_, Some(ref cdate)))) =
-                                    gr_results_dict.get(query_obj) {
-                                    if &date >= cdate {
-                                        cond_ok = true;
-                                    } else {
-                                        cond_ok = false;
-                                    }
-                                } else {
-                                    cond_ok = true;
-                                }
-                                if cond_ok {
-                                    self.add_as_last_valid(&context, gr_results_dict, date, val);
-                                }
-                            } else {
-                                self.add_as_last_valid(&context, gr_results_dict, date, val);
-                            }
-                            self.feedback.store(false, Ordering::SeqCst);
+            }
+        }
+
+        let gr_func: Vec<_> = context.grounded_func.drain(..).collect();
+        for (gf, date) in gr_func {
+            if is_func {
+                let query_func = self.actv.get_func();
+                if query_func.comparable(&gf) {
+                    let val = query_func == &gf;
+                    let mut d = results.grounded_queries.write().unwrap();
+                    let mut gr_results_dict = {
+                        if d.contains_key(query_pred) {
+                            d.get_mut(query_pred).unwrap()
+                        } else {
+                            let new = HashMap::new();
+                            d.insert(query_pred.to_string(), new);
+                            d.get_mut(query_pred).unwrap()
                         }
+                    };
+                    if gr_results_dict.contains_key(query_obj) {
+                        let cond_ok;
+                        if let Some(&Some((_, Some(ref cdate)))) = gr_results_dict.get(query_obj) {
+                            if &date >= cdate {
+                                cond_ok = true;
+                            } else {
+                                cond_ok = false;
+                            }
+                        } else {
+                            cond_ok = true;
+                        }
+                        if cond_ok {
+                            self.add_as_last_valid(&context, gr_results_dict, date, val);
+                        }
+                    } else {
+                        self.add_as_last_valid(&context, gr_results_dict, date, val);
                     }
+                    self.feedback.store(false, Ordering::SeqCst);
                 }
             }
         }

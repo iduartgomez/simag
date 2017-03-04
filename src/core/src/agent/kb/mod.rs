@@ -3,8 +3,9 @@
 //! serve as representations of the different objects and the relationships
 //! between them.
 
-mod inf;
+mod iexpr_inf;
+mod rule_inf;
 mod repr;
 
-pub use self::inf::*;
+pub use self::iexpr_inf::*;
 pub use self::repr::*;

@@ -1,6 +1,0 @@
-( fn::criticize(t="now")[$John,u=1;$Lucy] )
-( fn::takes[$analysis,u>0;$Bill] )
-( fn::sister[$Bill,u<1;$Lucy] )
-( fn::loves[cow,u=1;bull] )
-( fn::owns[$M1,u<-1;$Nono] )
-( fn::enemy[$Nono,u>2;$America] )

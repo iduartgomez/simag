@@ -1,7 +1,0 @@
-( professor[$Lucy,u=1] )
-( dean(t1="now", t2=t1)[$John,u=0] )
-( animal(t="2015.07.05.11.28")[cow,u=1] )
-( student[$Bill,u<0] )
-( missile[$M1,u>1] )
-( american[$West,u=1.5] )
-( american[$West,u=-1] )

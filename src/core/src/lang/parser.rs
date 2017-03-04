@@ -164,11 +164,11 @@ impl ParseTree {
         match LogSentence::new(&input, &mut context) {
             Ok(sent) => {
                 match context.stype {
-                    SentType::IExpr => Ok(ParseTree::IExpr(sent)),
-                    SentType::Expr if context.is_tell => {
+                    SentKind::IExpr => Ok(ParseTree::IExpr(sent)),
+                    SentKind::Expr if context.is_tell => {
                         Err(ParseErrF::ExprWithVars(format!("{}", sent)))
                     }
-                    SentType::Rule | SentType::Expr => Ok(ParseTree::Expr(sent)),
+                    SentKind::Rule | SentKind::Expr => Ok(ParseTree::Expr(sent)),
                 }
             }
             Err(err) => Err(ParseErrF::LogSentErr(err)),
