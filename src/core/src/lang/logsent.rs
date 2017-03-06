@@ -7,21 +7,20 @@
 //! by compounded expressions which will evaluate with the current knowledge
 //! when called and perform any subtitution in the knowledge base if pertinent.
 
-pub use self::errors::LogSentErr;
-use super::{Date, ParseErrF};
-
-use agent;
-use agent::BmsWrapper;
-
-use chrono::UTC;
-use lang::common::*;
-use lang::parser::*;
-
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use chrono::UTC;
+
+use super::{Time, ParseErrF};
+use agent;
+use agent::BmsWrapper;
+use lang::common::*;
+use lang::parser::*;
+
+pub use self::errors::LogSentErr;
 pub type SentID = usize;
 
 /// Type to store a first-order logic complex sentence.
@@ -41,8 +40,8 @@ pub struct LogSentence {
     skolem: Option<Vec<Arc<Skolem>>>,
     root: Option<Rc<Particle>>,
     predicates: (Vec<Rc<Assert>>, Vec<Rc<Assert>>),
-    has_time_vars: usize,
-    pub created: Date,
+    pub has_time_vars: usize,
+    pub created: Time,
     id: Option<SentID>,
     sent_kind: SentKind,
 }
@@ -201,31 +200,59 @@ impl<'a> LogSentence {
                                      assignments: Option<HashMap<&Var, &agent::VarAssignment>>,
                                      context: &mut T) {
         let root = &self.root;
-        let time_assign = self.get_time_assignments(agent, &assignments);
+        let time_assign = {
+            if self.vars.is_some() {
+                self.get_time_assignments(agent, &assignments)
+            } else {
+                HashMap::new()
+            }
+        };
         if self.has_time_vars != time_assign.len() {
             context.set_result(None);
             return;
         }
-        if let Some(res) = root.as_ref()
-            .unwrap()
-            .solve(agent, &assignments, &time_assign, context) {
-            if res {
-                if root.as_ref().unwrap().is_icond() {
+        if self.sent_kind.is_iexpr() {
+            if let Some(res) = root.as_ref()
+                .unwrap()
+                .solve(agent, &assignments, &time_assign, context) {
+                if res {
                     root.as_ref()
                         .unwrap()
-                        .substitute(agent, &assignments, &time_assign, context, &false)
+                        .substitute(agent, &assignments, &time_assign, context, &false);
+                    context.set_result(Some(true));
+                } else {
+                    root.as_ref()
+                        .unwrap()
+                        .substitute(agent, &assignments, &time_assign, context, &true);
+                    context.set_result(Some(false));
                 }
-                context.set_result(Some(true));
             } else {
-                if root.as_ref().unwrap().is_icond() {
-                    root.as_ref()
-                        .unwrap()
-                        .substitute(agent, &assignments, &time_assign, context, &true)
-                }
-                context.set_result(Some(false));
+                context.set_result(None);
             }
         } else {
-            context.set_result(None);
+            if let Some(res) = root.as_ref()
+                .unwrap()
+                .solve(agent, &assignments, &time_assign, context) {
+                if res {
+                    if root.as_ref().unwrap().is_icond() {
+                        context.substituting();
+                        root.as_ref()
+                            .unwrap()
+                            .substitute(agent, &assignments, &time_assign, context, &false)
+                    }
+                    context.set_result(Some(true));
+                } else {
+                    if root.as_ref().unwrap().is_icond() {
+                        context.substituting();
+                        root.as_ref()
+                            .unwrap()
+                            .substitute(agent, &assignments, &time_assign, context, &true)
+                    }
+                    context.set_result(Some(false));
+                }
+            } else {
+                context.set_result(None);
+            }
         }
     }
 
@@ -239,18 +266,18 @@ impl<'a> LogSentence {
                 VarKind::Time => {
                     for pred in &self.predicates.0 {
                         if pred.get_time_decl(&*var) {
-                            let dates = pred.get_dates(agent, var_assign);
-                            if dates.is_none() {
+                            let times = pred.get_times(agent, var_assign);
+                            if times.is_none() {
                                 continue 'outer;
                             }
-                            time_assign.insert(&**var, dates.unwrap());
+                            time_assign.insert(&**var, times.unwrap());
                             continue 'outer;
                         }
                     }
                 }
                 VarKind::TimeDecl => {
-                    let dates = Arc::new(var.get_dates());
-                    time_assign.insert(&**var, dates);
+                    let times = Arc::new(var.get_times());
+                    time_assign.insert(&**var, times);
                 }
                 _ => {}
             }
@@ -549,6 +576,15 @@ pub enum SentKind {
     IExpr,
     Expr,
     Rule,
+}
+
+impl SentKind {
+    fn is_iexpr(&self) -> bool {
+        match *self {
+            SentKind::IExpr => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1094,17 +1130,33 @@ pub trait ProofResContext {
 
     fn get_id(&self) -> SentID;
 
-    fn push_grounded_func(&mut self, grounded: GroundedFunc, time: Date);
+    fn push_grounded_func(&mut self, grounded: GroundedFunc, time: Time);
 
-    fn push_grounded_cls(&mut self, grounded: GroundedMemb, time: Date); 
+    fn push_grounded_cls(&mut self, grounded: GroundedMemb, time: Time);
 
-    fn newest_grfact(&self) -> &Date;
+    fn newest_grfact(&self) -> &Time;
 
-    fn set_newest_grfact(&mut self, time: Date);
+    fn set_newest_grfact(&mut self, time: Time);
 
     fn get_antecedents(&self) -> &[Grounded];
 
     fn push_antecedents(&mut self, grounded: Grounded);
+
+    fn push_false_fn_assert(&mut self, func: Arc<GroundedFunc>);
+
+    fn push_false_cls_assert(&mut self, cls: Arc<GroundedMemb>);
+
+    fn compare_relation(&self, func: &GroundedFunc) -> bool;
+
+    fn compare_cls(&self, cls: &GroundedMemb) -> bool;
+
+    fn has_relationship(&self, func: &GroundedFunc) -> Option<bool>;
+
+    fn has_cls_memb(&self, cls: &GroundedMemb) -> Option<bool>;
+
+    fn substituting(&mut self);
+
+    fn is_substituting(&self) -> bool;
 }
 
 pub trait LogSentResolution<T: ProofResContext> {

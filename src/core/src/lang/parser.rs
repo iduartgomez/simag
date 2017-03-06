@@ -99,11 +99,6 @@ impl Parser {
             }
         }
 
-        // separate by scopes; everything inside a scope is either an other scope,
-        // a var declaration, an operator or a terminal AST node;
-        // inner scopes are linked by logical operators, and the terminal nodes contain
-        // function and/or class declarations (which can be chained by AND operators);
-        // a program consist of one ore more scopes (each representing a compounded expression)
         let scopes = get_blocks(&p2[..]);
         if scopes.is_err() {
             match scopes.unwrap_err() {
@@ -149,9 +144,6 @@ pub enum ParseTree {
 
 impl ParseTree {
     fn process_ast(input: ASTNode, tell: bool) -> Result<ParseTree, ParseErrF> {
-        // return type is a hack to avoid compiling error due to not being 'Send' compatible
-        // instead we return a raw pointer as usize and when unifying all the thread
-        // results convert back to box and deref to the stack
         let mut context = ParseContext::new();
         context.in_assertion = true;
         context.is_tell = tell;
@@ -398,7 +390,8 @@ named!(scope0(&[u8]) -> IResult<&[u8], ASTNode>, ws!(
             |decl| {
                 IResult::Done(EMPTY, decl)
             }
-        )
+        ) |
+        do_parse!(expr: assertions >> (expr))
     ) 
 ));
 

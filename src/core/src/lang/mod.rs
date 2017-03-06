@@ -21,7 +21,7 @@ pub fn logic_parser(source: String, tell: bool) -> Result<VecDeque<ParseTree>, P
     self::parser::Parser::parse(source, tell)
 }
 
-pub type Date = DateTime<UTC>;
+pub type Time = DateTime<UTC>;
 
 mod errors {
     use super::parser::ParseErrB;

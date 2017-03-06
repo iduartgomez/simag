@@ -3,7 +3,7 @@ use TIME_EQ_DIFF;
 
 pub use self::errors::TimeFnErr;
 
-use super::Date;
+use super::Time;
 use agent;
 use agent::{BmsWrapper, Representation};
 use lang::errors::ParseErrF;
@@ -144,6 +144,7 @@ pub enum Grounded {
     Class(Weak<GroundedMemb>),
 }
 
+#[derive(Debug, Clone)]
 pub enum GroundedRef<'a> {
     Function(&'a GroundedFunc),
     Class(&'a GroundedMemb),
@@ -180,7 +181,7 @@ impl GroundedMemb {
     fn new(term: String,
            uval: Option<UVal>,
            parent: String,
-           dates: Option<Vec<(Date, Option<f32>)>>,
+           times: Option<Vec<(Time, Option<f32>)>>,
            context: &ParseContext)
            -> Result<GroundedMemb, ParseErrF> {
         let val;
@@ -192,9 +193,9 @@ impl GroundedMemb {
                 Number::UnsignedInteger(val) => {
                     if val == 0 || val == 1 {
                         let t_bms = BmsWrapper::new(false);
-                        if let Some(dates) = dates {
-                            for (date, val) in dates {
-                                t_bms.new_record(Some(date), val, None);
+                        if let Some(times) = times {
+                            for (time, val) in times {
+                                t_bms.new_record(Some(time), val, None);
                             }
                         } else {
                             t_bms.new_record(None, Some(val as f32), None);
@@ -208,9 +209,9 @@ impl GroundedMemb {
                 Number::UnsignedFloat(val) => {
                     if val >= 0. && val <= 1. {
                         let t_bms = BmsWrapper::new(false);
-                        if let Some(dates) = dates {
-                            for (date, val) in dates {
-                                t_bms.new_record(Some(date), val, None);
+                        if let Some(times) = times {
+                            for (time, val) in times {
+                                t_bms.new_record(Some(time), val, None);
                             }
                         } else {
                             t_bms.new_record(None, Some(val as f32), None);
@@ -449,9 +450,9 @@ impl ::std::clone::Clone for GroundedMemb {
 
 #[derive(Debug)]
 pub struct GroundedFunc {
-    pub name: String,
-    pub args: [GroundedMemb; 2],
-    pub third: Option<GroundedMemb>,
+    name: String,
+    args: [GroundedMemb; 2],
+    third: Option<GroundedMemb>,
     pub bms: Arc<BmsWrapper>,
 }
 
@@ -465,7 +466,7 @@ impl ::std::cmp::Eq for GroundedFunc {}
 
 impl GroundedFunc {
     pub fn from_free(free: &FuncDecl,
-                     assignments: &HashMap<&Var, &agent::VarAssignment>,
+                     assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
                      time_assign: &HashMap<&Var, Arc<BmsWrapper>>)
                      -> Result<GroundedFunc, ()> {
         if !free.variant.is_relational() || free.args.as_ref().unwrap().len() < 2 {
@@ -482,7 +483,12 @@ impl GroundedFunc {
         for (i, a) in free.args.as_ref().unwrap().iter().enumerate() {
             let n_a = match *a {
                 Predicate::FreeClsMemb(ref free) => {
-                    if let Some(entity) = assignments.get(&*free.term) {
+                    let assigned = if let Some(ref assignments) = *assignments {
+                        assignments
+                    } else {
+                        return Err(());
+                    };
+                    if let Some(entity) = assigned.get(&*free.term) {
                         GroundedMemb::from_free(free, entity.name)
                     } else {
                         return Err(());
@@ -694,11 +700,11 @@ impl FreeClsMemb {
 
 #[derive(Debug, Clone)]
 pub struct FreeClsOwner {
-    pub term: String,
+    term: String,
     value: Option<f32>,
     operator: Option<CompOperator>,
-    pub parent: Arc<Var>,
-    pub dates: BmsWrapper,
+    parent: Arc<Var>,
+    pub times: BmsWrapper,
 }
 
 impl FreeClsOwner {
@@ -711,7 +717,7 @@ impl FreeClsOwner {
             value: val,
             operator: op,
             parent: parent.get_var(),
-            dates: t_bms,
+            times: t_bms,
         })
     }
 
@@ -756,7 +762,17 @@ impl FreeClsOwner {
     }
 
     pub fn overwrite_time_data(&self, data: &BmsWrapper) {
-        self.dates.overwrite_data(data);
+        self.times.overwrite_data(data);
+    }
+
+    #[inline]
+    pub fn get_name(&self) -> &str {
+        &self.term
+    }
+
+    #[inline]
+    pub fn get_var_ref(&self) -> &Var {
+        &*self.parent
     }
 }
 
@@ -814,13 +830,13 @@ impl Assert {
     }
 
     #[inline]
-    pub fn get_dates(&self,
+    pub fn get_times(&self,
                      agent: &agent::Representation,
                      var_assign: &Option<HashMap<&Var, &agent::VarAssignment>>)
                      -> Option<Arc<BmsWrapper>> {
         match *self {
-            Assert::FuncDecl(ref f) => f.get_dates(agent, var_assign),
-            Assert::ClassDecl(ref c) => c.get_dates(agent, var_assign),
+            Assert::FuncDecl(ref f) => f.get_times(agent, var_assign),
+            Assert::ClassDecl(ref c) => c.get_times(agent, var_assign),
         }
     }
 
@@ -877,6 +893,14 @@ impl Assert {
         match self {
             Assert::FuncDecl(_) => panic!(),
             Assert::ClassDecl(c) => c,
+        }
+    }
+
+    #[inline]
+    pub fn unwrap_cls_as_ref(&self) -> &ClassDecl {
+        match *self {
+            Assert::FuncDecl(_) => panic!(),
+            Assert::ClassDecl(ref c) => c,
         }
     }
 
@@ -981,8 +1005,8 @@ impl<'a> FuncDecl {
         if let Some(mut oargs) = op_args {
             for arg in oargs.drain(..) {
                 match arg {
-                    OpArg::TimeDecl(TimeFn::Date(ref date)) => {
-                        time_data.new_record(Some(*date), val, None);
+                    OpArg::TimeDecl(TimeFn::Time(ref time)) => {
+                        time_data.new_record(Some(*time), val, None);
                     }
                     OpArg::TimeDecl(TimeFn::Now) => {
                         time_data.new_record(Some(UTC::now()), val, None);
@@ -1027,6 +1051,7 @@ impl<'a> FuncDecl {
         }
     }
 
+    #[inline]
     pub fn get_name(&self) -> &str {
         match self.name {
             Terminal::FreeTerm(ref var) => &var.name,
@@ -1099,7 +1124,7 @@ impl<'a> FuncDecl {
         false
     }
 
-    fn get_dates(&self,
+    fn get_times(&self,
                  agent: &agent::Representation,
                  var_assign: &Option<HashMap<&Var, &agent::VarAssignment>>)
                  -> Option<Arc<BmsWrapper>> {
@@ -1115,11 +1140,11 @@ impl<'a> FuncDecl {
             if var_assign.is_none() {
                 return None;
             }
-            let assignments = var_assign.as_ref().unwrap();
             let f = HashMap::new();
-            if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, &f) {
+            if let Ok(grfunc) = GroundedFunc::from_free(self, var_assign, &f) {
                 for arg in self.get_args() {
                     if let Predicate::FreeClsMemb(ref arg) = *arg {
+                        let assignments = var_assign.as_ref().unwrap();
                         if let Some(entity) = assignments.get(&*arg.term) {
                             if let Some(current) = entity.get_relationship(&grfunc) {
                                 return Some(current.bms.clone());
@@ -1356,6 +1381,7 @@ impl<'a> ClassDecl {
         }
     }
 
+    #[inline]
     pub fn get_name(&self) -> &str {
         match self.name {
             Terminal::FreeTerm(ref var) => &var.name,
@@ -1364,6 +1390,7 @@ impl<'a> ClassDecl {
         }
     }
 
+    #[inline]
     pub fn get_parent(&self) -> &Terminal {
         &self.name
     }
@@ -1414,7 +1441,7 @@ impl<'a> ClassDecl {
         false
     }
 
-    fn get_dates(&self,
+    fn get_times(&self,
                  agent: &agent::Representation,
                  var_assign: &Option<HashMap<&Var, &agent::VarAssignment>>)
                  -> Option<Arc<BmsWrapper>> {
@@ -1437,7 +1464,7 @@ impl<'a> ClassDecl {
                 }
             }
             Predicate::GroundedMemb(ref compare) => {
-                let entity = agent.get_entity_from_class(self.get_name(), &compare.term);
+                let entity = agent.get_obj_from_class(self.get_name(), &compare.term);
                 if let Some(grounded) = entity {
                     if *grounded == *compare {
                         return grounded.bms.clone();
@@ -1643,7 +1670,7 @@ impl<'a> OpArg {
                         -> BmsWrapper {
         let bms = BmsWrapper::new(false);
         match *self {
-            OpArg::TimeDecl(TimeFn::Date(ref payload)) => {
+            OpArg::TimeDecl(TimeFn::Time(ref payload)) => {
                 bms.new_record(Some(*payload), value, None);
             }
             OpArg::TimeDecl(TimeFn::Now) => {
@@ -1692,7 +1719,7 @@ impl<'a> OpArg {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TimeFn {
     Now,
-    Date(Date),
+    Time(Time),
     IsVar,
 }
 
@@ -1703,9 +1730,9 @@ impl TimeFn {
             Ok(TimeFn::Now)
         } else {
             let s = unsafe { str::from_utf8_unchecked(slice) };
-            match s.parse::<Date>() {
+            match s.parse::<Time>() {
                 Err(_) => Err(TimeFnErr::WrongFormat(s.to_owned()).into()),
-                Ok(date) => Ok(TimeFn::Date(date)),
+                Ok(time) => Ok(TimeFn::Time(time)),
             }
         }
     }
@@ -1713,7 +1740,7 @@ impl TimeFn {
     fn get_time_payload(&self, value: Option<f32>) -> BmsWrapper {
         let bms = BmsWrapper::new(false);
         match *self {
-            TimeFn::Date(ref payload) => {
+            TimeFn::Time(ref payload) => {
                 bms.new_record(Some(*payload), value, None);
             }
             TimeFn::Now => {
@@ -1727,7 +1754,7 @@ impl TimeFn {
     fn generate_uid(&self) -> Vec<u8> {
         let mut id = vec![];
         match *self {
-            TimeFn::Date(ref date) => id.append(&mut format!("{}", date).into_bytes()), 
+            TimeFn::Time(ref time) => id.append(&mut format!("{}", time).into_bytes()), 
             TimeFn::Now => id.push(2),
             TimeFn::IsVar => id.push(3),
         }
@@ -1768,8 +1795,8 @@ impl<'a> OpArgTerm {
                 }
                 match *term {
                     OpArgTermBorrowed::String(slice) => {
-                        let date = TimeFn::from_str(slice)?;
-                        Ok((CompOperator::Equal, OpArgTerm::TimePayload(date)))
+                        let time = TimeFn::from_str(slice)?;
+                        Ok((CompOperator::Equal, OpArgTerm::TimePayload(time)))
                     }
                     OpArgTermBorrowed::Terminal(_) => {
                         let var = OpArgTerm::from(term, context)?;
@@ -1862,7 +1889,7 @@ impl Var {
         })
     }
 
-    pub fn get_dates(&self) -> BmsWrapper {
+    pub fn get_times(&self) -> BmsWrapper {
         let h = HashMap::new();
         self.op_arg.as_ref().unwrap().get_time_payload(&h, None)
     }
@@ -1985,6 +2012,7 @@ impl<'a> Terminal {
         }
     }
 
+    #[inline]
     fn get_name(&self) -> &str {
         if let Terminal::GroundedTerm(ref name) = *self {
             name
@@ -2045,21 +2073,27 @@ mod logsent {
             if self.is_grounded() {
                 let sbj = self.args.as_ref().unwrap();
                 let grfunc = self.clone().into_grounded();
-                agent.has_relationship(&grfunc, sbj[0].get_name())
-            } else {
-                if assignments.is_none() {
-                    return None;
+                if context.compare_relation(&grfunc) {
+                    context.has_relationship(&grfunc)
+                } else {
+                    agent.has_relationship(&grfunc, sbj[0].get_name())
                 }
-                let assignments = assignments.as_ref().unwrap();
+            } else {
+                let assigned = if let Some(ref assigned) = *assignments {
+                    assigned
+                } else {
+                    return None;
+                };
                 if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, time_assign) {
                     for arg in self.get_args() {
                         if let Predicate::FreeClsMemb(ref arg) = *arg {
-                            if let Some(entity) = assignments.get(&*arg.term) {
+                            if let Some(entity) = assigned.get(&*arg.term) {
                                 if let Some(current) = entity.get_relationship(&grfunc) {
-                                    context.push_antecedents(Grounded::Function(Arc::downgrade(&current.clone())));
-                                    if let Some(date) = current.bms
+                                    let a = Grounded::Function(Arc::downgrade(&current.clone()));
+                                    context.push_antecedents(a);
+                                    if let Some(time) = current.bms
                                         .newest_date(context.newest_grfact()) {
-                                        context.set_newest_grfact(date);
+                                        context.set_newest_grfact(time);
                                     }
                                     if **current != grfunc {
                                         return Some(false);
@@ -2079,12 +2113,9 @@ mod logsent {
                       assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
                       time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
                       context: &mut T) {
-            if let Ok(grfunc) = GroundedFunc::from_free(self,
-                                                        assignments.as_ref().unwrap(),
-                                                        time_assign) {
+            if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, time_assign) {
                 context.push_grounded_func(grfunc.clone(), grfunc.bms.get_last_date());
-                let grfunc = Arc::new(grfunc);
-                agent.up_relation(grfunc.clone(), Some(context));
+                agent.up_relation(Arc::new(grfunc), Some(context));
             }
         }
     }
@@ -2107,11 +2138,11 @@ mod logsent {
                         if let Some(entity) = assignments.as_ref().unwrap().get(&*free.term) {
                             if let Some(current) = entity.get_class(free.parent.get_name()) {
                                 context.push_antecedents(Grounded::Class(Arc::downgrade(&current.clone())));
-                                if let Some(date) = current.bms
+                                if let Some(time) = current.bms
                                     .as_ref()
                                     .unwrap()
                                     .newest_date(context.newest_grfact()) {
-                                    context.set_newest_grfact(date);
+                                    context.set_newest_grfact(time);
                                 }
                                 if !free.grounded_eq(current) {
                                     return Some(false);
@@ -2124,20 +2155,26 @@ mod logsent {
                         }
                     }
                     Predicate::GroundedMemb(ref compare) => {
-                        let entity = agent.get_entity_from_class(self.get_name(), &compare.term);
-                        if let Some(current) = entity {
-                            context.push_antecedents(Grounded::Class(Arc::downgrade(&current.clone())));
-                            if let Some(date) = current.bms
-                                .as_ref()
-                                .unwrap()
-                                .newest_date(context.newest_grfact()) {
-                                context.set_newest_grfact(date);
-                            }
-                            if *current != *compare {
-                                return Some(false);
-                            }
+                        if context.compare_cls(compare) {
+                            return context.has_cls_memb(compare);
                         } else {
-                            return None;
+                            let entity =
+                                agent.get_obj_from_class(self.get_name(), &compare.term);
+                            if let Some(current) = entity {
+                                let grounded = Grounded::Class(Arc::downgrade(&current.clone()));
+                                context.push_antecedents(grounded);
+                                if let Some(time) = current.bms
+                                    .as_ref()
+                                    .unwrap()
+                                    .newest_date(context.newest_grfact()) {
+                                    context.set_newest_grfact(time);
+                                }
+                                if *current != *compare {
+                                    return Some(false);
+                                }
+                            } else {
+                                return None;
+                            }
                         }
                     }
                     _ => return None, // this path won't be taken in any program
@@ -2169,8 +2206,7 @@ mod logsent {
                 grfact.overwrite_time_data(&t);
                 context.push_grounded_cls(grfact.clone(),
                                           grfact.bms.as_ref().unwrap().get_last_date());
-                let grfact = Arc::new(grfact);
-                agent.up_membership(grfact.clone(), Some(context))
+                agent.up_membership(Arc::new(grfact), Some(context))
             }
         }
     }

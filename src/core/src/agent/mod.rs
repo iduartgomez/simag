@@ -6,6 +6,7 @@ pub use self::bms::{BmsWrapper};
 
 use lang::ParseErrF;
 
+#[derive(Debug)]
 pub struct Agent {
     representation: kb::Representation
 }

@@ -10,7 +10,8 @@ use std::iter::FromIterator;
 use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 
-/// This type is a container for internal agent's representations.
+/// A container for internal agent's representations.
+///
 /// An agent can have any number of such representations at any moment,
 /// all of which are contained in this object.
 ///
@@ -19,10 +20,10 @@ use std::sync::{Arc, RwLock};
 ///
 /// Attributes:
 ///     entities -> Unique members (entities) of their own set/class.
-///     | Entities are denoted with a $ symbol followed by an id.
+///     | Entities are denoted with a $ symbol followed by an alphanumeric literal.
 ///     classes -> Sets of objects (entities or subclasses) that share a common property.
 ///     | This includes 'classes of relationships' and other 'functions'.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Representation {
     pub entities: RwLock<HashMap<String, Entity>>,
     pub classes: RwLock<HashMap<String, Class>>,
@@ -41,8 +42,8 @@ impl Representation {
     /// corresponding classes. In case the sentence is a predicate,
     /// the objects get declared as members of their classes.
     ///
-    /// Accepts first-order logic sentences sentences, both atomic
-    /// sentences ('Lucy is a professor') and complex sentences compossed
+    /// Accepts first-order logic sentences, both atomic sentences
+    /// ('Lucy is a professor') and complex sentences compossed
     /// of different atoms and operators ('If someone is a professor,
     /// then it's a person'). Examples:
     ///
@@ -146,8 +147,10 @@ impl Representation {
                 decl = ClassMember::Entity(assert.clone());
             } else {
                 let entity = Entity::new(assert.get_name().to_string());
-                is_new = entity.add_class_membership(self, assert.clone(), context);
                 self.entities.write().unwrap().insert(entity.name.clone(), entity);
+                let lock = self.entities.read().unwrap();
+                let entity = lock.get(assert.get_name()).unwrap();
+                is_new = entity.add_class_membership(self, assert.clone(), context);
                 decl = ClassMember::Entity(assert.clone());
             }
         } else {
@@ -159,8 +162,10 @@ impl Representation {
                 decl = ClassMember::Class(assert.clone());
             } else {
                 let class = Class::new(assert.get_name().to_string(), ClassKind::Membership);
-                is_new = class.add_class_membership(self, assert.clone(), context);
                 self.classes.write().unwrap().insert(class.name.clone(), class);
+                let lock = self.classes.read().unwrap();
+                let class = lock.get(assert.get_name()).unwrap();
+                is_new = class.add_class_membership(self, assert.clone(), context);
                 decl = ClassMember::Class(assert.clone());
             }
         }
@@ -185,8 +190,10 @@ impl Representation {
                     is_new1 = entity.add_relationship(self, assert.clone(), context);
                 } else {
                     let entity = Entity::new(subject.to_string());
-                    is_new1 = entity.add_relationship(self, assert.clone(), context);
                     self.entities.write().unwrap().insert(entity.name.clone(), entity);
+                    let lock = self.entities.read().unwrap();
+                    let entity = lock.get(subject).unwrap();
+                    is_new1 = entity.add_relationship(self, assert.clone(), context);
                 }
             } else {
                 let class_exists = self.classes.read().unwrap().contains_key(subject);
@@ -196,28 +203,28 @@ impl Representation {
                     is_new1 = class.add_relationship(self, assert.clone(), context);
                 } else {
                     let class = Class::new(subject.to_string(), ClassKind::Membership);
-                    is_new1 = class.add_relationship(self, assert.clone(), context);
                     self.classes.write().unwrap().insert(class.name.clone(), class);
+                    let lock = self.classes.read().unwrap();
+                    let class = lock.get(subject).unwrap();
+                    is_new1 = class.add_relationship(self, assert.clone(), context);
                 }
             }
             let new_check = is_new.clone();
             *new_check.borrow_mut() = is_new1;
         };
-        let relation_exists = self.classes.read().unwrap().contains_key(&assert.name);
+        let relation_exists = self.classes.read().unwrap().contains_key(assert.get_name());
         if !relation_exists {
-            let relationship = Class::new(assert.name.clone(), ClassKind::Relationship);
+            let relationship = Class::new(assert.get_name().to_string(), ClassKind::Relationship);
             self.classes.write().unwrap().insert(relationship.name.clone(), relationship);
         }
-        process_arg(&assert.args[0]);
-        process_arg(&assert.args[1]);
-        if assert.third.is_some() {
-            process_arg(assert.third.as_ref().unwrap())
+        for arg in assert.get_args() {
+            process_arg(arg);
         }
         if *is_new.borrow() {
             let lock = self.classes.read().unwrap();
-            let parent = lock.get(&assert.name).unwrap();
-            parent.add_grounded_relationship(assert.clone());
-        }
+            let parent = lock.get(assert.get_name()).unwrap();
+            parent.add_relation_to_class(assert.clone());
+        } 
     }
 
     fn add_belief(&self, belief: Arc<LogSentence>) {
@@ -323,21 +330,21 @@ impl Representation {
             }
         }
 
-        let iter_cls_candidates =
-            |cls_decl: &ClassDecl, candidates: &HashMap<&Var, Vec<Arc<VarAssignment>>>| for a in
-                cls_decl.get_args() {
-                match *a {
-                    Predicate::FreeClsMemb(ref free) => {
-                        if let Some(ls) = candidates.get(free.get_var_ref()) {
-                            for entity in ls {
-                                let grfact = Arc::new(GroundedMemb::from_free(free, entity.name));
-                                self.ask_processed(QueryInput::AskClassMember(grfact), 0, true);
-                            }
+        let iter_cls_candidates = |cls_decl: &ClassDecl,
+                                   candidates: &HashMap<&Var, Vec<Arc<VarAssignment>>>| for a in
+            cls_decl.get_args() {
+            match *a {
+                Predicate::FreeClsMemb(ref free) => {
+                    if let Some(ls) = candidates.get(free.get_var_ref()) {
+                        for entity in ls {
+                            let grfact = Arc::new(GroundedMemb::from_free(free, entity.name));
+                            self.ask_processed(QueryInput::AskClassMember(grfact), 0, true);
                         }
                     }
-                    _ => continue,
                 }
-            };
+                _ => continue,
+            }
+        };
         let iter_func_candidates = |func_decl: &FuncDecl,
                                     candidates: &HashMap<&Var, Vec<Arc<VarAssignment>>>| {
             let mapped = ArgsProduct::product(candidates.clone());
@@ -346,7 +353,7 @@ impl Representation {
                 for args in mapped {
                     let args = HashMap::from_iter(args.iter()
                         .map(|&(v, ref a)| (v, &**a)));
-                    if let Ok(grfunc) = GroundedFunc::from_free(func_decl, &args, &f) {
+                    if let Ok(grfunc) = GroundedFunc::from_free(func_decl, &Some(args), &f) {
                         self.ask_processed(QueryInput::AskRelationalFunc(Arc::new(grfunc)),
                                            0,
                                            true);
@@ -375,16 +382,9 @@ impl Representation {
     }
 
     fn add_rule(&self, rule: Arc<LogSentence>) {
-        let mut cls_names: Vec<&str> = Vec::new();
-        let mut func_names: Vec<&FuncDecl> = Vec::new();
         let preds = rule.get_all_predicates();
         for p in preds {
             let name = p.get_name();
-            if p.is_class() {
-                cls_names.push(name);
-            } else {
-                func_names.push(p.unwrap_fn_as_ref());
-            }
             let class_exists = self.classes.read().unwrap().contains_key(name);
             if class_exists {
                 let lock = self.classes.read().unwrap();
@@ -399,7 +399,7 @@ impl Representation {
                 self.classes.write().unwrap().insert(name.to_string(), nc);
             }
         }
-        super::rule_inf::rules_inference(self, &cls_names, &func_names);
+        rollback_from_rule(self, rule.clone());
     }
 
     /// Takes a vector of class names and returns a hash map with those classes as keys
@@ -463,7 +463,7 @@ impl Representation {
         dict
     }
 
-    pub fn get_entity_from_class(&self, class: &str, subject: &str) -> Option<Arc<GroundedMemb>> {
+    pub fn get_obj_from_class(&self, class: &str, subject: &str) -> Option<Arc<GroundedMemb>> {
         if subject.starts_with('$') {
             let entity_exists = self.entities.read().unwrap().contains_key(subject);
             if entity_exists {
@@ -514,7 +514,7 @@ impl Representation {
     }
 
     pub fn get_class_membership(&self, subject: &FreeClsOwner) -> Vec<Arc<GroundedMemb>> {
-        let name = &subject.term;
+        let name = subject.get_name();
         if name.starts_with('$') {
             if let Some(entity) = self.entities.read().unwrap().get(name) {
                 entity.get_class_membership(subject)
@@ -607,7 +607,8 @@ impl Representation {
     }
 }
 
-/// An entity is the unique member of it's own class.
+/// An entity is a singleton, the unique member of it's own class.
+///
 /// Represents an object which can pertain to multiple classes or sets.
 /// It's an abstraction owned by an agent, the internal representation
 /// of the object, not the object itself.
@@ -670,6 +671,14 @@ impl Entity {
                                                 context: Option<&T>)
                                                 -> bool {
         let name = grounded.get_parent();
+        if let Some(context) = context {
+            if !context.is_substituting() &&
+               lookahead_rules(agent, name, GroundedRef::Class(&*grounded)) {
+                return false;
+            }
+        } else if lookahead_rules(agent, name, GroundedRef::Class(&*grounded)) {
+            return false;
+        }
         let stmt_exists = {
             let lock = self.classes.read().unwrap();
             lock.contains_key(name)
@@ -774,6 +783,14 @@ impl Entity {
                                             context: Option<&T>)
                                             -> bool {
         let name = func.get_name();
+        if let Some(context) = context {
+            if !context.is_substituting() &&
+               lookahead_rules(agent, name, GroundedRef::Function(&*func)) {
+                return false;
+            }
+        } else if lookahead_rules(agent, name, GroundedRef::Function(&*func)) {
+            return false;
+        }
         let stmt_exists = {
             let lock = self.relations.write().unwrap();
             lock.contains_key(name)
@@ -834,6 +851,38 @@ impl Entity {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClassKind {
+    Relationship,
+    Membership,
+}
+
+#[derive(Debug, Clone)]
+enum ClassMember {
+    Entity(Arc<GroundedMemb>),
+    Class(Arc<GroundedMemb>),
+    Func(Arc<GroundedFunc>),
+}
+
+impl ClassMember {
+    #[inline]
+    fn unwrap_memb(&self) -> Arc<GroundedMemb> {
+        match *self {
+            ClassMember::Entity(ref obj) |
+            ClassMember::Class(ref obj) => obj.clone(),
+            _ => panic!(),
+        }
+    }
+
+    #[inline]
+    fn unwrap_fn(&self) -> Arc<GroundedFunc> {
+        match *self {
+            ClassMember::Func(ref f) => f.clone(),
+            _ => panic!(),
+        }
+    }
+}
+
 /// A class is a set of entities that share some properties.
 /// It can be a subset of others supersets, and viceversa.
 ///
@@ -849,39 +898,9 @@ pub struct Class {
     classes: RwLock<HashMap<String, Arc<GroundedMemb>>>,
     relations: RwLock<HashMap<String, Vec<Arc<GroundedFunc>>>>,
     pub beliefs: RwLock<HashMap<String, Vec<Arc<LogSentence>>>>,
-    rules: RwLock<Vec<Arc<LogSentence>>>,
+    pub rules: RwLock<Vec<Arc<LogSentence>>>,
     kind: ClassKind,
     members: RwLock<Vec<ClassMember>>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ClassKind {
-    Relationship,
-    Membership,
-}
-
-#[derive(Debug, Clone)]
-enum ClassMember {
-    Entity(Arc<GroundedMemb>),
-    Class(Arc<GroundedMemb>),
-    Func(Arc<GroundedFunc>),
-}
-
-impl ClassMember {
-    fn unwrap_memb(&self) -> Arc<GroundedMemb> {
-        match *self {
-            ClassMember::Entity(ref obj) |
-            ClassMember::Class(ref obj) => obj.clone(),
-            _ => panic!(),
-        }
-    }
-
-    fn unwrap_fn(&self) -> Arc<GroundedFunc> {
-        match *self {
-            ClassMember::Func(ref f) => f.clone(),
-            _ => panic!(),
-        }
-    }
 }
 
 impl Class {
@@ -917,6 +936,14 @@ impl Class {
                                                 context: Option<&T>)
                                                 -> bool {
         let name = grounded.get_parent();
+        if let Some(context) = context {
+            if !context.is_substituting() &&
+               lookahead_rules(agent, name, GroundedRef::Class(&*grounded)) {
+                return false;
+            }
+        } else if lookahead_rules(agent, name, GroundedRef::Class(&*grounded)) {
+            return false;
+        }
         let stmt_exists = {
             let lock = self.classes.read().unwrap();
             lock.contains_key(name)
@@ -1084,6 +1111,14 @@ impl Class {
                                             context: Option<&T>)
                                             -> bool {
         let name = func.get_name();
+        if let Some(context) = context {
+            if !context.is_substituting() &&
+               lookahead_rules(agent, name, GroundedRef::Function(&*func)) {
+                return false;
+            }
+        } else if lookahead_rules(agent, name, GroundedRef::Function(&*func)) {
+            return false;
+        }
         let stmt_exists = {
             let lock = self.relations.write().unwrap();
             lock.contains_key(name)
@@ -1133,7 +1168,7 @@ impl Class {
     }
 
     /// Add a grounded relationship of this kind of relationship
-    fn add_grounded_relationship(&self, func: Arc<GroundedFunc>) {
+    fn add_relation_to_class(&self, func: Arc<GroundedFunc>) {
         self.members.write().unwrap().push(ClassMember::Func(func));
     }
 
@@ -1153,106 +1188,20 @@ impl Class {
     }
 }
 
-#[cfg(test)]
-mod test {
-    use super::*;
+#[inline]
+fn lookahead_rules(agent: &Representation, name: &str, grounded: GroundedRef) -> bool {
+    use super::rule_inf::rules_inference_lookahead;
+    let rules: Vec<Arc<LogSentence>> = {
+        let classes = agent.classes.read().unwrap();
+        let class = classes.get(name).unwrap();
+        let rules = &*class.rules.read().unwrap();
+        rules.clone()
+    };
+    rules_inference_lookahead(agent, rules, grounded)
+}
 
-    #[test]
-    fn repr_eval_fol() {
-        // indicative conditional
-        // (true |> true)
-        let rep = Representation::new();
-        let fol = String::from("
-            ( drugDealer[$West,u=1] |> ( scum[$West,u=1] && good[$West,u=0] ) )
-            ( drugDealer[$West,u=1] )
-        ");
-        let q = "( scum[$West,u=1] && good[$West,u=0] )".to_string();
-        rep.tell(fol);
-
-        // (false |> none)
-        let fol = String::from("
-            ( drugDealer[$West,u=1] |> ( scum[$West,u=1] && good[$West,u=0] ) )
-            ( drugDealer[$West,u=0] )
-        ");
-        let ask = "( scum[$West,u=1] && good[$West,u=0] )".to_string();
-
-        // material implication statements
-        // none
-        let fol = String::from("
-            ( drugDealer[$West,u=1] => ( scum[$West,u=1] && good[$West,u=0] ) )
-        ");
-        let ask = "".to_string();
-
-        // true (true => true)
-        let fol = String::from("
-            ( drugDealer[$West,u=1] => ( scum[$West,u=1] && good[$West,u=0] ) )
-            ( drugDealer[$West,u=1] && scum[$West,u=1] && good[$West,u=0] )
-        ");
-        let ask = "".to_string();
-
-        // true (false => true)
-        let fol = String::from("
-            ( drugDealer[$West,u=1] => ( scum[$West,u=1] && good[$West,u=0] ) )
-            ( drugDealer[$West,u=0] && scum[$West,u=1] && good[$West,u=0] )
-        ");
-        let ask = "".to_string();
-
-        // false (true => false)
-        let fol = String::from("
-            ( drugDealer[$West,u=1] => ( scum[$West,u=1] && good[$West,u=0] ) )
-            ( drugDealer[$West,u=1] && scum[$West,u=0] && good[$West,u=1] )
-        ");
-        let ask = "".to_string();
-
-        // true (false => false)
-        let fol = String::from("
-            ( drugDealer[$West,u=1] => ( scum[$West,u=1] && good[$West,u=0] ) )
-            ( drugDealer[$West,u=0] && scum[$West,u=0] && good[$West,u=1] )
-        ");
-        let ask = "".to_string();
-
-        // equivalence statements
-        // none  (none <=> true)
-        let fol = String::from("
-            ( drugDealer[$West,u=1] <=> ( scum[$West,u=1] && good[$West,u=0] ) )
-            ( scum[$West,u=1] )
-        ");
-        let ask = "".to_string();
-
-        // is false (false <=> true )
-        let fol = String::from("
-            ( drugDealer[$West,u=1] <=> ( scum[$West,u=1] && good[$West,u=0] ) )
-            ( scum[$West,u=1] )
-            ( good[$West,u=0] )
-            ( drugDealer[$West,u=0] )
-        ");
-        let ask = "".to_string();
-
-        // is false (true <=> false )
-        let fol = String::from("
-            ( drugDealer[$West,u=1] <=> ( scum[$West,u=1] && good[$West,u=0] ) )
-            ( scum[$West,u=0] )
-            ( good[$West,u=1] )
-            ( drugDealer[$West,u=1] )
-        ");
-        let ask = "".to_string();
-
-        // is true ( true <=> true )
-        let fol = String::from("
-            ( drugDealer[$West,u=1] <=> ( scum[$West,u=1] && good[$West,u=0] ) )
-            ( scum[$West,u=1] )
-            ( good[$West,u=0] )
-            ( drugDealer[$West,u=1] )
-        ");
-        let ask = "".to_string();
-
-        // is true ( false <=> false )
-        let fol = String::from("
-            ( drugDealer[$West,u=1] <=> ( scum[$West,u=1] && good[$West,u=0] ) )
-            ( scum[$West,u=0] )
-            ( good[$West,u=1] )
-            ( drugDealer[$West,u=0] )
-        ");
-        let ask = "".to_string();
-    }
+#[inline]
+fn rollback_from_rule(agent: &Representation, rule: Arc<LogSentence>) {
+    use super::rule_inf::rules_inference_rollback;
+    rules_inference_rollback(agent, rule);
 }

@@ -5,12 +5,13 @@
 //! 2) Detecting inconsistences between new and old beliefs.
 //! 3) Fixing those inconsitences.
 
-use super::{Representation};
+use super::Representation;
 use super::kb::QueryInput;
-use lang::{Date, Grounded, GroundedRef, SentID, ProofResContext};
+use lang::{Time, Grounded, GroundedRef, SentID, ProofResContext};
 
 use chrono::UTC;
 
+use std::cmp::Ordering as CmpOrdering;
 use std::mem;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,16 +31,16 @@ impl BmsWrapper {
     }
 
     pub fn new_record(&self,
-                      date: Option<Date>,
+                      time: Option<Time>,
                       value: Option<f32>,
                       was_produced: Option<SentID>) {
-        let date = match date {
-            Some(date) => date,
+        let time = match time {
+            Some(time) => time,
             None => UTC::now(),
         };
         let record = BmsRecord {
             produced: vec![],
-            date: date,
+            time: time,
             value: value,
             was_produced: was_produced,
         };
@@ -52,7 +53,7 @@ impl BmsWrapper {
                   agent: &Representation,
                   data: &BmsWrapper,
                   was_produced: Option<SentID>) {
-        let ask_processed = |entry: &(Grounded, Option<f32>), cmp_rec: &Date| {
+        let ask_processed = |entry: &(Grounded, Option<f32>), cmp_rec: &Time| {
             match *entry {
                 (Grounded::Function(ref func), ..) => {
                     let func = func.upgrade().unwrap();
@@ -61,7 +62,7 @@ impl BmsWrapper {
                     {
                         let lock = func.bms.records.read().unwrap();
                         let last = lock.last().unwrap();
-                        if last.date > *cmp_rec {
+                        if last.time > *cmp_rec {
                             // if it was produced, run again a test against the kb to check
                             // if it is still valid
                             ask = true;
@@ -75,21 +76,21 @@ impl BmsWrapper {
                                 .get_results_single();
                         if answ.is_none() {
                             let bms = &func.bms;
-                            let mut date: Option<Date> = None;
+                            let mut time: Option<Time> = None;
                             let mut value: Option<f32> = None;
                             {
                                 let lock = bms.records.read().unwrap();
                                 let recs = (*lock).iter();
                                 for rec in recs.rev() {
                                     if !rec.was_produced.is_some() {
-                                        date = Some(rec.date);
+                                        time = Some(rec.time);
                                         value = rec.value;
                                         break;
                                     }
                                 }
                             }
                             func.update_value(value);
-                            bms.new_record(date, value, None);
+                            bms.new_record(time, value, None);
                         }
                     }
                 }
@@ -99,7 +100,7 @@ impl BmsWrapper {
                     {
                         let lock = &*cls.bms.as_ref().unwrap().records.read().unwrap();
                         let last = lock.last().unwrap();
-                        if last.date > *cmp_rec {
+                        if last.time > *cmp_rec {
                             ask = true;
                         }
                     }
@@ -109,14 +110,14 @@ impl BmsWrapper {
                                 .get_results_single();
                         if answ.is_none() {
                             let bms = cls.bms.as_ref().unwrap();
-                            let mut date: Option<Date> = None;
+                            let mut time: Option<Time> = None;
                             let mut value: Option<f32> = None;
                             {
                                 let lock = bms.records.read().unwrap();
                                 let recs = (*lock).iter();
                                 for rec in recs.rev() {
                                     if !rec.was_produced.is_some() {
-                                        date = Some(rec.date);
+                                        time = Some(rec.time);
                                         value = rec.value;
                                         break;
                                     }
@@ -124,7 +125,7 @@ impl BmsWrapper {
                             }
 
                             cls.update_value(value);
-                            bms.new_record(date, value, None);
+                            bms.new_record(time, value, None);
                         }
                     }
                 }
@@ -144,7 +145,7 @@ impl BmsWrapper {
             }
             for rec in old_recs {
                 for entry in &rec.produced {
-                    ask_processed(entry, &rec.date);
+                    ask_processed(entry, &rec.time);
                 }
             }
             return;
@@ -153,12 +154,12 @@ impl BmsWrapper {
         let (up_rec_value, up_rec_date) = {
             let lock = data.records.read().unwrap();
             let last = lock.last().unwrap();
-            (last.value, last.date)
+            (last.value, last.time)
         };
         let (last_rec_value, last_rec_date) = {
             let lock = self.records.read().unwrap();
             let last = lock.last().unwrap();
-            (last.value, last.date)
+            (last.value, last.time)
         };
 
         if (last_rec_date == up_rec_date) && (last_rec_value == up_rec_value) {
@@ -191,7 +192,7 @@ impl BmsWrapper {
         } else if &up_rec_date > &last_rec_date || &up_rec_value != &last_rec_value {
             // new value is more recent, check only the last produced values
             //
-            // if both dates are the same there is an incongruency
+            // if both times are the same there is an incongruency
             // replace previous record value and check that all produced knowledge
             // with that value still holds true
             let last = {
@@ -207,7 +208,7 @@ impl BmsWrapper {
             {
                 let records = &mut *self.records.write().unwrap();
                 records.push(last);
-                records.sort_by(|a, b| a.date.cmp(&b.date));
+                records.sort_by(|a, b| a.time.cmp(&b.time));
             }
         }
         self.cleanup_records()
@@ -226,6 +227,12 @@ impl BmsWrapper {
         for pos in remove_ls {
             records.remove(pos);
         }
+    }
+
+    fn add_entry(&self, produced: Grounded, with_val: Option<f32>) {
+        let mut records = self.records.write().unwrap();
+        let record = records.last_mut().unwrap();
+        record.add_entry((produced, with_val));
     }
 
     pub fn update_producers<T: ProofResContext>(&self, owner: Grounded, context: &T) {
@@ -250,12 +257,6 @@ impl BmsWrapper {
         }
     }
 
-    fn add_entry(&self, produced: Grounded, with_val: Option<f32>) {
-        let mut records = self.records.write().unwrap();
-        let record = records.last_mut().unwrap();
-        record.add_entry((produced, with_val));
-    }
-
     pub fn overwrite_data(&self, other: &BmsWrapper) {
         let mut lock = &mut *self.records.write().unwrap();
         // drop old records
@@ -271,20 +272,20 @@ impl BmsWrapper {
         self.records.read().unwrap().len()
     }
 
-    pub fn newest_date(&self, other: &Date) -> Option<Date> {
+    pub fn newest_date(&self, other: &Time) -> Option<Time> {
         let lock = &*self.records.read().unwrap();
         let rec = lock.last().unwrap();
-        if &rec.date > other {
-            Some(rec.date)
+        if &rec.time > other {
+            Some(rec.time)
         } else {
             None
         }
     }
 
-    pub fn get_last_date(&self) -> Date {
+    pub fn get_last_date(&self) -> Time {
         let lock = &*self.records.read().unwrap();
         let rec = lock.last().unwrap();
-        rec.date
+        rec.time
     }
 
     pub fn replace_last_val(&self, val: Option<f32>) {
@@ -297,6 +298,16 @@ impl BmsWrapper {
         let records = &mut *self.records.write().unwrap();
         let last = records.last_mut().unwrap();
         last.was_produced = produced;
+    }
+
+    pub fn rollback_once(&self) {}
+
+    pub fn cmp_by_time(&self, other: &BmsWrapper) -> CmpOrdering {
+        let lock0 = &*self.records.read().unwrap();
+        let own_last_time = &lock0.last().unwrap().time;
+        let lock1 = &*other.records.read().unwrap();
+        let other_last_time = &lock1.last().unwrap().time;
+        own_last_time.cmp(other_last_time)
     }
 }
 
@@ -313,7 +324,7 @@ impl ::std::clone::Clone for BmsWrapper {
 #[derive(Debug, Clone)]
 struct BmsRecord {
     produced: Vec<(Grounded, Option<f32>)>,
-    date: Date,
+    time: Time,
     value: Option<f32>,
     was_produced: Option<SentID>,
 }

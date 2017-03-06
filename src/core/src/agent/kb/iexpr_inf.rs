@@ -11,10 +11,10 @@
 //! knowledge by the duration of it's own lifetime (data is never dropped, while
 //! the representation is alive), thereby is safe to point to the data being
 //! referenced from the representation or the query (for the duration of the query).
-
 #![allow(or_fun_call)]
 
 use super::repr::*;
+use super::VarAssignment;
 use lang::*;
 
 use crossbeam;
@@ -29,7 +29,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 type ObjName<'a> = &'a str;
 type QueryPred = String;
-type GroundedRes<'a> = HashMap<ObjName<'a>, Option<(bool, Option<Date>)>>;
+type GroundedRes<'a> = HashMap<ObjName<'a>, Option<(bool, Option<Time>)>>;
 type QueryResMemb<'a> = HashMap<ObjName<'a>, Vec<Arc<GroundedMemb>>>;
 type QueryResRels<'a> = HashMap<ObjName<'a>, Vec<Arc<GroundedFunc>>>;
 
@@ -77,7 +77,7 @@ impl<'b> InfResults<'b> {
         }
     }
 
-    fn add_grounded(&self, obj: &str, pred: &str, res: Option<(bool, Option<Date>)>) {
+    fn add_grounded(&self, obj: &str, pred: &str, res: Option<(bool, Option<Time>)>) {
         let obj = unsafe { ::std::mem::transmute::<&str, &'b str>(obj) };
         let mut lock = self.grounded_queries.write().unwrap();
         lock.entry(pred.to_string()).or_insert(HashMap::new()).insert(obj, res);
@@ -103,9 +103,9 @@ impl<'b> InfResults<'b> {
     #[allow(type_complexity)]
     pub fn get_results_multiple
         (self)
-         -> HashMap<QueryPred, HashMap<String, Option<(bool, Option<Date>)>>> {
+         -> HashMap<QueryPred, HashMap<String, Option<(bool, Option<Time>)>>> {
         // WARNING: ObjName<'a> may (truly) outlive the content, own the &str first
-        let orig: &mut HashMap<QueryPred, HashMap<ObjName<'b>, Option<(bool, Option<Date>)>>> =
+        let orig: &mut HashMap<QueryPred, HashMap<ObjName<'b>, Option<(bool, Option<Time>)>>> =
             &mut *self.grounded_queries.write().unwrap();
         let mut res = HashMap::new();
         for (qpred, r) in orig.drain() {
@@ -184,7 +184,7 @@ impl<'a> Answer<'a> {
     #[allow(type_complexity)]
     pub fn get_results_multiple
         (self)
-         -> HashMap<QueryPred, HashMap<String, Option<(bool, Option<Date>)>>> {
+         -> HashMap<QueryPred, HashMap<String, Option<(bool, Option<Time>)>>> {
         match self {
             Answer::Results(result) => result.get_results_multiple(),
             _ => panic!("simag: tried to unwrap a result from an error"),
@@ -360,7 +360,7 @@ impl<'a> Inference<'a> {
                 scope.spawn(move || {
                     let member_of = self.kb.get_class_membership(obj);
                     for m in member_of {
-                        self.results.add_membership(var, &obj.term, m.clone());
+                        self.results.add_membership(var, obj.get_name(), m.clone());
                     }
                 });
             }
@@ -502,53 +502,20 @@ impl ::std::ops::Drop for ProofArgs {
 struct ValidAnswer {
     node: usize, // *const ProofNode<'a>,
     args: ProofArgs,
-    newest_grfact: Date,
+    newest_grfact: Time,
 }
 
 #[derive(Debug)]
 pub struct IExprResult {
     result: Option<bool>,
-    newest_grfact: Date,
+    newest_grfact: Time,
     antecedents: Vec<Grounded>,
-    grounded_func: Vec<(GroundedFunc, Date)>,
-    grounded_cls: Vec<(GroundedMemb, Date)>,
+    grounded_func: Vec<(GroundedFunc, Time)>,
+    grounded_cls: Vec<(GroundedMemb, Time)>,
     sent_id: SentID,
     args: ProofArgs,
     node: usize, // *const ProofNode<'a>
-}
-
-impl ProofResContext for IExprResult {
-    fn set_result(&mut self, res: Option<bool>) {
-        self.result = res;
-    }
-
-    fn get_id(&self) -> SentID {
-        self.sent_id
-    }
-
-    fn push_grounded_func(&mut self, grounded: GroundedFunc, time: Date) {
-        self.grounded_func.push((grounded, time));
-    }
-
-    fn push_grounded_cls(&mut self, grounded: GroundedMemb, time: Date) {
-        self.grounded_cls.push((grounded, time));
-    }
-
-    fn newest_grfact(&self) -> &Date {
-        &self.newest_grfact
-    }
-
-    fn set_newest_grfact(&mut self, date: Date) {
-        self.newest_grfact = date;
-    }
-
-    fn get_antecedents(&self) -> &[Grounded] {
-        &self.antecedents
-    }
-
-    fn push_antecedents(&mut self, grounded: Grounded) {
-        self.antecedents.push(grounded);
-    }
+    sub_mode: bool,
 }
 
 impl IExprResult {
@@ -562,7 +529,70 @@ impl IExprResult {
             antecedents: vec![],
             grounded_func: vec![],
             grounded_cls: vec![],
+            sub_mode: false,
         }
+    }
+}
+
+impl ProofResContext for IExprResult {
+    fn substituting(&mut self) {
+        self.sub_mode = true;
+    }
+
+    fn is_substituting(&self) -> bool {
+        self.sub_mode
+    }
+
+    fn set_result(&mut self, res: Option<bool>) {
+        self.result = res;
+    }
+
+    fn get_id(&self) -> SentID {
+        self.sent_id
+    }
+
+    fn push_grounded_func(&mut self, grounded: GroundedFunc, time: Time) {
+        self.grounded_func.push((grounded, time));
+    }
+
+    fn push_grounded_cls(&mut self, grounded: GroundedMemb, time: Time) {
+        self.grounded_cls.push((grounded, time));
+    }
+
+    fn newest_grfact(&self) -> &Time {
+        &self.newest_grfact
+    }
+
+    fn set_newest_grfact(&mut self, time: Time) {
+        self.newest_grfact = time;
+    }
+
+    fn get_antecedents(&self) -> &[Grounded] {
+        &self.antecedents
+    }
+
+    fn push_antecedents(&mut self, grounded: Grounded) {
+        self.antecedents.push(grounded);
+    }
+
+    fn push_false_fn_assert(&mut self, _func: Arc<GroundedFunc>) {}
+
+    fn push_false_cls_assert(&mut self, _cls: Arc<GroundedMemb>) {}
+
+    fn compare_relation(&self, _func: &GroundedFunc) -> bool {
+        false
+    }
+
+    fn compare_cls(&self, _cls: &GroundedMemb) -> bool {
+        false
+    }
+
+    fn has_relationship(&self, _func: &GroundedFunc) -> Option<bool> {
+        None
+    }
+
+    fn has_cls_memb(&self, _cls: &GroundedMemb) -> Option<bool> {
+        None
     }
 }
 
@@ -696,7 +726,7 @@ impl<'a> InfTrial<'a> {
     fn add_as_last_valid(&self,
                          context: &IExprResult,
                          r_dict: &mut GroundedRes<'a>,
-                         date: Date,
+                         time: Time,
                          value: bool) {
         let query_obj = unsafe {
             let obj = self.actv.get_obj();
@@ -708,7 +738,7 @@ impl<'a> InfTrial<'a> {
                 return;
             }
         }
-        r_dict.insert(query_obj, Some((value, Some(date))));
+        r_dict.insert(query_obj, Some((value, Some(time))));
         let answ = ValidAnswer {
             node: context.node,
             args: context.args.clone(),
@@ -726,7 +756,7 @@ impl<'a> InfTrial<'a> {
         let results = unsafe { &*(self.results as *const InfResults) };
 
         let gr_cls: Vec<_> = context.grounded_cls.drain(..).collect();
-        for (gt, date) in gr_cls {
+        for (gt, time) in gr_cls {
             if !is_func {
                 let query_cls = self.actv.get_cls();
                 if query_cls.comparable(&gt) {
@@ -744,7 +774,7 @@ impl<'a> InfTrial<'a> {
                     if gr_results_dict.contains_key(query_obj) {
                         let cond_ok;
                         if let Some(&Some((_, Some(ref cdate)))) = gr_results_dict.get(query_obj) {
-                            if &date >= cdate {
+                            if &time >= cdate {
                                 cond_ok = true;
                             } else {
                                 cond_ok = false;
@@ -753,10 +783,10 @@ impl<'a> InfTrial<'a> {
                             cond_ok = true;
                         }
                         if cond_ok {
-                            self.add_as_last_valid(&context, gr_results_dict, date, val);
+                            self.add_as_last_valid(&context, gr_results_dict, time, val);
                         }
                     } else {
-                        self.add_as_last_valid(&context, gr_results_dict, date, val);
+                        self.add_as_last_valid(&context, gr_results_dict, time, val);
                     }
                     self.feedback.store(false, Ordering::SeqCst);
                 }
@@ -764,7 +794,7 @@ impl<'a> InfTrial<'a> {
         }
 
         let gr_func: Vec<_> = context.grounded_func.drain(..).collect();
-        for (gf, date) in gr_func {
+        for (gf, time) in gr_func {
             if is_func {
                 let query_func = self.actv.get_func();
                 if query_func.comparable(&gf) {
@@ -782,7 +812,7 @@ impl<'a> InfTrial<'a> {
                     if gr_results_dict.contains_key(query_obj) {
                         let cond_ok;
                         if let Some(&Some((_, Some(ref cdate)))) = gr_results_dict.get(query_obj) {
-                            if &date >= cdate {
+                            if &time >= cdate {
                                 cond_ok = true;
                             } else {
                                 cond_ok = false;
@@ -791,10 +821,10 @@ impl<'a> InfTrial<'a> {
                             cond_ok = true;
                         }
                         if cond_ok {
-                            self.add_as_last_valid(&context, gr_results_dict, date, val);
+                            self.add_as_last_valid(&context, gr_results_dict, time, val);
                         }
                     } else {
-                        self.add_as_last_valid(&context, gr_results_dict, date, val);
+                        self.add_as_last_valid(&context, gr_results_dict, time, val);
                     }
                     self.feedback.store(false, Ordering::SeqCst);
                 }
@@ -1088,46 +1118,6 @@ impl<'a> Hash for ProofNode<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct VarAssignment<'a> {
-    pub name: &'a str,
-    classes: HashMap<&'a str, Arc<GroundedMemb>>,
-    funcs: HashMap<&'a str, Vec<Arc<GroundedFunc>>>,
-}
-
-impl<'a> VarAssignment<'a> {
-    #[inline]
-    pub fn get_class(&self, name: &str) -> Option<&Arc<GroundedMemb>> {
-        self.classes.get(name)
-    }
-
-    #[inline]
-    pub fn get_relationship(&self, func: &GroundedFunc) -> Option<&Arc<GroundedFunc>> {
-        if let Some(funcs) = self.funcs.get(func.get_name()) {
-            for owned_f in funcs {
-                if owned_f.comparable(func) {
-                    return Some(owned_f);
-                }
-            }
-        }
-        None
-    }
-}
-
-impl<'a> ::std::cmp::PartialEq for VarAssignment<'a> {
-    fn eq(&self, other: &VarAssignment) -> bool {
-        *self.name == *other.name
-    }
-}
-
-impl<'a> ::std::cmp::Eq for VarAssignment<'a> {}
-
-impl<'a> Hash for VarAssignment<'a> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        (*self.name).hash(state);
-    }
-}
-
 #[derive(Debug)]
 pub enum QueryInput {
     AskRelationalFunc(Arc<GroundedFunc>),
@@ -1176,8 +1166,8 @@ impl<'b> QueryProcessed<'b> {
                                 query.push_to_clsquery_free(&*t.get_var_ref(), t);
                             }
                             Predicate::GroundedMemb(ref t) => {
-                                if let Some(dates) = cdecl.get_time_payload(t.get_value()) {
-                                    t.overwrite_time_data(&dates);
+                                if let Some(times) = cdecl.get_time_payload(t.get_value()) {
+                                    t.overwrite_time_data(&times);
                                 }
                                 query.push_to_clsquery_grounded(t.get_name(), Arc::new(t.clone()));
                             }
@@ -1189,8 +1179,8 @@ impl<'b> QueryProcessed<'b> {
                     for a in cdecl.get_args() {
                         match *a {
                             Predicate::FreeClsOwner(ref t) => {
-                                if let Some(dates) = cdecl.get_time_payload(None) {
-                                    t.overwrite_time_data(&dates);
+                                if let Some(times) = cdecl.get_time_payload(None) {
+                                    t.overwrite_time_data(&times);
                                 }
                                 query.ask_class_memb(t);
                             }
@@ -1302,12 +1292,12 @@ impl<'b> QueryProcessed<'b> {
 
     #[inline]
     fn ask_class_memb(&mut self, term: &'b FreeClsOwner) {
-        self.cls_memb_query.entry(&*term.parent).or_insert(vec![]).push(term);
+        self.cls_memb_query.entry(term.get_var_ref()).or_insert(vec![]).push(term);
     }
 
     #[inline]
     fn ask_relationships(&mut self, term: &'b FuncDecl) {
-        self.func_memb_query.entry(&*term.get_parent().get_var_ref()).or_insert(vec![]).push(term);
+        self.func_memb_query.entry(term.get_parent().get_var_ref()).or_insert(vec![]).push(term);
     }
 }
 
