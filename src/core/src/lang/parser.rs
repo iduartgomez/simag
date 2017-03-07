@@ -264,7 +264,7 @@ impl<'a> Scope<'a> {
             return Ok(None);
         }
         match self.logic_op {
-            Some(LogicOperator::And) => {}
+            Some(LogicOperator::And) | None => {}
             _ => return Ok(None),
         }
         self.next.is_assertion(context)

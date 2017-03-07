@@ -29,6 +29,9 @@ pub fn rules_inference_lookahead(agent: &Representation,
             Some(false) => return true,
             _ => {}
         }
+        if context.inconsistent {
+            return true;
+        }
     }
     false
 }
@@ -111,6 +114,7 @@ struct RuleResContext<'a> {
     false_cls: HashSet<*const GroundedMemb>,
     cmp_pred: Option<GroundedRef<'a>>,
     sub_mode: bool,
+    inconsistent: bool,
 }
 
 impl<'a> RuleResContext<'a> {
@@ -126,6 +130,7 @@ impl<'a> RuleResContext<'a> {
             false_cls: HashSet::new(),
             cmp_pred: cmp,
             sub_mode: false,
+            inconsistent: false,
         }
     }
 
@@ -152,6 +157,7 @@ impl<'a> ::std::clone::Clone for RuleResContext<'a> {
             false_cls: HashSet::new(),
             cmp_pred: cmp_pred.clone(),
             sub_mode: false,
+            inconsistent: false,
         }
     }
 }
@@ -163,6 +169,14 @@ impl<'a> ProofResContext for RuleResContext<'a> {
 
     fn is_substituting(&self) -> bool {
         self.sub_mode
+    }
+
+    fn set_inconsistent(&mut self, val: bool) {
+        self.inconsistent = val;
+    }
+
+    fn is_inconsistent(&self) -> bool {
+        self.inconsistent
     }
 
     fn set_result(&mut self, res: Option<bool>) {
@@ -275,7 +289,6 @@ mod test {
         ");
         let query = "( drugDealer[$West,u=1] && scum[$West,u=1] && good[$West,u=0] )".to_string();
         rep.tell(fol);
-        println!("{:?}", rep.by_class(&["scum", "good", "drugDealer"]));
         assert_eq!(rep.ask(query).get_results_single(), Some(true));
 
         // true (false => true)

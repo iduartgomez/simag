@@ -2074,7 +2074,13 @@ mod logsent {
                 let sbj = self.args.as_ref().unwrap();
                 let grfunc = self.clone().into_grounded();
                 if context.compare_relation(&grfunc) {
-                    context.has_relationship(&grfunc)
+                    let cmp = context.has_relationship(&grfunc) ;
+                    if let Some(false) = *&cmp {
+                        context.set_inconsistent(true);
+                        return Some(false);
+                    } else {
+                        return cmp;
+                    }
                 } else {
                     agent.has_relationship(&grfunc, sbj[0].get_name())
                 }
@@ -2156,7 +2162,13 @@ mod logsent {
                     }
                     Predicate::GroundedMemb(ref compare) => {
                         if context.compare_cls(compare) {
-                            return context.has_cls_memb(compare);
+                            let cmp = context.has_cls_memb(compare) ;
+                            if let Some(false) = *&cmp {
+                                context.set_inconsistent(true);
+                                return Some(false);
+                            } else {
+                                return cmp;
+                            }
                         } else {
                             let entity =
                                 agent.get_obj_from_class(self.get_name(), &compare.term);

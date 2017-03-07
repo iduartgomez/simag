@@ -118,6 +118,12 @@ impl<'a> LogSentence {
                 sent.sent_kind = SentKind::Rule;
             }
         } else {
+            let preds: Vec<_> = sent.particles
+                .iter()
+                .filter(|p| p.is_atom())
+                .map(|p| p.clone_pred())
+                .collect();
+            sent.predicates = (preds, vec![]);
             context.stype = SentKind::Rule;
             sent.sent_kind = SentKind::Rule;
         }
@@ -250,8 +256,10 @@ impl<'a> LogSentence {
                     }
                     context.set_result(Some(false));
                 }
-            } else {
+            } else if !context.is_inconsistent() {
                 context.set_result(None);
+            } else {
+                context.set_result(Some(false));
             }
         }
     }
@@ -665,30 +673,32 @@ impl LogicEquivalence {
                                  time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
                                  context: &mut T)
                                  -> Option<bool> {
-        let n0_res;
-        if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign, context) {
-            if res {
-                n0_res = true;
+        context.set_inconsistent(false);
+        let n0_res = self.next_lhs.solve(agent, assignments, time_assign, context);
+        let first = context.is_inconsistent();
+        context.set_inconsistent(false);
+        let n1_res = self.next_rhs.solve(agent, assignments, time_assign, context);
+        let second = context.is_inconsistent();
+        if let Some(val0) = n0_res {
+            if let Some(val1) = n1_res {
+                if val0 == val1 {
+                    context.set_inconsistent(false);
+                    return Some(true);
+                } else {
+                    context.set_inconsistent(true);
+                    return Some(false);
+                }
+            }
+            if first == second {
+                context.set_inconsistent(false);
+                Some(true)
             } else {
-                n0_res = false;
+                context.set_inconsistent(true);
+                Some(false)
             }
         } else {
-            return None;
-        }
-        let n1_res;
-        if let Some(res) = self.next_rhs.solve(agent, assignments, time_assign, context) {
-            if res {
-                n1_res = true;
-            } else {
-                n1_res = false;
-            }
-        } else {
-            return None;
-        }
-        if n0_res == n1_res {
+            context.set_inconsistent(false);
             Some(true)
-        } else {
-            Some(false)
         }
     }
 
@@ -730,29 +740,19 @@ impl LogicImplication {
                                  time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
                                  context: &mut T)
                                  -> Option<bool> {
-        let n0_res;
-        if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign, context) {
-            if res {
-                n0_res = true;
+        let n0_res = self.next_lhs.solve(agent, assignments, time_assign, context);
+        context.set_inconsistent(false);
+        let n1_res = self.next_rhs.solve(agent, assignments, time_assign, context);
+        if let Some(true) = n0_res {
+            if let Some(false) = n1_res {
+                Some(false)
+            } else if context.is_inconsistent() {
+                Some(false)
             } else {
-                n0_res = false;
+                Some(true)
             }
         } else {
-            return None;
-        }
-        let n1_res;
-        if let Some(res) = self.next_rhs.solve(agent, assignments, time_assign, context) {
-            if res {
-                n1_res = true;
-            } else {
-                n1_res = false;
-            }
-        } else {
-            return None;
-        }
-        if n0_res && !n1_res {
-            Some(false)
-        } else {
+            context.set_inconsistent(false);
             Some(true)
         }
     }
@@ -795,19 +795,15 @@ impl LogicConjunction {
                                  time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
                                  context: &mut T)
                                  -> Option<bool> {
-        if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign, context) {
-            if !res {
-                return Some(false);
-            }
-        } else {
+        let n0_res = self.next_lhs.solve(agent, assignments, time_assign, context);
+        let n1_res = self.next_rhs.solve(agent, assignments, time_assign, context);
+        if n0_res.is_none() | n1_res.is_none() {
             return None;
         }
-        if let Some(res) = self.next_rhs.solve(agent, assignments, time_assign, context) {
-            if !res {
-                return Some(false);
-            }
-        } else {
-            return None;
+        if let Some(false) = n0_res {
+            return Some(false);
+        } else if let Some(false) = n1_res {
+            return Some(false);
         }
         Some(true)
     }
@@ -861,30 +857,22 @@ impl LogicDisjunction {
                                  time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
                                  context: &mut T)
                                  -> Option<bool> {
-        let n0_res;
-        if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign, context) {
-            if res {
-                n0_res = Some(true);
-            } else {
-                n0_res = Some(false);
-            }
-        } else {
-            n0_res = None;
-        }
-        let n1_res;
-        if let Some(res) = self.next_rhs.solve(agent, assignments, time_assign, context) {
-            if res {
-                n1_res = Some(true);
-            } else {
-                n1_res = Some(false);
-            }
-        } else {
-            n1_res = None;
-        }
+        let n0_res = self.next_lhs.solve(agent, assignments, time_assign, context);
+        let n1_res = self.next_rhs.solve(agent, assignments, time_assign, context);
         if n0_res != n1_res {
+            if n0_res.is_some() && n1_res.is_some() {
+                context.set_inconsistent(false);
+            } else if let Some(false) = n0_res {
+                return Some(false);
+            } else if let Some(false) = n1_res {
+                return Some(false);
+            }
+            context.set_inconsistent(false);
             Some(true)
-        } else {
+        } else if let Some(false) = n0_res {
             Some(false)
+        } else {
+            None
         }
     }
 
@@ -1157,6 +1145,10 @@ pub trait ProofResContext {
     fn substituting(&mut self);
 
     fn is_substituting(&self) -> bool;
+
+    fn set_inconsistent(&mut self, val: bool);
+
+    fn is_inconsistent(&self) -> bool;
 }
 
 pub trait LogSentResolution<T: ProofResContext> {

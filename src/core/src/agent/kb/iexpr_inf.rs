@@ -543,6 +543,12 @@ impl ProofResContext for IExprResult {
         self.sub_mode
     }
 
+    fn set_inconsistent(&mut self, _val: bool) {}
+
+    fn is_inconsistent(&self) -> bool {
+        false
+    }
+
     fn set_result(&mut self, res: Option<bool>) {
         self.result = res;
     }
