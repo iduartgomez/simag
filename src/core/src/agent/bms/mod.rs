@@ -16,6 +16,10 @@ use std::mem;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+///Acts as a wrapper for the Belief Maintenance System for a given agent.
+///
+/// Serves to keep the believes alive in memory, fix inconsistencies and
+/// serialize any information.
 #[derive(Debug)]
 pub struct BmsWrapper {
     records: RwLock<Vec<BmsRecord>>,
@@ -48,6 +52,9 @@ impl BmsWrapper {
         records.push(record);
     }
 
+    /// Look for all the changes that were produced, before an update,
+    /// due to this belief previous value and test if they still apply.
+    /// If the facts no longer hold true rollback them.
     pub fn update(&self,
                   owner: GroundedRef,
                   agent: &Representation,
@@ -300,7 +307,9 @@ impl BmsWrapper {
         last.was_produced = produced;
     }
 
-    pub fn rollback_once(&self) {}
+    pub fn rollback_once(&self) {
+        unimplemented!()
+    }
 
     pub fn cmp_by_time(&self, other: &BmsWrapper) -> CmpOrdering {
         let lock0 = &*self.records.read().unwrap();
@@ -321,6 +330,8 @@ impl ::std::clone::Clone for BmsWrapper {
     }
 }
 
+/// Record of how a belief became to existence and what other believes
+/// it has produced since then.
 #[derive(Debug, Clone)]
 struct BmsRecord {
     produced: Vec<(Grounded, Option<f32>)>,

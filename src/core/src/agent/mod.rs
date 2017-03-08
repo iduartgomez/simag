@@ -6,6 +6,9 @@ pub use self::bms::{BmsWrapper};
 
 use lang::ParseErrF;
 
+/// Represent an alive object which can interact with environment.
+///
+/// Is the core construct of the simAG framework.
 #[derive(Debug)]
 pub struct Agent {
     representation: kb::Representation

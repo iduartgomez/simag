@@ -1,0 +1,6 @@
+[package]
+name = "simag_network"
+version = "0.0.1"
+authors = ["IDG <iduartgomez@gmail.com>"]
+
+[dependencies]

@@ -991,6 +991,14 @@ impl CompOperator {
         }
     }
 
+    #[inline]
+    pub fn is_less_eq(&self) -> bool {
+        match *self {
+            CompOperator::LessEqual => true,
+            _ => false,
+        }
+    } 
+
     pub fn generate_uid(&self, id: &mut Vec<u8>) {
         match *self {
             CompOperator::Equal => id.push(1),

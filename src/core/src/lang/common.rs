@@ -165,6 +165,11 @@ impl<'a> GroundedRef<'a> {
     }
 }
 
+
+/// Grounded membership of an entity to a class.
+///
+/// Not meant to be instantiated directly, but asserted from logic
+/// sentences or processed from `ClassDecl` on `tell` mode.
 #[derive(Debug)]
 pub struct GroundedMemb {
     term: String,
@@ -176,8 +181,8 @@ pub struct GroundedMemb {
 
 impl GroundedMemb {
     //! Internally the mutable parts are wrapped in `RwLock` types, as they can be accessed
-    //! from a multithreaded environment. This provides enough atomicity so the most
-    //! time it won't be blocking other reads.
+    //! from a multithreaded environment. This provides enough atomicity so most of 
+    //! the time it won't be blocking other reads.
     fn new(term: String,
            uval: Option<UVal>,
            parent: String,
@@ -448,6 +453,11 @@ impl ::std::clone::Clone for GroundedMemb {
     }
 }
 
+/// Grounded relational functions describe relations between two objects, 
+/// or two objets and a third indirect object.
+///
+/// Are not meant to be instantiated directly, but asserted from logic
+/// sentences or processed from `FuncDecl` on `tell` mode.
 #[derive(Debug)]
 pub struct GroundedFunc {
     name: String,
@@ -682,12 +692,19 @@ impl FreeClsMemb {
             };
             match other.operator.unwrap() {
                 CompOperator::Equal => {
-                    if self.operator.as_ref().unwrap().is_equal() {
+                    let self_op = self.operator.as_ref().unwrap();
+                    if self_op.is_equal() {
                         val_free.approx_eq_ulps(&val_grounded, FLOAT_EQ_ULPS)
-                    } else if self.operator.as_ref().unwrap().is_more() {
+                    } else if self_op.is_more() {
                         val_grounded > val_free
-                    } else {
+                    } else if self_op.is_less() {
                         val_grounded < val_free
+                    } else if self_op.is_less_eq() {
+                        (val_grounded < val_free) |
+                        val_free.approx_eq_ulps(&val_grounded, FLOAT_EQ_ULPS)
+                    } else {
+                        (val_grounded > val_free) |
+                        val_free.approx_eq_ulps(&val_grounded, FLOAT_EQ_ULPS)
                     }
                 }
                 _ => panic!(),
@@ -2074,7 +2091,7 @@ mod logsent {
                 let sbj = self.args.as_ref().unwrap();
                 let grfunc = self.clone().into_grounded();
                 if context.compare_relation(&grfunc) {
-                    let cmp = context.has_relationship(&grfunc) ;
+                    let cmp = context.has_relationship(&grfunc);
                     if let Some(false) = *&cmp {
                         context.set_inconsistent(true);
                         return Some(false);
@@ -2162,7 +2179,7 @@ mod logsent {
                     }
                     Predicate::GroundedMemb(ref compare) => {
                         if context.compare_cls(compare) {
-                            let cmp = context.has_cls_memb(compare) ;
+                            let cmp = context.has_cls_memb(compare);
                             if let Some(false) = *&cmp {
                                 context.set_inconsistent(true);
                                 return Some(false);
@@ -2170,8 +2187,7 @@ mod logsent {
                                 return cmp;
                             }
                         } else {
-                            let entity =
-                                agent.get_obj_from_class(self.get_name(), &compare.term);
+                            let entity = agent.get_obj_from_class(self.get_name(), &compare.term);
                             if let Some(current) = entity {
                                 let grounded = Grounded::Class(Arc::downgrade(&current.clone()));
                                 context.push_antecedents(grounded);

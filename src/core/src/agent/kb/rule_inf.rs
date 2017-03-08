@@ -19,9 +19,8 @@ pub fn rules_inference_lookahead(agent: &Representation,
         // construct a proper context for the sentence resolution
         let mut context = RuleResContext::new(&*rule, Some(grounded.clone()));
         // if the rule has any special var, get proper assignments
-        // INCOMPLETE:
         let assignments: Option<HashMap<&Var, &VarAssignment>> = {
-            if rule.has_time_vars > 0 { None } else { None }
+            if rule.has_time_vars > 0 { unimplemented!() } else { None }
         };
         // get the results from the rule and return value
         rule.solve(agent, assignments, &mut context);
@@ -45,9 +44,8 @@ pub fn rules_inference_rollback(agent: &Representation, rule: Arc<LogSentence>) 
     // test the rule
     let mut context = RuleResContext::new(&*rule, None);
     // if the rule has any special var, get proper assignments
-    // INCOMPLETE:
     let assignments: Option<HashMap<&Var, &VarAssignment>> = {
-        if rule.has_time_vars > 0 { None } else { None }
+        if rule.has_time_vars > 0 { unimplemented!() } else { None }
     };
     // if the result of the rule is false, procede to rollback
     rule.solve(agent, assignments.clone(), &mut context);

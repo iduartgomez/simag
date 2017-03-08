@@ -1,3 +1,5 @@
+//! Core functionality for the simAG library
+
 // clippy lints config:
 #![deny(float_cmp)]
 #![allow(or_fun_call)]

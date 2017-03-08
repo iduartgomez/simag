@@ -28,11 +28,6 @@ pub type SentID = usize;
 /// This sentence is the result of parsing a sentence and compile
 /// it in an usable form for the agent to classify and reason about
 /// objects and relations, cannot be instantiated directly.
-///
-/// It's callable when instantiated, accepts as arguments:
-/// 1) the working knowledge-base
-/// 2) n types which will subsitute the variables in the sentence
-///    or a list of string.
 #[derive(Debug)]
 pub struct LogSentence {
     particles: Vec<Rc<Particle>>,
