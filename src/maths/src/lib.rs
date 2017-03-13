@@ -1,42 +1,15 @@
 //! Support mathematical methods library for the simAG framework
+#![feature(test)]
+
+extern crate float_cmp;
+extern crate ndarray;
+extern crate test;
 
 mod model;
-mod mcmc;
+mod sampling;
+pub mod dists;
 
-use model::Distribution;
+const FLOAT_EQ_ULPS: i64 = 2;
+pub type P = f64;
 
-pub enum VariableKind {
-    Continuous,
-    Discrete,
-    Boolean,
-}
-
-pub type Continuous = f64;
-pub type Discrete = isize;
-pub type Boolean = bool;
-
-pub enum EventObs {
-    Continuous(Continuous),
-    Discrete(Discrete),
-    Boolean(Boolean),
-}
-
-impl Observation for EventObs {
-    fn is_kind(&self) -> VariableKind {
-        match *self {
-            EventObs::Continuous(_) => VariableKind::Continuous,
-            EventObs::Discrete(_) => VariableKind::Discrete,
-            EventObs::Boolean(_) => VariableKind::Boolean,
-        }
-    }
-}
-
-pub trait Observation {
-    fn is_kind(&self) -> VariableKind;
-}
-
-pub trait Sampler {
-    type O: Observation;
-
-    fn get_sample(input: &Distribution<Self::O>) -> Self::O;
-}
+pub use model::DiscreteModel;
