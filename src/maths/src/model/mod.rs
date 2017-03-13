@@ -1,83 +1,14 @@
 //! Infrastructure to instantiate an statistical model with a given set of parameters.
+mod discrete;
 
-mod bayesnet;
-
+use std::collections::{VecDeque, HashSet};
+use std::iter::FromIterator;
 use std::marker::PhantomData;
 use std::hash::Hash;
 
-use ndarray::Array2;
-
 use P;
-use sampling::{DiscreteSampler, DefaultSampler};
-use self::bayesnet::{BayesNet, NetIter};
 
-pub use self::bayesnet::Node;
-
-pub struct DiscreteModel<'a, D: 'a, O: 'a, S>
-    where D: DiscreteDist<O> + Hash + Eq,
-          O: Observation,
-          S: DiscreteSampler<D, O> + Clone
-{
-    vars: BayesNet<'a, D, O>,
-    sampler: S,
-    _obtype: PhantomData<O>,
-}
-
-impl<'a, D: 'a, O: 'a, S> DiscreteModel<'a, D, O, S>
-    where D: DiscreteDist<O> + Hash + Eq,
-          O: Observation,
-          S: DiscreteSampler<D, O> + Clone
-{
-    pub fn new(net: BayesNet<D, O>) -> DiscreteModel<D, O, DefaultSampler<D, O>> {
-        DiscreteModel {
-            _obtype: PhantomData,
-            vars: net,
-            sampler: DefaultSampler::new(),
-        }
-    }
-
-    pub fn with_sampler(&mut self, sampler: S) {
-        self.sampler = sampler;
-    }
-
-    pub fn add_variable(&mut self, var: D) {
-        unimplemented!()
-    }
-
-    pub fn sample(&self) -> Vec<Vec<u8>> {
-        let mut sampler = self.sampler.clone();
-        sampler.get_samples(self)
-    }
-
-    pub fn iter_vars<'b>(&'b self) -> NetIter<'a, 'b, D, O> {
-        self.vars.iter_vars()
-    }
-
-    pub fn var_numb(&self) -> usize {
-        self.vars.nodes.len()
-    }
-
-    pub fn add_node(&mut self, dist: &'a D) {
-        let pos = self.vars.nodes.len();
-        let node = Node::new(dist, pos);
-        self.vars.nodes.push(node);
-    }
-
-    pub fn add_parents_to_node(&mut self, node: &D, parents: (P, &[D])) {
-        // find node and parents in the net
-        let node = self.vars.nodes.last_mut().unwrap();
-        // build the cpt for the node after adding new ones
-        // combinations of the parent nodes random variables values
-        let mut row_n = 1;
-        for d in node.get_parents_dists() {
-            row_n *= d.get_k_num();
-        }
-        // number of categories for the node
-        let colum_n = node.dist.get_k_num();
-        node.cpt = Array2::zeros((colum_n, row_n));
-        unimplemented!()
-    }
-}
+pub use self::discrete::{DiscreteNode, DiscreteModel};
 
 // public traits for models:
 
@@ -102,52 +33,16 @@ pub trait Distribution {
     type Observation: Observation;
 }
 
+pub trait Node<D, N>
+    where D: Distribution + Hash + Eq,
+          N: Node<D, N>
+{
+    fn get_dist(&self) -> &D;
+    fn get_child(&self, pos: usize) -> &N;
+    fn get_childs(&self) -> &[N];
+}
+
 // default implementations:
-
-pub type Continuous = f32;
-pub type Discrete = isize;
-pub type Boolean = bool;
-
-pub enum VariableKind {
-    Continuous,
-    Discrete,
-    Boolean,
-}
-
-/// Unknown discrete distributions initially default to a categorical distribution,
-/// in case k = 2 (k = number of categories) it will be treated as a Bernoulli distribution.
-///
-/// Continuous distributions default to a nonparametric distribution.
-#[derive(Debug, Clone, Copy)]
-pub enum DistributionKind {
-    Continuous,
-    Discrete,
-}
-
-use dists::Normal;
-
-#[derive(Debug, Clone)]
-pub enum DType {
-    // continuous types:
-    Normal(Normal),
-    Beta,
-    Exponential,
-    Gamma,
-    ChiSquared,
-    StudentT,
-    F,
-    LogNormal,
-    Logistic,
-    LogLogistic,
-    NonParametric,
-    // discrete types:
-    Bernoulli(usize),
-    Categorical(usize),
-    Binomial(usize),
-    Poisson(usize),
-    // multivariate, used as conjugate prior in inference:
-    Dirichlet,
-}
 
 pub enum EventObs {
     Continuous(Continuous),
@@ -220,5 +115,138 @@ impl<O> DiscreteDist<O> for DefaultDiscrete<O>
 
     fn get_k_num(&self) -> usize {
         unimplemented!()
+    }
+}
+
+// support types:
+
+pub type Continuous = f32;
+pub type Discrete = isize;
+pub type Boolean = bool;
+
+pub enum VariableKind {
+    Continuous,
+    Discrete,
+    Boolean,
+}
+
+/// Unknown discrete distributions initially default to a categorical distribution,
+/// in case k = 2 (k = number of categories) it will be treated as a Bernoulli distribution.
+///
+/// Continuous distributions default to a nonparametric distribution.
+#[derive(Debug, Clone, Copy)]
+pub enum DistributionKind {
+    Continuous,
+    Discrete,
+}
+
+use dists::Normal;
+
+#[derive(Debug, Clone)]
+pub enum DType {
+    // continuous types:
+    Normal(Normal),
+    Beta,
+    Exponential,
+    Gamma,
+    ChiSquared,
+    StudentT,
+    F,
+    LogNormal,
+    Logistic,
+    LogLogistic,
+    NonParametric,
+    // discrete types:
+    Bernoulli(usize),
+    Categorical(usize),
+    Binomial(usize),
+    Poisson(usize),
+    // multivariate, used as conjugate prior in inference:
+    Dirichlet,
+}
+
+struct BayesNet<D, O, N>
+    where D: Distribution + Hash + Eq,
+          O: Observation,
+          N: Node<D, N>
+{
+    _disttype: PhantomData<D>,
+    _obtype: PhantomData<O>,
+    pub nodes: Vec<N>,
+}
+
+impl<D, O, N> BayesNet<D, O, N>
+    where D: Distribution + Hash + Eq,
+          O: Observation,
+          N: Node<D, N>
+{
+    fn new() -> BayesNet<D, O, N> {
+        BayesNet {
+            _disttype: PhantomData,
+            _obtype: PhantomData,
+            nodes: vec![],
+        }
+    }
+
+    fn iter_vars(&self) -> NetIter<D, N> {
+        NetIter::new(&self.nodes)
+    }
+}
+
+/// Bayesian Network iterator, visits all nodes from parents to childs
+pub struct NetIter<'a, D: 'a, N: 'a>
+    where D: Distribution + Hash + Eq,
+          N: Node<D, N>
+{
+    unvisitted: VecDeque<&'a N>,
+    processed: HashSet<&'a D>,
+    queued: &'a N,
+    childs_visitted: usize,
+}
+
+impl<'a, D, N> NetIter<'a, D, N>
+    where D: Distribution + Hash + Eq,
+          N: Node<D, N>
+{
+    fn new(nodes: &'a [N]) -> NetIter<'a, D, N> {
+        let mut unvisitted = VecDeque::from_iter(nodes);
+        let mut processed = HashSet::new();
+        let first = unvisitted.pop_front().unwrap();
+        processed.insert(first.get_dist());
+        NetIter {
+            unvisitted: unvisitted,
+            processed: processed,
+            queued: first,
+            childs_visitted: 0,
+        }
+    }
+}
+
+impl<'a, D, N> ::std::iter::Iterator for NetIter<'a, D, N>
+    where D: Distribution + Hash + Eq,
+          N: Node<D, N>
+{
+    type Item = &'a N;
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            while self.childs_visitted < self.queued.get_childs().len() {
+                let next = self.queued.get_child(self.childs_visitted);
+                self.childs_visitted += 1;
+                if !self.processed.contains(next.get_dist()) {
+                    return Some(next);
+                }
+            }
+
+            if self.unvisitted.is_empty() {
+                return None;
+            } else {
+                // add all previously visitted to the list of processed
+                for e in self.queued.get_childs() {
+                    self.processed.insert(e.get_dist());
+                }
+                let next = self.unvisitted.pop_front().unwrap();
+                self.queued = next;
+            }
+        }
     }
 }

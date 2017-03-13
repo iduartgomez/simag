@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use std::hash::Hash;
 
 use super::*;
-use model::{DiscreteModel, DiscreteDist, Observation, Node};
+use model::{DiscreteModel, DiscreteDist, Observation, DiscreteNode};
 use model::{Discrete, Boolean, DType};
 
 const ITER_TIMES: usize = 1000;
@@ -33,7 +33,7 @@ impl<D, O> Gibbs<D, O>
         }
     }
 
-    fn iter_var(&self, t: usize, var: &Node<D, O>) -> u8 {
+    fn iter_var(&self, t: usize, var: &DiscreteNode<D, O>) -> u8 {
         let mut mb_values = Vec::with_capacity(var.parents_len());
         // P(var|mb(var))
         for i in var.get_parents_positions() {
@@ -54,7 +54,7 @@ impl<D, O> Gibbs<D, O>
         self.samples.push(priors);
     }
 
-    fn initialization(&self, var: &Node<D, O>) -> u8 {
+    fn initialization(&self, var: &DiscreteNode<D, O>) -> u8 {
         // pick a random value of a prior dist for dist D with proper hyperparameter
         unimplemented!()
     }
