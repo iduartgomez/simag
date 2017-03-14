@@ -4,6 +4,8 @@
 extern crate float_cmp;
 extern crate ndarray;
 extern crate test;
+extern crate itertools;
+extern crate rand;
 
 mod model;
 mod sampling;

@@ -17,12 +17,16 @@ impl Normal {
         }
     }
 
-    pub fn new(mu: f64, sigma: f64) -> Normal {
-        Normal {
+    pub fn new(mu: f64, sigma: f64) -> Result<Normal, ()> {
+        if sigma < 0. {
+            return Err(());
+        }
+
+        Ok(Normal {
             mu: mu,
             sigma: sigma.abs(),
             std: false,
-        }
+        })
     }
 
     pub fn phi(&self, x: f64) -> f64 {
@@ -55,6 +59,8 @@ impl Normal {
         let y: f64 = 1. - ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * (-x * x).exp();
         0.5 * (1. + sign * y)
     }
+
+    pub fn sample() {}
 }
 
 #[cfg(test)]
@@ -62,23 +68,20 @@ mod test {
     use super::*;
     use test::Bencher;
 
-    #[test]
-    fn phi() {
+    #[bench]
+    fn compute_phi(b: &mut test::Bencher) {
+        fn b_phi() {
+            let d = Normal::new(2., 2.).unwrap();
+            let p = d.phi(3.);
+        }
+        b.iter(|| b_phi());
+
         let d = Normal::std();
         let p = d.phi(0.);
         assert!(p < 0.5001 && p > 0.4999);
 
-        let d = Normal::new(2., 2.);
+        let d = Normal::new(2., 2.).unwrap();
         let p = d.phi(3.);
         assert!(p < 0.6916 && p > 0.6914);
-    }
-
-    #[bench]
-    fn compute_phi(b: &mut test::Bencher) {
-        fn b_phi() {
-            let d = Normal::new(2., 2.);
-            let p = d.phi(3.);
-        }
-        b.iter(|| b_phi())
     }
 }
