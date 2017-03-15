@@ -5,6 +5,6 @@ authors = ["IDG <iduartgomez@gmail.com>"]
 
 [dependencies]
 float-cmp = "*"
-ndarray = "^0.8"
+# ndarray = "^0.8"
 itertools = "*"
 rand = "^0.3"

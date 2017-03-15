@@ -1,13 +1,11 @@
-//! Support mathematical methods library for the simAG framework
-#![feature(test)]
+//! Support mathematical methods library for the `simAG` framework
 
 extern crate float_cmp;
-extern crate ndarray;
-extern crate test;
+//extern crate ndarray;
 extern crate itertools;
 extern crate rand;
 
-mod model;
+pub mod model;
 mod sampling;
 pub mod dists;
 

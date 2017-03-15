@@ -7,10 +7,8 @@ use std::marker::PhantomData;
 use std::hash::Hash;
 use std::rc::Rc;
 
-use P;
-
 use dists::{Categorical, Binomial};
-pub use self::discrete::{DiscreteNode, DiscreteModel};
+pub use self::discrete::{DiscreteNode, DiscreteModel, CPT};
 
 // public traits for models:
 
@@ -25,10 +23,14 @@ pub trait DiscreteDist<O: Observation>: Distribution {
 
     /// Returns the exact form of the distribution, where the distribution
     /// type should be a discrete type.
-    fn dist_type(&self) -> DType;
+    fn dist_type(&self) -> &DType;
 
     /// Returns the number of categories for this discrete event
-    fn get_k_num(&self) -> u8;
+    fn k_num(&self) -> u8;
+
+    /// Returns a sample from the original variable, not talking into account
+    /// the parents in the network.
+    fn sample(&self) -> u8;
 }
 
 pub trait Distribution {
@@ -42,6 +44,7 @@ pub trait Node<D, N>
     fn get_dist(&self) -> &D;
     fn get_child(&self, pos: usize) -> &N;
     fn get_childs(&self) -> Vec<&N>;
+    fn is_root(&self) -> bool;
 }
 
 // default implementations:
@@ -63,7 +66,6 @@ impl Observation for EventObs {
 }
 
 pub struct DefaultDiscrete<O: Observation> {
-    kind: DistributionKind,
     dist: DType,
     observations: Vec<O>,
 }
@@ -72,21 +74,33 @@ impl<O> DefaultDiscrete<O>
     where O: Observation
 {
     pub fn new(kind: VariableKind) -> Result<DefaultDiscrete<O>, ()> {
-        let (kind, dtype) = match kind {
-            VariableKind::Discrete => (DistributionKind::Discrete, DType::UnknownDisc),
-            VariableKind::Boolean => (DistributionKind::Discrete, DType::UnknownDisc),
+        let dtype = match kind {
+            VariableKind::Discrete | VariableKind::Boolean => DType::UnknownDisc,
             _ => return Err(()),
         };
 
         Ok(DefaultDiscrete {
-            kind: kind,
             dist: dtype,
             observations: Vec::new(),
         })
     }
 
+    pub fn with_dist(dist: DType) -> Result<DefaultDiscrete<O>, ()> {
+        match dist {
+            DType::Binomial(_) |
+            DType::Categorical(_) |
+            DType::Poisson |
+            DType::UnknownDisc => {}
+            _ => return Err(()),
+        }
+        Ok(DefaultDiscrete {
+            dist: dist,
+            observations: Vec::new(),
+        })
+    }
+
     pub fn as_dist(&mut self, dist: DType) -> Result<(), ()> {
-        match *&dist {
+        match dist {
             DType::Binomial(_) |
             DType::Categorical(_) |
             DType::Poisson |
@@ -111,18 +125,30 @@ impl<O> DiscreteDist<O> for DefaultDiscrete<O>
         &self.observations
     }
 
-    fn dist_type(&self) -> DType {
-        unimplemented!()
+    fn dist_type(&self) -> &DType {
+        &self.dist
     }
 
-    fn get_k_num(&self) -> u8 {
-        unimplemented!()
+    fn k_num(&self) -> u8 {
+        match self.dist {
+            DType::Categorical(ref dist) => dist.sample(),
+            DType::Binomial(_) => 2,
+            _ => panic!(),
+        }
+    }
+
+    fn sample(&self) -> u8 {
+        match self.dist {
+            DType::Categorical(ref dist) => dist.sample(),
+            DType::Binomial(ref dist) => dist.sample(),
+            _ => panic!(),
+        }
     }
 }
 
 // support types:
 
-pub type Continuous = f32;
+pub type Continuous = f64;
 pub type Discrete = isize;
 pub type Boolean = bool;
 
@@ -130,16 +156,6 @@ pub enum VariableKind {
     Continuous,
     Discrete,
     Boolean,
-}
-
-/// Unknown discrete distributions initially default to a categorical distribution,
-/// in case k = 2 (k = number of categories) it will be treated as a binomial distribution.
-///
-/// Continuous distributions default to a nonparametric distribution.
-#[derive(Debug, Clone, Copy)]
-pub enum DistributionKind {
-    Continuous,
-    Discrete,
 }
 
 use dists::Normal;

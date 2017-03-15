@@ -10,7 +10,7 @@ use rand::{random, Open01};
 pub struct Categorical {
     k: u8,
     event_prob: Vec<P>,
-    sample_intervals: Vec<f32>,
+    cdf: Vec<P>,
 }
 
 impl Categorical {
@@ -22,10 +22,10 @@ impl Categorical {
             return Err(format!("overflow by: {}", overflow));
         }
 
-        let mut intervals = vec![0_f32; categories.len()];
-        let mut i1 = 0_f32;
+        let mut intervals = vec![0_f64; categories.len()];
+        let mut i1 = 0_f64;
         let sum = itertools::fold(categories.iter().enumerate(), 0_f64, |a, (i, &b)| {
-            i1 += b as f32;
+            i1 += b;
             if i == categories.len() - 1 {
                 intervals[i] = 1.;
             } else {
@@ -41,19 +41,23 @@ impl Categorical {
         Ok(Categorical {
             k: categories.len() as u8,
             event_prob: categories,
-            sample_intervals: intervals,
+            cdf: intervals,
         })
     }
 
     /// Samples from a univariate categorical distribution and returns
     /// a category choice (zero-based indexed).
     pub fn sample(&self) -> u8 {
-        let Open01(val) = random::<Open01<f32>>();
-        self.sample_intervals.iter().position(|&p| p > val).unwrap() as u8
+        let Open01(val) = random::<Open01<f64>>();
+        self.cdf.iter().position(|&p| p > val).unwrap() as u8
     }
 
-    pub fn probabilities(&self) -> &[P] {
+    pub fn pmf(&self) -> &[P] {
         &self.event_prob
+    }
+
+    pub fn k_num(&self) -> u8 {
+        self.event_prob.len() as u8
     }
 }
 
@@ -85,29 +89,15 @@ impl Binomial {
         }
     }
 
-    pub fn success_probability(&self) -> P {
+    pub fn success(&self) -> P {
         self.event_prob
     }
 
-    pub fn probabilities(&self) -> [P; 2] {
+    pub fn failure(&self) -> P {
+        1. - self.event_prob
+    }
+
+    pub fn pmf(&self) -> [P; 2] {
         [1. - self.event_prob, self.event_prob]
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use test::Bencher;
-
-    #[bench]
-    fn sample_categ(b: &mut test::Bencher) {
-        let d = Categorical::new(vec![0.00392155_f64; 255]).unwrap();
-        b.iter(|| d.sample());
-    }
-
-    #[bench]
-    fn sample_binomial(b: &mut test::Bencher) { 
-        let d = Binomial::new(0.5).unwrap();
-        b.iter(|| d.sample());
     }
 }
