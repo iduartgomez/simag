@@ -4,6 +4,7 @@ extern crate float_cmp;
 //extern crate ndarray;
 extern crate itertools;
 extern crate rand;
+extern crate uuid;
 
 pub mod model;
 mod sampling;

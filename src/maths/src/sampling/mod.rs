@@ -1,15 +1,13 @@
 mod discrete;
 
-use std::hash::Hash;
-
 pub use self::discrete::Gibbs;
 
-use model::{DiscreteModel, DiscreteDist, Observation};
+use model::{DiscreteModel, DiscreteVar, Observation};
 
 pub type DefaultSampler<D, O> = Gibbs<D, O>;
 
 pub trait DiscreteSampler<D, O>
-    where D: DiscreteDist<O> + Hash + Eq,
+    where D: DiscreteVar<O>,
           O: Observation
 {
     /// Return a matrix of t x k dimension samples (t = steeps; k = number of vars).
@@ -18,13 +16,13 @@ pub trait DiscreteSampler<D, O>
 }
 
 pub trait ContinuousSampler<D, O>
-    where D: DiscreteDist<O> + Hash + Eq,
+    where D: DiscreteVar<O>,
           O: Observation
 {
 }
 
 trait MixedSampler<D, O>
-    where D: DiscreteDist<O> + Hash + Eq,
+    where D: DiscreteVar<O>,
           O: Observation
 {
 }

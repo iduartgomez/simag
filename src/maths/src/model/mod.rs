@@ -1,11 +1,13 @@
 //! Infrastructure to instantiate an statistical model with a given set of parameters.
 mod discrete;
 
-use std::collections::{VecDeque, HashSet};
+use std::collections::{LinkedList, VecDeque, HashSet};
 use std::iter::FromIterator;
 use std::marker::PhantomData;
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
+
+use uuid::Uuid;
 
 use dists::{Categorical, Binomial};
 pub use self::discrete::{DiscreteNode, DiscreteModel, CPT};
@@ -16,7 +18,9 @@ pub trait Observation {
     fn is_kind(&self) -> VariableKind;
 }
 
-pub trait DiscreteDist<O: Observation>: Distribution {
+pub trait DiscreteVar<O>: Variable
+    where O: Observation
+{
     /// Returns an slice of known observations for the variable of
     /// this distribution.
     fn get_observations(&self) -> &[O];
@@ -33,18 +37,20 @@ pub trait DiscreteDist<O: Observation>: Distribution {
     fn sample(&self) -> u8;
 }
 
-pub trait Distribution {
+pub trait Variable: Hash + PartialEq + Eq {
     type Observation: Observation;
 }
 
 pub trait Node<D, N>
-    where D: Distribution + Hash + Eq,
+    where D: Variable,
           N: Node<D, N>
 {
     fn get_dist(&self) -> &D;
     fn get_child(&self, pos: usize) -> &N;
     fn get_childs(&self) -> Vec<&N>;
     fn is_root(&self) -> bool;
+    fn position(&self) -> usize;
+    fn update_position(&self, pos: usize);
 }
 
 // default implementations:
@@ -68,6 +74,7 @@ impl Observation for EventObs {
 pub struct DefaultDiscrete<O: Observation> {
     dist: DType,
     observations: Vec<O>,
+    id: Uuid,
 }
 
 impl<O> DefaultDiscrete<O>
@@ -82,6 +89,7 @@ impl<O> DefaultDiscrete<O>
         Ok(DefaultDiscrete {
             dist: dtype,
             observations: Vec::new(),
+            id: Uuid::new_v4(),
         })
     }
 
@@ -96,6 +104,7 @@ impl<O> DefaultDiscrete<O>
         Ok(DefaultDiscrete {
             dist: dist,
             observations: Vec::new(),
+            id: Uuid::new_v4(),
         })
     }
 
@@ -112,13 +121,31 @@ impl<O> DefaultDiscrete<O>
     }
 }
 
-impl<O> Distribution for DefaultDiscrete<O>
+impl<O> Hash for DefaultDiscrete<O>
+    where O: Observation
+{
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+impl<O> PartialEq for DefaultDiscrete<O>
+    where O: Observation
+{
+    fn eq(&self, other: &DefaultDiscrete<O>) -> bool {
+        self.id == other.id
+    }
+}
+
+impl<O> Eq for DefaultDiscrete<O> where O: Observation {}
+
+impl<O> Variable for DefaultDiscrete<O>
     where O: Observation
 {
     type Observation = O;
 }
 
-impl<O> DiscreteDist<O> for DefaultDiscrete<O>
+impl<O> DiscreteVar<O> for DefaultDiscrete<O>
     where O: Observation
 {
     fn get_observations(&self) -> &[O] {
@@ -183,8 +210,8 @@ pub enum DType {
     Dirichlet,
 }
 
-struct BayesNet<'a, D: 'a, O: 'a, N>
-    where D: Distribution + Hash + Eq,
+struct DAG<'a, D: 'a, O: 'a, N>
+    where D: Variable,
           O: Observation,
           N: Node<D, N>
 {
@@ -193,13 +220,13 @@ struct BayesNet<'a, D: 'a, O: 'a, N>
     nodes: Vec<Rc<N>>,
 }
 
-impl<'a, D: 'a, O: 'a, N> BayesNet<'a, D, O, N>
-    where D: Distribution + Hash + Eq,
+impl<'a, D: 'a, O: 'a, N> DAG<'a, D, O, N>
+    where D: Variable,
           O: Observation,
           N: Node<D, N>
 {
-    fn new() -> BayesNet<'a, D, O, N> {
-        BayesNet {
+    fn new() -> DAG<'a, D, O, N> {
+        DAG {
             _disttype: PhantomData,
             _obtype: PhantomData,
             nodes: vec![],
@@ -209,11 +236,95 @@ impl<'a, D: 'a, O: 'a, N> BayesNet<'a, D, O, N>
     fn iter_vars<'b>(&'b self) -> NetIter<'a, 'b, D, N> {
         NetIter::new(&self.nodes)
     }
+
+    /// Perform both topological sorting and acyclicality check in the same operation.
+    /// Returns error if is not a DAG.
+    fn topological_sort(&mut self) -> Result<(), ()> {
+        let mut cycle_detect = DirectedCycle::new(self);
+        cycle_detect.dfs(self, 0);
+        if cycle_detect.has_cycle() {
+            return Err(());
+        }
+        let mut priority = Vec::with_capacity(self.nodes.len());
+        for (i, c) in cycle_detect.sorted.iter().enumerate() {
+            let node = &self.nodes[*c];
+            if node.position() != i {
+                node.update_position(i);
+            }
+            priority.push((i, node.clone()));
+        }
+        priority.sort_by(|&(ref i, _), &(ref j, _)| i.cmp(j));
+        let sorted: Vec<Rc<N>> = priority.into_iter()
+            .map(|(i, e)| e)
+            .collect();
+        self.nodes = sorted;
+        Ok(())
+    }
+}
+
+struct DirectedCycle {
+    marked: Vec<bool>,
+    edge_to: Vec<usize>,
+    cycle: Vec<usize>,
+    on_stack: Vec<bool>,
+    sorted: Vec<usize>,
+}
+
+impl DirectedCycle {
+    fn new<D, O, N>(graph: &DAG<D, O, N>) -> DirectedCycle
+        where D: Variable,
+              O: Observation,
+              N: Node<D, N>
+    {
+        DirectedCycle {
+            marked: vec![false; graph.nodes.len()],
+            on_stack: vec![false; graph.nodes.len()],
+            edge_to: Vec::from_iter(0..graph.nodes.len()),
+            cycle: Vec::with_capacity(graph.nodes.len()),
+            sorted: Vec::with_capacity(graph.nodes.len()),
+        }
+    }
+
+    fn dfs<D, O, N>(&mut self, graph: &DAG<D, O, N>, v: usize)
+        where D: Variable,
+              O: Observation,
+              N: Node<D, N>
+    {
+        self.on_stack[v] = true;
+        self.marked[v] = true;
+        for c in graph.nodes[v].get_childs() {
+            let w = c.position();
+            if self.has_cycle() {
+                return;
+            } else if !self.marked[w] {
+                self.edge_to[w] = v;
+                self.dfs(graph, w);
+            } else if self.on_stack[w] {
+                let mut x = v;
+                while x != w {
+                    x = self.edge_to[x];
+                    self.cycle.push(x);
+                }
+                self.cycle.push(w);
+                self.cycle.push(v);
+            }
+            self.on_stack[v] = false;
+        }
+        self.sorted.push(v);
+    }
+
+    fn has_cycle(&self) -> bool {
+        !self.cycle.is_empty()
+    }
+
+    fn cycle(&self) -> &[usize] {
+        &self.cycle
+    }
 }
 
 /// Bayesian Network iterator, visits all nodes from parents to childs
 pub struct NetIter<'a: 'b, 'b, D: 'a, N: 'b>
-    where D: Distribution + Hash + Eq,
+    where D: Variable,
           N: Node<D, N>
 {
     unvisitted: VecDeque<&'b N>,
@@ -223,7 +334,7 @@ pub struct NetIter<'a: 'b, 'b, D: 'a, N: 'b>
 }
 
 impl<'a, 'b, D, N> NetIter<'a, 'b, D, N>
-    where D: Distribution + Hash + Eq,
+    where D: Variable,
           N: Node<D, N>
 {
     fn new(nodes: &'b [Rc<N>]) -> NetIter<'a, 'b, D, N> {
@@ -242,7 +353,7 @@ impl<'a, 'b, D, N> NetIter<'a, 'b, D, N>
 }
 
 impl<'a, 'b, D, N> ::std::iter::Iterator for NetIter<'a, 'b, D, N>
-    where D: Distribution + Hash + Eq,
+    where D: Variable,
           N: Node<D, N>
 {
     type Item = &'b N;

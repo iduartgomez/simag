@@ -1,34 +1,33 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::hash::Hash;
 use std::iter::FromIterator;
 use std::marker::PhantomData;
 use std::rc::{Rc, Weak};
 
-use super::{Node, BayesNet, DiscreteDist, Observation, NetIter, DType};
+use super::{Node, DAG, DiscreteVar, Observation, NetIter, DType};
 use sampling::{DiscreteSampler, DefaultSampler};
 use dists::{Categorical, Binomial};
 use P;
 
 pub struct DiscreteModel<'a, D: 'a, O: 'a, S>
-    where D: DiscreteDist<O> + Hash + Eq,
+    where D: DiscreteVar<O>,
           O: Observation,
           S: DiscreteSampler<D, O> + Clone
 {
-    vars: BayesNet<'a, D, O, DiscreteNode<'a, D, O>>,
+    vars: DAG<'a, D, O, DiscreteNode<'a, D, O>>,
     sampler: S,
     _obtype: PhantomData<O>,
 }
 
 impl<'a, D: 'a, O: 'a, S> DiscreteModel<'a, D, O, S>
-    where D: DiscreteDist<O> + Hash + Eq,
+    where D: DiscreteVar<O>,
           O: Observation,
           S: DiscreteSampler<D, O> + Clone
 {
     pub fn new() -> DiscreteModel<'a, D, O, DefaultSampler<D, O>> {
         DiscreteModel {
             _obtype: PhantomData,
-            vars: BayesNet::new(),
+            vars: DAG::new(),
             sampler: DefaultSampler::new(None, None),
         }
     }
@@ -93,7 +92,7 @@ impl<'a, D: 'a, O: 'a, S> DiscreteModel<'a, D, O, S>
     /// In both cases each row has to sum up to 1.
     ///
     /// More information on how to build in the [CPT]() type page.
-    pub fn add_parent_to_var(&mut self, node: &D, parent: &D, prob: CPT) -> Result<(), ()> {
+    pub fn add_parent_to_var(&mut self, node: &D, parent_d: &D, prob: CPT) -> Result<(), ()> {
         // checks to perform:
         //  - both exist in the model
         //  - the theoretical child cannot be a parent of the theoretical parent
@@ -108,11 +107,9 @@ impl<'a, D: 'a, O: 'a, S> DiscreteModel<'a, D, O, S>
         let parent: Rc<DiscreteNode<_, _>> = self.vars
             .nodes
             .iter()
-            .find(|n| (&**n).dist == parent)
+            .find(|n| (&**n).dist == parent_d)
             .cloned()
             .ok_or(())?;
-        // check child is not parent of parent already:
-
         let parent_k = parent.dist.k_num();
         let parents = &mut *node.parents.borrow_mut();
         parents.push((parent_k, Rc::downgrade(&parent.clone())));
@@ -120,10 +117,14 @@ impl<'a, D: 'a, O: 'a, S> DiscreteModel<'a, D, O, S>
         parent_childs.push(parent.clone());
         // make CPT for child
         if node.build_cpt(prob, parent_k as usize).is_err() {
-            Err(())
-        } else {
-            Ok(())
+            return Err(());
         }
+        // check if it's a DAG and topologically sort the graph 
+        self.vars.topological_sort()
+    }
+
+    pub fn remove_var(&mut self, node: &D) {
+        unimplemented!()
     }
 }
 
@@ -198,7 +199,7 @@ type KSizedParent<'a, D, O> = (u8, Weak<DiscreteNode<'a, D, O>>);
 /// This type cannot be instantiated directly, instead add the random variable
 /// distribution to the network.
 pub struct DiscreteNode<'a, D: 'a, O: 'a>
-    where D: DiscreteDist<O> + Hash + Eq,
+    where D: DiscreteVar<O>,
           O: Observation
 {
     _obtype: PhantomData<O>,
@@ -206,11 +207,11 @@ pub struct DiscreteNode<'a, D: 'a, O: 'a>
     childs: RefCell<Vec<Rc<DiscreteNode<'a, D, O>>>>,
     cpt: RefCell<HashMap<Choices, DType>>,
     parents: RefCell<Vec<KSizedParent<'a, D, O>>>, // (categ, parent_ptr)
-    pub pos: usize, // position in the bayes net vec of self
+    pos: RefCell<usize>, // position in the bayes net vec of self
 }
 
 impl<'a, D: 'a, O: 'a> DiscreteNode<'a, D, O>
-    where D: DiscreteDist<O> + Hash + Eq,
+    where D: DiscreteVar<O>,
           O: Observation
 {
     fn new(dist: &'a D, pos: usize) -> Result<DiscreteNode<'a, D, O>, ()> {
@@ -225,7 +226,7 @@ impl<'a, D: 'a, O: 'a> DiscreteNode<'a, D, O>
             dist: dist,
             childs: RefCell::new(vec![]),
             parents: RefCell::new(vec![]),
-            pos: pos,
+            pos: RefCell::new(pos),
             cpt: RefCell::new(HashMap::new()),
         })
     }
@@ -236,7 +237,7 @@ impl<'a, D: 'a, O: 'a> DiscreteNode<'a, D, O>
         let mut positions = Vec::with_capacity(parents.len());
         for &(_, ref p) in parents {
             let p = p.upgrade().unwrap();
-            positions.push(p.pos);
+            positions.push(*p.pos.borrow());
         }
         positions
     }
@@ -246,7 +247,7 @@ impl<'a, D: 'a, O: 'a> DiscreteNode<'a, D, O>
         let childs = &*self.childs.borrow();
         let mut positions = Vec::with_capacity(childs.len());
         for c in childs {
-            positions.push(c.pos);
+            positions.push(*c.pos.borrow());
         }
         positions
     }
@@ -277,6 +278,16 @@ impl<'a, D: 'a, O: 'a> DiscreteNode<'a, D, O>
         for &(_, ref p) in parents {
             let p = p.upgrade().unwrap();
             dists.push(p.dist);
+        }
+        dists
+    }
+
+    /// Returns a reference to the distributions of the childs·
+    pub fn get_childs_dists(&self) -> Vec<&D> {
+        let childs = &*self.childs.borrow();
+        let mut dists = Vec::with_capacity(childs.len());
+        for c in childs {
+            dists.push(c.dist);
         }
         dists
     }
@@ -313,7 +324,7 @@ impl<'a, D: 'a, O: 'a> DiscreteNode<'a, D, O>
 }
 
 impl<'a, D: 'a, O: 'a> Node<D, Self> for DiscreteNode<'a, D, O>
-    where D: DiscreteDist<O> + Hash + Eq,
+    where D: DiscreteVar<O>,
           O: Observation
 {
     fn get_dist(&self) -> &D {
@@ -332,5 +343,14 @@ impl<'a, D: 'a, O: 'a> Node<D, Self> for DiscreteNode<'a, D, O>
 
     fn is_root(&self) -> bool {
         self.parents_num() == 0
+    }
+
+    fn position(&self) -> usize {
+        *self.pos.borrow()
+    }
+
+    fn update_position(&self, pos: usize) {
+        let mut old = self.pos.borrow_mut();
+        *old = pos;
     }
 }

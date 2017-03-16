@@ -1,10 +1,9 @@
 //! Sampling for pure discrete models.
 
 use std::marker::PhantomData;
-use std::hash::Hash;
 
 use super::*;
-use model::{DiscreteModel, DiscreteDist, Observation, DiscreteNode};
+use model::{DiscreteModel, DiscreteVar, Observation, DiscreteNode};
 
 const ITER_TIMES: usize = 1000;
 const BURN_IN: usize = 0;
@@ -19,7 +18,7 @@ pub struct Gibbs<D, O> {
 }
 
 impl<D, O> Gibbs<D, O>
-    where D: DiscreteDist<O> + Hash + Eq,
+    where D: DiscreteVar<O>,
           O: Observation
 {
     pub fn new(steeps: Option<usize>, burnin: Option<usize>) -> Gibbs<D, O> {
@@ -72,7 +71,7 @@ impl<D, O> Gibbs<D, O>
 }
 
 impl<D, O> DiscreteSampler<D, O> for Gibbs<D, O>
-    where D: DiscreteDist<O> + Hash + Eq,
+    where D: DiscreteVar<O>,
           O: Observation
 {
     fn get_samples(mut self, net: &DiscreteModel<D, O, Gibbs<D, O>>) -> Vec<Vec<u8>> {
@@ -90,7 +89,7 @@ impl<D, O> DiscreteSampler<D, O> for Gibbs<D, O>
 }
 
 impl<D, O> ::std::clone::Clone for Gibbs<D, O>
-    where D: DiscreteDist<O> + Hash + Eq,
+    where D: DiscreteVar<O>,
           O: Observation
 {
     fn clone(&self) -> Gibbs<D, O> {
@@ -105,5 +104,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn sample() {}
+    fn sample() {
+
+    }
 }
