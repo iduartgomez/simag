@@ -1,27 +1,20 @@
 //! Sampling for pure discrete models.
 
-use std::marker::PhantomData;
-
-use super::*;
-use model::{DiscreteModel, DiscreteVar, Observation, DiscreteNode};
+use super::DiscreteSampler;
+use model::{DiscreteModel, DiscreteNode};
 
 const ITER_TIMES: usize = 1000;
 const BURN_IN: usize = 0;
 
 #[derive(Debug)]
-pub struct Gibbs<D, O> {
-    _obtype: PhantomData<O>,
-    _disttype: PhantomData<D>,
+pub struct Gibbs {
     steeps: usize,
     burnin: usize,
     samples: Vec<Vec<u8>>,
 }
 
-impl<D, O> Gibbs<D, O>
-    where D: DiscreteVar<O>,
-          O: Observation
-{
-    pub fn new(steeps: Option<usize>, burnin: Option<usize>) -> Gibbs<D, O> {
+impl Gibbs {
+    pub fn new(steeps: Option<usize>, burnin: Option<usize>) -> Gibbs {
         let steeps = match steeps {
             Some(val) => val,
             None => ITER_TIMES,
@@ -33,15 +26,15 @@ impl<D, O> Gibbs<D, O>
         };
 
         Gibbs {
-            _obtype: PhantomData,
-            _disttype: PhantomData,
             steeps: steeps,
             burnin: burnin,
             samples: Vec::with_capacity(ITER_TIMES),
         }
     }
 
-    fn var_val(&self, t: usize, var: &DiscreteNode<D, O>) -> u8 {
+    fn var_val<'a, N: 'a>(&self, t: usize, var: &N) -> u8
+        where N: DiscreteNode<'a>
+    {
         let mut mb_values = Vec::new();
         // P(var|mb(var))
         let parents = var.get_parents_positions();
@@ -54,33 +47,32 @@ impl<D, O> Gibbs<D, O>
             }
             var.draw_sample(&mb_values)
         } else {
-            var.dist.sample()
+            var.init_sample()
         }
     }
 
-    fn initialize<'a: 'b, 'b>(&'b mut self, net: &'b DiscreteModel<'a, D, O, Gibbs<D, O>>) {
-        use model::Node;
-
+    fn initialize<'a, N: 'a>(&mut self, net: &DiscreteModel<'a, N, Gibbs>)
+        where N: DiscreteNode<'a>
+    {
         // draw prior values from the distribution of each value
         let mut priors = Vec::with_capacity(net.var_num());
         for node in net.iter_vars().filter(|x| x.is_root()) {
-            priors.push(node.dist.sample());
+            priors.push(node.init_sample());
         }
         self.samples.push(priors);
     }
 }
 
-impl<D, O> DiscreteSampler<D, O> for Gibbs<D, O>
-    where D: DiscreteVar<O>,
-          O: Observation
-{
-    fn get_samples(mut self, net: &DiscreteModel<D, O, Gibbs<D, O>>) -> Vec<Vec<u8>> {
+impl DiscreteSampler for Gibbs {
+    fn get_samples<'a, N: 'a>(mut self, net: &DiscreteModel<'a, N, Gibbs>) -> Vec<Vec<u8>>
+        where N: DiscreteNode<'a>
+    {
         let k = net.var_num();
         self.samples = vec![vec![0_u8; k]; self.steeps];
         self.initialize(net);
         for t in 0..self.steeps {
             for (i, var_dist) in net.iter_vars().enumerate() {
-                let choice = self.var_val(t, var_dist);
+                let choice = self.var_val(t, &*var_dist);
                 self.samples[t][i] = choice;
             }
         }
@@ -88,11 +80,8 @@ impl<D, O> DiscreteSampler<D, O> for Gibbs<D, O>
     }
 }
 
-impl<D, O> ::std::clone::Clone for Gibbs<D, O>
-    where D: DiscreteVar<O>,
-          O: Observation
-{
-    fn clone(&self) -> Gibbs<D, O> {
+impl ::std::clone::Clone for Gibbs {
+    fn clone(&self) -> Gibbs {
         let steeps = Some(self.steeps);
         let burnin = Some(self.burnin);
         Gibbs::new(steeps, burnin)
@@ -104,7 +93,5 @@ mod test {
     use super::*;
 
     #[test]
-    fn sample() {
-
-    }
+    fn sample() {}
 }

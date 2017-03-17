@@ -2,27 +2,17 @@ mod discrete;
 
 pub use self::discrete::Gibbs;
 
-use model::{DiscreteModel, DiscreteVar, Observation};
+use model::{DiscreteModel, DiscreteNode};
 
-pub type DefaultSampler<D, O> = Gibbs<D, O>;
+pub type DefSampler = Gibbs;
 
-pub trait DiscreteSampler<D, O>
-    where D: DiscreteVar<O>,
-          O: Observation
-{
+pub trait DiscreteSampler {
     /// Return a matrix of t x k dimension samples (t = steeps; k = number of vars).
-    fn get_samples(self, state_space: &DiscreteModel<D, O, Self>) -> Vec<Vec<u8>>
-        where Self: Sized + Clone;
+    fn get_samples<'a, N: 'a>(self, state_space: &DiscreteModel<'a, N, Self>) -> Vec<Vec<u8>>
+        where Self: Sized + Clone,
+              N: DiscreteNode<'a>;
 }
 
-pub trait ContinuousSampler<D, O>
-    where D: DiscreteVar<O>,
-          O: Observation
-{
-}
+pub trait ContinuousSampler {}
 
-trait MixedSampler<D, O>
-    where D: DiscreteVar<O>,
-          O: Observation
-{
-}
+trait MixedSampler {}

@@ -1,16 +1,17 @@
 //! Infrastructure to instantiate an statistical model with a given set of parameters.
 mod discrete;
 
-use std::collections::{LinkedList, VecDeque, HashSet};
+use std::collections::{VecDeque, HashSet};
 use std::iter::FromIterator;
-use std::marker::PhantomData;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use std::rc::Rc;
-
-use uuid::Uuid;
+use std::marker::PhantomData;
 
 use dists::{Categorical, Binomial};
-pub use self::discrete::{DiscreteNode, DiscreteModel, CPT};
+use sampling::DiscreteSampler;
+
+pub use self::discrete::{DiscreteModel, DefDiscreteNode, DefDiscreteVar, CPT};
+pub use self::discrete::{DiscreteNode, DiscreteVar};
 
 // public traits for models:
 
@@ -18,39 +19,30 @@ pub trait Observation {
     fn is_kind(&self) -> VariableKind;
 }
 
-pub trait DiscreteVar<O>: Variable
-    where O: Observation
-{
-    /// Returns an slice of known observations for the variable of
-    /// this distribution.
-    fn get_observations(&self) -> &[O];
-
-    /// Returns the exact form of the distribution, where the distribution
-    /// type should be a discrete type.
-    fn dist_type(&self) -> &DType;
-
-    /// Returns the number of categories for this discrete event
-    fn k_num(&self) -> u8;
-
-    /// Returns a sample from the original variable, not talking into account
-    /// the parents in the network.
-    fn sample(&self) -> u8;
-}
-
 pub trait Variable: Hash + PartialEq + Eq {
-    type Observation: Observation;
+    type O: Observation;
 }
 
-pub trait Node<D, N>
-    where D: Variable,
-          N: Node<D, N>
-{
-    fn get_dist(&self) -> &D;
-    fn get_child(&self, pos: usize) -> &N;
-    fn get_childs(&self) -> Vec<&N>;
+/// A node in the the DAG.
+pub trait Node {
+    fn get_child(&self, pos: usize) -> Rc<Self>;
+    fn get_childs(&self) -> Vec<Rc<Self>>;
     fn is_root(&self) -> bool;
     fn position(&self) -> usize;
+
+    /// Returns the node parents positions in the network.
+    fn get_parents_positions(&self) -> Vec<usize>;
+
+    /// Returns the node childs positions in the network.
+    fn get_childs_positions(&self) -> Vec<usize>;
+
+    /// Node implementors are behind a reference counted pointer in the network,
+    /// so they must have an interior mutable field to keep track of their position
+    /// in the network which can be update calling this method.
     fn update_position(&self, pos: usize);
+
+    /// Returns the number of parents this node has.
+    fn parents_num(&self) -> usize;
 }
 
 // default implementations:
@@ -67,108 +59,6 @@ impl Observation for EventObs {
             EventObs::Continuous(_) => VariableKind::Continuous,
             EventObs::Discrete(_) => VariableKind::Discrete,
             EventObs::Boolean(_) => VariableKind::Boolean,
-        }
-    }
-}
-
-pub struct DefaultDiscrete<O: Observation> {
-    dist: DType,
-    observations: Vec<O>,
-    id: Uuid,
-}
-
-impl<O> DefaultDiscrete<O>
-    where O: Observation
-{
-    pub fn new(kind: VariableKind) -> Result<DefaultDiscrete<O>, ()> {
-        let dtype = match kind {
-            VariableKind::Discrete | VariableKind::Boolean => DType::UnknownDisc,
-            _ => return Err(()),
-        };
-
-        Ok(DefaultDiscrete {
-            dist: dtype,
-            observations: Vec::new(),
-            id: Uuid::new_v4(),
-        })
-    }
-
-    pub fn with_dist(dist: DType) -> Result<DefaultDiscrete<O>, ()> {
-        match dist {
-            DType::Binomial(_) |
-            DType::Categorical(_) |
-            DType::Poisson |
-            DType::UnknownDisc => {}
-            _ => return Err(()),
-        }
-        Ok(DefaultDiscrete {
-            dist: dist,
-            observations: Vec::new(),
-            id: Uuid::new_v4(),
-        })
-    }
-
-    pub fn as_dist(&mut self, dist: DType) -> Result<(), ()> {
-        match dist {
-            DType::Binomial(_) |
-            DType::Categorical(_) |
-            DType::Poisson |
-            DType::UnknownDisc => {}
-            _ => return Err(()),
-        }
-        self.dist = dist;
-        Ok(())
-    }
-}
-
-impl<O> Hash for DefaultDiscrete<O>
-    where O: Observation
-{
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
-    }
-}
-
-impl<O> PartialEq for DefaultDiscrete<O>
-    where O: Observation
-{
-    fn eq(&self, other: &DefaultDiscrete<O>) -> bool {
-        self.id == other.id
-    }
-}
-
-impl<O> Eq for DefaultDiscrete<O> where O: Observation {}
-
-impl<O> Variable for DefaultDiscrete<O>
-    where O: Observation
-{
-    type Observation = O;
-}
-
-impl<O> DiscreteVar<O> for DefaultDiscrete<O>
-    where O: Observation
-{
-    fn get_observations(&self) -> &[O] {
-        &self.observations
-    }
-
-    fn dist_type(&self) -> &DType {
-        &self.dist
-    }
-
-    fn k_num(&self) -> u8 {
-        match self.dist {
-            DType::Categorical(ref dist) => dist.sample(),
-            DType::Binomial(_) => 2,
-            _ => panic!(),
-        }
-    }
-
-    fn sample(&self) -> u8 {
-        match self.dist {
-            DType::Categorical(ref dist) => dist.sample(),
-            DType::Binomial(ref dist) => dist.sample(),
-            _ => panic!(),
         }
     }
 }
@@ -210,43 +100,40 @@ pub enum DType {
     Dirichlet,
 }
 
-struct DAG<'a, D: 'a, O: 'a, N>
-    where D: Variable,
-          O: Observation,
-          N: Node<D, N>
+struct DAG<'a, N: 'a>
+    where N: DiscreteNode<'a>
 {
-    _disttype: PhantomData<&'a D>,
-    _obtype: PhantomData<O>,
+    _node_lifetime: PhantomData<&'a N>,
     nodes: Vec<Rc<N>>,
 }
 
-impl<'a, D: 'a, O: 'a, N> DAG<'a, D, O, N>
-    where D: Variable,
-          O: Observation,
-          N: Node<D, N>
+impl<'a, N> DAG<'a, N>
+    where N: DiscreteNode<'a>
 {
-    fn new() -> DAG<'a, D, O, N> {
-        DAG {
-            _disttype: PhantomData,
-            _obtype: PhantomData,
-            nodes: vec![],
-        }
-    }
-
-    fn iter_vars<'b>(&'b self) -> NetIter<'a, 'b, D, N> {
-        NetIter::new(&self.nodes)
+    fn discrete_model<V>(init: &'a V) -> Result<DAG<DefDiscreteNode<'a, V>>, ()>
+        where V: Variable + DiscreteVar
+    {
+        let init = DefDiscreteNode::with_var(init, 0)?;
+        let mut nodes = Vec::new();
+        nodes.push(Rc::new(init));
+        Ok(DAG {
+            _node_lifetime: PhantomData,
+            nodes: nodes,
+        })
     }
 
     /// Perform both topological sorting and acyclicality check in the same operation.
     /// Returns error if is not a DAG.
     fn topological_sort(&mut self) -> Result<(), ()> {
-        let mut cycle_detect = DirectedCycle::new(self);
-        cycle_detect.dfs(self, 0);
-        if cycle_detect.has_cycle() {
-            return Err(());
+        let mut cycle_check = DirectedCycle::new::<N>(self);
+        for i in 0..self.nodes.len() {
+            cycle_check.dfs(self, i);
+            if cycle_check.has_cycle() {
+                return Err(());
+            }
         }
         let mut priority = Vec::with_capacity(self.nodes.len());
-        for (i, c) in cycle_detect.sorted.iter().enumerate() {
+        for (i, c) in cycle_check.sorted.iter().enumerate() {
             let node = &self.nodes[*c];
             if node.position() != i {
                 node.update_position(i);
@@ -255,7 +142,7 @@ impl<'a, D: 'a, O: 'a, N> DAG<'a, D, O, N>
         }
         priority.sort_by(|&(ref i, _), &(ref j, _)| i.cmp(j));
         let sorted: Vec<Rc<N>> = priority.into_iter()
-            .map(|(i, e)| e)
+            .map(|(_, e)| e)
             .collect();
         self.nodes = sorted;
         Ok(())
@@ -271,10 +158,8 @@ struct DirectedCycle {
 }
 
 impl DirectedCycle {
-    fn new<D, O, N>(graph: &DAG<D, O, N>) -> DirectedCycle
-        where D: Variable,
-              O: Observation,
-              N: Node<D, N>
+    fn new<'a, N: 'a>(graph: &DAG<'a, N>) -> DirectedCycle
+        where N: DiscreteNode<'a>
     {
         DirectedCycle {
             marked: vec![false; graph.nodes.len()],
@@ -285,10 +170,8 @@ impl DirectedCycle {
         }
     }
 
-    fn dfs<D, O, N>(&mut self, graph: &DAG<D, O, N>, v: usize)
-        where D: Variable,
-              O: Observation,
-              N: Node<D, N>
+    fn dfs<'a, N: 'a>(&mut self, graph: &DAG<'a, N>, v: usize)
+        where N: DiscreteNode<'a>
     {
         self.on_stack[v] = true;
         self.marked[v] = true;
@@ -323,27 +206,26 @@ impl DirectedCycle {
 }
 
 /// Bayesian Network iterator, visits all nodes from parents to childs
-pub struct NetIter<'a: 'b, 'b, D: 'a, N: 'b>
-    where D: Variable,
-          N: Node<D, N>
+pub struct NetIter<'a, N: 'a>
+    where N: DiscreteNode<'a>
 {
-    unvisitted: VecDeque<&'b N>,
-    processed: HashSet<&'a D>,
-    queued: &'b N,
+    _n_lt: PhantomData<&'a N>,
+    unvisitted: VecDeque<Rc<N>>,
+    processed: HashSet<usize>,
+    queued: Rc<N>,
     childs_visitted: usize,
 }
 
-impl<'a, 'b, D, N> NetIter<'a, 'b, D, N>
-    where D: Variable,
-          N: Node<D, N>
+impl<'a, N: 'a> NetIter<'a, N>
+    where N: DiscreteNode<'a>
 {
-    fn new(nodes: &'b [Rc<N>]) -> NetIter<'a, 'b, D, N> {
+    fn new(nodes: &[Rc<N>]) -> NetIter<'a, N> {
         let mut processed = HashSet::new();
-        let mut unvisitted = VecDeque::from_iter(nodes.iter().map(|x| &**x));
+        let mut unvisitted = VecDeque::from_iter(nodes.iter().cloned());
         let first = unvisitted.pop_front().unwrap();
-        let dist = unsafe { &*(first.get_dist() as *const D) as &'a D };
-        processed.insert(dist);
+        processed.insert(first.get_dist() as *const N::Var as usize);
         NetIter {
+            _n_lt: PhantomData,
             unvisitted: unvisitted,
             processed: processed,
             queued: first,
@@ -352,17 +234,17 @@ impl<'a, 'b, D, N> NetIter<'a, 'b, D, N>
     }
 }
 
-impl<'a, 'b, D, N> ::std::iter::Iterator for NetIter<'a, 'b, D, N>
-    where D: Variable,
-          N: Node<D, N>
+impl<'a, N: 'a> ::std::iter::Iterator for NetIter<'a, N>
+    where N: DiscreteNode<'a>
 {
-    type Item = &'b N;
+    type Item = Rc<N>;
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             while self.childs_visitted < self.queued.get_childs().len() {
                 let next = self.queued.get_child(self.childs_visitted);
                 self.childs_visitted += 1;
-                if !self.processed.contains(next.get_dist()) {
+                let d = next.get_dist() as *const N::Var as usize;
+                if !self.processed.contains(&d) {
                     return Some(next);
                 }
             }
@@ -372,8 +254,7 @@ impl<'a, 'b, D, N> ::std::iter::Iterator for NetIter<'a, 'b, D, N>
             } else {
                 // add all previously visitted to the list of processed
                 for e in self.queued.get_childs() {
-                    let e = unsafe { &*(e.get_dist() as *const D) as &'a D };
-                    self.processed.insert(e);
+                    self.processed.insert(e.get_dist() as *const N::Var as usize);
                 }
                 let next = self.unvisitted.pop_front().unwrap();
                 self.queued = next;
