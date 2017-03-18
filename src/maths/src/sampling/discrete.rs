@@ -1,6 +1,6 @@
 //! Sampling for pure discrete models.
 
-use super::DiscreteSampler;
+use super::{Sampler, DiscreteSampler};
 use model::{DiscreteModel, DiscreteNode};
 
 const ITER_TIMES: usize = 1000;
@@ -13,8 +13,8 @@ pub struct Gibbs {
     samples: Vec<Vec<u8>>,
 }
 
-impl Gibbs {
-    pub fn new(steeps: Option<usize>, burnin: Option<usize>) -> Gibbs {
+impl Sampler for Gibbs {
+    fn new(steeps: Option<usize>, burnin: Option<usize>) -> Gibbs {
         let steeps = match steeps {
             Some(val) => val,
             None => ITER_TIMES,
@@ -31,7 +31,9 @@ impl Gibbs {
             samples: Vec::with_capacity(ITER_TIMES),
         }
     }
+}
 
+impl Gibbs {
     fn var_val<'a, N: 'a>(&self, t: usize, var: &N) -> u8
         where N: DiscreteNode<'a>
     {

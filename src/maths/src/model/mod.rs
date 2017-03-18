@@ -39,7 +39,7 @@ pub trait Node {
     /// Node implementors are behind a reference counted pointer in the network,
     /// so they must have an interior mutable field to keep track of their position
     /// in the network which can be update calling this method.
-    fn update_position(&self, pos: usize);
+    fn set_position(&self, pos: usize);
 
     /// Returns the number of parents this node has.
     fn parents_num(&self) -> usize;
@@ -103,23 +103,18 @@ pub enum DType {
 struct DAG<'a, N: 'a>
     where N: DiscreteNode<'a>
 {
-    _node_lifetime: PhantomData<&'a N>,
+    _nlt: PhantomData<&'a N>,
     nodes: Vec<Rc<N>>,
 }
 
-impl<'a, N> DAG<'a, N>
+impl<'a, N: 'a> DAG<'a, N>
     where N: DiscreteNode<'a>
 {
-    fn discrete_model<V>(init: &'a V) -> Result<DAG<DefDiscreteNode<'a, V>>, ()>
-        where V: Variable + DiscreteVar
-    {
-        let init = DefDiscreteNode::with_var(init, 0)?;
-        let mut nodes = Vec::new();
-        nodes.push(Rc::new(init));
-        Ok(DAG {
-            _node_lifetime: PhantomData,
-            nodes: nodes,
-        })
+    fn new(init: N) -> DAG<'a, N> {
+        DAG {
+            _nlt: PhantomData,
+            nodes: vec![Rc::new(init)],
+        }
     }
 
     /// Perform both topological sorting and acyclicality check in the same operation.
@@ -136,7 +131,7 @@ impl<'a, N> DAG<'a, N>
         for (i, c) in cycle_check.sorted.iter().enumerate() {
             let node = &self.nodes[*c];
             if node.position() != i {
-                node.update_position(i);
+                node.set_position(i);
             }
             priority.push((i, node.clone()));
         }
@@ -209,7 +204,7 @@ impl DirectedCycle {
 pub struct NetIter<'a, N: 'a>
     where N: DiscreteNode<'a>
 {
-    _n_lt: PhantomData<&'a N>,
+    _nlt: PhantomData<&'a N>,
     unvisitted: VecDeque<Rc<N>>,
     processed: HashSet<usize>,
     queued: Rc<N>,
@@ -225,7 +220,7 @@ impl<'a, N: 'a> NetIter<'a, N>
         let first = unvisitted.pop_front().unwrap();
         processed.insert(first.get_dist() as *const N::Var as usize);
         NetIter {
-            _n_lt: PhantomData,
+            _nlt: PhantomData,
             unvisitted: unvisitted,
             processed: processed,
             queued: first,
