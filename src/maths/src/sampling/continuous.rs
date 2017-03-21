@@ -1,7 +1,5 @@
-//! Sampling for pure discrete models.
-
-use super::{Sampler, DiscreteSampler};
-use model::{DiscreteModel, DiscreteNode};
+use super::{Sampler, ContinuousSampler};
+use model::{ContModel, ContNode, ContDAG};
 
 const ITER_TIMES: usize = 1000;
 const BURN_IN: usize = 0;
@@ -10,7 +8,8 @@ const BURN_IN: usize = 0;
 pub struct Gibbs {
     steeps: usize,
     burnin: usize,
-    samples: Vec<Vec<u8>>,
+    normalized: usize, //ContModel<ContDAG>
+    samples: Vec<Vec<f64>>,
 }
 
 impl Sampler for Gibbs {
@@ -28,14 +27,15 @@ impl Sampler for Gibbs {
         Gibbs {
             steeps: steeps,
             burnin: burnin,
+            normalized: 0,
             samples: Vec::with_capacity(ITER_TIMES),
         }
     }
 }
 
 impl Gibbs {
-    fn var_val<'a, N: 'a>(&self, t: usize, var: &N) -> u8
-        where N: DiscreteNode<'a>
+    fn var_val<'a, N: 'a>(&self, t: usize, var: &N) -> f64
+        where N: ContNode<'a>
     {
         let mut mb_values = Vec::new();
         // P(var|mb(var))
@@ -53,8 +53,8 @@ impl Gibbs {
         }
     }
 
-    fn initialize<'a, N: 'a>(&mut self, net: &DiscreteModel<'a, N, Gibbs>)
-        where N: DiscreteNode<'a>
+    fn initialize<'a, N: 'a>(&mut self, net: &ContModel<'a, N, Gibbs>)
+        where N: ContNode<'a>
     {
         // draw prior values from the distribution of each value
         let mut priors = Vec::with_capacity(net.var_num());
@@ -65,12 +65,12 @@ impl Gibbs {
     }
 }
 
-impl DiscreteSampler for Gibbs {
-    fn get_samples<'a, N: 'a>(mut self, net: &DiscreteModel<'a, N, Gibbs>) -> Vec<Vec<u8>>
-        where N: DiscreteNode<'a>
+impl ContinuousSampler for Gibbs {
+    fn get_samples<'a, N: 'a>(mut self, net: &ContModel<'a, N, Gibbs>) -> Vec<Vec<f64>>
+        where N: ContNode<'a>
     {
         let k = net.var_num();
-        self.samples = vec![vec![0_u8; k]; self.steeps];
+        self.samples = vec![vec![0.0_f64; k]; self.steeps];
         self.initialize(net);
         for t in 0..self.steeps {
             for (i, var_dist) in net.iter_vars().enumerate() {

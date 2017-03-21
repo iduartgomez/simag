@@ -1,20 +1,21 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{VecDeque, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
-use std::iter::FromIterator;
+use std::iter::{FromIterator, Iterator};
 use std::rc::{Rc, Weak};
+use std::marker::PhantomData;
 
 use uuid::Uuid;
 
-use super::{Node, Variable};
-use super::{DAG, NetIter, DType, EventObs};
-use sampling::{DiscreteSampler, DefSampler};
+use super::{Node, Variable, Observation};
+use super::{DType, Discrete};
+use sampling::{DiscreteSampler, DefDiscreteSampler};
 use dists::{Categorical, Binomial};
 use P;
 
 // public traits for models:
 
-/// Discrete implementation for a discrete model.
+/// Node trait for a discrete model.
 pub trait DiscreteNode<'a>: Node
     where Self: Sized
 {
@@ -39,7 +40,7 @@ pub trait DiscreteNode<'a>: Node
     /// to initialize each sampling steep.
     fn init_sample(&self) -> u8;
 
-    fn add_parent(&self, parent: Weak<Self>, k: u8);
+    fn add_parent(&self, parent: Weak<Self>);
 
     fn add_child(&self, child: Rc<Self>);
 
@@ -47,13 +48,7 @@ pub trait DiscreteNode<'a>: Node
 }
 
 pub trait DiscreteVar: Variable {
-    /// Returns an slice of known observations for the variable of
-    /// this distribution.
-    fn get_observations(&self) -> &[Self::O];
-
-    /// Returns the exact form of the distribution, where the distribution
-    /// type should be a discrete type.
-    fn dist_type(&self) -> &DType;
+    type Event: Observation;
 
     /// Returns the number of categories for this discrete event
     fn k_num(&self) -> u8;
@@ -61,19 +56,25 @@ pub trait DiscreteVar: Variable {
     /// Returns a sample from the original variable, not talking into account
     /// the parents in the network.
     fn sample(&self) -> u8;
+
+    /// Returns an slice of known observations for the variable of
+    /// this distribution.
+    fn get_observations(&self) -> &[Self::Event];
+
+    fn push_observation(&mut self, obs: Self::Event);
 }
 
 pub struct DiscreteModel<'a, N: 'a, S>
     where N: DiscreteNode<'a>,
           S: DiscreteSampler + Clone
 {
-    vars: DAG<'a, N>,
+    vars: DiscreteDAG<'a, N>,
     sampler: S,
 }
 
-use std::marker::PhantomData;
-
-type DefDiscreteModel<'a> = DiscreteModel<'a, DefDiscreteNode<'a, DefDiscreteVar>, DefSampler>;
+pub type DefDiscreteModel<'a> = DiscreteModel<'a,
+                                              DefDiscreteNode<'a, DefDiscreteVar>,
+                                              DefDiscreteSampler>;
 
 impl<'a, N, S> DiscreteModel<'a, N, S>
     where N: DiscreteNode<'a>,
@@ -83,26 +84,12 @@ impl<'a, N, S> DiscreteModel<'a, N, S>
                sampler: S)
                -> Result<DiscreteModel<'a, N, S>, ()> {
         let init = N::new(init, 0)?;
-        let dag = DAG::new(init);
+        let dag = DiscreteDAG::new(init);
         Ok(DiscreteModel {
             vars: dag,
-            sampler: S::new(None, None),
+            sampler: sampler,
         })
     }
-
-    /* 
-    pub fn default_impl(init: &'a DefDiscreteVar) -> Result<DefDiscreteModel<'a>, ()> {
-        let init: DefDiscreteNode<DefDiscreteVar> = DefDiscreteNode::with_var(init, 0)?;
-        let dag: DAG<DefDiscreteNode<DefDiscreteVar>> = DAG {
-            _node_lifetime: PhantomData,
-            nodes: vec![Rc::new(init)],
-        };
-        Ok(DiscreteModel {
-            vars: dag,
-            sampler: DefSampler::new(None, None),
-        })
-    }
-    */
 
     /// Add a new variable to the model.
     pub fn add_var(&mut self, var: &'a <N as DiscreteNode<'a>>::Var) -> Result<(), ()> {
@@ -135,22 +122,11 @@ impl<'a, N, S> DiscreteModel<'a, N, S>
     /// -   the number of categories of the parent.
     /// -   the combination of categories of the different parents.
     ///
-    /// This is an important point, because if all the necessary values are not provided
-    /// the rest will be guessed using a simple proportional linear model. This is often
-    /// not the case in any realistic or complex model and is desirable to provide all
-    /// the necessary values when constructing the net.
-    ///
     /// ## Example
     /// Assume variable C(k=2) has an existing parent A(k=3) in the model and we add a second,
     /// B(k=3), so we need to pass the CPT corresponding to the joint distribution P(C|A,B)
     /// which would have dimensions 9*2 (Ka*Kb = 9 which are all the possible combinations of
-    /// values taken by parents at a given time).
-    ///
-    /// In case the provided CPT was of 3*2 dimensions, those values will be taken and combined
-    /// proportionally with the existing CPT (of 3*2 dimensions) to derive all the necessary
-    /// values.
-    ///
-    /// In both cases each row has to sum up to 1.
+    /// values taken by parents at a given time). Each row has to sum up to 1.
     ///
     /// More information on how to build in the [CPT]() type page.
     pub fn add_parent_to_var(&mut self,
@@ -181,15 +157,15 @@ impl<'a, N, S> DiscreteModel<'a, N, S>
         if node.build_cpt(prob, parent_k as usize).is_err() {
             return Err(());
         }
-        node.add_parent(Rc::downgrade(&parent.clone()), parent_k);
-        parent.add_child(parent.clone());
+        node.add_parent(Rc::downgrade(&parent.clone()));
+        parent.add_child(node.clone());
         // check if it's a DAG and topologically sort the graph
         self.vars.topological_sort()
     }
 
     /// Remove a variable from the model, the childs will be disjoint if they don't
     /// have an other parent.
-    pub fn remove_var(&mut self, node: &'a <N as DiscreteNode<'a>>::Var) {
+    pub fn remove_var(&mut self, _node: &'a <N as DiscreteNode<'a>>::Var) {
         unimplemented!()
     }
 
@@ -209,6 +185,8 @@ impl<'a, N, S> DiscreteModel<'a, N, S>
         NetIter::new(&self.vars.nodes)
     }
 }
+
+dag_constructor!(DiscreteDAG, DiscreteNode);
 
 type Choices = Vec<u8>;
 
@@ -257,12 +235,9 @@ impl CPT {
             return Err(());
         }
 
-        for (i, row) in elements.iter().enumerate() {
+        for row in &elements {
             let r_len = row.len();
             if r_len != column_n {
-                return Err(());
-            }
-            if indexes[i].len() != r_len {
                 return Err(());
             }
         }
@@ -274,9 +249,7 @@ impl CPT {
     }
 }
 
-type KSizedParent<'a, V> = (u8, Weak<DefDiscreteNode<'a, V>>);
-
-/// A node in the network representing a random variable.
+/// A node in the network representing a discrete random variable.
 ///
 /// This type cannot be instantiated directly, instead add the random variable
 /// distribution to the network.
@@ -286,58 +259,11 @@ pub struct DefDiscreteNode<'a, V: 'a>
     pub dist: &'a V,
     childs: RefCell<Vec<Rc<DefDiscreteNode<'a, V>>>>,
     cpt: RefCell<HashMap<Choices, DType>>,
-    parents: RefCell<Vec<KSizedParent<'a, V>>>, // (categ, parent_ptr)
+    parents: RefCell<Vec<Weak<DefDiscreteNode<'a, V>>>>, // (categ, parent_ptr)
     pos: RefCell<usize>, // position in the bayes net vec of self
 }
 
-impl<'a, V: 'a + DiscreteVar> Node for DefDiscreteNode<'a, V> {
-    fn get_child(&self, pos: usize) -> Rc<Self> {
-        let childs = &*self.childs.borrow();
-        childs[pos].clone()
-    }
-
-    fn get_childs(&self) -> Vec<Rc<Self>> {
-        let childs = &*self.childs.borrow();
-        Vec::from_iter(childs.iter().cloned())
-    }
-
-    fn is_root(&self) -> bool {
-        self.parents_num() == 0
-    }
-
-    fn position(&self) -> usize {
-        *self.pos.borrow()
-    }
-
-    fn get_parents_positions(&self) -> Vec<usize> {
-        let parents = &*self.parents.borrow();
-        let mut positions = Vec::with_capacity(parents.len());
-        for &(_, ref p) in parents {
-            let p = p.upgrade().unwrap();
-            positions.push(*p.pos.borrow());
-        }
-        positions
-    }
-
-    fn get_childs_positions(&self) -> Vec<usize> {
-        let childs = &*self.childs.borrow();
-        let mut positions = Vec::with_capacity(childs.len());
-        for c in childs {
-            positions.push(*c.pos.borrow());
-        }
-        positions
-    }
-
-    #[inline]
-    fn parents_num(&self) -> usize {
-        let parents = &*self.parents.borrow();
-        parents.len()
-    }
-
-    fn set_position(&self, pos: usize) {
-        *self.pos.borrow_mut() = pos;
-    }
-}
+node_constructor!(DefDiscreteNode, DiscreteVar, DefDiscreteVar, Discrete);
 
 impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
     where V: DiscreteVar
@@ -369,8 +295,8 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
         let cpt = &*self.cpt.borrow();
         let probs = cpt.get(values).unwrap();
         match *probs {
-            DType::Binomial(ref dist) => dist.sample(),
-            DType::Categorical(ref dist) => dist.sample(),
+            DType::Binomial(ref dist) => dist.sample(None),
+            DType::Categorical(ref dist) => dist.sample(None),
             _ => panic!(),
         }
     }
@@ -382,7 +308,7 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
     fn get_parents_dists(&self) -> Vec<&'a V> {
         let parents = &*self.parents.borrow();
         let mut dists = Vec::with_capacity(parents.len());
-        for &(_, ref p) in parents {
+        for p in parents {
             let p = p.upgrade().unwrap();
             dists.push(p.dist);
         }
@@ -398,9 +324,9 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
         dists
     }
 
-    fn add_parent(&self, parent: Weak<Self>, k: u8) {
+    fn add_parent(&self, parent: Weak<Self>) {
         let parents = &mut *self.parents.borrow_mut();
-        parents.push((k, parent));
+        parents.push(parent);
     }
 
     fn add_child(&self, child: Rc<Self>) {
@@ -413,16 +339,22 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
 
         let parents = &*self.parents.borrow();
         let rows1 = probs.dim_num()[0];
-        let rows0 = parents.iter().fold(1, |t, &(i, _)| t * (i as usize));
-        if (rows1 != rows0) && rows1 != parent_k {
+        let rows0 = parents.iter().fold(1, |t, p| {
+            let i = {
+                let p = p.upgrade().unwrap();
+                p.dist.k_num()
+            };
+            t * (i as usize)
+        }) * parent_k;
+        if ((rows0 > parent_k) && (rows1 != rows0)) || (parent_k != rows1) {
             return Err("insufficient number of probability rows in the CPT".to_string());
-        } else if rows1 == parent_k {
-            unimplemented!()
         }
 
         let mut cpt = HashMap::new();
+        let mut sum = 0.;
         let CPT { indexes, data } = probs;
         for (idx, prob) in zip(indexes.into_iter(), data.into_iter()) {
+            sum += prob.iter().fold(0_f64, |t, &p| t + p);
             let dist = if prob.len() == 2 {
                 // binomial
                 DType::Binomial(Binomial::new(prob[1])?)
@@ -432,86 +364,21 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
             };
             cpt.insert(idx, dist);
         }
-
+        if sum < 1.0 {
+            return Err(("Conditional probability table must sum to 1".to_string()));
+        }
         let mut self_cpt = self.cpt.borrow_mut();
         *self_cpt = cpt;
         Ok(())
     }
 }
 
-pub struct DefDiscreteVar {
-    dist: DType,
-    observations: Vec<EventObs>,
-    id: Uuid,
-}
-
-impl DefDiscreteVar {
-    pub fn new() -> Result<DefDiscreteVar, ()> {
-        Ok(DefDiscreteVar {
-            dist: DType::UnknownDisc,
-            observations: Vec::new(),
-            id: Uuid::new_v4(),
-        })
-    }
-
-    pub fn with_dist(dist: DType) -> Result<DefDiscreteVar, ()> {
-        match dist {
-            DType::Binomial(_) |
-            DType::Categorical(_) |
-            DType::Poisson |
-            DType::UnknownDisc => {}
-            _ => return Err(()),
-        }
-        Ok(DefDiscreteVar {
-            dist: dist,
-            observations: Vec::new(),
-            id: Uuid::new_v4(),
-        })
-    }
-
-    pub fn as_dist(&mut self, dist: DType) -> Result<(), ()> {
-        match dist {
-            DType::Binomial(_) |
-            DType::Categorical(_) |
-            DType::Poisson |
-            DType::UnknownDisc => {}
-            _ => return Err(()),
-        }
-        self.dist = dist;
-        Ok(())
-    }
-}
-
-impl Hash for DefDiscreteVar {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
-    }
-}
-
-impl PartialEq for DefDiscreteVar {
-    fn eq(&self, other: &DefDiscreteVar) -> bool {
-        self.id == other.id
-    }
-}
-
-impl Eq for DefDiscreteVar {}
-
-impl Variable for DefDiscreteVar {
-    type O = EventObs;
-}
-
 impl DiscreteVar for DefDiscreteVar {
-    fn get_observations(&self) -> &[<Self as Variable>::O] {
-        &self.observations
-    }
-
-    fn dist_type(&self) -> &DType {
-        &self.dist
-    }
+    type Event = Discrete;
 
     fn k_num(&self) -> u8 {
         match self.dist {
-            DType::Categorical(ref dist) => dist.sample(),
+            DType::Categorical(ref dist) => dist.sample(None),
             DType::Binomial(_) => 2,
             _ => panic!(),
         }
@@ -519,11 +386,24 @@ impl DiscreteVar for DefDiscreteVar {
 
     fn sample(&self) -> u8 {
         match self.dist {
-            DType::Categorical(ref dist) => dist.sample(),
-            DType::Binomial(ref dist) => dist.sample(),
+            DType::Categorical(ref dist) => dist.sample(None),
+            DType::Binomial(ref dist) => dist.sample(None),
             _ => panic!(),
         }
     }
+    fn get_observations(&self) -> &[<Self as DiscreteVar>::Event] {
+        &self.observations
+    }
+
+    fn push_observation(&mut self, obs: Self::Event) {
+        self.observations.push(obs)
+    }
+}
+
+pub fn default_discrete_model(init: &DefDiscreteVar) -> Result<DefDiscreteModel, ()> {
+    use sampling::Sampler;
+    let sampler = DefDiscreteSampler::new(None, None);
+    DiscreteModel::new(init, sampler)
 }
 
 #[cfg(test)]
@@ -531,7 +411,6 @@ mod test {
     use super::*;
     use model::DType;
     use dists::Binomial;
-    use sampling::Sampler;
 
     #[test]
     fn build() {
@@ -547,17 +426,19 @@ mod test {
         let cp = DType::Binomial(Binomial::new(0.7).unwrap());
         let wet_grass = DefDiscreteVar::with_dist(cp).unwrap();
 
-        let mut model: DiscreteModel<DefDiscreteNode<_>, _> =
-            DiscreteModel::new(&wet_grass, DefSampler::new(None, None)).unwrap();
+        let mut model = default_discrete_model(&wet_grass).unwrap();
         model.add_var(&sprinkler).unwrap();
         model.add_var(&rain).unwrap();
         model.add_var(&cloudy).unwrap();
 
-        //let choices = vec![vec![0_u8, 0], vec![1, 0], vec![0, 1], vec![1, 1]];
         let choices = vec![vec![0_u8], vec![1]];
-        let elements = vec![vec![0.5_f64, 0.5], vec![0.8, 0.2]];
+        let elements = vec![vec![0.25_f64, 0.25], vec![0.4, 0.1]];
         let cpt = CPT::new(elements, choices).unwrap();
-        model.add_parent_to_var(&sprinkler, &cloudy, cpt);
-        //model.add_parent_to_var(&rain, &cloudy);
+        model.add_parent_to_var(&sprinkler, &cloudy, cpt).unwrap();
+
+        let choices = vec![vec![0_u8], vec![1]];
+        let elements = vec![vec![0.45_f64, 0.05], vec![0.05, 0.45]];
+        let cpt = CPT::new(elements, choices).unwrap();
+        model.add_parent_to_var(&rain, &cloudy, cpt).unwrap();
     }
 }
