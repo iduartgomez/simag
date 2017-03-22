@@ -10,6 +10,8 @@ pub use self::exponential::Exponential;
 pub use self::categorical::Categorical;
 pub use self::categorical::Binomial;
 
+pub use self::transforms::Gaussianization;
+
 trait Invertible {}
 
 pub trait Sample {

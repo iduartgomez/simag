@@ -1,5 +1,4 @@
 use RGSLRng;
-use P;
 
 #[derive(Debug, Clone)]
 pub struct Normal {

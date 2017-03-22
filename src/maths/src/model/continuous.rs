@@ -1,8 +1,7 @@
 use std::cell::RefCell;
-use std::collections::{VecDeque, HashMap, HashSet};
+use std::collections::{VecDeque, HashSet};
 use std::hash::{Hash, Hasher};
 use std::iter::{FromIterator, Iterator};
-use std::ops::Deref;
 use std::rc::{Rc, Weak};
 use std::marker::PhantomData;
 
@@ -11,6 +10,8 @@ use uuid::Uuid;
 use super::{Node, Variable, Observation};
 use super::{DType, Continuous};
 use sampling::{ContinuousSampler, DefContSampler};
+use dists::{Sample, Gaussianization};
+use RGSLRng;
 
 // public traits for models:
 
@@ -18,7 +19,7 @@ use sampling::{ContinuousSampler, DefContSampler};
 pub trait ContNode<'a>: Node
     where Self: Sized
 {
-    type Var: 'a + ContVar;
+    type Var: 'a + ContVar + Gaussianization;
 
     fn new(dist: &'a Self::Var, pos: usize) -> Result<Self, ()>;
 
@@ -33,23 +34,23 @@ pub trait ContNode<'a>: Node
 
     /// Takes an slice reprensenting the realized parent variables values at the current
     /// time **t** and draws a sample based on the corresponding probabilities.
-    fn draw_sample(&self, fixed: &[f64]) -> f64;
+    fn draw_sample(&self, rng: &mut RGSLRng, fixed: &[f64]) -> f64;
 
     /// Sample from the prior distribution, usually called on roots of the tree
     /// to initialize each sampling steep.
-    fn init_sample(&self) -> f64;
+    fn init_sample(&self, rng: &mut RGSLRng) -> f64;
 
-    fn add_parent(&self, parent: Weak<Self>);
+    fn add_parent(&self, parent: Weak<Self>, rank_cr: f64);
 
     fn add_child(&self, child: Rc<Self>);
 }
 
 pub trait ContVar: Variable {
-    type Event: Observation + Deref;
+    type Event: Observation;
 
     /// Returns a sample from the original variable, not taking into consideration
     /// the parents in the network (if any).
-    fn sample(&self) -> f64;
+    fn sample(&self, rng: &mut RGSLRng) -> f64;
 
     /// Returns an slice of known observations for the variable of
     /// this distribution.
@@ -107,7 +108,8 @@ impl<'a, N, S> ContModel<'a, N, S>
     /// Both variables have to be added previously to the model.
     pub fn add_parent_to_var(&mut self,
                              node: &'a <N as ContNode<'a>>::Var,
-                             parent_d: &'a <N as ContNode<'a>>::Var)
+                             parent_d: &'a <N as ContNode<'a>>::Var,
+                             rank_cr: f64)
                              -> Result<(), ()> {
         // checks to perform:
         //  - both exist in the model
@@ -126,7 +128,7 @@ impl<'a, N, S> ContModel<'a, N, S>
             .find(|n| (&**n).get_dist() == parent_d)
             .cloned()
             .ok_or(())?;
-        node.add_parent(Rc::downgrade(&parent.clone()));
+        node.add_parent(Rc::downgrade(&parent.clone()), rank_cr);
         parent.add_child(parent.clone());
         // check if it's a DAG and topologically sort the graph
         self.vars.topological_sort()
@@ -167,7 +169,115 @@ pub struct DefContNode<'a, V: 'a>
     pub dist: &'a V,
     childs: RefCell<Vec<Rc<DefContNode<'a, V>>>>,
     parents: RefCell<Vec<Weak<DefContNode<'a, V>>>>,
-    pos: RefCell<usize>, // position in the bayes net vec of self
+    edges: RefCell<Vec<f64>>, // rank correlations assigned to edges
+    pos: RefCell<usize>,
 }
 
-node_constructor!(DefContNode, ContVar, DefContVar, Continuous);
+node_impl!(DefContNode, ContVar);
+
+impl<'a, V: 'a> ContNode<'a> for DefContNode<'a, V>
+    where V: ContVar + Gaussianization
+{
+    type Var = V;
+
+    fn new(dist: &'a V, pos: usize) -> Result<Self, ()> {
+        match *dist.dist_type() {
+            DType::Normal(_) |
+            DType::Exponential(_) => {}
+            _ => return Err(()),
+        }
+
+        // get the probabilities from the dist and insert as default cpt
+        Ok(DefContNode {
+            dist: dist,
+            childs: RefCell::new(vec![]),
+            parents: RefCell::new(vec![]),
+            edges: RefCell::new(vec![]),
+            pos: RefCell::new(pos),
+        })
+    }
+
+    fn get_dist(&self) -> &'a V {
+        self.dist
+    }
+
+    fn draw_sample(&self, rng: &mut RGSLRng, values: &[f64]) -> f64 {
+        let parents = &*self.parents.borrow();
+        let mut dists = vec![];
+        for p in parents {
+            let p = p.upgrade().unwrap();
+            dists.push(p.dist);
+        }
+        unimplemented!()
+        // need to fix parent variables probabilities and sample based on those
+    }
+
+    fn init_sample(&self, rng: &mut RGSLRng) -> f64 {
+        self.dist.sample(rng)
+    }
+
+    fn get_parents_dists(&self) -> Vec<&'a V> {
+        let parents = &*self.parents.borrow();
+        let mut dists = Vec::with_capacity(parents.len());
+        for p in parents {
+            let p = p.upgrade().unwrap();
+            dists.push(p.dist);
+        }
+        dists
+    }
+
+    fn get_childs_dists(&self) -> Vec<&'a V> {
+        let childs = &*self.childs.borrow();
+        let mut dists = Vec::with_capacity(childs.len());
+        for c in childs {
+            dists.push(c.dist);
+        }
+        dists
+    }
+
+    fn add_parent(&self, parent: Weak<Self>, rank_cr: f64) {
+        let parents = &mut *self.parents.borrow_mut();
+        let edges = &mut *self.edges.borrow_mut();
+        parents.push(parent);
+        edges.push(rank_cr);
+    }
+
+    fn add_child(&self, child: Rc<Self>) {
+        let parent_childs = &mut *self.childs.borrow_mut();
+        parent_childs.push(child);
+    }
+}
+
+var_constructor!(DefContVar, Continuous);
+
+impl ContVar for DefContVar {
+    type Event = Continuous;
+
+    fn sample(&self, rng: &mut RGSLRng) -> f64 {
+        match self.dist {
+            DType::Normal(ref dist) => dist.sample(rng),
+            DType::Exponential(ref dist) => dist.sample(rng),
+            _ => panic!(),
+        }
+    }
+    fn get_observations(&self) -> &[<Self as ContVar>::Event] {
+        &self.observations
+    }
+
+    fn push_observation(&mut self, obs: Self::Event) {
+        self.observations.push(obs)
+    }
+
+    #[inline(always)]
+    fn float_into_event(float: f64) -> Self::Event {
+        float as Self::Event
+    }
+}
+
+
+impl Gaussianization for DefContVar {
+    #[inline(always)]
+    fn into_default(self) -> Self {
+        self
+    }
+}

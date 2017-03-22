@@ -1,5 +1,7 @@
 use super::{Sampler, ContinuousSampler};
-use model::{ContModel, ContNode, ContDAG};
+use model::{ContModel, ContNode, DefContVar};
+use dists::Gaussianization;
+use RGSLRng;
 
 const ITER_TIMES: usize = 1000;
 const BURN_IN: usize = 0;
@@ -8,8 +10,15 @@ const BURN_IN: usize = 0;
 pub struct Gibbs {
     steeps: usize,
     burnin: usize,
-    normalized: usize, //ContModel<ContDAG>
+    normalized: Vec<Normalized>,
     samples: Vec<Vec<f64>>,
+    rng: RGSLRng,
+}
+
+#[derive(Debug)]
+struct Normalized {
+    var: DefContVar,
+    pt_cr: Vec<f64>,
 }
 
 impl Sampler for Gibbs {
@@ -23,18 +32,18 @@ impl Sampler for Gibbs {
             Some(val) => val,
             None => BURN_IN,
         };
-
         Gibbs {
             steeps: steeps,
             burnin: burnin,
-            normalized: 0,
+            normalized: vec![],
             samples: Vec::with_capacity(ITER_TIMES),
+            rng: RGSLRng::new(),
         }
     }
 }
 
 impl Gibbs {
-    fn var_val<'a, N: 'a>(&self, t: usize, var: &N) -> f64
+    fn var_val<'a, N: 'a>(&mut self, t: usize, var: &N) -> f64
         where N: ContNode<'a>
     {
         let mut mb_values = Vec::new();
@@ -47,21 +56,37 @@ impl Gibbs {
                 let val_at_t = self.samples[t][i];
                 mb_values.push(val_at_t);
             }
-            var.draw_sample(&mb_values)
+            var.draw_sample(&mut self.rng, &mb_values)
         } else {
-            var.init_sample()
+            var.init_sample(&mut self.rng)
         }
     }
 
+    /// In a pure continuous random variable Bayesian net, the following algorithm is used:
+    ///
+    /// 1)  Every variable is transformed to the standard unit normal distribution.
+    /// 2)  Construct the vine for the standard normal variables.
+    /// 3)
     fn initialize<'a, N: 'a>(&mut self, net: &ContModel<'a, N, Gibbs>)
         where N: ContNode<'a>
     {
-        // draw prior values from the distribution of each value
+        // construct a transformed BBN
+        for node in net.iter_vars() {
+            let d = node.get_dist().as_normal().into_default();
+            let n = Normalized {
+                pt_cr: Vec::with_capacity(node.childs_num()),
+                var: d,
+            };
+            self.normalized.push(n);
+        }
+
+        /*
         let mut priors = Vec::with_capacity(net.var_num());
-        for node in net.iter_vars().filter(|x| x.is_root()) {
-            priors.push(node.init_sample());
+        for node in net.iter_vars() {
+            priors.push(node.init_sample(&mut self.rng));
         }
         self.samples.push(priors);
+        */
     }
 }
 

@@ -1,19 +1,18 @@
 //! Infrastructure to instantiate an statistical model with a given set of parameters.
 
 use std::hash::Hash;
-use std::ops::Deref;
 use std::rc::Rc;
 
 use dists::{Categorical, Binomial};
 
 pub use self::discrete::{DiscreteModel, DefDiscreteModel, DefDiscreteNode, DefDiscreteVar, CPT};
 pub use self::discrete::{DiscreteNode, DiscreteVar, default_discrete_model};
-pub use self::continuous::{ContModel, DefContModel, ContDAG, DefContNode, DefContVar};
+pub use self::continuous::{ContModel, DefContModel, DefContNode, DefContVar};
 pub use self::continuous::{ContNode, ContVar};
 
 macro_rules! dag_constructor {
     ($name:ident, $node:ident) => {
-        pub struct $name<'a, N>
+        struct $name<'a, N>
             where N: $node<'a>
         {
             _nlt: PhantomData<&'a ()>,
@@ -169,8 +168,8 @@ macro_rules! dag_constructor {
     }
 }
 
-macro_rules! node_constructor {
-    ($name:ident, $var_trait:ident, $var_name:ident, $obs_ty:ident) => {
+macro_rules! node_impl {
+    ($name:ident, $var_trait:ident) => {
         impl<'a, V: 'a + $var_trait> Node for $name<'a, V> {
             fn get_child(&self, pos: usize) -> Rc<Self> {
                 let childs = &*self.childs.borrow();
@@ -215,11 +214,22 @@ macro_rules! node_constructor {
                 parents.len()
             }
 
+            #[inline]
+            fn childs_num(&self) -> usize {
+                let childs = &*self.childs.borrow();
+                childs.len()
+            }
+
             fn set_position(&self, pos: usize) {
                 *self.pos.borrow_mut() = pos;
             }
         }
+    }
+}
 
+macro_rules! var_constructor {
+    ($var_name:ident, $obs_ty:ident) => {
+        #[derive(Debug)]
         pub struct $var_name {
             dist: DType,
             observations: Vec<$obs_ty>,
@@ -294,7 +304,6 @@ macro_rules! node_constructor {
                 Ok(())
             }
         }
-
     }
 }
 
@@ -338,6 +347,9 @@ pub trait Node {
 
     /// Returns the number of parents this node has.
     fn parents_num(&self) -> usize;
+
+    /// Returns the number of childs this node has.
+    fn childs_num(&self) -> usize;
 }
 
 // helper types:
@@ -391,5 +403,5 @@ pub enum DType {
     Categorical(Categorical),
     Binomial(Binomial),
     Poisson,
-    UnknownDisc,
+    UnknownDisc
 }

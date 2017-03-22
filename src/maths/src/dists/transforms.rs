@@ -1,7 +1,7 @@
 /// Methods for transforming between distribution kinds.
 
-use model::{ContVar, DiscreteVar, Variable};
-use model::DType;
+use model::{ContVar, DiscreteVar};
+use model::{DType, DefContVar};
 use dists::*;
 use RGSLRng;
 
@@ -24,8 +24,7 @@ pub trait IntoDiscrete
 pub trait Gaussianization
     where Self: ContVar + Sized
 {
-    type Output: ContVar;
-    fn into_normal(self) -> Self::Output {
+    fn as_normal(&self) -> Self {
         let dist = match *self.dist_type() {
             DType::Normal(ref dist) => dist as &Sample,
             DType::Exponential(ref dist) => dist as &Sample,
@@ -34,13 +33,15 @@ pub trait Gaussianization
 
         let mut rng = RGSLRng::new();
         let std = Normal::std();
-        let mut normal = Self::Output::new();
+        let mut normal = Self::new();
         for _ in 0..1000 {
             let s = dist.sample(&mut rng);
-            let y = Self::Output::float_into_event(std.inverse_cdf(s));
+            let y = Self::float_into_event(std.inverse_cdf(s));
             normal.push_observation(y);
         }
-        normal.set_dist(DType::Normal(std));
+        normal.set_dist(DType::Normal(std)).unwrap();
         normal
     }
+
+    fn into_default(self) -> DefContVar;
 }

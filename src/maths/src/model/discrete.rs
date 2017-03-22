@@ -263,7 +263,7 @@ pub struct DefDiscreteNode<'a, V: 'a>
     pos: RefCell<usize>, // position in the bayes net vec of self
 }
 
-node_constructor!(DefDiscreteNode, DiscreteVar, DefDiscreteVar, Discrete);
+node_impl!(DefDiscreteNode, DiscreteVar);
 
 impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
     where V: DiscreteVar
@@ -372,6 +372,8 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
         Ok(())
     }
 }
+
+var_constructor!(DefDiscreteVar, Discrete);
 
 impl DiscreteVar for DefDiscreteVar {
     type Event = Discrete;

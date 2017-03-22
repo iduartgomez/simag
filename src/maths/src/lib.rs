@@ -65,3 +65,11 @@ impl Clone for RGSLRng {
         rng
     }
 }
+
+use std::fmt;
+
+impl fmt::Debug for RGSLRng {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "RGSLRng")
+    }
+}
