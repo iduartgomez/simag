@@ -19,13 +19,13 @@ mod discrete;
 mod continuous;
 
 pub use self::discrete::Gibbs as DiscreteGibbs;
-pub use self::continuous::Gibbs as ContGibbs;
+pub use self::continuous::AnalyticNormal;
 
 use model::{DiscreteModel, DiscreteNode};
 use model::{ContModel, ContNode};
 
 pub type DefDiscreteSampler = DiscreteGibbs;
-pub type DefContSampler = ContGibbs;
+pub type DefContSampler<'a> = AnalyticNormal<'a>;
 
 pub trait Sampler
     where Self: Sized + Clone
@@ -35,13 +35,13 @@ pub trait Sampler
 
 pub trait DiscreteSampler: Sampler {
     /// Return a matrix of t x k dimension samples (t = steeps; k = number of vars).
-    fn get_samples<'a, N: 'a>(self, state_space: &DiscreteModel<'a, N, Self>) -> Vec<Vec<u8>>
+    fn get_samples<'a, N>(self, state_space: &DiscreteModel<'a, N, Self>) -> Vec<Vec<u8>>
         where N: DiscreteNode<'a>;
 }
 
-pub trait ContinuousSampler: Sampler {
+pub trait ContinuousSampler<'a>: Sampler {
     /// Return a matrix of t x k dimension samples (t = steeps; k = number of vars).
-    fn get_samples<'a, N: 'a>(self, state_space: &ContModel<'a, N, Self>) -> Vec<Vec<f64>>
+    fn get_samples<N>(self, state_space: &ContModel<'a, N, Self>) -> Vec<Vec<f64>>
         where N: ContNode<'a>;
 }
 

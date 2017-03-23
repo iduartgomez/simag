@@ -7,11 +7,11 @@ use std::marker::PhantomData;
 
 use uuid::Uuid;
 
+use RGSLRng;
 use super::{Node, Variable, Observation};
 use super::{DType, Discrete};
 use sampling::{DiscreteSampler, DefDiscreteSampler};
 use dists::{Categorical, Binomial};
-use P;
 
 // public traits for models:
 
@@ -34,14 +34,16 @@ pub trait DiscreteNode<'a>: Node
 
     /// Takes an slice reprensenting the parents categories at the current
     /// time **t** and draws a sample based on the corresponding probabilities.
-    fn draw_sample(&self, values: &[u8]) -> u8;
+    fn draw_sample(&self, rng: &mut RGSLRng, values: &[u8]) -> u8;
 
     /// Sample from the prior distribution, usually called on roots of the tree
     /// to initialize each sampling steep.
-    fn init_sample(&self) -> u8;
+    fn init_sample(&self, rng: &mut RGSLRng) -> u8;
 
+    /// Add a new parent to this node. Does not add self as child implicitly!
     fn add_parent(&self, parent: Weak<Self>);
 
+    /// Add a child to this node. Does not add self as parent implicitly!
     fn add_child(&self, child: Rc<Self>);
 
     fn build_cpt(&self, probabilities: CPT, k: usize) -> Result<(), String>;
@@ -55,12 +57,13 @@ pub trait DiscreteVar: Variable {
 
     /// Returns a sample from the original variable, not talking into account
     /// the parents in the network.
-    fn sample(&self) -> u8;
+    fn sample(&self, rng: &mut RGSLRng) -> u8;
 
     /// Returns an slice of known observations for the variable of
     /// this distribution.
     fn get_observations(&self) -> &[Self::Event];
 
+    /// Push a new observation of the measured event/variable to the stack of obserbations.
     fn push_observation(&mut self, obs: Self::Event);
 }
 
@@ -184,16 +187,28 @@ impl<'a, N, S> DiscreteModel<'a, N, S>
     pub fn iter_vars(&self) -> NetIter<'a, N> {
         NetIter::new(&self.vars.nodes)
     }
+
+    /// Get the node in the graph at position **i** unchecked.
+    pub fn get_var(&self, i: usize) -> Rc<N> {
+        self.vars.get_node(i)
+    }
 }
 
-dag_constructor!(DiscreteDAG, DiscreteNode);
+struct DiscreteDAG<'a, N>
+    where N: DiscreteNode<'a>
+{
+    _nlt: PhantomData<&'a ()>,
+    nodes: Vec<Rc<N>>,
+}
+
+dag_impl!(DiscreteDAG, DiscreteNode);
 
 type Choices = Vec<u8>;
 
 /// Conditional probability table for a child event in the network.
 #[derive(Debug, Clone)]
 pub struct CPT {
-    data: Vec<Vec<P>>,
+    data: Vec<Vec<f64>>,
     indexes: Vec<Choices>,
 }
 
@@ -220,7 +235,7 @@ impl CPT {
     ///
     /// A child(k=2) with 2 parents with two categories each would have n=4 (k1=2 x k2=2),
     /// and a CPT matrix of 4x2 dimensions.
-    pub fn new(elements: Vec<Vec<P>>, indexes: Vec<Choices>) -> Result<CPT, ()> {
+    pub fn new(elements: Vec<Vec<f64>>, indexes: Vec<Choices>) -> Result<CPT, ()> {
         let row_n = elements.len();
         if row_n < 2 {
             return Err(());
@@ -291,18 +306,18 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
         self.dist
     }
 
-    fn draw_sample(&self, values: &[u8]) -> u8 {
+    fn draw_sample(&self, rng: &mut RGSLRng, values: &[u8]) -> u8 {
         let cpt = &*self.cpt.borrow();
         let probs = cpt.get(values).unwrap();
         match *probs {
-            DType::Binomial(ref dist) => dist.sample(None),
-            DType::Categorical(ref dist) => dist.sample(None),
+            DType::Binomial(ref dist) => dist.sample(rng),
+            DType::Categorical(ref dist) => dist.sample(rng),
             _ => panic!(),
         }
     }
 
-    fn init_sample(&self) -> u8 {
-        self.dist.sample()
+    fn init_sample(&self, rng: &mut RGSLRng) -> u8 {
+        self.dist.sample(rng)
     }
 
     fn get_parents_dists(&self) -> Vec<&'a V> {
@@ -365,7 +380,7 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
             cpt.insert(idx, dist);
         }
         if sum < 1.0 {
-            return Err(("Conditional probability table must sum to 1".to_string()));
+            return Err("Conditional probability table must sum to 1".to_string());
         }
         let mut self_cpt = self.cpt.borrow_mut();
         *self_cpt = cpt;
@@ -373,23 +388,30 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
     }
 }
 
-var_constructor!(DefDiscreteVar, Discrete);
+#[derive(Debug)]
+pub struct DefDiscreteVar {
+    dist: DType,
+    observations: Vec<Discrete>,
+    id: Uuid,
+}
+
+var_impl!(DefDiscreteVar);
 
 impl DiscreteVar for DefDiscreteVar {
     type Event = Discrete;
 
     fn k_num(&self) -> u8 {
         match self.dist {
-            DType::Categorical(ref dist) => dist.sample(None),
+            DType::Categorical(ref dist) => dist.k_num(),
             DType::Binomial(_) => 2,
             _ => panic!(),
         }
     }
 
-    fn sample(&self) -> u8 {
+    fn sample(&self, rng: &mut RGSLRng) -> u8 {
         match self.dist {
-            DType::Categorical(ref dist) => dist.sample(None),
-            DType::Binomial(ref dist) => dist.sample(None),
+            DType::Categorical(ref dist) => dist.sample(rng),
+            DType::Binomial(ref dist) => dist.sample(rng),
             _ => panic!(),
         }
     }

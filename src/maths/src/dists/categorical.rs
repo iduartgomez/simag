@@ -1,22 +1,21 @@
 use std::u8;
 
-use P;
+use RGSLRng;
 
 use itertools;
-use rand;
 
-/// A discrete categorical distribution where k < 256 and sum(P(k)) == 1.
+/// A discrete categorical distribution where k < 256 and sum(f64(k)) == 1.
 #[derive(Debug, Clone)]
 pub struct Categorical {
     k: u8,
-    event_prob: Vec<P>,
-    cdf: Vec<P>,
+    event_prob: Vec<f64>,
+    cdf: Vec<f64>,
 }
 
 impl Categorical {
     /// Takes a vector representing the probability of each category
     /// for the random variable.
-    pub fn new(categories: Vec<P>) -> Result<Categorical, String> {
+    pub fn new(categories: Vec<f64>) -> Result<Categorical, String> {
         if categories.len() > u8::MAX as usize {
             let overflow = categories.len() - (u8::MAX as usize);
             return Err(format!("overflow by: {}", overflow));
@@ -48,20 +47,13 @@ impl Categorical {
     /// Samples from a univariate categorical distribution and returns
     /// a category choice (zero-based indexed).
     #[inline]
-    pub fn sample(&self, rng_source: Option<&mut rand::ThreadRng>) -> u8 {
-        use rand::Rng;
-        let val = if let Some(source) = rng_source {
-            let rand::Open01(val) = source.gen::<rand::Open01<f64>>();
-            val
-        } else {
-            let rand::Open01(val) = rand::random::<rand::Open01<f64>>();
-            val
-        };
+    pub fn sample(&self, rng: &mut RGSLRng) -> u8 {
+        let val = rng.uniform_pos();
         self.cdf.iter().position(|&p| p > val).unwrap() as u8
     }
 
     #[inline]
-    pub fn pmf(&self) -> &[P] {
+    pub fn pmf(&self) -> &[f64] {
         &self.event_prob
     }
 
@@ -72,12 +64,12 @@ impl Categorical {
 
 #[derive(Debug, Clone)]
 pub struct Binomial {
-    event_prob: P,
+    event_prob: f64,
 }
 
 impl Binomial {
     /// Takes the probability of success as an argument.
-    pub fn new(prob: P) -> Result<Binomial, String> {
+    pub fn new(prob: f64) -> Result<Binomial, String> {
         if prob >= 1. {
             return Err(format!("sum(p) == {} > 1.0", prob));
         }
@@ -88,28 +80,21 @@ impl Binomial {
     /// Samples from a univariate binomial distribution and returns a category choice
     /// (zero-based indexed).
     #[inline]
-    pub fn sample(&self, rng_source: Option<&mut rand::ThreadRng>) -> u8 {
-        use rand::Rng;
-        let val = if let Some(source) = rng_source {
-            let rand::Open01(val) = source.gen::<rand::Open01<f64>>();
-            val
-        } else {
-            let rand::Open01(val) = rand::random::<rand::Open01<f64>>();
-            val
-        };
+    pub fn sample(&self, rng: &mut RGSLRng) -> u8 {
+        let val = rng.uniform_pos();
         if val < (1. - self.event_prob) { 0 } else { 1 }
     }
 
-    pub fn success(&self) -> P {
+    pub fn success(&self) -> f64 {
         self.event_prob
     }
 
-    pub fn failure(&self) -> P {
+    pub fn failure(&self) -> f64 {
         1. - self.event_prob
     }
 
     #[inline]
-    pub fn pmf(&self) -> [P; 2] {
+    pub fn pmf(&self) -> [f64; 2] {
         [1. - self.event_prob, self.event_prob]
     }
 }

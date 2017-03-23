@@ -1,20 +1,17 @@
 //! Support mathematical methods library for the `simAG` framework
 
 extern crate float_cmp;
-//extern crate ndarray;
 extern crate itertools;
 extern crate rand;
 extern crate uuid;
 extern crate rgsl;
+extern crate ndarray;
 
 pub mod model;
 pub mod sampling;
 pub mod dists;
 
 //const FLOAT_EQ_ULPS: i64 = 2;
-
-/// Probability type
-pub type P = f64;
 
 pub use model::DiscreteModel;
 
@@ -24,6 +21,8 @@ pub struct RGSLRng {
     inner: GSLRng,
     cnt: usize,
 }
+
+const ENTROPY: usize = 32 * 1024;
 
 impl RGSLRng {
     pub fn new() -> RGSLRng {
@@ -40,6 +39,15 @@ impl RGSLRng {
         }
     }
 
+    #[inline]
+    pub fn uniform_pos(&mut self) -> f64 {
+        self.cnt += 1;
+        if self.cnt == ENTROPY {
+            self.reseed();
+        }
+        self.inner.uniform_pos()
+    }
+
     fn reseed(&mut self) {
         use rand::{OsRng, Rng};
         let seed = OsRng::new().unwrap().next_u32() as usize;
@@ -48,7 +56,7 @@ impl RGSLRng {
 
     fn rng(&mut self) -> &GSLRng {
         self.cnt += 1;
-        if self.cnt == 32 * 1024 {
+        if self.cnt == ENTROPY {
             self.reseed();
         }
         &self.inner

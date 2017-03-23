@@ -10,15 +10,8 @@ pub use self::discrete::{DiscreteNode, DiscreteVar, default_discrete_model};
 pub use self::continuous::{ContModel, DefContModel, DefContNode, DefContVar};
 pub use self::continuous::{ContNode, ContVar};
 
-macro_rules! dag_constructor {
+macro_rules! dag_impl {
     ($name:ident, $node:ident) => {
-        struct $name<'a, N>
-            where N: $node<'a>
-        {
-            _nlt: PhantomData<&'a ()>,
-            nodes: Vec<Rc<N>>,
-        }
-
         impl<'a, N> $name<'a, N>
             where N: $node<'a>
         {
@@ -53,6 +46,11 @@ macro_rules! dag_constructor {
                     .collect();
                 self.nodes = sorted;
                 Ok(())
+            }
+
+            #[inline]
+            fn get_node(&self, pos: usize) -> Rc<N> {
+                self.nodes[pos].clone()
             }
         }
 
@@ -144,7 +142,7 @@ macro_rules! dag_constructor {
             fn next(&mut self) -> Option<Self::Item> {
                 loop {
                     while self.childs_visitted < self.queued.get_childs().len() {
-                        let next = self.queued.get_child(self.childs_visitted);
+                        let next = self.queued.get_child_unchecked(self.childs_visitted);
                         self.childs_visitted += 1;
                         let d = next.get_dist() as *const N::Var as usize;
                         if !self.processed.contains(&d) {
@@ -171,7 +169,7 @@ macro_rules! dag_constructor {
 macro_rules! node_impl {
     ($name:ident, $var_trait:ident) => {
         impl<'a, V: 'a + $var_trait> Node for $name<'a, V> {
-            fn get_child(&self, pos: usize) -> Rc<Self> {
+            fn get_child_unchecked(&self, pos: usize) -> Rc<Self> {
                 let childs = &*self.childs.borrow();
                 childs[pos].clone()
             }
@@ -227,15 +225,8 @@ macro_rules! node_impl {
     }
 }
 
-macro_rules! var_constructor {
-    ($var_name:ident, $obs_ty:ident) => {
-        #[derive(Debug)]
-        pub struct $var_name {
-            dist: DType,
-            observations: Vec<$obs_ty>,
-            id: Uuid,
-        }
-
+macro_rules! var_impl {
+    ($var_name:ident) => {
         impl $var_name {
             pub fn with_dist(dist: DType) -> Result<$var_name, ()> {
                 match dist {
@@ -329,7 +320,7 @@ pub trait Variable: Hash + PartialEq + Eq {
 
 /// A node in the the DAG.
 pub trait Node {
-    fn get_child(&self, pos: usize) -> Rc<Self>;
+    fn get_child_unchecked(&self, pos: usize) -> Rc<Self>;
     fn get_childs(&self) -> Vec<Rc<Self>>;
     fn is_root(&self) -> bool;
     fn position(&self) -> usize;
@@ -403,5 +394,5 @@ pub enum DType {
     Categorical(Categorical),
     Binomial(Binomial),
     Poisson,
-    UnknownDisc
+    UnknownDisc,
 }

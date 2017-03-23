@@ -24,7 +24,7 @@ pub trait IntoDiscrete
 pub trait Gaussianization
     where Self: ContVar + Sized
 {
-    fn as_normal(&self) -> Self {
+    fn as_normal(&self, samples: usize) -> Self {
         let dist = match *self.dist_type() {
             DType::Normal(ref dist) => dist as &Sample,
             DType::Exponential(ref dist) => dist as &Sample,
@@ -34,7 +34,7 @@ pub trait Gaussianization
         let mut rng = RGSLRng::new();
         let std = Normal::std();
         let mut normal = Self::new();
-        for _ in 0..1000 {
+        for _ in 0..samples {
             let s = dist.sample(&mut rng);
             let y = Self::float_into_event(std.inverse_cdf(s));
             normal.push_observation(y);

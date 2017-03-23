@@ -21,3 +21,7 @@ pub trait Sample {
 pub trait InverseCDF {
     fn inverse_cdf(&self, x: f64) -> f64;
 }
+
+pub trait Inverse {
+    fn inverse(&self, p: f64) -> f64;
+}

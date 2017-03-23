@@ -4,9 +4,9 @@ version = "0.0.1"
 authors = ["IDG <iduartgomez@gmail.com>"]
 
 [dependencies]
-float-cmp = "*"
-# ndarray = "^0.8"
-itertools = "*"
 rand = "^0.3"
+float-cmp = "*"
+itertools = "*"
 uuid = { version = "^0.4", features = ["v4"] }
 GSL = "*"
+ndarray = "^0.8"

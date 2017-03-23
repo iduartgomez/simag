@@ -1,5 +1,6 @@
 //! Sampling for pure discrete models.
 
+use RGSLRng;
 use super::{Sampler, DiscreteSampler};
 use model::{DiscreteModel, DiscreteNode};
 
@@ -11,6 +12,7 @@ pub struct Gibbs {
     steeps: usize,
     burnin: usize,
     samples: Vec<Vec<u8>>,
+    rng: RGSLRng,
 }
 
 impl Sampler for Gibbs {
@@ -29,12 +31,13 @@ impl Sampler for Gibbs {
             steeps: steeps,
             burnin: burnin,
             samples: Vec::with_capacity(ITER_TIMES),
+            rng: RGSLRng::new(),
         }
     }
 }
 
 impl Gibbs {
-    fn var_val<'a, N: 'a>(&self, t: usize, var: &N) -> u8
+    fn var_val<'a, N: 'a>(&mut self, t: usize, var: &N) -> u8
         where N: DiscreteNode<'a>
     {
         let mut mb_values = Vec::new();
@@ -47,9 +50,9 @@ impl Gibbs {
                 let val_at_t = self.samples[t][i];
                 mb_values.push(val_at_t);
             }
-            var.draw_sample(&mb_values)
+            var.draw_sample(&mut self.rng, &mb_values)
         } else {
-            var.init_sample()
+            var.init_sample(&mut self.rng)
         }
     }
 
@@ -59,14 +62,14 @@ impl Gibbs {
         // draw prior values from the distribution of each value
         let mut priors = Vec::with_capacity(net.var_num());
         for node in net.iter_vars().filter(|x| x.is_root()) {
-            priors.push(node.init_sample());
+            priors.push(node.init_sample(&mut self.rng));
         }
         self.samples.push(priors);
     }
 }
 
 impl DiscreteSampler for Gibbs {
-    fn get_samples<'a, N: 'a>(mut self, net: &DiscreteModel<'a, N, Gibbs>) -> Vec<Vec<u8>>
+    fn get_samples<'a, N>(mut self, net: &DiscreteModel<'a, N, Gibbs>) -> Vec<Vec<u8>>
         where N: DiscreteNode<'a>
     {
         let k = net.var_num();

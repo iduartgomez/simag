@@ -7,11 +7,11 @@ use std::marker::PhantomData;
 
 use uuid::Uuid;
 
+use RGSLRng;
 use super::{Node, Variable, Observation};
 use super::{DType, Continuous};
 use sampling::{ContinuousSampler, DefContSampler};
 use dists::{Sample, Gaussianization};
-use RGSLRng;
 
 // public traits for models:
 
@@ -21,6 +21,7 @@ pub trait ContNode<'a>: Node
 {
     type Var: 'a + ContVar + Gaussianization;
 
+    /// Constructor method for the continuous node in the Bayesian net.
     fn new(dist: &'a Self::Var, pos: usize) -> Result<Self, ()>;
 
     /// Return the distribution of a node.
@@ -40,9 +41,18 @@ pub trait ContNode<'a>: Node
     /// to initialize each sampling steep.
     fn init_sample(&self, rng: &mut RGSLRng) -> f64;
 
+    /// Add a new parent to this child with given rank correlation.
+    /// Does not add self as child implicitly!
     fn add_parent(&self, parent: Weak<Self>, rank_cr: f64);
 
+    /// Add a child to this node, assumes rank correlation was provided to the child.
+    /// Does not add self as parent implicitly!
     fn add_child(&self, child: Rc<Self>);
+
+    /// Get the values of the edges of this node with its parents, representing the rank
+    /// correlation between the nodes. Returns the position of the parent for each edge
+    /// in the network.
+    fn get_edges(&self) -> Vec<(f64, usize)>;
 }
 
 pub trait ContVar: Variable {
@@ -56,24 +66,29 @@ pub trait ContVar: Variable {
     /// this distribution.
     fn get_observations(&self) -> &[Self::Event];
 
+    /// Push a new observation of the measured event/variable to the stack of obserbations.
     fn push_observation(&mut self, obs: Self::Event);
 
+    /// Conversion of a double float to the associated Event type.
     fn float_into_event(f64) -> Self::Event;
+
+    /// Get an obsevation value from the observations stack. Panics if it out of bound.
+    fn get_obs_unchecked(&self, pos: usize) -> Self::Event;
 }
 
 pub struct ContModel<'a, N: 'a, S>
     where N: ContNode<'a>,
-          S: ContinuousSampler + Clone
+          S: ContinuousSampler<'a> + Clone
 {
     vars: ContDAG<'a, N>,
     sampler: S,
 }
 
-pub type DefContModel<'a> = ContModel<'a, DefContNode<'a, DefContVar>, DefContSampler>;
+pub type DefContModel<'a> = ContModel<'a, DefContNode<'a, DefContVar>, DefContSampler<'a>>;
 
 impl<'a, N, S> ContModel<'a, N, S>
     where N: ContNode<'a>,
-          S: ContinuousSampler + Clone
+          S: ContinuousSampler<'a> + Clone
 {
     pub fn new(init: &'a <N as ContNode<'a>>::Var, sampler: S) -> Result<ContModel<'a, N, S>, ()> {
         let init = N::new(init, 0)?;
@@ -155,9 +170,21 @@ impl<'a, N, S> ContModel<'a, N, S>
     pub fn iter_vars(&self) -> NetIter<'a, N> {
         NetIter::new(&self.vars.nodes)
     }
+
+    /// Get the node in the graph at position **i** unchecked.
+    pub fn get_var(&self, i: usize) -> Rc<N> {
+        self.vars.get_node(i)
+    }
 }
 
-dag_constructor!(ContDAG, ContNode);
+struct ContDAG<'a, N>
+    where N: ContNode<'a>
+{
+    _nlt: PhantomData<&'a ()>,
+    nodes: Vec<Rc<N>>,
+}
+
+dag_impl!(ContDAG, ContNode);
 
 /// A node in the network representing a continuous random variable.
 ///
@@ -246,9 +273,27 @@ impl<'a, V: 'a> ContNode<'a> for DefContNode<'a, V>
         let parent_childs = &mut *self.childs.borrow_mut();
         parent_childs.push(child);
     }
+
+    fn get_edges(&self) -> Vec<(f64, usize)> {
+        let edges = &*self.edges.borrow();
+        let parents = &*self.parents.borrow();
+        let mut edge_with_parent = Vec::with_capacity(parents.len());
+        for (i, p) in parents.iter().enumerate() {
+            let p = p.upgrade().unwrap();
+            edge_with_parent.push((edges[i], p.position()));
+        }
+        edge_with_parent
+    }
 }
 
-var_constructor!(DefContVar, Continuous);
+#[derive(Debug)]
+pub struct DefContVar {
+    dist: DType,
+    observations: Vec<Continuous>,
+    id: Uuid,
+}
+
+var_impl!(DefContVar);
 
 impl ContVar for DefContVar {
     type Event = Continuous;
@@ -272,8 +317,11 @@ impl ContVar for DefContVar {
     fn float_into_event(float: f64) -> Self::Event {
         float as Self::Event
     }
-}
 
+    fn get_obs_unchecked(&self, pos: usize) -> Self::Event {
+        self.observations[pos]
+    }
+}
 
 impl Gaussianization for DefContVar {
     #[inline(always)]
