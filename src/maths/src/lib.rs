@@ -5,7 +5,7 @@ extern crate itertools;
 extern crate rand;
 extern crate uuid;
 extern crate rgsl;
-extern crate ndarray;
+//extern crate ndarray;
 
 pub mod model;
 pub mod sampling;
@@ -16,9 +16,11 @@ pub mod dists;
 pub use model::DiscreteModel;
 
 use rgsl::types::rng::Rng as GSLRng;
+use rand::{OsRng, Rng};
 
 pub struct RGSLRng {
     inner: GSLRng,
+    thread_rng: OsRng,
     cnt: usize,
 }
 
@@ -28,10 +30,13 @@ impl RGSLRng {
     pub fn new() -> RGSLRng {
         use rgsl::types::rng;
         let rng_type = rng::algorithms::taus2();
-        if let Some(generator) = rng::Rng::new(&rng_type) {
-            generator.set(0);
+        if let Some(mut generator) = rng::Rng::new(&rng_type) {
+            let mut thread_rng = OsRng::new().unwrap();
+            let seed = thread_rng.next_u32() as usize;
+            generator.set(seed);
             RGSLRng {
                 inner: generator,
+                thread_rng: thread_rng,
                 cnt: 0,
             }
         } else {
@@ -48,9 +53,17 @@ impl RGSLRng {
         self.inner.uniform_pos()
     }
 
+    #[inline]
+    pub fn uniform_int(&mut self, n: usize) -> usize {
+        self.cnt += 1;
+        if self.cnt == ENTROPY {
+            self.reseed();
+        }
+        self.inner.uniform_int(n)
+    }
+
     fn reseed(&mut self) {
-        use rand::{OsRng, Rng};
-        let seed = OsRng::new().unwrap().next_u32() as usize;
+        let seed = self.thread_rng.next_u32() as usize;
         self.inner.set(seed);
     }
 
@@ -65,8 +78,10 @@ impl RGSLRng {
 
 impl Clone for RGSLRng {
     fn clone(&self) -> RGSLRng {
+        let thread_rng = OsRng::new().unwrap();
         let mut rng = RGSLRng {
             inner: self.inner.clone(),
+            thread_rng: thread_rng,
             cnt: 0,
         };
         rng.reseed();

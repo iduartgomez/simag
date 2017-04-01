@@ -3,8 +3,6 @@
 use std::hash::Hash;
 use std::rc::Rc;
 
-use dists::{Categorical, Binomial};
-
 pub use self::discrete::{DiscreteModel, DefDiscreteModel, DefDiscreteNode, DefDiscreteVar, CPT};
 pub use self::discrete::{DiscreteNode, DiscreteVar, default_discrete_model};
 pub use self::continuous::{ContModel, DefContModel, DefContNode, DefContVar};
@@ -379,12 +377,13 @@ use dists::*;
 pub enum DType {
     // continuous types:
     Normal(Normal),
-    Beta,
+    Beta(Beta),
     Exponential(Exponential),
-    Gamma,
-    ChiSquared,
-    StudentT,
-    F,
+    Gamma(Gamma),
+    ChiSquared(ChiSquared),
+    StudentT(StudentT),
+    F(FDist),
+    Cauchy(Cauchy),
     LogNormal,
     Logistic,
     LogLogistic,

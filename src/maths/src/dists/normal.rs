@@ -2,8 +2,8 @@ use RGSLRng;
 
 #[derive(Debug, Clone)]
 pub struct Normal {
-    mu: f64,
-    sigma: f64,
+    pub mu: f64,
+    pub sigma: f64,
     std: bool,
 }
 

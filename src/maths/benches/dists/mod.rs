@@ -2,26 +2,32 @@ mod sample {
     use test::Bencher;
     use simag::dists::*;
     use simag::RGSLRng;
-    use rand;
 
     #[bench]
     fn categorical(b: &mut Bencher) {
+        let mut rng = RGSLRng::new();
         let d = Categorical::new(vec![0.00392155_f64; 255]).unwrap();
-        let mut rng = rand::thread_rng();
-        b.iter(|| d.sample(Some(&mut rng)));
+        b.iter(|| d.sample(&mut rng));
     }
 
     #[bench]
     fn binomial(b: &mut Bencher) {
+        let mut rng = RGSLRng::new();
         let d = Binomial::new(0.5).unwrap();
-        let mut rng = rand::thread_rng();
-        b.iter(|| d.sample(Some(&mut rng)));
+        b.iter(|| d.sample(&mut rng));
     }
 
     #[bench]
     fn normal(b: &mut Bencher) {
         let mut rng = RGSLRng::new();
         let d = Normal::new(2., 2.).unwrap();
+        b.iter(|| d.sample(&mut rng));
+    }
+
+    #[bench]
+    fn exponential(b: &mut Bencher) {
+        let mut rng = RGSLRng::new();
+        let d = Exponential::new(1.5).unwrap();
         b.iter(|| d.sample(&mut rng));
     }
 }
@@ -33,6 +39,12 @@ mod cdf {
     #[bench]
     fn normal(b: &mut Bencher) {
         let d = Normal::new(2., 2.).unwrap();
+        b.iter(|| d.cdf(3.));
+    }
+
+    #[bench]
+    fn exponential(b: &mut Bencher) {
+        let d = Exponential::new(1.5).unwrap();
         b.iter(|| d.cdf(3.));
     }
 }

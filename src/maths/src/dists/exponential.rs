@@ -8,7 +8,7 @@ pub struct Exponential {
 
 impl Exponential {
     pub fn new(lambda: f64) -> Result<Exponential, ()> {
-        if lambda.is_sign_negative() {
+        if lambda <= 0.0 {
             return Err(());
         }
 
@@ -30,7 +30,7 @@ impl Exponential {
     }
 }
 
-use super::{Sample, InverseCDF};
+use super::{Sample, InverseCDF, InverseDensity};
 
 impl Sample for Exponential {
     #[inline]
@@ -51,5 +51,16 @@ impl InverseCDF for Exponential {
                     exponential distribution")
         }
         exponential_Pinv(x, self.mean)
+    }
+}
+
+impl InverseDensity for Exponential {
+    fn inverse_density(&self, y: f64) -> f64 {
+        if y.is_sign_negative() {
+            panic!("simag: expected positive real number when computing the density of \
+                    the inverse exponential distribution")
+        }
+        let exp = -self.rate / y;
+        exp.exp()
     }
 }

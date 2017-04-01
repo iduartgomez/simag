@@ -33,10 +33,6 @@ pub trait ContNode<'a>: Node
     /// Returns a reference to the distributions of the childs·
     fn get_childs_dists(&self) -> Vec<&'a Self::Var>;
 
-    /// Takes an slice reprensenting the realized parent variables values at the current
-    /// time **t** and draws a sample based on the corresponding probabilities.
-    fn draw_sample(&self, rng: &mut RGSLRng, fixed: &[f64]) -> f64;
-
     /// Sample from the prior distribution, usually called on roots of the tree
     /// to initialize each sampling steep.
     fn init_sample(&self, rng: &mut RGSLRng) -> f64;
@@ -226,17 +222,6 @@ impl<'a, V: 'a> ContNode<'a> for DefContNode<'a, V>
 
     fn get_dist(&self) -> &'a V {
         self.dist
-    }
-
-    fn draw_sample(&self, rng: &mut RGSLRng, values: &[f64]) -> f64 {
-        let parents = &*self.parents.borrow();
-        let mut dists = vec![];
-        for p in parents {
-            let p = p.upgrade().unwrap();
-            dists.push(p.dist);
-        }
-        unimplemented!()
-        // need to fix parent variables probabilities and sample based on those
     }
 
     fn init_sample(&self, rng: &mut RGSLRng) -> f64 {

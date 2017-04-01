@@ -1,13 +1,12 @@
 use std::f64::consts::PI;
 use std::collections::{HashMap, VecDeque};
 
-use ndarray as arr;
 use rgsl::{MatrixF64, VectorF64};
 use rgsl;
 
 use super::{Sampler, ContinuousSampler};
 use model::{Variable, ContModel, ContNode, ContVar, DefContVar, DType};
-use dists::{Normal, Inverse, Gaussianization};
+use dists::{Normal, InverseDensity, Gaussianization};
 use RGSLRng;
 
 const ITER_TIMES: usize = 1000;
@@ -65,7 +64,7 @@ impl<'a> AnalyticNormal<'a> {
         const PI_DIV_SIX: f64 = PI / 6.0;
         // construct a std normal variables net and the joint partial correlation matrix
         // we do this by:
-        // 1) sampling from each random variable in the network (where for 
+        // 1) sampling from each random variable in the network (where for
         // variable X and prob func F(x) it has an invertible F^-1(x) function, otherwise panic)
         // and normalizing the sample using the inverse CDF of std normal
         // 2) calculating the partial correlation of each edge conditioned on other edges which
@@ -73,8 +72,8 @@ impl<'a> AnalyticNormal<'a> {
         // 3) construct the correlation matrix with the values obtained, specifying the full
         // correlation matrix for the joint mulvariate std normal distribution
         let d = net.var_num();
-        self.cr_matrix = MatrixF64::new(d, d).unwrap();
-        self.cr_matrix.set_identity();
+        let mut cr_matrix = MatrixF64::new(d, d).unwrap();
+        cr_matrix.set_identity();
         let mut cached: HashMap<(usize, usize), f64> = HashMap::new();
         for (x, node) in net.iter_vars().enumerate() {
             let dist = node.get_dist().as_normal(self.steeps).into_default();
@@ -84,8 +83,8 @@ impl<'a> AnalyticNormal<'a> {
                 // ρ{i,j}|D = 2 * sin( π/6 * r{i,j}|D )
                 let rho_xy = 2.0 * (PI_DIV_SIX * pt_cr).sin();
                 let p_cr = partial_correlation((x, y), rho_xy, cond.as_slices().0, &mut cached);
-                self.cr_matrix.set(x, y, p_cr);
-                self.cr_matrix.set(y, x, p_cr);
+                cr_matrix.set(x, y, p_cr);
+                cr_matrix.set(y, x, p_cr);
             }
             let n = Normalized {
                 var: dist,
@@ -96,11 +95,17 @@ impl<'a> AnalyticNormal<'a> {
         // find matrix A such as { A x A(transposed) = Σ } where { Σ = correlation matrix }
         // we do this using symmetric tridiagonal decomposition to avoid any problem
         // of A not being positive-definite instead of using Cholesky decomposition
-        let decomp_vec = VectorF64::new(d).unwrap();
-        match symmtd_decomp(&self.cr_matrix, &decomp_vec) { 
+        let decomp_vec = VectorF64::new(d - 1).unwrap();
+        match symmtd_decomp(&cr_matrix, &decomp_vec) { 
             rgsl::Value::Success => {}
-            _ => panic!("simag: failed to decompose correlation matrix while initialising sampler"), 
+            _ => {
+                panic!("simag: failed to factorize the correlation matrix while initialising \
+                        sampler")
+            } 
         }
+        // BLAS ops only accept float matrixes, so we have to convert from f64 to f32
+        //self.cr_matrix = matrixf64_to_matrixf32(cr_matrix);
+        self.cr_matrix = cr_matrix;
     }
 }
 
@@ -134,24 +139,36 @@ impl<'a> ContinuousSampler<'a> for AnalyticNormal<'a> {
     fn get_samples<N>(mut self, net: &ContModel<'a, N, AnalyticNormal<'a>>) -> Vec<Vec<f64>>
         where N: ContNode<'a>
     {
+        use rgsl::blas::level2::dtrmv;
+
         let std = Normal::std();
-        let k = net.var_num();
         self.initialize(net);
         let d = self.normalized.len();
         for t in 0..self.steeps {
-            let mut steep_sample = Vec::with_capacity(d);
-            for normal in &self.normalized {
+            let mut steep_sample = VectorF64::new(d).unwrap();
+            for (i, normal) in self.normalized.iter().enumerate() {
                 // get each normalized sample obtained during initialization
                 // for var i at steep t, then transform back to the original distribution
                 // using the inverse dist function F^-1
-                let sample = std.cdf(normal.var.get_obs_unchecked(t));
-                let sample = match *normal.original {
-                    DType::Exponential(ref d) => d.inverse(sample),
-                    _ => panic!()
-                };
-                steep_sample.push(sample);
+                let sample = normal.var.get_obs_unchecked(t);
+                steep_sample.set(i, sample);
             }
-            self.samples.push(steep_sample);
+            dtrmv(rgsl::cblas::Uplo::Lower,
+                  rgsl::cblas::Transpose::NoTrans,
+                  rgsl::cblas::Diag::NonUnit,
+                  &self.cr_matrix,
+                  &mut steep_sample);
+            let mut f = Vec::with_capacity(d);
+            for i in 0..d {
+                let sample = std.cdf(steep_sample.get(i));
+                let sample = match *self.normalized[i].original {
+                    DType::Normal(ref d) => sample + d.mu,
+                    DType::Exponential(ref d) => d.inverse_density(sample),
+                    _ => panic!(),
+                };
+                f.push(sample)
+            }
+            self.samples.push(f);
         }
         self.samples
     }
@@ -169,17 +186,54 @@ impl<'a> ::std::clone::Clone for AnalyticNormal<'a> {
 mod test {
     use super::*;
 
+    use RGSLRng;
+    use rgsl;
+
+    use std::collections::HashMap;
+
     #[test]
     fn pt_cr() {
-        /*
-        let pt_cr_matrix: arr::Array<f64, arr::Dim<[usize; 2]>> =
-            arr::ArrayBase::from_shape_fn((d, d), |dims: (usize, usize)| if &dims.0 == &dims.1 {
-                1.0
-            } else {
-                0.0
-            });
-        */
+        use rgsl::linear_algebra::symmtd_decomp;
+        use rgsl::blas::level2::dtrmv;
+        use rgsl::randist::gaussian::gaussian;
 
+        let mut rng = RGSLRng::new();
+        let mut mtx = MatrixF64::new(6, 6).unwrap();
+        let mut map = HashMap::new();
+        for i in 0..6 {
+            for j in 0..6 {
+                let sign: f64 = if rng.uniform_pos() < 0.5 { -1.0 } else { 1.0 };
+                if i == j {
+                    mtx.set(i, j, 1.0);
+                } else if map.get(&(j, i)).is_some() {
+                    let val = map.get(&(j, i)).unwrap();
+                    mtx.set(i, j, *val);
+                } else {
+                    let x = rng.uniform_pos() * sign;
+                    map.insert((i, j), x);
+                    mtx.set(i, j, x);
+                }
+            }
+        }
+        println!("\nSYNTHETIC CORR MTX:\n{:?}\n", mtx);
+        let mut v = VectorF64::new(5).unwrap();
+        symmtd_decomp(&mut mtx, &mut v);
+        println!("TAU:\n{:?}", v);
+        println!("A:\n{:?}\n", mtx);
 
+        let mut samples = VectorF64::new(6).unwrap();
+        for i in 0..6 {
+            let s = gaussian(rng.rng(), 1.0);
+            samples.set(i, s);
+        }
+        println!("SYNTHETIC SAMPLES: {:?}", samples);
+        dtrmv(rgsl::cblas::Uplo::Lower,
+              rgsl::cblas::Transpose::NoTrans,
+              rgsl::cblas::Diag::NonUnit,
+              &mtx,
+              &mut samples);
+        println!("s x A = {:?}\n", samples);
+
+        panic!()
     }
 }

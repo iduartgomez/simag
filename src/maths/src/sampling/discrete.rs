@@ -73,13 +73,15 @@ impl DiscreteSampler for Gibbs {
         where N: DiscreteNode<'a>
     {
         let k = net.var_num();
-        self.samples = vec![vec![0_u8; k]; self.steeps];
+        self.samples = Vec::with_capacity(self.steeps);
         self.initialize(net);
         for t in 0..self.steeps {
-            for (i, var_dist) in net.iter_vars().enumerate() {
+            let mut steep = Vec::with_capacity(k);
+            for var_dist in net.iter_vars() {
                 let choice = self.var_val(t, &*var_dist);
-                self.samples[t][i] = choice;
+                steep.push(choice);
             }
+            self.samples.push(steep)
         }
         self.samples
     }
