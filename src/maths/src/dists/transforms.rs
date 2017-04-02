@@ -25,17 +25,26 @@ pub trait Gaussianization
     where Self: ContVar + Sized
 {
     fn as_normal(&self, samples: usize) -> Self {
-        let dist = match *self.dist_type() {
-            DType::Normal(ref dist) => dist as &Sample,
-            DType::Exponential(ref dist) => dist as &Sample,
-            _ => panic!("simag: the distribution does not actually have an invertible function"),
+        let (sampler, cdf) = match *self.dist_type() {
+            DType::Normal(ref dist) => (dist as &Sample, dist as &CDF),
+            DType::Exponential(ref dist) => (dist as &Sample, dist as &CDF),
+            DType::Beta(ref dist) => (dist as &Sample, dist as &CDF),
+            DType::Gamma(ref dist) => (dist as &Sample, dist as &CDF),
+            DType::ChiSquared(ref dist) => (dist as &Sample, dist as &CDF),
+            DType::TDist(ref dist) => (dist as &Sample, dist as &CDF),
+            DType::FDist(ref dist) => (dist as &Sample, dist as &CDF),
+            DType::Cauchy(ref dist) => (dist as &Sample, dist as &CDF),
+            DType::LogNormal(ref dist) => (dist as &Sample, dist as &CDF),
+            DType::Logistic(ref dist) => (dist as &Sample, dist as &CDF),
+            DType::Pareto(ref dist) => (dist as &Sample, dist as &CDF),
+            _ => panic!("simag: the distribution does not have an invertible cumulative function"),
         };
 
         let mut rng = RGSLRng::new();
         let std = Normal::std();
         let mut normal = Self::new();
         for _ in 0..samples {
-            let s = dist.sample(&mut rng);
+            let s = cdf.cdf(sampler.sample(&mut rng));
             let y = Self::float_into_event(std.inverse_cdf(s));
             normal.push_observation(y);
         }

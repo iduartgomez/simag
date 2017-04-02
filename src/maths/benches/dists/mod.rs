@@ -3,6 +3,7 @@ mod sample {
     use simag::dists::*;
     use simag::RGSLRng;
 
+    // discrete:
     #[bench]
     fn categorical(b: &mut Bencher) {
         let mut rng = RGSLRng::new();
@@ -17,6 +18,42 @@ mod sample {
         b.iter(|| d.sample(&mut rng));
     }
 
+    // continuous:
+    #[bench]
+    fn cauchy(b: &mut Bencher) {
+        let mut rng = RGSLRng::new();
+        let d = Cauchy::std(1.).unwrap();
+        b.iter(|| d.sample(&mut rng));
+    }
+
+    #[bench]
+    fn chisquared(b: &mut Bencher) {
+        let mut rng = RGSLRng::new();
+        let d = ChiSquared::new(3).unwrap();
+        b.iter(|| d.sample(&mut rng));
+    }
+
+    #[bench]
+    fn exponential(b: &mut Bencher) {
+        let mut rng = RGSLRng::new();
+        let d = Exponential::new(1.5).unwrap();
+        b.iter(|| d.sample(&mut rng));
+    }
+
+    #[bench]
+    fn fdist(b: &mut Bencher) {
+        let mut rng = RGSLRng::new();
+        let d = FDist::new(5.0, 2.0).unwrap();
+        b.iter(|| d.sample(&mut rng));
+    }
+
+    #[bench]
+    fn gamma(b: &mut Bencher) {
+        let mut rng = RGSLRng::new();
+        let d = Gamma::new(1., 0.5).unwrap();
+        b.iter(|| d.sample(&mut rng));
+    }
+
     #[bench]
     fn normal(b: &mut Bencher) {
         let mut rng = RGSLRng::new();
@@ -25,9 +62,9 @@ mod sample {
     }
 
     #[bench]
-    fn exponential(b: &mut Bencher) {
+    fn tdist(b: &mut Bencher) {
         let mut rng = RGSLRng::new();
-        let d = Exponential::new(1.5).unwrap();
+        let d = TDist::new(2.0).unwrap();
         b.iter(|| d.sample(&mut rng));
     }
 }

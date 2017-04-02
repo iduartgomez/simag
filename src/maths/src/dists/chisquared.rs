@@ -15,17 +15,14 @@ impl ChiSquared {
     }
 
     #[inline]
-    pub fn cdf(&self, x: f64) -> f64 {
-        use rgsl::randist::chi_squared::chisq_P;
+    pub fn pdf(&self, x: f64) -> f64 {
+        use rgsl::randist::chi_squared::chisq_pdf;
 
-        if x.is_sign_negative() {
-            panic!("simag: expected positive real number when computing CDF of chi-squared")
-        }
-        chisq_P(x, self.k as f64)
+        chisq_pdf(x, self.k as f64)
     }
 }
 
-use super::{Sample, InverseCDF, InverseDensity};
+use super::{Sample, CDF};
 
 impl Sample for ChiSquared {
     #[inline]
@@ -36,7 +33,17 @@ impl Sample for ChiSquared {
     }
 }
 
-impl InverseCDF for ChiSquared {
+impl CDF for ChiSquared {
+    #[inline]
+    fn cdf(&self, x: f64) -> f64 {
+        use rgsl::randist::chi_squared::chisq_P;
+
+        if x.is_sign_negative() {
+            panic!("simag: expected positive real number when computing CDF of chi-squared")
+        }
+        chisq_P(x, self.k as f64)
+    }
+
     #[inline]
     fn inverse_cdf(&self, x: f64) -> f64 {
         use rgsl::randist::chi_squared::chisq_Pinv;
@@ -46,27 +53,5 @@ impl InverseCDF for ChiSquared {
                     chi-squared")
         }
         chisq_Pinv(x, self.k as f64)
-    }
-}
-
-impl InverseDensity for ChiSquared {
-    fn inverse_density(&self, y: f64) -> f64 {
-        use rgsl::gamma_beta::gamma::lngamma;
-
-        let d = self.k as f64 / 2.0;
-        if y <= 0.0 {
-            panic!("simag: expected y > 0 real number when computing the density of \
-                    the inverse chi-squared distribution")
-        } else if d > 171.0 {
-            let of = d - 171.0;
-            panic!("simag: overflow by {of}\nmax value of the operation (k + 1 / 2) when \
-                    computing the density of the inverse chi-squared T dist is 171.0,\n the \
-                    parameter k of the distribution was in this instance: {nu}",
-                   of = of,
-                   nu = self.k)
-        }
-
-        let x = 2.0_f64;
-        x.powf(-d) / lngamma(d) * y.powf(-d - 1.0) * (-1.0 / 2.0 * y).exp()
     }
 }

@@ -19,18 +19,14 @@ impl Exponential {
     }
 
     #[inline]
-    pub fn cdf(&self, x: f64) -> f64 {
-        use rgsl::randist::exponential::exponential_P;
-
-        if x.is_sign_negative() {
-            panic!("simag: expected positive real number when computing CDF of exponential \
-                    distribution")
-        }
-        exponential_P(x, self.mean)
+    pub fn pdf(&self, x: f64) -> f64 {
+        use rgsl::randist::exponential::exponential_pdf;
+        
+        exponential_pdf(x, self.mean)
     }
 }
 
-use super::{Sample, InverseCDF, InverseDensity};
+use super::{Sample, CDF,};
 
 impl Sample for Exponential {
     #[inline]
@@ -41,7 +37,18 @@ impl Sample for Exponential {
     }
 }
 
-impl InverseCDF for Exponential {
+impl CDF for Exponential {
+    #[inline]
+    fn cdf(&self, x: f64) -> f64 {
+        use rgsl::randist::exponential::exponential_P;
+
+        if x.is_sign_negative() {
+            panic!("simag: expected positive real number when computing CDF of exponential \
+                    distribution")
+        }
+        exponential_P(x, self.mean)
+    }
+
     #[inline]
     fn inverse_cdf(&self, x: f64) -> f64 {
         use rgsl::randist::exponential::exponential_Pinv;
@@ -51,16 +58,5 @@ impl InverseCDF for Exponential {
                     exponential distribution")
         }
         exponential_Pinv(x, self.mean)
-    }
-}
-
-impl InverseDensity for Exponential {
-    fn inverse_density(&self, y: f64) -> f64 {
-        if y.is_sign_negative() {
-            panic!("simag: expected positive real number when computing the density of \
-                    the inverse exponential distribution")
-        }
-        let exp = -self.rate / y;
-        exp.exp()
     }
 }

@@ -6,7 +6,7 @@ use rgsl;
 
 use super::{Sampler, ContinuousSampler};
 use model::{Variable, ContModel, ContNode, ContVar, DefContVar, DType};
-use dists::{Normal, InverseDensity, Gaussianization};
+use dists::{Normal, Gaussianization, CDF};
 use RGSLRng;
 
 const ITER_TIMES: usize = 1000;
@@ -162,8 +162,17 @@ impl<'a> ContinuousSampler<'a> for AnalyticNormal<'a> {
             for i in 0..d {
                 let sample = std.cdf(steep_sample.get(i));
                 let sample = match *self.normalized[i].original {
-                    DType::Normal(ref d) => sample + d.mu,
-                    DType::Exponential(ref d) => d.inverse_density(sample),
+                    DType::Normal(ref dist) => sample + dist.mu,
+                    DType::Exponential(ref dist) => dist.inverse_cdf(sample),
+                    DType::Beta(ref dist) => dist.inverse_cdf(sample),
+                    DType::Gamma(ref dist) => dist.inverse_cdf(sample),
+                    DType::ChiSquared(ref dist) => dist.inverse_cdf(sample),
+                    DType::TDist(ref dist) => dist.inverse_cdf(sample),
+                    DType::FDist(ref dist) => dist.inverse_cdf(sample),
+                    DType::Cauchy(ref dist) => dist.inverse_cdf(sample),
+                    DType::LogNormal(ref dist) => dist.inverse_cdf(sample),
+                    DType::Logistic(ref dist) => dist.inverse_cdf(sample),
+                    DType::Pareto(ref dist) => dist.inverse_cdf(sample),
                     _ => panic!(),
                 };
                 f.push(sample)

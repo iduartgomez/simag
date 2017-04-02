@@ -30,15 +30,14 @@ impl Cauchy {
     }
 
     #[inline]
-    pub fn cdf(&self, x: f64) -> f64 {
-        use rgsl::randist::cauchy::cauchy_P;
-        let std = x - self.x;
+    pub fn pdf(&self, x: f64) -> f64 {
+        use rgsl::randist::cauchy::cauchy_pdf;
 
-        cauchy_P(std, self.gamma)
+        cauchy_pdf(x - self.x, self.gamma)
     }
 }
 
-use super::{Sample, InverseCDF, InverseDensity};
+use super::{Sample, CDF};
 
 impl Sample for Cauchy {
     #[inline]
@@ -49,21 +48,19 @@ impl Sample for Cauchy {
     }
 }
 
-impl InverseCDF for Cauchy {
+impl CDF for Cauchy {
+    #[inline]
+    fn cdf(&self, x: f64) -> f64 {
+        use rgsl::randist::cauchy::cauchy_P;
+        let std = x - self.x;
+
+        cauchy_P(std, self.gamma)
+    }
+
     #[inline]
     fn inverse_cdf(&self, x: f64) -> f64 {
         use rgsl::randist::cauchy::cauchy_Pinv;
 
         cauchy_Pinv(x - self.x, self.gamma)
-    }
-}
-
-impl InverseDensity for Cauchy {
-    fn inverse_density(&self, y: f64) -> f64 {
-        use rgsl::randist::cauchy::cauchy_pdf;
-
-        let c = self.gamma * self.gamma;
-        let y = y - self.x;
-        cauchy_pdf(y, self.gamma / c) + self.x
     }
 }

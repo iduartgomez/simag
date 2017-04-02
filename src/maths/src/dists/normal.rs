@@ -33,20 +33,19 @@ impl Normal {
     }
 
     #[inline]
-    pub fn cdf(&self, x: f64) -> f64 {
-        use rgsl::randist::gaussian::gaussian_P;
-        use rgsl::randist::gaussian::ugaussian_P;
-
+    pub fn pdf(&self, x: f64) -> f64 {
+        use rgsl::randist::gaussian::gaussian_pdf;
+        use rgsl::randist::gaussian::ugaussian_pdf;
+        
         if self.std {
-            ugaussian_P(x)
+            ugaussian_pdf(x)
         } else {
-            let x = x - self.mu;
-            gaussian_P(x, self.sigma)
+            gaussian_pdf(x - self.mu, self.sigma)
         }
     }
 }
 
-use super::{Sample, InverseCDF};
+use super::{Sample, CDF};
 
 impl Sample for Normal {
     #[inline]
@@ -63,7 +62,20 @@ impl Sample for Normal {
     }
 }
 
-impl InverseCDF for Normal {
+impl CDF for Normal {
+    #[inline]
+    fn cdf(&self, x: f64) -> f64 {
+        use rgsl::randist::gaussian::gaussian_P;
+        use rgsl::randist::gaussian::ugaussian_P;
+
+        if self.std {
+            ugaussian_P(x)
+        } else {
+            let x = x - self.mu;
+            gaussian_P(x, self.sigma)
+        }
+    }
+
     #[inline]
     fn inverse_cdf(&self, x: f64) -> f64 {
         use rgsl::randist::gaussian::gaussian_Pinv;
@@ -72,8 +84,7 @@ impl InverseCDF for Normal {
         if self.std {
             ugaussian_Pinv(x)
         } else {
-            let q = self.cdf(x);
-            gaussian_Pinv(q, self.sigma)
+            gaussian_Pinv(x - self.mu, self.sigma)
         }
     }
 }

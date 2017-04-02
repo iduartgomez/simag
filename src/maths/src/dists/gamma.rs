@@ -16,17 +16,14 @@ impl Gamma {
     }
 
     #[inline]
-    pub fn cdf(&self, x: f64) -> f64 {
-        use rgsl::randist::gamma::gamma_P;
-
-        if x.is_sign_negative() {
-            panic!("simag: expected positive real number when computing CDF of gamma dist")
-        }
-        gamma_P(x, self.a, self.b)
+    pub fn pdf(&self, x: f64) -> f64 {
+        use rgsl::randist::gamma::gamma_pdf;
+        
+        gamma_pdf(x, self.a, self.b)
     }
 }
 
-use super::{Sample, InverseCDF, InverseDensity};
+use super::{Sample, CDF,};
 
 impl Sample for Gamma {
     #[inline]
@@ -37,7 +34,17 @@ impl Sample for Gamma {
     }
 }
 
-impl InverseCDF for Gamma {
+impl CDF for Gamma {
+    #[inline]
+    fn cdf(&self, x: f64) -> f64 {
+        use rgsl::randist::gamma::gamma_P;
+
+        if x.is_sign_negative() {
+            panic!("simag: expected positive real number when computing CDF of gamma dist")
+        }
+        gamma_P(x, self.a, self.b)
+    }
+
     #[inline]
     fn inverse_cdf(&self, x: f64) -> f64 {
         use rgsl::randist::gamma::gamma_Pinv;
@@ -47,26 +54,5 @@ impl InverseCDF for Gamma {
                     gamma dist")
         }
         gamma_Pinv(x, self.a, self.b)
-    }
-}
-
-impl InverseDensity for Gamma {
-    fn inverse_density(&self, y: f64) -> f64 {
-        use rgsl::randist::gamma::gamma_pdf;
-
-        if y <= 0.0 {
-            panic!("simag: expected y > 0 real number when computing the density of \
-                    the inverse gamma distribution")
-        } else if self.a > 171.0 {
-            let of = self.a - 171.0;
-            panic!("simag: overflow by {of}\nmax value of the parameter alpha when \
-                    computing the density of the inverse gamma T dist is 171.0,\n the \
-                    parameter k of the distribution was in this instance: {nu}",
-                   of = of,
-                   nu = self.a)
-        }
-
-        let y = y / self.b;
-        gamma_pdf(y, self.a, 1.0) / self.b
     }
 }

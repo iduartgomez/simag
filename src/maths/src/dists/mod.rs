@@ -6,8 +6,11 @@ mod chisquared;
 mod exponential;
 mod fdist;
 mod gamma;
+mod logistic;
+mod lognormal;
 mod normal;
-mod studentt;
+mod pareto;
+mod tdist;
 
 mod transforms;
 
@@ -22,8 +25,11 @@ pub use self::chisquared::ChiSquared;
 pub use self::exponential::Exponential;
 pub use self::fdist::FDist;
 pub use self::gamma::Gamma;
+pub use self::logistic::Logistic;
+pub use self::lognormal::LogNormal;
 pub use self::normal::Normal;
-pub use self::studentt::StudentT;
+pub use self::pareto::Pareto;
+pub use self::tdist::TDist;
 
 pub use self::transforms::Gaussianization;
 
@@ -33,10 +39,7 @@ pub trait Sample {
     fn sample(&self, rng: &mut RGSLRng) -> f64;
 }
 
-pub trait InverseCDF {
+pub trait CDF {
+    fn cdf(&self, x: f64) -> f64;
     fn inverse_cdf(&self, x: f64) -> f64;
-}
-
-pub trait InverseDensity {
-    fn inverse_density(&self, p: f64) -> f64;
 }

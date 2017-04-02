@@ -16,17 +16,14 @@ impl FDist {
     }
 
     #[inline]
-    pub fn cdf(&self, x: f64) -> f64 {
-        use rgsl::randist::f_distribution::fdist_P;
-
-        if x.is_sign_negative() {
-            panic!("simag: expected positive real number when computing CDF of F-distribution")
-        }
-        fdist_P(x, self.d1, self.d2)
+    pub fn pdf(&self, x: f64) -> f64 {
+        use rgsl::randist::f_distribution::fdist_pdf;
+        
+        fdist_pdf(x, self.d1, self.d2)
     }
 }
 
-use super::{Sample, InverseCDF, InverseDensity};
+use super::{Sample, CDF,};
 
 impl Sample for FDist {
     #[inline]
@@ -37,7 +34,17 @@ impl Sample for FDist {
     }
 }
 
-impl InverseCDF for FDist {
+impl CDF for FDist {
+    #[inline]
+    fn cdf(&self, x: f64) -> f64 {
+        use rgsl::randist::f_distribution::fdist_P;
+
+        if x.is_sign_negative() {
+            panic!("simag: expected positive real number when computing CDF of F-distribution")
+        }
+        fdist_P(x, self.d1, self.d2)
+    }
+
     #[inline]
     fn inverse_cdf(&self, x: f64) -> f64 {
         use rgsl::randist::f_distribution::fdist_Pinv;
@@ -47,13 +54,5 @@ impl InverseCDF for FDist {
                     F-distribution")
         }
         fdist_Pinv(x, self.d1, self.d2)
-    }
-}
-
-impl InverseDensity for FDist {
-    fn inverse_density(&self, y: f64) -> f64 {
-        use rgsl::randist::f_distribution::fdist_pdf;
-        // inverse of F(x; d1, d2) is simply F(x; d2, d1)
-        fdist_pdf(y, self.d2, self.d1)
     }
 }
