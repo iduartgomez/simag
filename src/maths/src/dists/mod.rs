@@ -33,8 +33,6 @@ pub use self::tdist::TDist;
 
 pub use self::transforms::Gaussianization;
 
-trait Invertible {}
-
 pub trait Sample {
     fn sample(&self, rng: &mut RGSLRng) -> f64;
 }

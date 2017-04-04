@@ -23,7 +23,7 @@ impl Categorical {
             let overflow = categories.len() - (u8::MAX as usize);
             return Err(format!("overflow by: {}", overflow));
         } else if categories.len() < 2 {
-            return Err("requires at least two categories".to_string())
+            return Err("requires at least two categories".to_string());
         }
 
         let mut intervals = vec![0_f64; categories.len()];

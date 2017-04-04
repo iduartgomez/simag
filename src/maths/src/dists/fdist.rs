@@ -1,4 +1,5 @@
 use RGSLRng;
+use err::ErrMsg;
 
 #[derive(Debug, Clone)]
 pub struct FDist {
@@ -30,7 +31,7 @@ impl Sample for FDist {
     fn sample(&self, rng: &mut RGSLRng) -> f64 {
         use rgsl::randist::f_distribution::fdist;
 
-        fdist(rng.rng(), self.d1, self.d2)
+        fdist(rng.get_gen(), self.d1, self.d2)
     }
 }
 
@@ -40,7 +41,7 @@ impl CDF for FDist {
         use rgsl::randist::f_distribution::fdist_P;
 
         if x.is_sign_negative() {
-            panic!("simag: expected positive real number when computing CDF of F-distribution")
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self))
         }
         fdist_P(x, self.d1, self.d2)
     }
@@ -50,8 +51,7 @@ impl CDF for FDist {
         use rgsl::randist::f_distribution::fdist_Pinv;
 
         if x.is_sign_negative() {
-            panic!("simag: expected positive real number when computing inverse CDF of \
-                    F-distribution")
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self))
         }
         fdist_Pinv(x, self.d1, self.d2)
     }

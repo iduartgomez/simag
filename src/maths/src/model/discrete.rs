@@ -12,6 +12,7 @@ use super::{Node, Variable, Observation};
 use super::{DType, Discrete};
 use sampling::{DiscreteSampler, DefDiscreteSampler};
 use dists::{Categorical, Binomial};
+use err::ErrMsg;
 
 // public traits for models:
 
@@ -312,7 +313,7 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
         match *probs {
             DType::Binomial(ref dist) => dist.sample(rng),
             DType::Categorical(ref dist) => dist.sample(rng),
-            _ => panic!(),
+            ref d => panic!(ErrMsg::ContDistDiscNode.panic_msg_with_arg(d)),
         }
     }
 
@@ -361,7 +362,7 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
             };
             t * (i as usize)
         }) * parent_k;
-        if ((rows0 > parent_k) && (rows1 != rows0)) || (parent_k != rows1) {
+        if ((rows0 > parent_k) && (rows1 != rows0)) && (parent_k != rows1) {
             return Err("insufficient number of probability rows in the CPT".to_string());
         }
 
@@ -404,7 +405,7 @@ impl DiscreteVar for DefDiscreteVar {
         match self.dist {
             DType::Categorical(ref dist) => dist.k_num(),
             DType::Binomial(_) => 2,
-            _ => panic!(),
+            ref d => panic!(ErrMsg::ContDistDiscNode.panic_msg_with_arg(d)),
         }
     }
 
@@ -412,9 +413,10 @@ impl DiscreteVar for DefDiscreteVar {
         match self.dist {
             DType::Categorical(ref dist) => dist.sample(rng),
             DType::Binomial(ref dist) => dist.sample(rng),
-            _ => panic!(),
+            ref d => panic!(ErrMsg::ContDistDiscNode.panic_msg_with_arg(d)),
         }
     }
+
     fn get_observations(&self) -> &[<Self as DiscreteVar>::Event] {
         &self.observations
     }
@@ -464,5 +466,16 @@ mod test {
         let elements = vec![vec![0.45_f64, 0.05], vec![0.05, 0.45]];
         let cpt = CPT::new(elements, choices).unwrap();
         model.add_parent_to_var(&rain, &cloudy, cpt).unwrap();
+
+        let choices = vec![vec![0_u8], vec![1]];
+        let elements = vec![vec![0.15_f64, 0.25], vec![0.05, 0.55]];
+        let cpt = CPT::new(elements, choices).unwrap();
+        model.add_parent_to_var(&wet_grass, &rain, cpt).unwrap();
+
+        let choices = vec![vec![0_u8, 0], vec![0, 1], vec![1, 0], vec![1, 1]];
+        let elements =
+            vec![vec![0.34_f64, 0.01], vec![0.01, 0.14], vec![0.05, 0.10], vec![0.01, 0.34]];
+        let cpt = CPT::new(elements, choices).unwrap();
+        model.add_parent_to_var(&wet_grass, &sprinkler, cpt).unwrap();
     }
 }

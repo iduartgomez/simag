@@ -3,7 +3,9 @@
 use model::{ContVar, DiscreteVar};
 use model::{DType, DefContVar};
 use dists::*;
+
 use RGSLRng;
+use err::ErrMsg;
 
 pub trait IntoContinuous
     where Self: DiscreteVar + Sized
@@ -37,7 +39,7 @@ pub trait Gaussianization
             DType::LogNormal(ref dist) => (dist as &Sample, dist as &CDF),
             DType::Logistic(ref dist) => (dist as &Sample, dist as &CDF),
             DType::Pareto(ref dist) => (dist as &Sample, dist as &CDF),
-            _ => panic!("simag: the distribution does not have an invertible cumulative function"),
+            ref d => panic!(ErrMsg::DistNotInvertible.panic_msg_with_arg(d)),
         };
 
         let mut rng = RGSLRng::new();

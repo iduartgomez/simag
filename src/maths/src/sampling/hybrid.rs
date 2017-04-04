@@ -4,8 +4,8 @@ use std::collections::{HashMap, VecDeque};
 use rgsl::{MatrixF64, VectorF64};
 use rgsl;
 
-use super::{Sampler, ContinuousSampler};
-use model::{Variable, ContModel, ContNode, ContVar, DefContVar, DType};
+use super::{Sampler, HybridSampler, HybridSamplerResult};
+use model::{Variable, HybridModel, HybridNode, ContVar, DefContVar, DType, DiscreteVar};
 use dists::{Normal, Gaussianization, CDF};
 use err::ErrMsg;
 use RGSLRng;
@@ -18,7 +18,7 @@ pub struct AnalyticNormalWithinGibbs<'a> {
     steeps: usize,
     burnin: usize,
     normalized: Vec<Normalized<'a>>,
-    samples: Vec<Vec<f64>>,
+    samples: Vec<Vec<HybridSamplerResult>>,
     rng: RGSLRng,
     cr_matrix: MatrixF64,
 }
@@ -52,8 +52,9 @@ impl<'a> Sampler for AnalyticNormalWithinGibbs<'a> {
 }
 
 impl<'a> AnalyticNormalWithinGibbs<'a> {
-    fn initialize<N>(&mut self, net: &ContModel<'a, N, AnalyticNormalWithinGibbs<'a>>)
-        where N: ContNode<'a>
+    fn initialize<N, D>(&mut self, net: &HybridModel<'a, N, AnalyticNormalWithinGibbs<'a>, D>)
+        where N: HybridNode<'a, D>,
+              D: DiscreteVar
     {
         use rgsl::linear_algebra::symmtd_decomp;
 
@@ -128,7 +129,7 @@ fn partial_correlation((x, y): (usize, usize),
     rho_xyz
 }
 
-impl<'a> ContinuousSampler<'a> for AnalyticNormalWithinGibbs<'a> {
+impl<'a> HybridSampler<'a> for AnalyticNormalWithinGibbs<'a> {
     /// In a pure continuous Bayesian net, the following algorithm is used:
     ///
     /// 1)  Every distribution is transformed to the standard unit normal distribution
@@ -140,8 +141,11 @@ impl<'a> ContinuousSampler<'a> for AnalyticNormalWithinGibbs<'a> {
     ///     compute the sample for each distribution and transform back to the original,
     ///     distribution using the inverse cumulative distribution function.
     /// 5)  Repeat 4 as many times as specified by the `steeps` parameter of the sampler.
-    fn get_samples<N>(mut self, net: &ContModel<'a, N, AnalyticNormalWithinGibbs<'a>>) -> Vec<Vec<f64>>
-        where N: ContNode<'a>
+    fn get_samples<N, D>(mut self,
+                         net: &HybridModel<'a, N, AnalyticNormalWithinGibbs<'a>, D>)
+                         -> Vec<Vec<HybridSamplerResult>>
+        where N: HybridNode<'a, D>,
+              D: DiscreteVar
     {
         use rgsl::blas::level2::dtrmv;
 
@@ -179,7 +183,7 @@ impl<'a> ContinuousSampler<'a> for AnalyticNormalWithinGibbs<'a> {
                     DType::Pareto(ref dist) => dist.inverse_cdf(sample),
                     ref d => panic!(ErrMsg::DiscDistContNode.panic_msg_with_arg(d)),
                 };
-                f.push(sample)
+                f.push(HybridSamplerResult::Continuous(sample))
             }
             self.samples.push(f);
         }
@@ -192,64 +196,5 @@ impl<'a> ::std::clone::Clone for AnalyticNormalWithinGibbs<'a> {
         let steeps = Some(self.steeps);
         let burnin = Some(self.burnin);
         AnalyticNormalWithinGibbs::new(steeps, burnin)
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    use RGSLRng;
-    use rgsl;
-
-    use std::collections::HashMap;
-
-    #[test]
-    fn analytic_normal() {
-        unimplemented!()
-    }
-
-    #[test]
-    fn pt_cr() {
-        use rgsl::linear_algebra::symmtd_decomp;
-        use rgsl::blas::level2::dtrmv;
-        use rgsl::randist::gaussian::gaussian;
-
-        let mut rng = RGSLRng::new();
-        let mut mtx = MatrixF64::new(6, 6).unwrap();
-        let mut map = HashMap::new();
-        for i in 0..6 {
-            for j in 0..6 {
-                let sign: f64 = if rng.uniform_pos() < 0.5 { -1.0 } else { 1.0 };
-                if i == j {
-                    mtx.set(i, j, 1.0);
-                } else if map.get(&(j, i)).is_some() {
-                    let val = map.get(&(j, i)).unwrap();
-                    mtx.set(i, j, *val);
-                } else {
-                    let x = rng.uniform_pos() * sign;
-                    map.insert((i, j), x);
-                    mtx.set(i, j, x);
-                }
-            }
-        }
-        println!("\nSYNTHETIC CORR MTX:\n{:?}\n", mtx);
-        let mut v = VectorF64::new(5).unwrap();
-        symmtd_decomp(&mut mtx, &mut v);
-        println!("TAU:\n{:?}", v);
-        println!("A:\n{:?}\n", mtx);
-
-        let mut samples = VectorF64::new(6).unwrap();
-        for i in 0..6 {
-            let s = gaussian(rng.get_gen(), 1.0);
-            samples.set(i, s);
-        }
-        println!("SYNTHETIC SAMPLES: {:?}", samples);
-        dtrmv(rgsl::cblas::Uplo::Lower,
-              rgsl::cblas::Transpose::NoTrans,
-              rgsl::cblas::Diag::NonUnit,
-              &mtx,
-              &mut samples);
-        println!("s x A = {:?}\n", samples);
     }
 }

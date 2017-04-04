@@ -54,9 +54,9 @@ impl Sample for Normal {
         use rgsl::randist::gaussian::ugaussian;
 
         if self.std {
-            ugaussian(rng.rng())
+            ugaussian(rng.get_gen())
         } else {
-            let s = gaussian_ziggurat(rng.rng(), self.sigma);
+            let s = gaussian_ziggurat(rng.get_gen(), self.sigma);
             s + self.mu
         }
     }

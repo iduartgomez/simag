@@ -997,7 +997,7 @@ impl Particle {
                 p.substitute(agent, assignments, time_assign, context, rhs)
             }
             Particle::Atom(ref p) => p.substitute(agent, assignments, time_assign, context),
-            _ => panic!("simag: wrong operator on the rhs of the expression"),
+            _ => panic!(),
         }
     }
 

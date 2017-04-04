@@ -17,15 +17,17 @@
 
 mod discrete;
 mod continuous;
+mod hybrid;
 
 pub use self::discrete::Gibbs as DiscreteGibbs;
-pub use self::continuous::AnalyticNormal;
+pub use self::continuous::AnalyticNormalWithinGibbs;
+pub use self::hybrid::AnalyticNormalWithinGibbs as HybridGibbs;
 
-use model::{DiscreteModel, DiscreteNode};
-use model::{ContModel, ContNode};
+use model::{DiscreteModel, DiscreteNode, ContModel, ContNode, HybridModel, HybridNode, DiscreteVar};
 
 pub type DefDiscreteSampler = DiscreteGibbs;
-pub type DefContSampler<'a> = AnalyticNormal<'a>;
+pub type DefContSampler<'a> = AnalyticNormalWithinGibbs<'a>;
+pub type DefHybridSampler<'a> = HybridGibbs<'a>;
 
 pub trait Sampler
     where Self: Sized + Clone
@@ -45,4 +47,17 @@ pub trait ContinuousSampler<'a>: Sampler {
         where N: ContNode<'a>;
 }
 
-//trait MixedSampler {}
+pub trait HybridSampler<'a>: Sampler {
+    /// Return a matrix of t x k dimension samples (t = steeps; k = number of vars).
+    fn get_samples<N, D>(self,
+                         state_space: &HybridModel<'a, N, Self, D>)
+                         -> Vec<Vec<HybridSamplerResult>>
+        where N: HybridNode<'a, D>,
+              D: DiscreteVar;
+}
+
+#[derive(Debug)]
+pub enum HybridSamplerResult {
+    Continuous(f64),
+    Discrete(u8),
+}

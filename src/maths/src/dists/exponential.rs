@@ -1,4 +1,5 @@
 use RGSLRng;
+use err::ErrMsg;
 
 #[derive(Debug, Clone)]
 pub struct Exponential {
@@ -33,7 +34,7 @@ impl Sample for Exponential {
     fn sample(&self, rng: &mut RGSLRng) -> f64 {
         use rgsl::randist::exponential::exponential;
 
-        exponential(rng.rng(), self.mean)
+        exponential(rng.get_gen(), self.mean)
     }
 }
 
@@ -43,8 +44,7 @@ impl CDF for Exponential {
         use rgsl::randist::exponential::exponential_P;
 
         if x.is_sign_negative() {
-            panic!("simag: expected positive real number when computing CDF of exponential \
-                    distribution")
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self))
         }
         exponential_P(x, self.mean)
     }
@@ -54,8 +54,7 @@ impl CDF for Exponential {
         use rgsl::randist::exponential::exponential_Pinv;
 
         if x.is_sign_negative() {
-            panic!("simag: expected positive real number when computing inverse CDF of \
-                    exponential distribution")
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self))
         }
         exponential_Pinv(x, self.mean)
     }

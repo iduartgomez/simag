@@ -7,6 +7,8 @@ pub use self::discrete::{DiscreteModel, DefDiscreteModel, DefDiscreteNode, DefDi
 pub use self::discrete::{DiscreteNode, DiscreteVar, default_discrete_model};
 pub use self::continuous::{ContModel, DefContModel, DefContNode, DefContVar};
 pub use self::continuous::{ContNode, ContVar};
+pub use self::hybrid::{HybridModel, DefHybridModel, DefHybridNode};
+pub use self::hybrid::{HybridNode};
 
 macro_rules! dag_impl {
     ($name:ident, $node:ident) => {
@@ -298,6 +300,7 @@ macro_rules! var_impl {
 
 mod discrete;
 mod continuous;
+mod hybrid;
 
 // public traits for models:
 
@@ -387,7 +390,6 @@ pub enum DType {
     LogNormal(LogNormal),
     Logistic(Logistic),
     Pareto(Pareto),
-    //Dirichlet(Dirichlet),
     NonParametric,
     // discrete types:
     Categorical(Categorical),

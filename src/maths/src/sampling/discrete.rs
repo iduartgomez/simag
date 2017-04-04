@@ -100,5 +100,7 @@ mod test {
     //use super::*;
 
     #[test]
-    fn sample() {}
+    fn sample() {
+        unimplemented!()
+    }
 }

@@ -1,4 +1,5 @@
 use RGSLRng;
+use err::ErrMsg;
 
 #[derive(Debug, Clone)]
 pub struct Beta {
@@ -18,7 +19,7 @@ impl Beta {
     #[inline]
     pub fn pdf(&self, x: f64) -> f64 {
         use rgsl::randist::beta::beta_pdf;
-        
+
         beta_pdf(x, self.a, self.b)
     }
 }
@@ -30,7 +31,7 @@ impl Sample for Beta {
     fn sample(&self, rng: &mut RGSLRng) -> f64 {
         use rgsl::randist::beta::beta;
 
-        beta(rng.rng(), self.a, self.b)
+        beta(rng.get_gen(), self.a, self.b)
     }
 }
 
@@ -40,8 +41,7 @@ impl CDF for Beta {
         use rgsl::randist::beta::beta_P;
 
         if x < 0.0 || x > 1.0 {
-            panic!("simag: expected a real number in the interval [0,1] when computing CDF of \
-                    beta dist")
+            panic!(ErrMsg::Closed01.panic_msg_with_arg(&self))
         }
         beta_P(x, self.a, self.b)
     }
@@ -51,8 +51,7 @@ impl CDF for Beta {
         use rgsl::randist::beta::beta_Pinv;
 
         if x < 0.0 || x > 1.0 {
-            panic!("simag: expected a real number in the interval [0,1] when computing inverse \
-                    CDF of beta dist")
+            panic!(ErrMsg::Closed01.panic_msg_with_arg(&self))
         }
         beta_Pinv(x, self.a, self.b)
     }

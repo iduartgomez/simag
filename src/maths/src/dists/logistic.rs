@@ -2,45 +2,45 @@ use RGSLRng;
 
 #[derive(Debug, Clone)]
 pub struct Logistic {
-    x: f64,
-    k: f64,
+    mu: f64,
+    sigma: f64,
 }
 
 impl Logistic {
-    pub fn new(x: f64, k: f64) -> Result<Logistic, ()> {
-        if k < 0.0 {
+    pub fn new(mu: f64, sigma: f64) -> Result<Logistic, ()> {
+        if sigma < 0.0 {
             return Err(());
         }
 
         Ok(Logistic {
-            x: x,
-            k: k,
+            mu: mu,
+            sigma: sigma,
         })
     }
 
     pub fn std() -> Logistic {
         Logistic {
-            x: 0.0,
-            k: 1.0,
+            mu: 0.0,
+            sigma: 1.0,
         }
     }
 
     #[inline]
     pub fn pdf(&self, x: f64) -> f64 {
         use rgsl::randist::logistic::logistic_pdf;
-        
-        logistic_pdf(x - self.x, self.k)
+
+        logistic_pdf(x - self.mu, self.sigma)
     }
 }
 
-use super::{Sample, CDF,};
+use super::{Sample, CDF};
 
 impl Sample for Logistic {
     #[inline]
     fn sample(&self, rng: &mut RGSLRng) -> f64 {
         use rgsl::randist::logistic::logistic;
 
-        logistic(rng.rng(), self.k) + self.x
+        logistic(rng.get_gen(), self.sigma) + self.mu
     }
 }
 
@@ -48,15 +48,15 @@ impl CDF for Logistic {
     #[inline]
     fn cdf(&self, x: f64) -> f64 {
         use rgsl::randist::logistic::logistic_P;
-        let std = x - self.x;
+        let std = x - self.mu;
 
-        logistic_P(std, self.k)
+        logistic_P(std, self.sigma)
     }
 
     #[inline]
     fn inverse_cdf(&self, x: f64) -> f64 {
         use rgsl::randist::logistic::logistic_Pinv;
 
-        logistic_Pinv(x - self.x, self.k)
+        logistic_Pinv(x - self.mu, self.sigma)
     }
 }

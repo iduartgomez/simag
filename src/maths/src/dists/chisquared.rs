@@ -1,4 +1,5 @@
 use RGSLRng;
+use err::ErrMsg;
 
 #[derive(Debug, Clone)]
 pub struct ChiSquared {
@@ -29,7 +30,7 @@ impl Sample for ChiSquared {
     fn sample(&self, rng: &mut RGSLRng) -> f64 {
         use rgsl::randist::chi_squared::chisq;
 
-        chisq(rng.rng(), self.k as f64)
+        chisq(rng.get_gen(), self.k as f64)
     }
 }
 
@@ -39,7 +40,7 @@ impl CDF for ChiSquared {
         use rgsl::randist::chi_squared::chisq_P;
 
         if x.is_sign_negative() {
-            panic!("simag: expected positive real number when computing CDF of chi-squared")
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self))
         }
         chisq_P(x, self.k as f64)
     }
@@ -49,8 +50,7 @@ impl CDF for ChiSquared {
         use rgsl::randist::chi_squared::chisq_Pinv;
 
         if x.is_sign_negative() {
-            panic!("simag: expected positive real number when computing inverse CDF of \
-                    chi-squared")
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self))
         }
         chisq_Pinv(x, self.k as f64)
     }

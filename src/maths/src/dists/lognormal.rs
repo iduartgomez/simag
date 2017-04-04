@@ -34,7 +34,7 @@ impl Sample for LogNormal {
     fn sample(&self, rng: &mut RGSLRng) -> f64 {
         use rgsl::randist::lognormal::lognormal;
 
-        lognormal(rng.rng(), self.zeta, self.sigma)
+        lognormal(rng.get_gen(), self.zeta, self.sigma)
     }
 }
 

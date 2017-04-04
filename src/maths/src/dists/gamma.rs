@@ -1,4 +1,5 @@
 use RGSLRng;
+use err::ErrMsg;
 
 #[derive(Debug, Clone)]
 pub struct Gamma {
@@ -30,7 +31,7 @@ impl Sample for Gamma {
     fn sample(&self, rng: &mut RGSLRng) -> f64 {
         use rgsl::randist::gamma::gamma;
 
-        gamma(rng.rng(), self.a, self.b)
+        gamma(rng.get_gen(), self.a, self.b)
     }
 }
 
@@ -40,7 +41,7 @@ impl CDF for Gamma {
         use rgsl::randist::gamma::gamma_P;
 
         if x.is_sign_negative() {
-            panic!("simag: expected positive real number when computing CDF of gamma dist")
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self))
         }
         gamma_P(x, self.a, self.b)
     }
@@ -50,8 +51,7 @@ impl CDF for Gamma {
         use rgsl::randist::gamma::gamma_Pinv;
 
         if x.is_sign_negative() {
-            panic!("simag: expected positive real number when computing inverse CDF of \
-                    gamma dist")
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self))
         }
         gamma_Pinv(x, self.a, self.b)
     }

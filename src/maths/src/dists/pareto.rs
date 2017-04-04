@@ -34,7 +34,7 @@ impl Sample for Pareto {
     fn sample(&self, rng: &mut RGSLRng) -> f64 {
         use rgsl::randist::pareto::pareto;
 
-        pareto(rng.rng(), self.alpha, self.scale)
+        pareto(rng.get_gen(), self.alpha, self.scale)
     }
 }
 

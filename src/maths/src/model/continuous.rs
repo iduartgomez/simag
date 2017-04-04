@@ -12,6 +12,7 @@ use super::{Node, Variable, Observation};
 use super::{DType, Continuous};
 use sampling::{ContinuousSampler, DefContSampler};
 use dists::{Sample, Gaussianization};
+use err::ErrMsg;
 
 // public traits for models:
 
@@ -286,10 +287,20 @@ impl ContVar for DefContVar {
     fn sample(&self, rng: &mut RGSLRng) -> f64 {
         match self.dist {
             DType::Normal(ref dist) => dist.sample(rng),
+            DType::Beta(ref dist) => dist.sample(rng),
             DType::Exponential(ref dist) => dist.sample(rng),
-            _ => panic!(),
+            DType::Gamma(ref dist) => dist.sample(rng),
+            DType::ChiSquared(ref dist) => dist.sample(rng),
+            DType::TDist(ref dist) => dist.sample(rng),
+            DType::FDist(ref dist) => dist.sample(rng),
+            DType::Cauchy(ref dist) => dist.sample(rng),
+            DType::LogNormal(ref dist) => dist.sample(rng),
+            DType::Logistic(ref dist) => dist.sample(rng),
+            DType::Pareto(ref dist) => dist.sample(rng),
+            ref d => panic!(ErrMsg::DiscDistContNode.panic_msg_with_arg(d)),
         }
     }
+
     fn get_observations(&self) -> &[<Self as ContVar>::Event] {
         &self.observations
     }
