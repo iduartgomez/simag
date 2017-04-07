@@ -14,7 +14,7 @@ const ITER_TIMES: usize = 1000;
 const BURN_IN: usize = 0;
 
 #[derive(Debug)]
-pub struct AnalyticNormalWithinGibbs<'a> {
+pub struct ExactNormalized<'a> {
     steeps: usize,
     burnin: usize,
     normalized: Vec<Normalized<'a>>,
@@ -29,8 +29,8 @@ struct Normalized<'a> {
     original: &'a DType,
 }
 
-impl<'a> Sampler for AnalyticNormalWithinGibbs<'a> {
-    fn new(steeps: Option<usize>, burnin: Option<usize>) -> AnalyticNormalWithinGibbs<'a> {
+impl<'a> Sampler for ExactNormalized<'a> {
+    fn new(steeps: Option<usize>, burnin: Option<usize>) -> ExactNormalized<'a> {
         let steeps = match steeps {
             Some(val) => val,
             None => ITER_TIMES,
@@ -40,7 +40,7 @@ impl<'a> Sampler for AnalyticNormalWithinGibbs<'a> {
             Some(val) => val,
             None => BURN_IN,
         };
-        AnalyticNormalWithinGibbs {
+        ExactNormalized {
             steeps: steeps,
             burnin: burnin,
             normalized: vec![],
@@ -51,8 +51,8 @@ impl<'a> Sampler for AnalyticNormalWithinGibbs<'a> {
     }
 }
 
-impl<'a> AnalyticNormalWithinGibbs<'a> {
-    fn initialize<N>(&mut self, net: &ContModel<'a, N, AnalyticNormalWithinGibbs<'a>>)
+impl<'a> ExactNormalized<'a> {
+    fn initialize<N>(&mut self, net: &ContModel<'a, N, ExactNormalized<'a>>)
         where N: ContNode<'a>
     {
         use rgsl::linear_algebra::symmtd_decomp;
@@ -82,9 +82,10 @@ impl<'a> AnalyticNormalWithinGibbs<'a> {
                 cr_matrix.set(x, y, p_cr);
                 cr_matrix.set(y, x, p_cr);
             }
+            let d = unsafe { &*(node.get_dist() as *const _) as &'a <N as ContNode>::Var };
             let n = Normalized {
                 var: dist,
-                original: node.get_dist().dist_type(),
+                original: d.dist_type(),
             };
             self.normalized.push(n);
         }
@@ -128,7 +129,7 @@ fn partial_correlation((x, y): (usize, usize),
     rho_xyz
 }
 
-impl<'a> ContinuousSampler<'a> for AnalyticNormalWithinGibbs<'a> {
+impl<'a> ContinuousSampler<'a> for ExactNormalized<'a> {
     /// In a pure continuous Bayesian net, the following algorithm is used:
     ///
     /// 1)  Every distribution is transformed to the standard unit normal distribution
@@ -140,7 +141,7 @@ impl<'a> ContinuousSampler<'a> for AnalyticNormalWithinGibbs<'a> {
     ///     compute the sample for each distribution and transform back to the original,
     ///     distribution using the inverse cumulative distribution function.
     /// 5)  Repeat 4 as many times as specified by the `steeps` parameter of the sampler.
-    fn get_samples<N>(mut self, net: &ContModel<'a, N, AnalyticNormalWithinGibbs<'a>>) -> Vec<Vec<f64>>
+    fn get_samples<N>(mut self, net: &ContModel<'a, N, ExactNormalized<'a>>) -> Vec<Vec<f64>>
         where N: ContNode<'a>
     {
         use rgsl::blas::level2::dtrmv;
@@ -187,11 +188,11 @@ impl<'a> ContinuousSampler<'a> for AnalyticNormalWithinGibbs<'a> {
     }
 }
 
-impl<'a> ::std::clone::Clone for AnalyticNormalWithinGibbs<'a> {
-    fn clone(&self) -> AnalyticNormalWithinGibbs<'a> {
+impl<'a> ::std::clone::Clone for ExactNormalized<'a> {
+    fn clone(&self) -> ExactNormalized<'a> {
         let steeps = Some(self.steeps);
         let burnin = Some(self.burnin);
-        AnalyticNormalWithinGibbs::new(steeps, burnin)
+        ExactNormalized::new(steeps, burnin)
     }
 }
 

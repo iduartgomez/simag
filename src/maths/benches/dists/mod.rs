@@ -14,7 +14,7 @@ mod sample {
     #[bench]
     fn binomial(b: &mut Bencher) {
         let mut rng = RGSLRng::new();
-        let d = Binomial::new(0.5).unwrap();
+        let d = Bernoulli::new(0.5).unwrap();
         b.iter(|| d.sample(&mut rng));
     }
 

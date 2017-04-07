@@ -26,7 +26,7 @@ pub trait ContNode<'a>: Node
     fn new(dist: &'a Self::Var, pos: usize) -> Result<Self, ()>;
 
     /// Return the distribution of a node.
-    fn get_dist(&self) -> &'a Self::Var;
+    fn get_dist(&self) -> &Self::Var;
 
     /// Returns a reference to the distributions of the parents·
     fn get_parents_dists(&self) -> Vec<&'a Self::Var>;
@@ -185,7 +185,7 @@ dag_impl!(ContDAG, ContNode);
 
 /// A node in the network representing a continuous random variable.
 ///
-/// This type cannot be instantiated directly, instead add the random variable
+/// This type shouldn't be instantiated directly, instead add the random variable
 /// distribution to the network.
 pub struct DefContNode<'a, V: 'a>
     where V: ContVar
@@ -207,7 +207,16 @@ impl<'a, V: 'a> ContNode<'a> for DefContNode<'a, V>
     fn new(dist: &'a V, pos: usize) -> Result<Self, ()> {
         match *dist.dist_type() {
             DType::Normal(_) |
-            DType::Exponential(_) => {}
+            DType::Beta(_) |
+            DType::Exponential(_) |
+            DType::Gamma(_) |
+            DType::ChiSquared(_) |
+            DType::TDist(_) |
+            DType::FDist(_) |
+            DType::Cauchy(_) |
+            DType::LogNormal(_) |
+            DType::Logistic(_) |
+            DType::Pareto(_) => {}
             _ => return Err(()),
         }
 
@@ -221,7 +230,7 @@ impl<'a, V: 'a> ContNode<'a> for DefContNode<'a, V>
         })
     }
 
-    fn get_dist(&self) -> &'a V {
+    fn get_dist(&self) -> &V {
         self.dist
     }
 
@@ -309,7 +318,7 @@ impl ContVar for DefContVar {
         self.observations.push(obs)
     }
 
-    #[inline(always)]
+    #[inline]
     fn float_into_event(float: f64) -> Self::Event {
         float as Self::Event
     }
@@ -320,7 +329,7 @@ impl ContVar for DefContVar {
 }
 
 impl Gaussianization for DefContVar {
-    #[inline(always)]
+    #[inline]
     fn into_default(self) -> Self {
         self
     }

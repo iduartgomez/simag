@@ -83,6 +83,12 @@ impl Clone for RGSLRng {
     }
 }
 
+impl Default for RGSLRng {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 use std::fmt;
 
 impl fmt::Debug for RGSLRng {

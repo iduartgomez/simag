@@ -1,46 +1,41 @@
 use std::cell::RefCell;
 use std::collections::{VecDeque, HashSet};
-use std::hash::{Hash, Hasher};
 use std::iter::{FromIterator, Iterator};
 use std::rc::{Rc, Weak};
 use std::marker::PhantomData;
 
-use uuid::Uuid;
-
 use RGSLRng;
-use super::{Node, Variable, Observation, ContVar, DiscreteVar, ContNode};
-use super::{DType, Continuous, DefContVar, DefDiscreteVar};
+use super::{Node, ContVar, DiscreteVar, ContNode};
+use super::{DType, DefContVar, DefDiscreteVar};
 use sampling::{HybridSampler, DefHybridSampler, HybridSamplerResult};
-use dists::{Sample, Gaussianization};
+use dists::{Gaussianization, AsContinuous};
 
-pub trait HybridNode<'a, D>: ContNode<'a>
-    where Self: Sized,
-          D: DiscreteVar
+pub trait HybridNode<'a>: ContNode<'a>
+    where Self: Sized
 {
+    type Discrete: DiscreteVar + AsContinuous;
+    fn new_with_discrete(var: &'a Self::Discrete, pos: usize) -> Result<Self, ()>;
 }
 
-pub struct HybridModel<'a, N: 'a, S, D>
-    where N: HybridNode<'a, D>,
-          S: HybridSampler<'a> + Clone,
-          D: DiscreteVar
+pub struct HybridModel<'a, N: 'a, S>
+    where N: HybridNode<'a>,
+          S: HybridSampler<'a> + Clone
 {
-    vars: HybridDAG<'a, N, D>,
+    vars: HybridDAG<'a, N>,
     sampler: S,
 }
 
 pub type DefHybridModel<'a> = HybridModel<'a,
                                           DefHybridNode<'a, DefContVar, DefDiscreteVar>,
-                                          DefHybridSampler<'a>,
-                                          DefDiscreteVar>;
+                                          DefHybridSampler<'a>>;
 
-impl<'a, N, S, D> HybridModel<'a, N, S, D>
-    where N: HybridNode<'a, D>,
-          S: HybridSampler<'a> + Clone,
-          D: DiscreteVar
+impl<'a, N, S> HybridModel<'a, N, S>
+    where N: HybridNode<'a>,
+          S: HybridSampler<'a> + Clone
 {
     pub fn new(init: &'a <N as ContNode<'a>>::Var,
                sampler: S)
-               -> Result<HybridModel<'a, N, S, D>, ()> {
+               -> Result<HybridModel<'a, N, S>, ()> {
         let init = N::new(init, 0)?;
         let dag = HybridDAG::new(init);
         Ok(HybridModel {
@@ -116,7 +111,7 @@ impl<'a, N, S, D> HybridModel<'a, N, S, D>
     }
 
     /// Iterate the model variables in topographical order.
-    pub fn iter_vars(&self) -> NetIter<'a, N, D> {
+    pub fn iter_vars(&self) -> NetIter<'a, N> {
         NetIter::new(&self.vars.nodes)
     }
 
@@ -126,25 +121,27 @@ impl<'a, N, S, D> HybridModel<'a, N, S, D>
     }
 }
 
-/// A node in the network representing a continuous random variable.
+/// A node in the network representing a random variable.
 ///
-/// This type cannot be instantiated directly, instead add the random variable
+/// This type shouldn't be instantiated directly, instead add the random variable
 /// distribution to the network.
-pub struct DefHybridNode<'a, V: 'a, D: 'a>
-    where V: ContVar,
-          D: DiscreteVar
+pub struct DefHybridNode<'a, C: 'a, D: 'a>
+    where C: ContVar,
+          D: DiscreteVar + AsContinuous
 {
-    pub dist: &'a V,
-    childs: RefCell<Vec<Rc<DefHybridNode<'a, V, D>>>>,
-    parents: RefCell<Vec<Weak<DefHybridNode<'a, V, D>>>>,
+    cont_dist: Option<&'a C>,
+    disc_dist: Option<&'a D>,
+    as_cont: Option<C>,
+    childs: RefCell<Vec<Rc<DefHybridNode<'a, C, D>>>>,
+    parents: RefCell<Vec<Weak<DefHybridNode<'a, C, D>>>>,
     edges: RefCell<Vec<f64>>, // rank correlations assigned to edges
     pos: RefCell<usize>,
-    was_discrete: Option<&'a D>,
+    was_discrete: bool,
 }
 
-impl<'a, V: 'a, D: 'a> Node for DefHybridNode<'a, V, D>
-    where V: ContVar,
-          D: DiscreteVar
+impl<'a, C: 'a, D: 'a> Node for DefHybridNode<'a, C, D>
+    where C: ContVar,
+          D: DiscreteVar + AsContinuous
 {
     fn get_child_unchecked(&self, pos: usize) -> Rc<Self> {
         let childs = &*self.childs.borrow();
@@ -200,53 +197,92 @@ impl<'a, V: 'a, D: 'a> Node for DefHybridNode<'a, V, D>
     }
 }
 
-impl<'a, V: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, V, D>
-    where V: ContVar + Gaussianization,
-          D: DiscreteVar
+impl<'a, C: 'a, D: 'a> HybridNode<'a> for DefHybridNode<'a, C, D>
+    where C: ContVar + Gaussianization,
+          D: DiscreteVar + AsContinuous
 {
-    type Var = V;
+    type Discrete = D;
+    fn new_with_discrete(var: &'a Self::Discrete, pos: usize) -> Result<Self, ()> {
+        let dist = var.as_continuous()?;
+        Ok(DefHybridNode {
+            cont_dist: None,
+            disc_dist: Some(var),
+            as_cont: Some(dist),
+            childs: RefCell::new(vec![]),
+            parents: RefCell::new(vec![]),
+            edges: RefCell::new(vec![]),
+            pos: RefCell::new(pos),
+            was_discrete: true,
+        })
+    }
+}
 
-    fn new(dist: &'a V, pos: usize) -> Result<Self, ()> {
+impl<'a, C: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, C, D>
+    where C: ContVar + Gaussianization,
+          D: DiscreteVar + AsContinuous
+{
+    type Var = C;
+
+    fn new(dist: &'a C, pos: usize) -> Result<Self, ()> {
         match *dist.dist_type() {
             DType::Normal(_) |
-            DType::Exponential(_) => {}
+            DType::Beta(_) |
+            DType::Exponential(_) |
+            DType::Gamma(_) |
+            DType::ChiSquared(_) |
+            DType::TDist(_) |
+            DType::FDist(_) |
+            DType::Cauchy(_) |
+            DType::LogNormal(_) |
+            DType::Logistic(_) |
+            DType::Pareto(_) => {}
             _ => return Err(()),
         }
 
         // get the probabilities from the dist and insert as default cpt
         Ok(DefHybridNode {
-            dist: dist,
+            cont_dist: Some(dist),
+            disc_dist: None,
+            as_cont: None,
             childs: RefCell::new(vec![]),
             parents: RefCell::new(vec![]),
             edges: RefCell::new(vec![]),
             pos: RefCell::new(pos),
-            was_discrete: None,
+            was_discrete: false,
         })
     }
 
-    fn get_dist(&self) -> &'a V {
-        self.dist
+    fn get_dist(&self) -> &C {
+        if !self.was_discrete {
+            self.cont_dist.unwrap()
+        } else {
+            self.as_cont.as_ref().unwrap()
+        }
     }
 
     fn init_sample(&self, rng: &mut RGSLRng) -> f64 {
-        self.dist.sample(rng)
+        if !self.was_discrete {
+            self.cont_dist.unwrap().sample(rng)
+        } else {
+            self.as_cont.as_ref().unwrap().sample(rng)
+        }
     }
 
-    fn get_parents_dists(&self) -> Vec<&'a V> {
+    fn get_parents_dists(&self) -> Vec<&'a C> {
         let parents = &*self.parents.borrow();
         let mut dists = Vec::with_capacity(parents.len());
         for p in parents {
             let p = p.upgrade().unwrap();
-            dists.push(p.dist);
+            dists.push(p.cont_dist.unwrap());
         }
         dists
     }
 
-    fn get_childs_dists(&self) -> Vec<&'a V> {
+    fn get_childs_dists(&self) -> Vec<&'a C> {
         let childs = &*self.childs.borrow();
         let mut dists = Vec::with_capacity(childs.len());
         for c in childs {
-            dists.push(c.dist);
+            dists.push(c.cont_dist.unwrap());
         }
         dists
     }
@@ -277,23 +313,19 @@ impl<'a, V: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, V, D>
 
 // HybridDAG:
 
-struct HybridDAG<'a, N, D>
-    where N: HybridNode<'a, D>,
-          D: DiscreteVar
+struct HybridDAG<'a, N>
+    where N: HybridNode<'a>
 {
     _nlt: PhantomData<&'a ()>,
-    _dt: PhantomData<D>,
     nodes: Vec<Rc<N>>,
 }
 
-impl<'a, N, D> HybridDAG<'a, N, D>
-    where N: HybridNode<'a, D>,
-          D: DiscreteVar
+impl<'a, N> HybridDAG<'a, N>
+    where N: HybridNode<'a>
 {
-    fn new(init: N) -> HybridDAG<'a, N, D> {
+    fn new(init: N) -> HybridDAG<'a, N> {
         HybridDAG {
             _nlt: PhantomData,
-            _dt: PhantomData,
             nodes: vec![Rc::new(init)],
         }
     }
@@ -301,7 +333,7 @@ impl<'a, N, D> HybridDAG<'a, N, D>
     /// Perform both topological sorting and acyclicality check in the same operation.
     /// Returns error if is not a DAG.
     fn topological_sort(&mut self) -> Result<(), ()> {
-        let mut cycle_check = DirectedCycle::new::<N, D>(self);
+        let mut cycle_check = DirectedCycle::new::<N>(self);
         for i in 0..self.nodes.len() {
             cycle_check.dfs(self, i);
             if cycle_check.has_cycle() {
@@ -339,9 +371,8 @@ struct DirectedCycle {
 }
 
 impl DirectedCycle {
-    fn new<'a, N, D>(graph: &HybridDAG<'a, N, D>) -> DirectedCycle
-        where N: HybridNode<'a, D>,
-              D: DiscreteVar
+    fn new<'a, N>(graph: &HybridDAG<'a, N>) -> DirectedCycle
+        where N: HybridNode<'a>
     {
         DirectedCycle {
             marked: vec![false; graph.nodes.len()],
@@ -352,9 +383,8 @@ impl DirectedCycle {
         }
     }
 
-    fn dfs<'a, N, D>(&mut self, graph: &HybridDAG<'a, N, D>, v: usize)
-        where N: HybridNode<'a, D>,
-              D: DiscreteVar
+    fn dfs<'a, N>(&mut self, graph: &HybridDAG<'a, N>, v: usize)
+        where N: HybridNode<'a>
     {
         self.on_stack[v] = true;
         self.marked[v] = true;
@@ -385,30 +415,26 @@ impl DirectedCycle {
 }
 
 /// Bayesian Network iterator, visits all nodes from parents to childs
-pub struct NetIter<'a, N, D>
-    where N: HybridNode<'a, D>,
-          D: DiscreteVar
+pub struct NetIter<'a, N>
+    where N: HybridNode<'a>
 {
     _nlt: PhantomData<&'a ()>,
-    _dt: PhantomData<D>,
     unvisitted: VecDeque<Rc<N>>,
     processed: HashSet<usize>,
     queued: Rc<N>,
     childs_visitted: usize,
 }
 
-impl<'a, N, D> NetIter<'a, N, D>
-    where N: HybridNode<'a, D>,
-          D: DiscreteVar
+impl<'a, N> NetIter<'a, N>
+    where N: HybridNode<'a>
 {
-    fn new(nodes: &[Rc<N>]) -> NetIter<'a, N, D> {
+    fn new(nodes: &[Rc<N>]) -> NetIter<'a, N> {
         let mut processed = HashSet::new();
         let mut unvisitted = VecDeque::from_iter(nodes.iter().cloned());
         let first = unvisitted.pop_front().unwrap();
         processed.insert(first.get_dist() as *const N::Var as usize);
         NetIter {
             _nlt: PhantomData,
-            _dt: PhantomData,
             unvisitted: unvisitted,
             processed: processed,
             queued: first,
@@ -417,9 +443,8 @@ impl<'a, N, D> NetIter<'a, N, D>
     }
 }
 
-impl<'a, N, D> Iterator for NetIter<'a, N, D>
-    where N: HybridNode<'a, D>,
-          D: DiscreteVar
+impl<'a, N> Iterator for NetIter<'a, N>
+    where N: HybridNode<'a>
 {
     type Item = Rc<N>;
     fn next(&mut self) -> Option<Self::Item> {

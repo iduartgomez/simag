@@ -36,18 +36,19 @@ impl ErrMsg {
                 format!("simag: expected positive real number when computing `{:?}`",
                         arg)
             }
-            _ => format!(""),
+            _ => "".to_string(),
         }
     }
 
     pub fn panic_msg(&self) -> String {
         match *self {
-            ErrMsg::RGSLRngInstance => format!("simag: failed to instantiate the RNG from GSL"),
+            ErrMsg::RGSLRngInstance => "simag: failed to instantiate the RNG from GSL".to_string(),
             ErrMsg::CorrMtxInstance => {
-                format!("simag: failed to factorize the correlation matrix while initialising \
-                         sampler")
+                "simag: failed to factorize the correlation matrix while initialising \
+                         sampler"
+                    .to_string()
             }
-            _ => format!(""),
+            _ => "".to_string(),
         }
     }
 }

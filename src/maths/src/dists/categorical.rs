@@ -1,5 +1,6 @@
 use std::u8;
 
+use super::{GumbelSoftmax, GSRelaxation, Sample, CDF};
 use RGSLRng;
 
 use itertools;
@@ -92,26 +93,26 @@ impl Categorical {
 }
 
 #[derive(Debug, Clone)]
-pub struct Binomial {
+pub struct Bernoulli {
     event_prob: f64,
 }
 
-impl Binomial {
+impl Bernoulli {
     /// Takes the probability of success as an argument.
-    pub fn new(prob: f64) -> Result<Binomial, String> {
+    pub fn new(prob: f64) -> Result<Bernoulli, String> {
         if prob >= 1. {
             return Err(format!("sum(p) == {} > 1.0", prob));
         }
 
-        Ok(Binomial { event_prob: prob })
+        Ok(Bernoulli { event_prob: prob })
     }
 
-    /// Samples from a univariate binomial distribution and returns a category choice
-    /// (zero-based indexed).
+    /// Samples from a univariate Bernoulli distribution and returns zero if
+    /// the trial was a failure or one if it was a success.
     #[inline]
     pub fn sample(&self, rng: &mut RGSLRng) -> u8 {
         let val = rng.uniform_pos();
-        if val < (1. - self.event_prob) { 0 } else { 1 }
+        if val >= self.event_prob { 1 } else { 0 }
     }
 
     pub fn success(&self) -> f64 {
@@ -120,5 +121,81 @@ impl Binomial {
 
     pub fn failure(&self) -> f64 {
         1. - self.event_prob
+    }
+}
+
+impl GSRelaxation<RelaxedBernoulli> for Bernoulli {
+    fn relaxed(&self, temperature: Option<f64>) -> RelaxedBernoulli {
+        let t = if let Some(t) = temperature { t } else { 0.5 };
+        RelaxedBernoulli {
+            l: self.event_prob / 1. - self.event_prob,
+            t: t,
+            s: self.event_prob,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct RelaxedBernoulli {
+    l: f64,
+    t: f64,
+    s: f64,
+}
+
+impl RelaxedBernoulli {
+    pub fn pdf(&self, x: f64) -> f64 {
+        let a = self.l * x;
+        let b = 1.0 - x;
+        let e = self.t - 1.0;
+        (self.t * a).powf(-e) * b.powf(-e) / (a.powf(-self.t) + b.powf(-self.t)).powi(2)
+    }
+
+    /// Given a probability `p` between the interval (0,1) return if the event was a success or not.
+    #[inline]
+    pub fn discretized(&self, p: f64) -> bool {
+        p <= self.s
+    }
+}
+
+impl GumbelSoftmax for RelaxedBernoulli {}
+
+impl Sample for RelaxedBernoulli {
+    #[inline]
+    fn sample(&self, rng: &mut RGSLRng) -> f64 {
+        let log = -((1.0 / rng.uniform_pos()) - 1.0).ln();
+        1.0 / (1.0 + (-(log + self.l.ln()) / self.t).exp())
+    }
+}
+
+impl CDF for RelaxedBernoulli {
+    #[inline]
+    fn cdf(&self, x: f64) -> f64 {
+        let log = -((1.0 / x) - 1.0).ln();
+        1.0 / (1.0 + (-(log + self.l.ln()) / self.t).exp())
+    }
+
+    #[inline]
+    fn inverse_cdf(&self, p: f64) -> f64 {
+        let f = -(1.0 / p - 1.0).ln();
+        (1.0 / (1.0 + (-self.t * f - self.l.ln()).exp()))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn relaxed_bernoulli() {
+        let mut rng = RGSLRng::new();
+        let dist = RelaxedBernoulli {
+            l: 0.7 / 0.3,
+            t: 0.1,
+            s: 0.7,
+        };
+        let sample = dist.sample(&mut rng);
+        let cdf = dist.cdf(sample);
+        let inv = dist.inverse_cdf(cdf);
+        assert_eq!(sample, inv);
     }
 }

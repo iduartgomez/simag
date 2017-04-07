@@ -11,7 +11,7 @@ use RGSLRng;
 use super::{Node, Variable, Observation};
 use super::{DType, Discrete};
 use sampling::{DiscreteSampler, DefDiscreteSampler};
-use dists::{Categorical, Binomial};
+use dists::{Categorical, Bernoulli};
 use err::ErrMsg;
 
 // public traits for models:
@@ -267,7 +267,7 @@ impl CPT {
 
 /// A node in the network representing a discrete random variable.
 ///
-/// This type cannot be instantiated directly, instead add the random variable
+/// This type shouldn't be instantiated directly, instead add the random variable
 /// distribution to the network.
 pub struct DefDiscreteNode<'a, V: 'a>
     where V: DiscreteVar
@@ -289,7 +289,7 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
     fn new(dist: &'a V, pos: usize) -> Result<Self, ()> {
         match *dist.dist_type() {
             DType::Categorical(_) |
-            DType::Binomial(_) => {}
+            DType::Bernoulli(_) => {}
             _ => return Err(()),
         }
 
@@ -311,7 +311,7 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
         let cpt = &*self.cpt.borrow();
         let probs = cpt.get(values).unwrap();
         match *probs {
-            DType::Binomial(ref dist) => dist.sample(rng),
+            DType::Bernoulli(ref dist) => dist.sample(rng),
             DType::Categorical(ref dist) => dist.sample(rng),
             ref d => panic!(ErrMsg::ContDistDiscNode.panic_msg_with_arg(d)),
         }
@@ -373,7 +373,7 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
             sum += prob.iter().fold(0_f64, |t, &p| t + p);
             let dist = if prob.len() == 2 {
                 // binomial
-                DType::Binomial(Binomial::new(prob[1])?)
+                DType::Bernoulli(Bernoulli::new(prob[1])?)
             } else {
                 // n-categorical
                 DType::Categorical(Categorical::new(prob.to_vec())?)
@@ -404,7 +404,7 @@ impl DiscreteVar for DefDiscreteVar {
     fn k_num(&self) -> u8 {
         match self.dist {
             DType::Categorical(ref dist) => dist.k_num(),
-            DType::Binomial(_) => 2,
+            DType::Bernoulli(_) => 2,
             ref d => panic!(ErrMsg::ContDistDiscNode.panic_msg_with_arg(d)),
         }
     }
@@ -412,7 +412,7 @@ impl DiscreteVar for DefDiscreteVar {
     fn sample(&self, rng: &mut RGSLRng) -> u8 {
         match self.dist {
             DType::Categorical(ref dist) => dist.sample(rng),
-            DType::Binomial(ref dist) => dist.sample(rng),
+            DType::Bernoulli(ref dist) => dist.sample(rng),
             ref d => panic!(ErrMsg::ContDistDiscNode.panic_msg_with_arg(d)),
         }
     }
@@ -426,6 +426,10 @@ impl DiscreteVar for DefDiscreteVar {
     }
 }
 
+use dists::AsContinuous;
+
+impl AsContinuous for DefDiscreteVar {}
+
 pub fn default_discrete_model(init: &DefDiscreteVar) -> Result<DefDiscreteModel, ()> {
     use sampling::Sampler;
     let sampler = DefDiscreteSampler::new(None, None);
@@ -436,20 +440,20 @@ pub fn default_discrete_model(init: &DefDiscreteVar) -> Result<DefDiscreteModel,
 mod test {
     use super::*;
     use model::DType;
-    use dists::Binomial;
+    use dists::Bernoulli;
 
     #[test]
     fn build() {
-        let cp = DType::Binomial(Binomial::new(0.6).unwrap());
+        let cp = DType::Bernoulli(Bernoulli::new(0.6).unwrap());
         let cloudy = DefDiscreteVar::with_dist(cp).unwrap();
 
-        let cp = DType::Binomial(Binomial::new(0.1).unwrap());
+        let cp = DType::Bernoulli(Bernoulli::new(0.1).unwrap());
         let sprinkler = DefDiscreteVar::with_dist(cp).unwrap();
 
-        let cp = DType::Binomial(Binomial::new(0.4).unwrap());
+        let cp = DType::Bernoulli(Bernoulli::new(0.4).unwrap());
         let rain = DefDiscreteVar::with_dist(cp).unwrap();
 
-        let cp = DType::Binomial(Binomial::new(0.7).unwrap());
+        let cp = DType::Bernoulli(Bernoulli::new(0.7).unwrap());
         let wet_grass = DefDiscreteVar::with_dist(cp).unwrap();
 
         let mut model = default_discrete_model(&wet_grass).unwrap();

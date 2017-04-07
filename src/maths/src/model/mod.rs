@@ -8,7 +8,7 @@ pub use self::discrete::{DiscreteNode, DiscreteVar, default_discrete_model};
 pub use self::continuous::{ContModel, DefContModel, DefContNode, DefContVar};
 pub use self::continuous::{ContNode, ContVar};
 pub use self::hybrid::{HybridModel, DefHybridModel, DefHybridNode};
-pub use self::hybrid::{HybridNode};
+pub use self::hybrid::HybridNode;
 
 macro_rules! dag_impl {
     ($name:ident, $node:ident) => {
@@ -230,10 +230,9 @@ macro_rules! var_impl {
         impl $var_name {
             pub fn with_dist(dist: DType) -> Result<$var_name, ()> {
                 match dist {
-                    DType::Binomial(_) |
+                    DType::Bernoulli(_) |
                     DType::Categorical(_) |
-                    DType::Poisson |
-                    DType::UnknownDisc => {}
+                    DType::Poisson => {}
                     _ => return Err(()),
                 }
                 Ok($var_name {
@@ -245,10 +244,9 @@ macro_rules! var_impl {
 
             pub fn as_dist(&mut self, dist: DType) -> Result<(), ()> {
                 match dist {
-                    DType::Binomial(_) |
+                    DType::Bernoulli(_) |
                     DType::Categorical(_) |
-                    DType::Poisson |
-                    DType::UnknownDisc => {}
+                    DType::Poisson  => {}
                     _ => return Err(()),
                 }
                 self.dist = dist;
@@ -270,6 +268,12 @@ macro_rules! var_impl {
 
         impl Eq for $var_name {}
 
+        impl Default for $var_name {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+
         impl Variable for $var_name {
             fn new() -> $var_name {
                 $var_name {
@@ -278,7 +282,6 @@ macro_rules! var_impl {
                     id: Uuid::new_v4(),
                 }
             }
-
             fn dist_type(&self) -> &DType {
                 &self.dist
             }
@@ -286,9 +289,8 @@ macro_rules! var_impl {
 
             fn set_dist(&mut self, dist: DType) -> Result<(), ()> {
                 match dist {
-                    DType::Binomial(_) |
-                    DType::Categorical(_) |
-                    DType::UnknownDisc => {}
+                    DType::Bernoulli(_) |
+                    DType::Categorical(_)  => {}
                     _ => return Err(()),
                 }
                 self.dist = dist;
@@ -390,10 +392,11 @@ pub enum DType {
     LogNormal(LogNormal),
     Logistic(Logistic),
     Pareto(Pareto),
+    RelaxedBernoulli(RelaxedBernoulli),
     NonParametric,
     // discrete types:
     Categorical(Categorical),
-    Binomial(Binomial),
+    Bernoulli(Bernoulli),
     Poisson,
     UnknownDisc,
 }

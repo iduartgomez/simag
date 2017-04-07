@@ -5,7 +5,7 @@ use rgsl::{MatrixF64, VectorF64};
 use rgsl;
 
 use super::{Sampler, HybridSampler, HybridSamplerResult};
-use model::{Variable, HybridModel, HybridNode, ContVar, DefContVar, DType, DiscreteVar};
+use model::{Variable, HybridModel, HybridNode, ContVar, DefContVar, DType};
 use dists::{Normal, Gaussianization, CDF};
 use err::ErrMsg;
 use RGSLRng;
@@ -14,7 +14,7 @@ const ITER_TIMES: usize = 1000;
 const BURN_IN: usize = 0;
 
 #[derive(Debug)]
-pub struct AnalyticNormalWithinGibbs<'a> {
+pub struct ExactNormalized<'a> {
     steeps: usize,
     burnin: usize,
     normalized: Vec<Normalized<'a>>,
@@ -29,8 +29,8 @@ struct Normalized<'a> {
     original: &'a DType,
 }
 
-impl<'a> Sampler for AnalyticNormalWithinGibbs<'a> {
-    fn new(steeps: Option<usize>, burnin: Option<usize>) -> AnalyticNormalWithinGibbs<'a> {
+impl<'a> Sampler for ExactNormalized<'a> {
+    fn new(steeps: Option<usize>, burnin: Option<usize>) -> ExactNormalized<'a> {
         let steeps = match steeps {
             Some(val) => val,
             None => ITER_TIMES,
@@ -40,7 +40,7 @@ impl<'a> Sampler for AnalyticNormalWithinGibbs<'a> {
             Some(val) => val,
             None => BURN_IN,
         };
-        AnalyticNormalWithinGibbs {
+        ExactNormalized {
             steeps: steeps,
             burnin: burnin,
             normalized: vec![],
@@ -51,12 +51,12 @@ impl<'a> Sampler for AnalyticNormalWithinGibbs<'a> {
     }
 }
 
-impl<'a> AnalyticNormalWithinGibbs<'a> {
-    fn initialize<N, D>(&mut self, net: &HybridModel<'a, N, AnalyticNormalWithinGibbs<'a>, D>)
-        where N: HybridNode<'a, D>,
-              D: DiscreteVar
+impl<'a> ExactNormalized<'a> {
+    fn initialize<N>(&mut self, net: &HybridModel<'a, N, ExactNormalized<'a>>)
+        where N: HybridNode<'a>
     {
         use rgsl::linear_algebra::symmtd_decomp;
+        use model::ContNode;
 
         const PI_DIV_SIX: f64 = PI / 6.0;
         // construct a std normal variables net and the joint partial correlation matrix
@@ -83,9 +83,10 @@ impl<'a> AnalyticNormalWithinGibbs<'a> {
                 cr_matrix.set(x, y, p_cr);
                 cr_matrix.set(y, x, p_cr);
             }
+            let d = unsafe { &*(node.get_dist() as *const _) as &'a <N as ContNode>::Var };
             let n = Normalized {
                 var: dist,
-                original: node.get_dist().dist_type(),
+                original: d.dist_type(),
             };
             self.normalized.push(n);
         }
@@ -129,7 +130,7 @@ fn partial_correlation((x, y): (usize, usize),
     rho_xyz
 }
 
-impl<'a> HybridSampler<'a> for AnalyticNormalWithinGibbs<'a> {
+impl<'a> HybridSampler<'a> for ExactNormalized<'a> {
     /// In a pure continuous Bayesian net, the following algorithm is used:
     ///
     /// 1)  Every distribution is transformed to the standard unit normal distribution
@@ -141,11 +142,10 @@ impl<'a> HybridSampler<'a> for AnalyticNormalWithinGibbs<'a> {
     ///     compute the sample for each distribution and transform back to the original,
     ///     distribution using the inverse cumulative distribution function.
     /// 5)  Repeat 4 as many times as specified by the `steeps` parameter of the sampler.
-    fn get_samples<N, D>(mut self,
-                         net: &HybridModel<'a, N, AnalyticNormalWithinGibbs<'a>, D>)
-                         -> Vec<Vec<HybridSamplerResult>>
-        where N: HybridNode<'a, D>,
-              D: DiscreteVar
+    fn get_samples<N>(mut self,
+                      net: &HybridModel<'a, N, ExactNormalized<'a>>)
+                      -> Vec<Vec<HybridSamplerResult>>
+        where N: HybridNode<'a>
     {
         use rgsl::blas::level2::dtrmv;
 
@@ -170,20 +170,48 @@ impl<'a> HybridSampler<'a> for AnalyticNormalWithinGibbs<'a> {
             for i in 0..d {
                 let sample = std.cdf(steep_sample.get(i));
                 let sample = match *self.normalized[i].original {
-                    DType::Normal(ref dist) => sample + dist.mu,
-                    DType::Exponential(ref dist) => dist.inverse_cdf(sample),
-                    DType::Beta(ref dist) => dist.inverse_cdf(sample),
-                    DType::Gamma(ref dist) => dist.inverse_cdf(sample),
-                    DType::ChiSquared(ref dist) => dist.inverse_cdf(sample),
-                    DType::TDist(ref dist) => dist.inverse_cdf(sample),
-                    DType::FDist(ref dist) => dist.inverse_cdf(sample),
-                    DType::Cauchy(ref dist) => dist.inverse_cdf(sample),
-                    DType::LogNormal(ref dist) => dist.inverse_cdf(sample),
-                    DType::Logistic(ref dist) => dist.inverse_cdf(sample),
-                    DType::Pareto(ref dist) => dist.inverse_cdf(sample),
+                    DType::Normal(ref dist) => HybridSamplerResult::Continuous(sample + dist.mu),
+                    DType::Exponential(ref dist) => {
+                        HybridSamplerResult::Continuous(dist.inverse_cdf(sample))
+                    }
+                    DType::Beta(ref dist) => {
+                        HybridSamplerResult::Continuous(dist.inverse_cdf(sample))
+                    }
+                    DType::Gamma(ref dist) => {
+                        HybridSamplerResult::Continuous(dist.inverse_cdf(sample))
+                    }
+                    DType::ChiSquared(ref dist) => {
+                        HybridSamplerResult::Continuous(dist.inverse_cdf(sample))
+                    }
+                    DType::TDist(ref dist) => {
+                        HybridSamplerResult::Continuous(dist.inverse_cdf(sample))
+                    }
+                    DType::FDist(ref dist) => {
+                        HybridSamplerResult::Continuous(dist.inverse_cdf(sample))
+                    }
+                    DType::Cauchy(ref dist) => {
+                        HybridSamplerResult::Continuous(dist.inverse_cdf(sample))
+                    }
+                    DType::LogNormal(ref dist) => {
+                        HybridSamplerResult::Continuous(dist.inverse_cdf(sample))
+                    }
+                    DType::Logistic(ref dist) => {
+                        HybridSamplerResult::Continuous(dist.inverse_cdf(sample))
+                    }
+                    DType::Pareto(ref dist) => {
+                        HybridSamplerResult::Continuous(dist.inverse_cdf(sample))
+                    }
+                    DType::RelaxedBernoulli(ref dist) => {
+                        let success = if dist.discretized(dist.inverse_cdf(sample)) {
+                            1
+                        } else {
+                            0
+                        };
+                        HybridSamplerResult::Discrete(success)
+                    }
                     ref d => panic!(ErrMsg::DiscDistContNode.panic_msg_with_arg(d)),
                 };
-                f.push(HybridSamplerResult::Continuous(sample))
+                f.push(sample)
             }
             self.samples.push(f);
         }
@@ -191,10 +219,10 @@ impl<'a> HybridSampler<'a> for AnalyticNormalWithinGibbs<'a> {
     }
 }
 
-impl<'a> ::std::clone::Clone for AnalyticNormalWithinGibbs<'a> {
-    fn clone(&self) -> AnalyticNormalWithinGibbs<'a> {
+impl<'a> ::std::clone::Clone for ExactNormalized<'a> {
+    fn clone(&self) -> ExactNormalized<'a> {
         let steeps = Some(self.steeps);
         let burnin = Some(self.burnin);
-        AnalyticNormalWithinGibbs::new(steeps, burnin)
+        ExactNormalized::new(steeps, burnin)
     }
 }
