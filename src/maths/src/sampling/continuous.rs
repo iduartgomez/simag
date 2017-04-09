@@ -1,12 +1,12 @@
 use std::f64::consts::PI;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 use rgsl::{MatrixF64, VectorF64};
 use rgsl;
 
 use super::{Sampler, ContinuousSampler};
 use model::{Variable, ContModel, ContNode, ContVar, DefContVar, DType};
-use dists::{Normal, Gaussianization, CDF};
+use dists::{Normal, Normalization, CDF};
 use err::ErrMsg;
 use RGSLRng;
 
@@ -55,7 +55,7 @@ impl<'a> ExactNormalized<'a> {
     fn initialize<N>(&mut self, net: &ContModel<'a, N, ExactNormalized<'a>>)
         where N: ContNode<'a>
     {
-        use rgsl::linear_algebra::symmtd_decomp;
+        use super::partial_correlation;
 
         const PI_DIV_SIX: f64 = PI / 6.0;
         // construct a std normal variables net and the joint partial correlation matrix
@@ -63,25 +63,24 @@ impl<'a> ExactNormalized<'a> {
         // 1) sampling from each random variable in the network (where for
         // variable X and prob func F(x) it has an invertible F^-1(x) function, otherwise panic)
         // and normalizing the sample using the inverse CDF of std normal
-        // 2) calculating the partial correlation of each edge conditioned on other edges which
-        // are conditioning the child, the order depends on the topological sort algorithm of the DAG
-        // 3) construct the correlation matrix with the values obtained, specifying the full
+        // 2) compute the partial correlation of each edge conditioned on other edges which are
+        // conditioning the child, the order depends on the topological sort algorithm of the DAG
+        // 3) repeating steep 2 for the whole vine will specify the correlation matrix for the full
         // correlation matrix for the joint mulvariate std normal distribution
         let d = net.var_num();
-        let mut cr_matrix = MatrixF64::new(d, d).unwrap();
-        cr_matrix.set_identity();
+        self.cr_matrix = MatrixF64::new(d, d).unwrap();
+        self.cr_matrix.set_identity();
         let mut cached: HashMap<(usize, usize), f64> = HashMap::new();
-        for (x, node) in net.iter_vars().enumerate() {
+        for (i, node) in net.iter_vars().enumerate() {
             let dist = node.get_dist().as_normal(self.steeps).into_default();
-            let mut cond = VecDeque::new();
-            for (pt_cr, y) in node.get_edges() {
-                cond.push_front(y);
+            for (pt_cr, j) in node.get_edges() {
                 // ρ{i,j}|D = 2 * sin( π/6 * r{i,j}|D )
                 let rho_xy = 2.0 * (PI_DIV_SIX * pt_cr).sin();
-                let p_cr = partial_correlation((x, y), rho_xy, cond.as_slices().0, &mut cached);
-                cr_matrix.set(x, y, p_cr);
-                cr_matrix.set(y, x, p_cr);
+                cached.insert((i, j), rho_xy);
+                self.cr_matrix.set(i, j, rho_xy);
             }
+            let anc = node.get_all_ancestors();
+            partial_correlation(i, &anc, &mut cached, &mut self.cr_matrix);
             let d = unsafe { &*(node.get_dist() as *const _) as &'a <N as ContNode>::Var };
             let n = Normalized {
                 var: dist,
@@ -89,44 +88,7 @@ impl<'a> ExactNormalized<'a> {
             };
             self.normalized.push(n);
         }
-        // find matrix A such as { A x A(transposed) = Σ } where { Σ = correlation matrix }
-        // we do this using symmetric tridiagonal decomposition to avoid any problem
-        // of A not being positive-definite instead of using Cholesky decomposition
-        let decomp_vec = VectorF64::new(d - 1).unwrap();
-        match symmtd_decomp(&cr_matrix, &decomp_vec) { 
-            rgsl::Value::Success => {}
-            _ => panic!(ErrMsg::CorrMtxInstance.panic_msg()),
-        }
-        // BLAS ops only accept float matrixes, so we have to convert from f64 to f32
-        //self.cr_matrix = matrixf64_to_matrixf32(cr_matrix);
-        self.cr_matrix = cr_matrix;
     }
-}
-
-/// Returns rho{x,y|z...n}
-fn partial_correlation((x, y): (usize, usize),
-                       rho_xy: f64,
-                       cond: &[usize],
-                       cached: &mut HashMap<(usize, usize), f64>)
-                       -> f64 {
-    if let Some(rho_xy) = cached.get(&(x, y)) {
-        return *rho_xy;
-    }
-    if cond.len() == 1 {
-        cached.insert((x, y), rho_xy);
-        return rho_xy;
-    }
-
-    let rho_xz = *cached.get(&(x, cond[1])).unwrap();
-    let rho_zy = if let Some(rho_zy) = cached.get(&(cond[0], cond[1])) {
-        *rho_zy
-    } else {
-        0.0_f64
-    };
-    let rho_xyz = (rho_xy - rho_xz * rho_zy) /
-                  (((1.0 - rho_xz.powi(2)) * (1.0 - rho_zy.powi(2))).sqrt());
-    cached.insert((x, cond[0]), rho_xyz);
-    rho_xyz
 }
 
 impl<'a> ContinuousSampler<'a> for ExactNormalized<'a> {
@@ -205,13 +167,7 @@ mod test {
 
     use std::collections::HashMap;
 
-    #[test]
-    fn analytic_normal() {
-        unimplemented!()
-    }
-
-    #[test]
-    fn pt_cr() {
+    fn _pt_cr() {
         use rgsl::linear_algebra::symmtd_decomp;
         use rgsl::blas::level2::dtrmv;
         use rgsl::randist::gaussian::gaussian;

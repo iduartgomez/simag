@@ -12,7 +12,7 @@ mod sample {
     }
 
     #[bench]
-    fn binomial(b: &mut Bencher) {
+    fn bernoulli(b: &mut Bencher) {
         let mut rng = RGSLRng::new();
         let d = Bernoulli::new(0.5).unwrap();
         b.iter(|| d.sample(&mut rng));
@@ -66,6 +66,14 @@ mod sample {
         let mut rng = RGSLRng::new();
         let d = TDist::new(2.0).unwrap();
         b.iter(|| d.sample(&mut rng));
+    }
+
+    #[bench]
+    fn relaxed_bernoulli(b: &mut Bencher) {
+        let mut rng = RGSLRng::new();
+        let d = Bernoulli::new(0.7).unwrap();
+        let relaxed = d.relaxed(None);
+        b.iter(|| relaxed.sample(&mut rng));
     }
 }
 

@@ -11,7 +11,7 @@ use RGSLRng;
 use super::{Node, Variable, Observation};
 use super::{DType, Continuous};
 use sampling::{ContinuousSampler, DefContSampler};
-use dists::{Sample, Gaussianization};
+use dists::{Sample, Normalization};
 use err::ErrMsg;
 
 // public traits for models:
@@ -20,7 +20,7 @@ use err::ErrMsg;
 pub trait ContNode<'a>: Node
     where Self: Sized
 {
-    type Var: 'a + ContVar + Gaussianization;
+    type Var: 'a + ContVar + Normalization;
 
     /// Constructor method for the continuous node in the Bayesian net.
     fn new(dist: &'a Self::Var, pos: usize) -> Result<Self, ()>;
@@ -73,6 +73,9 @@ pub trait ContVar: Variable {
     fn get_obs_unchecked(&self, pos: usize) -> Self::Event;
 }
 
+pub type DefContModel<'a> = ContModel<'a, DefContNode<'a, DefContVar>, DefContSampler<'a>>;
+
+#[derive(Debug)]
 pub struct ContModel<'a, N: 'a, S>
     where N: ContNode<'a>,
           S: ContinuousSampler<'a> + Clone
@@ -81,36 +84,37 @@ pub struct ContModel<'a, N: 'a, S>
     sampler: S,
 }
 
-pub type DefContModel<'a> = ContModel<'a, DefContNode<'a, DefContVar>, DefContSampler<'a>>;
-
 impl<'a, N, S> ContModel<'a, N, S>
     where N: ContNode<'a>,
-          S: ContinuousSampler<'a> + Clone
+          S: ContinuousSampler<'a>
 {
     pub fn new(init: &'a <N as ContNode<'a>>::Var, sampler: S) -> Result<ContModel<'a, N, S>, ()> {
         let init = N::new(init, 0)?;
-        let dag = ContDAG::new(init);
         Ok(ContModel {
-            vars: dag,
+            vars: ContDAG::new(init),
             sampler: sampler,
+        })
+    }
+
+    /// Get a new instance of the default implementation of a continuous model.
+    pub fn default(init: &'a DefContVar) -> Result<DefContModel<'a>, ()> {
+        use sampling::Sampler;
+        let init = DefContNode::new(init, 0)?;
+        Ok(ContModel {
+            vars: ContDAG {
+                _nlt: PhantomData,
+                nodes: vec![Rc::new(init)],
+            },
+            sampler: DefContSampler::new(None, None),
         })
     }
 
     /// Add a new variable to the model.
     pub fn add_var(&mut self, var: &'a <N as ContNode<'a>>::Var) -> Result<(), ()> {
         let pos = self.vars.nodes.len();
-        let node: N = Self::with_var(var, pos)?;
+        let node = N::new(var, pos)?;
         self.vars.nodes.push(Rc::new(node));
         Ok(())
-    }
-
-    /// Make a new orphan node from a continuous random variable (not added to the model
-    /// automatically).
-    fn with_var<No: 'a>(dist: &'a <No as ContNode<'a>>::Var, pos: usize) -> Result<No, ()>
-        where No: ContNode<'a>
-    {
-        let node = No::new(dist, pos)?;
-        Ok(node)
     }
 
     /// Adds a parent `dist` to a child `dist`, connecting both nodes directionally.
@@ -118,11 +122,11 @@ impl<'a, N, S> ContModel<'a, N, S>
     /// Takes the distribution of a variable, and the parent variable distribution
     /// as arguments and returns a result indicating if the parent was added properly.
     /// Both variables have to be added previously to the model.
-    pub fn add_parent_to_var(&mut self,
-                             node: &'a <N as ContNode<'a>>::Var,
-                             parent_d: &'a <N as ContNode<'a>>::Var,
-                             rank_cr: f64)
-                             -> Result<(), ()> {
+    pub fn add_parent(&mut self,
+                      node: &'a <N as ContNode<'a>>::Var,
+                      parent_d: &'a <N as ContNode<'a>>::Var,
+                      rank_cr: f64)
+                      -> Result<(), ()> {
         // checks to perform:
         //  - both exist in the model
         //  - the theoretical child cannot be a parent of the theoretical parent
@@ -141,7 +145,7 @@ impl<'a, N, S> ContModel<'a, N, S>
             .cloned()
             .ok_or(())?;
         node.add_parent(Rc::downgrade(&parent.clone()), rank_cr);
-        parent.add_child(parent.clone());
+        parent.add_child(node.clone());
         // check if it's a DAG and topologically sort the graph
         self.vars.topological_sort()
     }
@@ -174,6 +178,7 @@ impl<'a, N, S> ContModel<'a, N, S>
     }
 }
 
+#[derive(Debug)]
 struct ContDAG<'a, N>
     where N: ContNode<'a>
 {
@@ -181,7 +186,7 @@ struct ContDAG<'a, N>
     nodes: Vec<Rc<N>>,
 }
 
-dag_impl!(ContDAG, ContNode);
+dag_impl!(ContDAG, ContNode; [ContVar + Normalization]);
 
 /// A node in the network representing a continuous random variable.
 ///
@@ -197,10 +202,22 @@ pub struct DefContNode<'a, V: 'a>
     pos: RefCell<usize>,
 }
 
+impl<'a, V: 'a + ContVar> ::std::fmt::Debug for DefContNode<'a, V> {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+        write!(f,
+               "DefContNode {{ dist: {d:?}, childs: {c}, parents: {p}, pos: {pos}, edges: {e:?} }}",
+               c = self.childs.borrow().len(),
+               p = self.parents.borrow().len(),
+               pos = *self.pos.borrow(),
+               d = self.dist,
+               e = self.edges.borrow())
+    }
+}
+
 node_impl!(DefContNode, ContVar);
 
 impl<'a, V: 'a> ContNode<'a> for DefContNode<'a, V>
-    where V: ContVar + Gaussianization
+    where V: ContVar + Normalization
 {
     type Var = V;
 
@@ -288,6 +305,23 @@ pub struct DefContVar {
     id: Uuid,
 }
 
+fn validate_dist(dist: &DType) -> Result<(), ()> {
+    match *dist {
+        DType::Normal(_) |
+        DType::Beta(_) |
+        DType::Exponential(_) |
+        DType::Gamma(_) |
+        DType::ChiSquared(_) |
+        DType::TDist(_) |
+        DType::FDist(_) |
+        DType::Cauchy(_) |
+        DType::LogNormal(_) |
+        DType::Logistic(_) |
+        DType::Pareto(_) => Ok(()), 
+        _ => Err(()),
+    }
+}
+
 var_impl!(DefContVar);
 
 impl ContVar for DefContVar {
@@ -328,7 +362,7 @@ impl ContVar for DefContVar {
     }
 }
 
-impl Gaussianization for DefContVar {
+impl Normalization for DefContVar {
     #[inline]
     fn into_default(self) -> Self {
         self

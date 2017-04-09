@@ -31,7 +31,7 @@ pub use self::normal::Normal;
 pub use self::pareto::Pareto;
 pub use self::tdist::TDist;
 
-pub use self::transforms::{AsContinuous, Gaussianization, GumbelSoftmax, GSRelaxation};
+pub use self::transforms::{AsContinuous, Normalization, GumbelSoftmax, GSRelaxation};
 
 /// Draw a random variate from a (continuous) distribution.
 pub trait Sample {

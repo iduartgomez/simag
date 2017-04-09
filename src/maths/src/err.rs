@@ -6,7 +6,6 @@ pub enum ErrMsg {
     DiscDistContNode,
     DistNotInvertible,
     RGSLRngInstance,
-    CorrMtxInstance,
     Closed01,
     PositiveReal,
 }
@@ -43,11 +42,6 @@ impl ErrMsg {
     pub fn panic_msg(&self) -> String {
         match *self {
             ErrMsg::RGSLRngInstance => "simag: failed to instantiate the RNG from GSL".to_string(),
-            ErrMsg::CorrMtxInstance => {
-                "simag: failed to factorize the correlation matrix while initialising \
-                         sampler"
-                    .to_string()
-            }
             _ => "".to_string(),
         }
     }

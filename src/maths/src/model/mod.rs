@@ -4,14 +4,14 @@ use std::hash::Hash;
 use std::rc::Rc;
 
 pub use self::discrete::{DiscreteModel, DefDiscreteModel, DefDiscreteNode, DefDiscreteVar, CPT};
-pub use self::discrete::{DiscreteNode, DiscreteVar, default_discrete_model};
+pub use self::discrete::{DiscreteNode, DiscreteVar};
 pub use self::continuous::{ContModel, DefContModel, DefContNode, DefContVar};
 pub use self::continuous::{ContNode, ContVar};
 pub use self::hybrid::{HybridModel, DefHybridModel, DefHybridNode};
 pub use self::hybrid::HybridNode;
 
 macro_rules! dag_impl {
-    ($name:ident, $node:ident) => {
+    ($name:ident, $node:ident; [$($var_type:tt)+]) =>  {
         impl<'a, N> $name<'a, N>
             where N: $node<'a>
         {
@@ -51,9 +51,13 @@ macro_rules! dag_impl {
             #[inline]
             fn get_node(&self, pos: usize) -> Rc<N> {
                 self.nodes[pos].clone()
-            }
+            }         
         }
+        
+        dag_impl!(ITER: $name, $node; [$($var_type)+,]);
+    };
 
+    (ITER: $name:ident, $node:ident; [$($var_type:tt)+]) => {
         struct DirectedCycle {
             marked: Vec<bool>,
             edge_to: Vec<usize>,
@@ -163,7 +167,7 @@ macro_rules! dag_impl {
                 }
             }
         }
-    }
+    };
 }
 
 macro_rules! node_impl {
@@ -197,6 +201,20 @@ macro_rules! node_impl {
                 positions
             }
 
+            fn get_all_ancestors(&self) -> Vec<usize> {
+                let parents = &*self.parents.borrow();
+                let mut anc = Vec::with_capacity(parents.len());
+                for p in parents {
+                    let p = p.upgrade().unwrap();
+                    let mut ancestors = p.get_all_ancestors();
+                    anc.append(&mut ancestors);
+                    anc.push(*p.pos.borrow());
+                }
+                anc.sort_by(|a, b| b.cmp(a));
+                anc.dedup();
+                anc
+            }
+
             fn get_childs_positions(&self) -> Vec<usize> {
                 let childs = &*self.childs.borrow();
                 let mut positions = Vec::with_capacity(childs.len());
@@ -206,13 +224,11 @@ macro_rules! node_impl {
                 positions
             }
 
-            #[inline]
             fn parents_num(&self) -> usize {
                 let parents = &*self.parents.borrow();
                 parents.len()
             }
 
-            #[inline]
             fn childs_num(&self) -> usize {
                 let childs = &*self.childs.borrow();
                 childs.len()
@@ -229,12 +245,7 @@ macro_rules! var_impl {
     ($var_name:ident) => {
         impl $var_name {
             pub fn with_dist(dist: DType) -> Result<$var_name, ()> {
-                match dist {
-                    DType::Bernoulli(_) |
-                    DType::Categorical(_) |
-                    DType::Poisson => {}
-                    _ => return Err(()),
-                }
+                validate_dist(&dist)?;
                 Ok($var_name {
                     dist: dist,
                     observations: Vec::new(),
@@ -243,12 +254,27 @@ macro_rules! var_impl {
             }
 
             pub fn as_dist(&mut self, dist: DType) -> Result<(), ()> {
-                match dist {
-                    DType::Bernoulli(_) |
-                    DType::Categorical(_) |
-                    DType::Poisson  => {}
-                    _ => return Err(()),
+                validate_dist(&dist)?;
+                self.dist = dist;
+                Ok(())
+            }
+        }
+
+        impl Variable for $var_name {
+            fn new() -> $var_name {
+                $var_name {
+                    dist: DType::UnknownDisc,
+                    observations: Vec::new(),
+                    id: Uuid::new_v4(),
                 }
+            }
+
+            fn dist_type(&self) -> &DType {
+                &self.dist
+            }
+
+            fn set_dist(&mut self, dist: DType) -> Result<(), ()> {
+                validate_dist(&dist)?;
                 self.dist = dist;
                 Ok(())
             }
@@ -273,30 +299,6 @@ macro_rules! var_impl {
                 Self::new()
             }
         }
-
-        impl Variable for $var_name {
-            fn new() -> $var_name {
-                $var_name {
-                    dist: DType::UnknownDisc,
-                    observations: Vec::new(),
-                    id: Uuid::new_v4(),
-                }
-            }
-            fn dist_type(&self) -> &DType {
-                &self.dist
-            }
-
-
-            fn set_dist(&mut self, dist: DType) -> Result<(), ()> {
-                match dist {
-                    DType::Bernoulli(_) |
-                    DType::Categorical(_)  => {}
-                    _ => return Err(()),
-                }
-                self.dist = dist;
-                Ok(())
-            }
-        }
     }
 }
 
@@ -310,7 +312,7 @@ pub trait Observation {
     fn is_kind(&self) -> VariableKind;
 }
 
-pub trait Variable: Hash + PartialEq + Eq {
+pub trait Variable: Hash + PartialEq + Eq + ::std::fmt::Debug {
     fn new() -> Self;
 
     /// Returns the exact form of the distribution, where the distribution
@@ -322,7 +324,7 @@ pub trait Variable: Hash + PartialEq + Eq {
 }
 
 /// A node in the the DAG.
-pub trait Node {
+pub trait Node: ::std::fmt::Debug {
     fn get_child_unchecked(&self, pos: usize) -> Rc<Self>;
     fn get_childs(&self) -> Vec<Rc<Self>>;
     fn is_root(&self) -> bool;
@@ -330,6 +332,9 @@ pub trait Node {
 
     /// Returns the node parents positions in the network.
     fn get_parents_positions(&self) -> Vec<usize>;
+
+    /// Returns the positions in the network of the ancestors of this node.
+    fn get_all_ancestors(&self) -> Vec<usize>;
 
     /// Returns the node childs positions in the network.
     fn get_childs_positions(&self) -> Vec<usize>;
@@ -398,5 +403,7 @@ pub enum DType {
     Categorical(Categorical),
     Bernoulli(Bernoulli),
     Poisson,
+    Binomial,
+    Multinomial,
     UnknownDisc,
 }

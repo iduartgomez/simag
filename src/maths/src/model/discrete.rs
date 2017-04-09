@@ -68,48 +68,52 @@ pub trait DiscreteVar: Variable {
     fn push_observation(&mut self, obs: Self::Event);
 }
 
+pub type DefDiscreteModel<'a> = DiscreteModel<'a,
+                                              DefDiscreteNode<'a, DefDiscreteVar>,
+                                              DefDiscreteSampler>;
+
+#[derive(Debug)]
 pub struct DiscreteModel<'a, N: 'a, S>
     where N: DiscreteNode<'a>,
-          S: DiscreteSampler + Clone
+          S: DiscreteSampler
 {
     vars: DiscreteDAG<'a, N>,
     sampler: S,
 }
 
-pub type DefDiscreteModel<'a> = DiscreteModel<'a,
-                                              DefDiscreteNode<'a, DefDiscreteVar>,
-                                              DefDiscreteSampler>;
-
 impl<'a, N, S> DiscreteModel<'a, N, S>
     where N: DiscreteNode<'a>,
-          S: DiscreteSampler + Clone
+          S: DiscreteSampler
 {
     pub fn new(init: &'a <N as DiscreteNode<'a>>::Var,
                sampler: S)
                -> Result<DiscreteModel<'a, N, S>, ()> {
         let init = N::new(init, 0)?;
-        let dag = DiscreteDAG::new(init);
         Ok(DiscreteModel {
-            vars: dag,
+            vars: DiscreteDAG::new(init),
             sampler: sampler,
+        })
+    }
+
+    /// Get a new instance of the default implementation of a discrete model.
+    pub fn default(init: &'a DefDiscreteVar) -> Result<DefDiscreteModel<'a>, ()> {
+        use sampling::Sampler;
+        let init = DefDiscreteNode::new(init, 0)?;
+        Ok(DiscreteModel {
+            vars: DiscreteDAG {
+                _nlt: PhantomData,
+                nodes: vec![Rc::new(init)],
+            },
+            sampler: DefDiscreteSampler::new(None, None),
         })
     }
 
     /// Add a new variable to the model.
     pub fn add_var(&mut self, var: &'a <N as DiscreteNode<'a>>::Var) -> Result<(), ()> {
         let pos = self.vars.nodes.len();
-        let node: N = Self::with_var(var, pos)?;
+        let node = N::new(var, pos)?;
         self.vars.nodes.push(Rc::new(node));
         Ok(())
-    }
-
-    /// Make a new orphan node from a discrete random variable (not added to the model
-    /// automatically).
-    fn with_var<No: 'a>(dist: &'a <No as DiscreteNode<'a>>::Var, pos: usize) -> Result<No, ()>
-        where No: DiscreteNode<'a>
-    {
-        let node = No::new(dist, pos)?;
-        Ok(node)
     }
 
     /// Adds a parent `dist` to a child `dist`, connecting both nodes directionally.
@@ -133,11 +137,11 @@ impl<'a, N, S> DiscreteModel<'a, N, S>
     /// values taken by parents at a given time). Each row has to sum up to 1.
     ///
     /// More information on how to build in the [CPT]() type page.
-    pub fn add_parent_to_var(&mut self,
-                             node: &'a <N as DiscreteNode<'a>>::Var,
-                             parent_d: &'a <N as DiscreteNode<'a>>::Var,
-                             prob: CPT)
-                             -> Result<(), ()> {
+    pub fn add_parent(&mut self,
+                      node: &'a <N as DiscreteNode<'a>>::Var,
+                      parent_d: &'a <N as DiscreteNode<'a>>::Var,
+                      prob: CPT)
+                      -> Result<(), ()> {
         // checks to perform:
         //  - both exist in the model
         //  - the theoretical child cannot be a parent of the theoretical parent
@@ -195,6 +199,7 @@ impl<'a, N, S> DiscreteModel<'a, N, S>
     }
 }
 
+#[derive(Debug)]
 struct DiscreteDAG<'a, N>
     where N: DiscreteNode<'a>
 {
@@ -202,7 +207,7 @@ struct DiscreteDAG<'a, N>
     nodes: Vec<Rc<N>>,
 }
 
-dag_impl!(DiscreteDAG, DiscreteNode);
+dag_impl!(DiscreteDAG, DiscreteNode; [DiscreteVar]);
 
 type Choices = Vec<u8>;
 
@@ -277,6 +282,17 @@ pub struct DefDiscreteNode<'a, V: 'a>
     cpt: RefCell<HashMap<Choices, DType>>,
     parents: RefCell<Vec<Weak<DefDiscreteNode<'a, V>>>>, // (categ, parent_ptr)
     pos: RefCell<usize>, // position in the bayes net vec of self
+}
+
+impl<'a, V: 'a + DiscreteVar> ::std::fmt::Debug for DefDiscreteNode<'a, V> {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+        write!(f,
+               "DefDiscreteNode {{ dist: {d:?}, childs: {c}, parents: {p}, pos: {pos} }}",
+               c = self.childs.borrow().len(),
+               p = self.parents.borrow().len(),
+               pos = *self.pos.borrow(),
+               d = self.dist)
+    }
 }
 
 node_impl!(DefDiscreteNode, DiscreteVar);
@@ -372,7 +388,7 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
         for (idx, prob) in zip(indexes.into_iter(), data.into_iter()) {
             sum += prob.iter().fold(0_f64, |t, &p| t + p);
             let dist = if prob.len() == 2 {
-                // binomial
+                // 2 categories
                 DType::Bernoulli(Bernoulli::new(prob[1])?)
             } else {
                 // n-categorical
@@ -394,6 +410,15 @@ pub struct DefDiscreteVar {
     dist: DType,
     observations: Vec<Discrete>,
     id: Uuid,
+}
+
+fn validate_dist(dist: &DType) -> Result<(), ()> {
+    match *dist {
+        DType::Bernoulli(_) |
+        DType::Categorical(_) |
+        DType::Poisson => Ok(()),
+        _ => Err(()),
+    }
 }
 
 var_impl!(DefDiscreteVar);
@@ -429,57 +454,3 @@ impl DiscreteVar for DefDiscreteVar {
 use dists::AsContinuous;
 
 impl AsContinuous for DefDiscreteVar {}
-
-pub fn default_discrete_model(init: &DefDiscreteVar) -> Result<DefDiscreteModel, ()> {
-    use sampling::Sampler;
-    let sampler = DefDiscreteSampler::new(None, None);
-    DiscreteModel::new(init, sampler)
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use model::DType;
-    use dists::Bernoulli;
-
-    #[test]
-    fn build() {
-        let cp = DType::Bernoulli(Bernoulli::new(0.6).unwrap());
-        let cloudy = DefDiscreteVar::with_dist(cp).unwrap();
-
-        let cp = DType::Bernoulli(Bernoulli::new(0.1).unwrap());
-        let sprinkler = DefDiscreteVar::with_dist(cp).unwrap();
-
-        let cp = DType::Bernoulli(Bernoulli::new(0.4).unwrap());
-        let rain = DefDiscreteVar::with_dist(cp).unwrap();
-
-        let cp = DType::Bernoulli(Bernoulli::new(0.7).unwrap());
-        let wet_grass = DefDiscreteVar::with_dist(cp).unwrap();
-
-        let mut model = default_discrete_model(&wet_grass).unwrap();
-        model.add_var(&sprinkler).unwrap();
-        model.add_var(&rain).unwrap();
-        model.add_var(&cloudy).unwrap();
-
-        let choices = vec![vec![0_u8], vec![1]];
-        let elements = vec![vec![0.25_f64, 0.25], vec![0.4, 0.1]];
-        let cpt = CPT::new(elements, choices).unwrap();
-        model.add_parent_to_var(&sprinkler, &cloudy, cpt).unwrap();
-
-        let choices = vec![vec![0_u8], vec![1]];
-        let elements = vec![vec![0.45_f64, 0.05], vec![0.05, 0.45]];
-        let cpt = CPT::new(elements, choices).unwrap();
-        model.add_parent_to_var(&rain, &cloudy, cpt).unwrap();
-
-        let choices = vec![vec![0_u8], vec![1]];
-        let elements = vec![vec![0.15_f64, 0.25], vec![0.05, 0.55]];
-        let cpt = CPT::new(elements, choices).unwrap();
-        model.add_parent_to_var(&wet_grass, &rain, cpt).unwrap();
-
-        let choices = vec![vec![0_u8, 0], vec![0, 1], vec![1, 0], vec![1, 1]];
-        let elements =
-            vec![vec![0.34_f64, 0.01], vec![0.01, 0.14], vec![0.05, 0.10], vec![0.01, 0.34]];
-        let cpt = CPT::new(elements, choices).unwrap();
-        model.add_parent_to_var(&wet_grass, &sprinkler, cpt).unwrap();
-    }
-}

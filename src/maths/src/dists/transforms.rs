@@ -45,7 +45,7 @@ pub trait AsDiscrete
 
 /// Takes a random variable with an invertible distribution function F and returns
 /// a standard normal distribution.
-pub trait Gaussianization
+pub trait Normalization
     where Self: ContVar + Sized
 {
     fn as_normal(&self, samples: usize) -> Self {

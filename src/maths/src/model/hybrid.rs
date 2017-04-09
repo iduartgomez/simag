@@ -8,7 +8,7 @@ use RGSLRng;
 use super::{Node, ContVar, DiscreteVar, ContNode};
 use super::{DType, DefContVar, DefDiscreteVar};
 use sampling::{HybridSampler, DefHybridSampler, HybridSamplerResult};
-use dists::{Gaussianization, AsContinuous};
+use dists::{Normalization, AsContinuous};
 
 pub trait HybridNode<'a>: ContNode<'a>
     where Self: Sized
@@ -17,6 +17,7 @@ pub trait HybridNode<'a>: ContNode<'a>
     fn new_with_discrete(var: &'a Self::Discrete, pos: usize) -> Result<Self, ()>;
 }
 
+#[derive(Debug)]
 pub struct HybridModel<'a, N: 'a, S>
     where N: HybridNode<'a>,
           S: HybridSampler<'a> + Clone
@@ -33,6 +34,19 @@ impl<'a, N, S> HybridModel<'a, N, S>
     where N: HybridNode<'a>,
           S: HybridSampler<'a> + Clone
 {
+    /// Get a new instance of the default implementation of a continuous model.
+    pub fn default(init: &'a DefContVar) -> Result<DefHybridModel<'a>, ()> {
+        use sampling::Sampler;
+        let init = DefHybridNode::new(init, 0)?;
+        Ok(HybridModel {
+            vars: HybridDAG {
+                _nlt: PhantomData,
+                nodes: vec![Rc::new(init)],
+            },
+            sampler: DefHybridSampler::new(None, None),
+        })
+    }
+
     pub fn new(init: &'a <N as ContNode<'a>>::Var,
                sampler: S)
                -> Result<HybridModel<'a, N, S>, ()> {
@@ -47,18 +61,9 @@ impl<'a, N, S> HybridModel<'a, N, S>
     /// Add a new variable to the model.
     pub fn add_var(&mut self, var: &'a <N as ContNode<'a>>::Var) -> Result<(), ()> {
         let pos = self.vars.nodes.len();
-        let node: N = Self::with_var(var, pos)?;
+        let node = N::new(var, pos)?;
         self.vars.nodes.push(Rc::new(node));
         Ok(())
-    }
-
-    /// Make a new orphan node from a continuous random variable (not added to the model
-    /// automatically).
-    fn with_var<Nd: 'a>(dist: &'a <Nd as ContNode<'a>>::Var, pos: usize) -> Result<Nd, ()>
-        where Nd: ContNode<'a>
-    {
-        let node = Nd::new(dist, pos)?;
-        Ok(node)
     }
 
     /// Adds a parent `dist` to a child `dist`, connecting both nodes directionally.
@@ -66,11 +71,11 @@ impl<'a, N, S> HybridModel<'a, N, S>
     /// Takes the distribution of a variable, and the parent variable distribution
     /// as arguments and returns a result indicating if the parent was added properly.
     /// Both variables have to be added previously to the model.
-    pub fn add_parent_to_var(&mut self,
-                             node: &'a <N as ContNode<'a>>::Var,
-                             parent_d: &'a <N as ContNode<'a>>::Var,
-                             rank_cr: f64)
-                             -> Result<(), ()> {
+    pub fn add_parent(&mut self,
+                      node: &'a <N as ContNode<'a>>::Var,
+                      parent_d: &'a <N as ContNode<'a>>::Var,
+                      rank_cr: f64)
+                      -> Result<(), ()> {
         // checks to perform:
         //  - both exist in the model
         //  - the theoretical child cannot be a parent of the theoretical parent
@@ -89,7 +94,7 @@ impl<'a, N, S> HybridModel<'a, N, S>
             .cloned()
             .ok_or(())?;
         node.add_parent(Rc::downgrade(&parent.clone()), rank_cr);
-        parent.add_child(parent.clone());
+        parent.add_child(node.clone());
         // check if it's a DAG and topologically sort the graph
         self.vars.topological_sort()
     }
@@ -125,12 +130,13 @@ impl<'a, N, S> HybridModel<'a, N, S>
 ///
 /// This type shouldn't be instantiated directly, instead add the random variable
 /// distribution to the network.
+#[derive(Debug)]
 pub struct DefHybridNode<'a, C: 'a, D: 'a>
     where C: ContVar,
           D: DiscreteVar + AsContinuous
 {
     cont_dist: Option<&'a C>,
-    disc_dist: Option<&'a D>,
+    _disc_dist: Option<&'a D>,
     as_cont: Option<C>,
     childs: RefCell<Vec<Rc<DefHybridNode<'a, C, D>>>>,
     parents: RefCell<Vec<Weak<DefHybridNode<'a, C, D>>>>,
@@ -171,6 +177,20 @@ impl<'a, C: 'a, D: 'a> Node for DefHybridNode<'a, C, D>
         positions
     }
 
+    fn get_all_ancestors(&self) -> Vec<usize> {
+        let parents = &*self.parents.borrow();
+        let mut anc = Vec::with_capacity(parents.len());
+        for p in parents {
+            let p = p.upgrade().unwrap();
+            let mut ancestors = p.get_all_ancestors();
+            anc.append(&mut ancestors);
+            anc.push(*p.pos.borrow());
+        }
+        anc.sort_by(|a, b| b.cmp(a));
+        anc.dedup();
+        anc
+    }
+
     fn get_childs_positions(&self) -> Vec<usize> {
         let childs = &*self.childs.borrow();
         let mut positions = Vec::with_capacity(childs.len());
@@ -180,13 +200,11 @@ impl<'a, C: 'a, D: 'a> Node for DefHybridNode<'a, C, D>
         positions
     }
 
-    #[inline]
     fn parents_num(&self) -> usize {
         let parents = &*self.parents.borrow();
         parents.len()
     }
 
-    #[inline]
     fn childs_num(&self) -> usize {
         let childs = &*self.childs.borrow();
         childs.len()
@@ -198,7 +216,7 @@ impl<'a, C: 'a, D: 'a> Node for DefHybridNode<'a, C, D>
 }
 
 impl<'a, C: 'a, D: 'a> HybridNode<'a> for DefHybridNode<'a, C, D>
-    where C: ContVar + Gaussianization,
+    where C: ContVar + Normalization,
           D: DiscreteVar + AsContinuous
 {
     type Discrete = D;
@@ -206,7 +224,7 @@ impl<'a, C: 'a, D: 'a> HybridNode<'a> for DefHybridNode<'a, C, D>
         let dist = var.as_continuous()?;
         Ok(DefHybridNode {
             cont_dist: None,
-            disc_dist: Some(var),
+            _disc_dist: Some(var),
             as_cont: Some(dist),
             childs: RefCell::new(vec![]),
             parents: RefCell::new(vec![]),
@@ -218,7 +236,7 @@ impl<'a, C: 'a, D: 'a> HybridNode<'a> for DefHybridNode<'a, C, D>
 }
 
 impl<'a, C: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, C, D>
-    where C: ContVar + Gaussianization,
+    where C: ContVar + Normalization,
           D: DiscreteVar + AsContinuous
 {
     type Var = C;
@@ -242,7 +260,7 @@ impl<'a, C: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, C, D>
         // get the probabilities from the dist and insert as default cpt
         Ok(DefHybridNode {
             cont_dist: Some(dist),
-            disc_dist: None,
+            _disc_dist: None,
             as_cont: None,
             childs: RefCell::new(vec![]),
             parents: RefCell::new(vec![]),
@@ -313,6 +331,7 @@ impl<'a, C: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, C, D>
 
 // HybridDAG:
 
+#[derive(Debug)]
 struct HybridDAG<'a, N>
     where N: HybridNode<'a>
 {

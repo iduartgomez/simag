@@ -17,14 +17,18 @@ pub struct Categorical {
 }
 
 impl Categorical {
-    /// Takes a vector representing the probability of each category
-    /// for the random variable.
+    /// Takes a vector of length K > 2 representing the probability of each category
+    /// for the random variable and returns the categorical distribution.
+    ///
+    /// For binary variables use the Bernoulli distribution.
     pub fn new(categories: Vec<f64>) -> Result<Categorical, String> {
         if categories.len() > u8::MAX as usize {
             let overflow = categories.len() - (u8::MAX as usize);
-            return Err(format!("overflow by: {}", overflow));
-        } else if categories.len() < 2 {
-            return Err("requires at least two categories".to_string());
+            return Err(format!("overflow by: {} categories", overflow));
+        } else if categories.len() < 3 {
+            return Err("requires at least three categories, use Bernoulli distribution for \
+                        distributions with 2 categories"
+                .to_string());
         }
 
         let mut intervals = vec![0_f64; categories.len()];
@@ -54,8 +58,16 @@ impl Categorical {
     /// a category choice (zero-based indexed).
     #[inline]
     pub fn sample(&self, rng: &mut RGSLRng) -> u8 {
+        use std::cmp::Ordering;
+
         let val = rng.uniform_pos();
-        self.cdf.iter().position(|&p| p > val).unwrap() as u8
+        let res = self.cdf
+            .binary_search_by(|x| if x < &val {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            });
+        res.unwrap_err() as u8
     }
 
     #[inline]
@@ -73,17 +85,13 @@ impl Categorical {
     #[inline]
     pub fn cmf(&self, x: u8) -> f64 {
         let x = x as usize;
-        if x > self.event_prob.len() - 1 {
+        if x > self.cdf.len() - 1 {
             panic!("simag: index out of bounds; the number of categories for this random variable \
                     are `{}`, idx provided was `{}`",
-                   self.event_prob.len(),
+                   self.cdf.len(),
                    x)
         }
-        let mut acc = 0.0_f64;
-        for i in 0..(x + 1) {
-            acc += self.event_prob[i];
-        }
-        acc
+        self.cdf[x]
     }
 
     #[inline]
@@ -112,7 +120,7 @@ impl Bernoulli {
     #[inline]
     pub fn sample(&self, rng: &mut RGSLRng) -> u8 {
         let val = rng.uniform_pos();
-        if val >= self.event_prob { 1 } else { 0 }
+        if val <= self.event_prob { 1 } else { 0 }
     }
 
     pub fn success(&self) -> f64 {
@@ -150,10 +158,10 @@ impl RelaxedBernoulli {
         (self.t * a).powf(-e) * b.powf(-e) / (a.powf(-self.t) + b.powf(-self.t)).powi(2)
     }
 
-    /// Given a probability `p` between the interval (0,1) return if the event was a success or not.
+    /// Given a probability `p` between return if the event was a success or not.
     #[inline]
     pub fn discretized(&self, p: f64) -> bool {
-        p <= self.s
+        p >= self.s
     }
 }
 
@@ -185,17 +193,30 @@ impl CDF for RelaxedBernoulli {
 mod test {
     use super::*;
 
+    #[ignore]
     #[test]
     fn relaxed_bernoulli() {
+        let trials = 10000;
         let mut rng = RGSLRng::new();
         let dist = RelaxedBernoulli {
             l: 0.7 / 0.3,
             t: 0.1,
             s: 0.7,
         };
-        let sample = dist.sample(&mut rng);
-        let cdf = dist.cdf(sample);
-        let inv = dist.inverse_cdf(cdf);
-        assert_eq!(sample, inv);
+        let mut err = 0.01;
+        let mut success: f64 = 0.;
+        for _ in 0..trials {
+            let sample = dist.sample(&mut rng);
+            let cdf = dist.cdf(sample);
+            let inv = dist.inverse_cdf(cdf);
+            err = (err + (sample - inv).abs()) / 2.0;
+            if dist.discretized(inv) {
+                success += 1.;
+            }
+        }
+        let mean = success / trials as f64;
+        println!("mean: {}, err: {}", mean, err);
+        assert!(err < 0.05);
+        assert!((mean > 0.65) && (mean < 0.75));
     }
 }

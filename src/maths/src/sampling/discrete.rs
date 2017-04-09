@@ -94,13 +94,3 @@ impl ::std::clone::Clone for Gibbs {
         Gibbs::new(steeps, burnin)
     }
 }
-
-#[cfg(test)]
-mod test {
-    //use super::*;
-
-    #[test]
-    fn sample() {
-        unimplemented!()
-    }
-}

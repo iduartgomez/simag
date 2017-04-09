@@ -5,8 +5,8 @@ authors = ["IDG <iduartgomez@gmail.com>"]
 
 [dependencies]
 rand = "^0.3"
-float-cmp = "*"
-itertools = "*"
+float-cmp = "^0.2"
+itertools = "^0.6"
 uuid = { version = "^0.4", features = ["v4"] }
 GSL = { git = "https://github.com/GuillaumeGomez/rust-GSL.git" }
-ndarray = "^0.8"
+#ndarray = "^0.8"

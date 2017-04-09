@@ -61,12 +61,12 @@ impl RGSLRng {
         self.inner.set(seed);
     }
 
-    pub fn get_gen(&mut self) -> &GSLRng {
+    pub fn get_gen(&mut self) -> &mut GSLRng {
         self.cnt += 1;
         if self.cnt == ENTROPY {
             self.reseed();
         }
-        &self.inner
+        &mut self.inner
     }
 }
 
