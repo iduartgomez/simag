@@ -16,12 +16,8 @@ fn build() {
     let duty_period = &vars["fly_duty_period"];
     let rest_time = &vars["rest_time_on_flight"];
 
-    let sampler = DefContSampler::new(None, None);
-    let mut model: DefContModel = ContModel::new(workload, sampler).unwrap();
-    //let mut model: DefContModel = ContModel::default(workload).unwrap();
-    //let mut model: DefContModel = ContModel::default();
-
-    //model.add_var(workload).unwrap();
+    let mut model = DefContModel::default();
+    model.add_var(workload).unwrap();
     model.add_var(sleep).unwrap();
     model.add_var(fitness).unwrap();
     model.add_var(nighttime).unwrap();
