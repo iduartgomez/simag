@@ -21,13 +21,13 @@ mod hybrid;
 
 pub use self::discrete::Gibbs as DiscreteGibbs;
 pub use self::continuous::ExactNormalized;
-pub use self::hybrid::ExactNormalized as HybridGibbs;
+pub use self::hybrid::ExactNormalized as HybridExact;
 
-use model::{DiscreteModel, DiscreteNode, ContModel, ContNode, HybridModel, HybridNode};
+use model::{DiscreteModel, DiscreteNode, ContModel, ContNode, HybridNode, IterModel};
 
 pub type DefDiscreteSampler = DiscreteGibbs;
 pub type DefContSampler<'a> = ExactNormalized<'a>;
-pub type DefHybridSampler<'a> = HybridGibbs<'a>;
+pub type DefHybridSampler<'a> = HybridExact<'a>;
 
 pub trait Sampler
     where Self: Sized + Clone
@@ -47,12 +47,14 @@ pub trait ContinuousSampler<'a>: Sampler {
         where N: ContNode<'a>;
 }
 
+use std::ops::Deref;
+
 pub trait HybridSampler<'a>: Sampler {
     /// Return a matrix of t x k dimension samples (t = steeps; k = number of vars).
-    fn get_samples<N>(self,
-                      state_space: &HybridModel<'a, N, Self>)
-                      -> Vec<Vec<HybridSamplerResult>>
-        where N: HybridNode<'a>;
+    fn get_samples<'b, M>(self, state_space: &M) -> Vec<Vec<HybridSamplerResult>>
+        where M: IterModel,
+              <<<M as IterModel>::Iter as Iterator>::Item as Deref>::Target: HybridNode<'a>,
+              <<M as IterModel>::Iter as Iterator>::Item: Deref;
 }
 
 #[derive(Debug)]
@@ -74,6 +76,7 @@ use rgsl::MatrixF64;
 ///     - cond: slice of positions (identifiers) of the conditioning variables of x
 ///     - cached: a dynamic cache of the partial correlations between the different variables
 ///     - mtx: the correlation matrix for the full joint distribution
+#[allow(dead_code)]
 fn partial_correlation(x: usize,
                        cond: &[usize],
                        cached: &mut HashMap<(usize, usize), f64>,
@@ -81,7 +84,7 @@ fn partial_correlation(x: usize,
     if cond.is_empty() {
         return;
     } else if cond.len() < 2 {
-        cached.entry((x, cond[0])).or_insert(mtx.get(x, cond[0]));
+        cached.entry((x, cond[0])).or_insert_with(|| mtx.get(x, cond[0]));
         return;
     };
 
@@ -89,7 +92,7 @@ fn partial_correlation(x: usize,
         let cond = if cond.len() > i + 1 {
             &cond[i..]
         } else {
-            cached.entry((x, *y)).or_insert(mtx.get(x, *y));
+            cached.entry((x, *y)).or_insert_with(|| mtx.get(x, *y));
             break;
         };
         let y = *y;
@@ -145,7 +148,7 @@ mod test {
         // for d->c
         cached.insert((3, 2), corr[0]);
         cr_matrix.set(3, 2, corr[0]);
-        partial_correlation(3, &[2, 1, 0], &mut cached, &mut cr_matrix);
+        partial_correlation(3, &[2, 1], &mut cached, &mut cr_matrix);
 
         println!("correlation matrix:\n{:?}\n", cr_matrix);
         println!("cached: {:?}", cached);

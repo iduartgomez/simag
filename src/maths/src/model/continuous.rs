@@ -76,7 +76,7 @@ pub trait ContVar: Variable {
 pub type DefContModel<'a> = ContModel<'a, DefContNode<'a, DefContVar>, DefContSampler<'a>>;
 
 #[derive(Debug)]
-pub struct ContModel<'a, N: 'a, S>
+pub struct ContModel<'a, N, S>
     where N: ContNode<'a>,
           S: ContinuousSampler<'a> + Clone
 {
@@ -88,25 +88,20 @@ impl<'a, N, S> ContModel<'a, N, S>
     where N: ContNode<'a>,
           S: ContinuousSampler<'a>
 {
-    pub fn new(init: &'a <N as ContNode<'a>>::Var, sampler: S) -> Result<ContModel<'a, N, S>, ()> {
-        let init = N::new(init, 0)?;
-        Ok(ContModel {
-            vars: ContDAG::new(init),
+    pub fn new(sampler: S) -> ContModel<'a, N, S> {
+        ContModel {
+            vars: ContDAG::new(),
             sampler: sampler,
-        })
+        }
     }
 
     /// Get a new instance of the default implementation of a continuous model.
-    pub fn default(init: &'a DefContVar) -> Result<DefContModel<'a>, ()> {
+    pub fn default() -> DefContModel<'a> {
         use sampling::Sampler;
-        let init = DefContNode::new(init, 0)?;
-        Ok(ContModel {
-            vars: ContDAG {
-                _nlt: PhantomData,
-                nodes: vec![Rc::new(init)],
-            },
+        ContModel {
+            vars: ContDAG::new(),
             sampler: DefContSampler::new(None, None),
-        })
+        }
     }
 
     /// Add a new variable to the model.
@@ -117,14 +112,15 @@ impl<'a, N, S> ContModel<'a, N, S>
         Ok(())
     }
 
-    /// Adds a parent `dist` to a child `dist`, connecting both nodes directionally.
+    /// Adds a parent `dist` to a child `dist`, connecting both nodes directionally
+    /// with an arc. The arc value represents the rank correlation.
     ///
     /// Takes the distribution of a variable, and the parent variable distribution
     /// as arguments and returns a result indicating if the parent was added properly.
     /// Both variables have to be added previously to the model.
     pub fn add_parent(&mut self,
                       node: &'a <N as ContNode<'a>>::Var,
-                      parent_d: &'a <N as ContNode<'a>>::Var,
+                      parent: &'a <N as ContNode<'a>>::Var,
                       rank_cr: f64)
                       -> Result<(), ()> {
         // checks to perform:
@@ -141,7 +137,7 @@ impl<'a, N, S> ContModel<'a, N, S>
         let parent: Rc<N> = self.vars
             .nodes
             .iter()
-            .find(|n| (&**n).get_dist() == parent_d)
+            .find(|n| (&**n).get_dist() == parent)
             .cloned()
             .ok_or(())?;
         node.add_parent(Rc::downgrade(&parent.clone()), rank_cr);
@@ -152,7 +148,7 @@ impl<'a, N, S> ContModel<'a, N, S>
 
     /// Remove a variable from the model, the childs will be disjoint if they don't
     /// have an other parent.
-    pub fn remove_var(&mut self, _node: &'a <N as ContNode<'a>>::Var) {
+    pub fn remove_var(&mut self, node: &'a <N as ContNode<'a>>::Var) {
         unimplemented!()
     }
 

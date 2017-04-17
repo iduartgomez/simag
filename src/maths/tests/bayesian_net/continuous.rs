@@ -1,5 +1,4 @@
 use simag::model::*;
-use simag::sampling::{DefContSampler, Sampler};
 
 use super::contvar_construct;
 

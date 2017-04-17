@@ -37,7 +37,7 @@ impl Sampler for Gibbs {
 }
 
 impl Gibbs {
-    fn var_val<'a, N: 'a>(&mut self, t: usize, var: &N) -> u8
+    fn var_val<'a, N>(&mut self, t: usize, var: &N) -> u8
         where N: DiscreteNode<'a>
     {
         let mut mb_values = Vec::new();
@@ -56,7 +56,7 @@ impl Gibbs {
         }
     }
 
-    fn initialize<'a, N: 'a>(&mut self, net: &DiscreteModel<'a, N, Gibbs>)
+    fn initialize<'a, N>(&mut self, net: &DiscreteModel<'a, N, Gibbs>)
         where N: DiscreteNode<'a>
     {
         // draw prior values from the distribution of each value

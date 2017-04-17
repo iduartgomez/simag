@@ -7,7 +7,7 @@ pub use self::discrete::{DiscreteModel, DefDiscreteModel, DefDiscreteNode, DefDi
 pub use self::discrete::{DiscreteNode, DiscreteVar};
 pub use self::continuous::{ContModel, DefContModel, DefContNode, DefContVar};
 pub use self::continuous::{ContNode, ContVar};
-pub use self::hybrid::{HybridModel, DefHybridModel, DefHybridNode};
+pub use self::hybrid::{HybridModel, DefHybridModel, DefHybridNode, ChainGraph};
 pub use self::hybrid::HybridNode;
 
 macro_rules! dag_impl {
@@ -15,10 +15,10 @@ macro_rules! dag_impl {
         impl<'a, N> $name<'a, N>
             where N: $node<'a>
         {
-            fn new(init: N) -> $name<'a, N> {
+            fn new() -> $name<'a, N> {
                 $name {
                     _nlt: PhantomData,
-                    nodes: vec![Rc::new(init)],
+                    nodes: vec![],
                 }
             }
 
@@ -351,6 +351,16 @@ pub trait Node: ::std::fmt::Debug {
     fn childs_num(&self) -> usize;
 }
 
+pub trait IterModel {
+    type Iter: Iterator;
+
+    /// Iterate the model variables in topographical order.
+    fn iter_vars(&self) -> Self::Iter;
+
+    /// Returns the total number of variables in the model.
+    fn var_num(&self) -> usize;
+}
+
 // helper types:
 
 pub type Discrete = usize;
@@ -406,4 +416,58 @@ pub enum DType {
     Binomial,
     Multinomial,
     UnknownDisc,
+}
+
+
+/// A helper type for computing properties of a model composed of several submodels.
+///
+/// You can construct complex models from other smaller submodels always that
+/// the submodels have the following properties:
+///
+/// - The submodels are composed of continuous variables, or hybrid (pure discrete
+///   is unsuported).
+/// - The submodels have a designated single "output" node for their respective graphs.
+/// - The submodels have a single designated root for their respective graphs.
+///
+/// When operated, the submodels will output a single value which may function as an input
+/// to one other submodel of the joint model.
+#[derive(Default)]
+pub struct JointModel<'a: 'b, 'b> {
+    nodes: Vec<NodeKind<'a, 'b>>,
+    _edges: Vec<(usize, usize)>,
+}
+
+impl<'a: 'b, 'b> JointModel<'a, 'b> {
+    pub fn new() -> JointModel<'a, 'b> {
+        JointModel {
+            nodes: vec![],
+            _edges: vec![],
+        }
+    }
+
+    pub fn add_submodel(&mut self, node: NodeKind<'a, 'b>) -> Result<(), ()> {
+        self.nodes.push(node);
+        Ok(())
+    }
+
+    /*
+    pub fn add_edge(&mut self,
+                    a: NodeKind<'a, 'b>,
+                    b: NodeKind<'a, 'b>,
+                    weight: Option<f64>)
+                    -> Result<(), ()> {
+        unimplemented!()
+    }
+
+    pub fn remove_edge(&mut self, a: NodeKind<'a, 'b>, b: NodeKind<'a, 'b>) {
+        unimplemented!()
+    }
+
+    pub fn sample(&self) -> f64 {}
+    */
+}
+
+pub enum NodeKind<'a: 'b, 'b> {
+    Continuous(&'b DefContModel<'a>),
+    Hybrid(&'b DefHybridModel<'a>),
 }

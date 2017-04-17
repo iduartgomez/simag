@@ -1,5 +1,5 @@
 use std::f64::consts::PI;
-use std::collections::HashMap;
+//use std::collections::HashMap;
 
 use rgsl::{MatrixF64, VectorF64};
 use rgsl;
@@ -55,7 +55,7 @@ impl<'a> ExactNormalized<'a> {
     fn initialize<N>(&mut self, net: &ContModel<'a, N, ExactNormalized<'a>>)
         where N: ContNode<'a>
     {
-        use super::partial_correlation;
+        //use super::partial_correlation;
 
         const PI_DIV_SIX: f64 = PI / 6.0;
         // construct a std normal variables net and the joint partial correlation matrix
@@ -70,17 +70,17 @@ impl<'a> ExactNormalized<'a> {
         let d = net.var_num();
         self.cr_matrix = MatrixF64::new(d, d).unwrap();
         self.cr_matrix.set_identity();
-        let mut cached: HashMap<(usize, usize), f64> = HashMap::new();
+        //let mut cached: HashMap<(usize, usize), f64> = HashMap::new();
         for (i, node) in net.iter_vars().enumerate() {
             let dist = node.get_dist().as_normal(self.steeps).into_default();
             for (pt_cr, j) in node.get_edges() {
                 // ρ{i,j}|D = 2 * sin( π/6 * r{i,j}|D )
                 let rho_xy = 2.0 * (PI_DIV_SIX * pt_cr).sin();
-                cached.insert((i, j), rho_xy);
+                //cached.insert((i, j), rho_xy);
                 self.cr_matrix.set(i, j, rho_xy);
             }
-            let anc = node.get_all_ancestors();
-            partial_correlation(i, &anc, &mut cached, &mut self.cr_matrix);
+            //let anc = node.get_parents_positions();
+            //partial_correlation(i, &anc, &mut cached, &mut self.cr_matrix);
             let d = unsafe { &*(node.get_dist() as *const _) as &'a <N as ContNode>::Var };
             let n = Normalized {
                 var: dist,

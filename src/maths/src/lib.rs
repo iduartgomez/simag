@@ -14,7 +14,6 @@ pub mod dists;
 mod rng;
 mod err;
 
-#[allow(dead_code)]
 const FLOAT_EQ_ULPS: i64 = 2;
 #[allow(dead_code)]
 const FLOAT_EQ_RATIO: f64 = 0.1;

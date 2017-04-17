@@ -1,5 +1,4 @@
 use simag::model::*;
-use simag::sampling::{DefDiscreteSampler, Sampler};
 
 use super::discvar_constructor;
 
@@ -12,12 +11,8 @@ fn build() {
     let rain = &vars["rain"];
     let cloudy = &vars["cloudy"];
 
-    let sampler = DefDiscreteSampler::new(None, None);
-    let mut model: DefDiscreteModel = DiscreteModel::new(wet_grass, sampler).unwrap();
-    //let mut model = DiscreteModel::default(wet_grass).unwrap();
-    //let mut model = DiscreteModel::default();
-
-    //model.add_var(wet_grass).unwrap();
+    let mut model = DefDiscreteModel::default();
+    model.add_var(wet_grass).unwrap();
     model.add_var(sprinkler).unwrap();
     model.add_var(rain).unwrap();
     model.add_var(cloudy).unwrap();

@@ -10,15 +10,19 @@ use super::{DType, DefContVar, DefDiscreteVar};
 use sampling::{HybridSampler, DefHybridSampler, HybridSamplerResult};
 use dists::{Normalization, AsContinuous};
 
+use itertools::Itertools;
+
 pub trait HybridNode<'a>: ContNode<'a>
     where Self: Sized
 {
     type Discrete: DiscreteVar + AsContinuous;
+
+    /// Makes an hybrid model node from a discrete variable.
     fn new_with_discrete(var: &'a Self::Discrete, pos: usize) -> Result<Self, ()>;
 }
 
 #[derive(Debug)]
-pub struct HybridModel<'a, N: 'a, S>
+pub struct HybridModel<'a, N, S>
     where N: HybridNode<'a>,
           S: HybridSampler<'a> + Clone
 {
@@ -35,27 +39,19 @@ impl<'a, N, S> HybridModel<'a, N, S>
           S: HybridSampler<'a> + Clone
 {
     /// Get a new instance of the default implementation of a continuous model.
-    pub fn default(init: &'a DefContVar) -> Result<DefHybridModel<'a>, ()> {
+    pub fn default() -> DefHybridModel<'a> {
         use sampling::Sampler;
-        let init = DefHybridNode::new(init, 0)?;
-        Ok(HybridModel {
-            vars: HybridDAG {
-                _nlt: PhantomData,
-                nodes: vec![Rc::new(init)],
-            },
+        HybridModel {
+            vars: HybridDAG::new(),
             sampler: DefHybridSampler::new(None, None),
-        })
+        }
     }
 
-    pub fn new(init: &'a <N as ContNode<'a>>::Var,
-               sampler: S)
-               -> Result<HybridModel<'a, N, S>, ()> {
-        let init = N::new(init, 0)?;
-        let dag = HybridDAG::new(init);
-        Ok(HybridModel {
-            vars: dag,
+    pub fn new(sampler: S) -> HybridModel<'a, N, S> {
+        HybridModel {
+            vars: HybridDAG::new(),
             sampler: sampler,
-        })
+        }
     }
 
     /// Add a new variable to the model.
@@ -66,14 +62,15 @@ impl<'a, N, S> HybridModel<'a, N, S>
         Ok(())
     }
 
-    /// Adds a parent `dist` to a child `dist`, connecting both nodes directionally.
+    /// Adds a parent `dist` to a child `dist`, connecting both nodes directionally
+    /// with an arc.
     ///
     /// Takes the distribution of a variable, and the parent variable distribution
     /// as arguments and returns a result indicating if the parent was added properly.
     /// Both variables have to be added previously to the model.
     pub fn add_parent(&mut self,
                       node: &'a <N as ContNode<'a>>::Var,
-                      parent_d: &'a <N as ContNode<'a>>::Var,
+                      parent: &'a <N as ContNode<'a>>::Var,
                       rank_cr: f64)
                       -> Result<(), ()> {
         // checks to perform:
@@ -90,7 +87,7 @@ impl<'a, N, S> HybridModel<'a, N, S>
         let parent: Rc<N> = self.vars
             .nodes
             .iter()
-            .find(|n| (&**n).get_dist() == parent_d)
+            .find(|n| (&**n).get_dist() == parent)
             .cloned()
             .ok_or(())?;
         node.add_parent(Rc::downgrade(&parent.clone()), rank_cr);
@@ -101,7 +98,7 @@ impl<'a, N, S> HybridModel<'a, N, S>
 
     /// Remove a variable from the model, the childs will be disjoint if they don't
     /// have an other parent.
-    pub fn remove_var(&mut self, _node: &'a <N as ContNode<'a>>::Var) {
+    pub fn remove_var(&mut self, node: &'a <N as ContNode<'a>>::Var) {
         unimplemented!()
     }
 
@@ -115,14 +112,23 @@ impl<'a, N, S> HybridModel<'a, N, S>
         self.vars.nodes.len()
     }
 
-    /// Iterate the model variables in topographical order.
-    pub fn iter_vars(&self) -> NetIter<'a, N> {
-        NetIter::new(&self.vars.nodes)
-    }
-
     /// Get the node in the graph at position **i** unchecked.
     pub fn get_var(&self, i: usize) -> Rc<N> {
         self.vars.get_node(i)
+    }
+}
+
+impl<'a, N, S> super::IterModel for HybridModel<'a, N, S>
+    where N: HybridNode<'a>,
+          S: HybridSampler<'a> + Clone
+{
+    type Iter = NetIter<'a, N>;
+    fn iter_vars(&self) -> Self::Iter {
+        NetIter::new(&self.vars.nodes)
+    }
+
+    fn var_num(&self) -> usize {
+        self.vars.nodes.len()
     }
 }
 
@@ -339,154 +345,162 @@ struct HybridDAG<'a, N>
     nodes: Vec<Rc<N>>,
 }
 
-impl<'a, N> HybridDAG<'a, N>
-    where N: HybridNode<'a>
+dag_impl!(HybridDAG, HybridNode; [ContVar + Normalization]);
+
+
+type DefChainGraph<'a> = ChainGraph<'a,
+                                    DefHybridNode<'a, DefContVar, DefDiscreteVar>,
+                                    DefHybridSampler<'a>>;
+
+/// A chain graph is composed by a set of nodes, a set of acyclic directed edges (or arcs) and/or
+/// a set of undirected edges.
+///
+/// Bayesian networks and markov fields are both special cases of chain graphs (which can
+/// contain both). This implementation will support hybrid nodes (continuous and discrete variables
+/// treated as continuous variables).
+///
+/// Sampling of this kind of graph is done thought Markov chain Monte Carlo methods, and the
+/// underlying graph is 'moralized' first (to an undirected graph), hence any edge weighting
+/// information would be lost (so it's unnecessary). To avoid this problem, the use of one of
+/// the other provided models is encouraged.
+pub struct ChainGraph<'a, N, S>
+    where N: HybridNode<'a>,
+          S: HybridSampler<'a>
 {
-    fn new(init: N) -> HybridDAG<'a, N> {
-        HybridDAG {
+    _nlt: PhantomData<&'a ()>,
+    sampler: S,
+    _edges: Vec<(Rc<N>, Rc<N>)>,
+    underlying: Vec<Rc<N>>,
+}
+
+impl<'a, N, S> ChainGraph<'a, N, S>
+    where N: HybridNode<'a>,
+          S: HybridSampler<'a>
+{
+    pub fn new(sampler: S) -> ChainGraph<'a, N, S> {
+        ChainGraph {
             _nlt: PhantomData,
-            nodes: vec![Rc::new(init)],
+            sampler: sampler,
+            _edges: vec![],
+            underlying: vec![],
         }
     }
 
-    /// Perform both topological sorting and acyclicality check in the same operation.
-    /// Returns error if is not a DAG.
-    fn topological_sort(&mut self) -> Result<(), ()> {
-        let mut cycle_check = DirectedCycle::new::<N>(self);
-        for i in 0..self.nodes.len() {
-            cycle_check.dfs(self, i);
-            if cycle_check.has_cycle() {
-                return Err(());
-            }
+    pub fn default() -> DefChainGraph<'a> {
+        use sampling::Sampler;
+        ChainGraph {
+            _nlt: PhantomData,
+            sampler: DefHybridSampler::new(None, None),
+            _edges: vec![],
+            underlying: vec![],
         }
-        let mut priority = Vec::with_capacity(self.nodes.len());
-        for (i, c) in cycle_check.sorted.iter().enumerate() {
-            let node = &self.nodes[*c];
-            if node.position() != i {
-                node.set_position(i);
-            }
-            priority.push((i, node.clone()));
-        }
-        priority.sort_by(|&(ref i, _), &(ref j, _)| i.cmp(j));
-        let sorted: Vec<Rc<N>> = priority.into_iter()
-            .map(|(_, e)| e)
-            .collect();
-        self.nodes = sorted;
+    }
+
+    /// Add a new variable to the model.
+    pub fn add_var(&mut self, var: &'a <N as ContNode<'a>>::Var) -> Result<(), ()> {
+        let pos = self.underlying.len();
+        let node = N::new(var, pos)?;
+        self.underlying.push(Rc::new(node));
         Ok(())
     }
 
-    #[inline]
-    fn get_node(&self, pos: usize) -> Rc<N> {
-        self.nodes[pos].clone()
+    /// Adds an (undirected) edge between two variables.
+    ///
+    /// Both variables have to be added previously to the model.
+    pub fn add_edge(&mut self,
+                    a: &'a <N as ContNode<'a>>::Var,
+                    b: &'a <N as ContNode<'a>>::Var)
+                    -> Result<(), ()> {
+        let a: Rc<N> = self.underlying
+            .iter()
+            .find(|n| (&**n).get_dist() == a)
+            .cloned()
+            .ok_or(())?;
+        let b: Rc<N> = self.underlying
+            .iter()
+            .find(|n| (&**n).get_dist() == b)
+            .cloned()
+            .ok_or(())?;
+        self._edges.push((a, b));
+        Ok(())
     }
-}
 
-struct DirectedCycle {
-    marked: Vec<bool>,
-    edge_to: Vec<usize>,
-    cycle: Vec<usize>,
-    on_stack: Vec<bool>,
-    sorted: Vec<usize>,
-}
-
-impl DirectedCycle {
-    fn new<'a, N>(graph: &HybridDAG<'a, N>) -> DirectedCycle
-        where N: HybridNode<'a>
-    {
-        DirectedCycle {
-            marked: vec![false; graph.nodes.len()],
-            on_stack: vec![false; graph.nodes.len()],
-            edge_to: Vec::from_iter(0..graph.nodes.len()),
-            cycle: Vec::with_capacity(graph.nodes.len()),
-            sorted: Vec::with_capacity(graph.nodes.len()),
+    /// Append a Bayesian network to the model, it will be "moralized" in the process,
+    /// losing all the implied causal information.
+    pub fn append_dag<So: HybridSampler<'a>>(&mut self, other: HybridModel<'a, N, So>) {
+        let HybridModel { vars: HybridDAG { mut nodes, .. }, .. } = other;
+        let cnt = self.underlying.len();
+        for node in &mut nodes {
+            node.set_position(node.position() + cnt);
+        }
+        self.underlying.append(&mut nodes);
+        // moralize the appended graph, converting directed edges to undirected:
+        for node in &self.underlying[cnt..] {
+            let mut parents = node.get_parents_positions();
+            parents.push(node.position());
+            let mut edges: Vec<(Rc<N>, Rc<N>)> = parents.iter()
+                .tuple_combinations()
+                .map(|(a, b)| (self.underlying[*a].clone(), self.underlying[*b].clone()))
+                .collect();
+            self._edges.append(&mut edges);
         }
     }
 
-    fn dfs<'a, N>(&mut self, graph: &HybridDAG<'a, N>, v: usize)
-        where N: HybridNode<'a>
-    {
-        self.on_stack[v] = true;
-        self.marked[v] = true;
-        for c in graph.nodes[v].get_childs() {
-            let w = c.position();
-            if self.has_cycle() {
-                return;
-            } else if !self.marked[w] {
-                self.edge_to[w] = v;
-                self.dfs(graph, w);
-            } else if self.on_stack[w] {
-                let mut x = v;
-                while x != w {
-                    x = self.edge_to[x];
-                    self.cycle.push(x);
-                }
-                self.cycle.push(w);
-                self.cycle.push(v);
-            }
-        }
-        self.on_stack[v] = false;
-        self.sorted.push(v);
+    /// Remove a variable from the model, the childs will be disjoint if they don't
+    /// have an other parent.
+    pub fn remove_var(&mut self, node: &'a <N as ContNode<'a>>::Var) {
+        unimplemented!()
     }
 
-    fn has_cycle(&self) -> bool {
-        !self.cycle.is_empty()
+    /// Sample the model in
+    pub fn sample(&self) -> Vec<Vec<HybridSamplerResult>> {
+        self.sampler.clone().get_samples(self)
+    }
+
+    /// Get the node in the graph at position **i** unchecked.
+    pub fn get_var(&self, i: usize) -> Rc<N> {
+        self.underlying[i].clone()
     }
 }
 
-/// Bayesian Network iterator, visits all nodes from parents to childs
-pub struct NetIter<'a, N>
+impl<'a, N, S> super::IterModel for ChainGraph<'a, N, S>
+    where N: HybridNode<'a>,
+          S: HybridSampler<'a> + Clone
+{
+    type Iter = IterCG<'a, N>;
+    fn iter_vars(&self) -> IterCG<'a, N> {
+        IterCG {
+            _nlt: PhantomData,
+            nodes: self.underlying.clone(),
+            cnt: 0,
+        }
+    }
+
+    fn var_num(&self) -> usize {
+        self.underlying.len()
+    }
+}
+
+pub struct IterCG<'a, N>
     where N: HybridNode<'a>
 {
     _nlt: PhantomData<&'a ()>,
-    unvisitted: VecDeque<Rc<N>>,
-    processed: HashSet<usize>,
-    queued: Rc<N>,
-    childs_visitted: usize,
+    nodes: Vec<Rc<N>>,
+    cnt: usize,
 }
 
-impl<'a, N> NetIter<'a, N>
-    where N: HybridNode<'a>
-{
-    fn new(nodes: &[Rc<N>]) -> NetIter<'a, N> {
-        let mut processed = HashSet::new();
-        let mut unvisitted = VecDeque::from_iter(nodes.iter().cloned());
-        let first = unvisitted.pop_front().unwrap();
-        processed.insert(first.get_dist() as *const N::Var as usize);
-        NetIter {
-            _nlt: PhantomData,
-            unvisitted: unvisitted,
-            processed: processed,
-            queued: first,
-            childs_visitted: 0,
-        }
-    }
-}
-
-impl<'a, N> Iterator for NetIter<'a, N>
+impl<'a, N> ::std::iter::Iterator for IterCG<'a, N>
     where N: HybridNode<'a>
 {
     type Item = Rc<N>;
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            while self.childs_visitted < self.queued.get_childs().len() {
-                let next = self.queued.get_child_unchecked(self.childs_visitted);
-                self.childs_visitted += 1;
-                let d = next.get_dist() as *const N::Var as usize;
-                if !self.processed.contains(&d) {
-                    return Some(next);
-                }
-            }
 
-            if self.unvisitted.is_empty() {
-                return None;
-            } else {
-                // add all previously visitted to the list of processed
-                for e in self.queued.get_childs() {
-                    self.processed.insert(e.get_dist() as *const N::Var as usize);
-                }
-                let next = self.unvisitted.pop_front().unwrap();
-                self.queued = next;
-            }
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.cnt < self.nodes.len() {
+            let r = self.nodes[self.cnt].clone();
+            self.cnt += 1;
+            Some(r)
+        } else {
+            None
         }
     }
 }

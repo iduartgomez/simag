@@ -1,11 +1,12 @@
 use std::f64::consts::PI;
-use std::collections::{HashMap};
+use std::ops::Deref;
+//use std::collections::{HashMap};
 
 use rgsl::{MatrixF64, VectorF64};
 use rgsl;
 
 use super::{Sampler, HybridSampler, HybridSamplerResult};
-use model::{Variable, HybridModel, HybridNode, ContVar, DefContVar, DType};
+use model::{Variable, HybridNode, ContVar, DefContVar, DType, IterModel};
 use dists::{Normal, Normalization, CDF};
 use err::ErrMsg;
 use RGSLRng;
@@ -52,11 +53,13 @@ impl<'a> Sampler for ExactNormalized<'a> {
 }
 
 impl<'a> ExactNormalized<'a> {
-    fn initialize<N>(&mut self, net: &HybridModel<'a, N, ExactNormalized<'a>>)
-        where N: HybridNode<'a>
+    fn initialize<'b, M>(&mut self, net: &M)
+        where <<<M as IterModel>::Iter as Iterator>::Item as Deref>::Target: HybridNode<'a>,
+              <<M as IterModel>::Iter as Iterator>::Item: Deref,
+              M: IterModel
     {
         use model::ContNode;
-        use super::partial_correlation;
+        //use super::partial_correlation;
 
         const PI_DIV_SIX: f64 = PI / 6.0;
         // construct a std normal variables net and the joint partial correlation matrix
@@ -71,18 +74,22 @@ impl<'a> ExactNormalized<'a> {
         let d = net.var_num();
         self.cr_matrix = MatrixF64::new(d, d).unwrap();
         self.cr_matrix.set_identity();
-        let mut cached: HashMap<(usize, usize), f64> = HashMap::new();
+        //let mut cached: HashMap<(usize, usize), f64> = HashMap::new();
         for (i, node) in net.iter_vars().enumerate() {
             let dist = node.get_dist().as_normal(self.steeps).into_default();
             for (pt_cr, j) in node.get_edges() {
                 // ρ{i,j}|D = 2 * sin( π/6 * r{i,j}|D )
                 let rho_xy = 2.0 * (PI_DIV_SIX * pt_cr).sin();
-                cached.insert((i, j), rho_xy);
+                //cached.insert((i, j), rho_xy);
                 self.cr_matrix.set(i, j, rho_xy);
             }
-            let anc = node.get_all_ancestors();
-            partial_correlation(i, &anc, &mut cached, &mut self.cr_matrix);
-            let d = unsafe { &*(node.get_dist() as *const _) as &'a <N as ContNode>::Var };
+            //let anc = node.get_all_ancestors();
+            //partial_correlation(i, &anc, &mut cached, &mut self.cr_matrix);
+            let d = unsafe {
+                &*(node.get_dist() as *const _) 
+                as &'a <<<<M as IterModel>::Iter as Iterator>::Item as Deref>::Target 
+                             as ContNode>::Var 
+            };
             let n = Normalized {
                 var: dist,
                 original: d.dist_type(),
@@ -104,10 +111,10 @@ impl<'a> HybridSampler<'a> for ExactNormalized<'a> {
     ///     compute the sample for each distribution and transform back to the original,
     ///     distribution using the inverse cumulative distribution function.
     /// 5)  Repeat 4 as many times as specified by the `steeps` parameter of the sampler.
-    fn get_samples<N>(mut self,
-                      net: &HybridModel<'a, N, ExactNormalized<'a>>)
-                      -> Vec<Vec<HybridSamplerResult>>
-        where N: HybridNode<'a>
+    fn get_samples<'b, M>(mut self, net: &M) -> Vec<Vec<HybridSamplerResult>>
+        where <<<M as IterModel>::Iter as Iterator>::Item as Deref>::Target: HybridNode<'a>,
+              <<M as IterModel>::Iter as Iterator>::Item: Deref,
+              M: IterModel
     {
         use rgsl::blas::level2::dtrmv;
 

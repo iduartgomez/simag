@@ -73,7 +73,7 @@ pub type DefDiscreteModel<'a> = DiscreteModel<'a,
                                               DefDiscreteSampler>;
 
 #[derive(Debug)]
-pub struct DiscreteModel<'a, N: 'a, S>
+pub struct DiscreteModel<'a, N, S>
     where N: DiscreteNode<'a>,
           S: DiscreteSampler
 {
@@ -85,27 +85,20 @@ impl<'a, N, S> DiscreteModel<'a, N, S>
     where N: DiscreteNode<'a>,
           S: DiscreteSampler
 {
-    pub fn new(init: &'a <N as DiscreteNode<'a>>::Var,
-               sampler: S)
-               -> Result<DiscreteModel<'a, N, S>, ()> {
-        let init = N::new(init, 0)?;
-        Ok(DiscreteModel {
-            vars: DiscreteDAG::new(init),
+    pub fn new(sampler: S) -> DiscreteModel<'a, N, S> {
+        DiscreteModel {
+            vars: DiscreteDAG::new(),
             sampler: sampler,
-        })
+        }
     }
 
     /// Get a new instance of the default implementation of a discrete model.
-    pub fn default(init: &'a DefDiscreteVar) -> Result<DefDiscreteModel<'a>, ()> {
+    pub fn default() -> DefDiscreteModel<'a> {
         use sampling::Sampler;
-        let init = DefDiscreteNode::new(init, 0)?;
-        Ok(DiscreteModel {
-            vars: DiscreteDAG {
-                _nlt: PhantomData,
-                nodes: vec![Rc::new(init)],
-            },
+        DiscreteModel {
+            vars: DiscreteDAG::new(),
             sampler: DefDiscreteSampler::new(None, None),
-        })
+        }
     }
 
     /// Add a new variable to the model.
@@ -116,7 +109,8 @@ impl<'a, N, S> DiscreteModel<'a, N, S>
         Ok(())
     }
 
-    /// Adds a parent `dist` to a child `dist`, connecting both nodes directionally.
+    /// Adds a parent `dist` to a child `dist`, connecting both nodes directionally
+    /// with an arc.
     ///
     /// Takes the distribution of a variable, and the parent variable distribution
     /// as arguments and returns a result indicating if the parent was added properly.
@@ -139,7 +133,7 @@ impl<'a, N, S> DiscreteModel<'a, N, S>
     /// More information on how to build in the [CPT]() type page.
     pub fn add_parent(&mut self,
                       node: &'a <N as DiscreteNode<'a>>::Var,
-                      parent_d: &'a <N as DiscreteNode<'a>>::Var,
+                      parent: &'a <N as DiscreteNode<'a>>::Var,
                       prob: CPT)
                       -> Result<(), ()> {
         // checks to perform:
@@ -156,7 +150,7 @@ impl<'a, N, S> DiscreteModel<'a, N, S>
         let parent: Rc<N> = self.vars
             .nodes
             .iter()
-            .find(|n| (&**n).get_dist() == parent_d)
+            .find(|n| (&**n).get_dist() == parent)
             .cloned()
             .ok_or(())?;
 
@@ -173,7 +167,7 @@ impl<'a, N, S> DiscreteModel<'a, N, S>
 
     /// Remove a variable from the model, the childs will be disjoint if they don't
     /// have an other parent.
-    pub fn remove_var(&mut self, _node: &'a <N as DiscreteNode<'a>>::Var) {
+    pub fn remove_var(&mut self, node: &'a <N as DiscreteNode<'a>>::Var) {
         unimplemented!()
     }
 

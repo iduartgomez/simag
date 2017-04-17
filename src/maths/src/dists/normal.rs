@@ -1,5 +1,8 @@
 use RGSLRng;
 
+use float_cmp::ApproxEqUlps;
+use FLOAT_EQ_ULPS;
+
 #[derive(Debug, Clone)]
 pub struct Normal {
     pub mu: f64,
@@ -21,7 +24,7 @@ impl Normal {
             return Err(());
         }
 
-        if mu == 0. && sigma == 1. {
+        if mu.approx_eq_ulps(&0., FLOAT_EQ_ULPS) && sigma.approx_eq_ulps(&1., FLOAT_EQ_ULPS) {
             Ok(Normal::std())
         } else {
             Ok(Normal {
