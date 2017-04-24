@@ -17,7 +17,7 @@
 //! arg = term [',' uval] ;
 //! uval = 'u' comp_op number ;
 //! op_arg = (string|term) [comp_op (string|term)] ;
-//! icond_op    =	'|>' ;
+//! icond_op    =	':=' ;
 //! and_op      =	'&&' ;
 //! or_op		=	'||' ;
 //! logic_op	=    '<=>'
@@ -43,7 +43,7 @@ use lang::logsent::*;
 use lang::common::*;
 use lang::errors::ParseErrF;
 
-const ICOND_OP: &'static [u8] = b"|>";
+const ICOND_OP: &'static [u8] = b":=";
 const AND_OP: &'static [u8] = b"&&";
 const OR_OP: &'static [u8] = b"||";
 const IFF_OP: &'static [u8] = b"<=>";
@@ -1012,7 +1012,7 @@ impl CompOperator {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum LogicOperator {
-    ICond,
+    Entail,
     And,
     Or,
     Implication,
@@ -1022,7 +1022,7 @@ pub enum LogicOperator {
 impl LogicOperator {
     fn from_bytes(m: &[u8]) -> LogicOperator {
         if m == ICOND_OP {
-            LogicOperator::ICond
+            LogicOperator::Entail
         } else if m == AND_OP {
             LogicOperator::And
         } else if m == OR_OP {
@@ -1052,7 +1052,7 @@ impl LogicOperator {
 }
 
 named!(logic_operator, 
-    ws!(alt!(tag!("|>") | tag!("&&") | tag!("||") | tag!("=>") | tag!("<=>")))
+    ws!(alt!(tag!(":=") | tag!("&&") | tag!("||") | tag!("=>") | tag!("<=>")))
 );
 
 // comment parsing tools:
@@ -1190,9 +1190,9 @@ mod test {
         assert!(scanned.is_err());
 
         let source = b"
-        ((let x y) (american[x,u=1] && hostile[z,u=1]) |> criminal[x,u=1])
-        ((let x y) ((american[x,u=1] && hostile[z,u=1]) |> criminal[x,u=1]))
-        ((let x y) (american[x,u=1] && hostile[z,u=1]) |> criminal[x,u=1])
+        ((let x y) (american[x,u=1] && hostile[z,u=1]) := criminal[x,u=1])
+        ((let x y) ((american[x,u=1] && hostile[z,u=1]) := criminal[x,u=1]))
+        ((let x y) (american[x,u=1] && hostile[z,u=1]) := criminal[x,u=1])
         ";
         let mut data = Vec::new();
         let scanned = Parser::feed(source, &mut data);

@@ -11,7 +11,7 @@ fn build() {
     let rain = &vars["rain"];
     let cloudy = &vars["cloudy"];
 
-    let mut model = DefDiscreteModel::default();
+    let mut model = DefDiscreteModel::new();
     model.add_var(wet_grass).unwrap();
     model.add_var(sprinkler).unwrap();
     model.add_var(rain).unwrap();

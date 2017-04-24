@@ -1,8 +1,7 @@
-use std::cell::RefCell;
 use std::collections::{VecDeque, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::iter::{FromIterator, Iterator};
-use std::rc::{Rc, Weak};
+use std::sync::{Arc, Weak, RwLock};
 use std::marker::PhantomData;
 
 use uuid::Uuid;
@@ -10,16 +9,14 @@ use uuid::Uuid;
 use RGSLRng;
 use super::{Node, Variable, Observation};
 use super::{DType, Discrete};
-use sampling::{DiscreteSampler, DefDiscreteSampler};
+use sampling::DiscMargSampler;
 use dists::{Categorical, Bernoulli};
 use err::ErrMsg;
 
 // public traits for models:
 
 /// Node trait for a discrete model.
-pub trait DiscreteNode<'a>: Node
-    where Self: Sized
-{
+pub trait DiscreteNode<'a>: Node + Sized {
     type Var: 'a + DiscreteVar;
 
     fn new(dist: &'a Self::Var, pos: usize) -> Result<Self, ()>;
@@ -34,7 +31,7 @@ pub trait DiscreteNode<'a>: Node
     fn get_childs_dists(&self) -> Vec<&'a Self::Var>;
 
     /// Takes an slice reprensenting the parents categories at the current
-    /// time **t** and draws a sample based on the corresponding probabilities.
+    /// state *t* and draws a sample based on the corresponding probabilities.
     fn draw_sample(&self, rng: &mut RGSLRng, values: &[u8]) -> u8;
 
     /// Sample from the prior distribution, usually called on roots of the tree
@@ -42,10 +39,10 @@ pub trait DiscreteNode<'a>: Node
     fn init_sample(&self, rng: &mut RGSLRng) -> u8;
 
     /// Add a new parent to this node. Does not add self as child implicitly!
-    fn add_parent(&self, parent: Weak<Self>);
+    fn add_parent(&self, parent: Arc<Self>);
 
     /// Add a child to this node. Does not add self as parent implicitly!
-    fn add_child(&self, child: Rc<Self>);
+    fn add_child(&self, child: Arc<Self>);
 
     fn build_cpt(&self, probabilities: CPT, k: usize) -> Result<(), String>;
 }
@@ -68,44 +65,27 @@ pub trait DiscreteVar: Variable {
     fn push_observation(&mut self, obs: Self::Event);
 }
 
-pub type DefDiscreteModel<'a> = DiscreteModel<'a,
-                                              DefDiscreteNode<'a, DefDiscreteVar>,
-                                              DefDiscreteSampler>;
+pub type DefDiscreteModel<'a> = DiscreteModel<'a, DefDiscreteNode<'a, DefDiscreteVar>>;
 
 #[derive(Debug)]
-pub struct DiscreteModel<'a, N, S>
-    where N: DiscreteNode<'a>,
-          S: DiscreteSampler
+pub struct DiscreteModel<'a, N>
+    where N: DiscreteNode<'a>
 {
     vars: DiscreteDAG<'a, N>,
-    sampler: S,
 }
 
-impl<'a, N, S> DiscreteModel<'a, N, S>
-    where N: DiscreteNode<'a>,
-          S: DiscreteSampler
+impl<'a, N> DiscreteModel<'a, N>
+    where N: DiscreteNode<'a>
 {
-    pub fn new(sampler: S) -> DiscreteModel<'a, N, S> {
-        DiscreteModel {
-            vars: DiscreteDAG::new(),
-            sampler: sampler,
-        }
-    }
-
-    /// Get a new instance of the default implementation of a discrete model.
-    pub fn default() -> DefDiscreteModel<'a> {
-        use sampling::Sampler;
-        DiscreteModel {
-            vars: DiscreteDAG::new(),
-            sampler: DefDiscreteSampler::new(None, None),
-        }
+    pub fn new() -> DiscreteModel<'a, N> {
+        DiscreteModel { vars: DiscreteDAG::new() }
     }
 
     /// Add a new variable to the model.
     pub fn add_var(&mut self, var: &'a <N as DiscreteNode<'a>>::Var) -> Result<(), ()> {
         let pos = self.vars.nodes.len();
         let node = N::new(var, pos)?;
-        self.vars.nodes.push(Rc::new(node));
+        self.vars.nodes.push(Arc::new(node));
         Ok(())
     }
 
@@ -141,13 +121,13 @@ impl<'a, N, S> DiscreteModel<'a, N, S>
         //  - the theoretical child cannot be a parent of the theoretical parent
         //    as the network is a DAG
         // find node and parents in the net
-        let node: Rc<N> = self.vars
+        let node: Arc<N> = self.vars
             .nodes
             .iter()
             .find(|n| (&**n).get_dist() == node)
             .cloned()
             .ok_or(())?;
-        let parent: Rc<N> = self.vars
+        let parent: Arc<N> = self.vars
             .nodes
             .iter()
             .find(|n| (&**n).get_dist() == parent)
@@ -159,7 +139,7 @@ impl<'a, N, S> DiscreteModel<'a, N, S>
         if node.build_cpt(prob, parent_k as usize).is_err() {
             return Err(());
         }
-        node.add_parent(Rc::downgrade(&parent.clone()));
+        node.add_parent(parent.clone());
         parent.add_child(node.clone());
         // check if it's a DAG and topologically sort the graph
         self.vars.topological_sort()
@@ -171,9 +151,8 @@ impl<'a, N, S> DiscreteModel<'a, N, S>
         unimplemented!()
     }
 
-    /// Sample the model in
-    pub fn sample(&self) -> Vec<Vec<u8>> {
-        let sampler = self.sampler.clone();
+    /// Sample for the model marginal probabilities with the current elicited probabilities.
+    pub fn sample_marginals<S: DiscMargSampler>(&self, sampler: S) -> Vec<Vec<u8>> {
         sampler.get_samples(self)
     }
 
@@ -183,12 +162,12 @@ impl<'a, N, S> DiscreteModel<'a, N, S>
     }
 
     /// Iterate the model variables in topographical order.
-    pub fn iter_vars(&self) -> NetIter<'a, N> {
-        NetIter::new(&self.vars.nodes)
+    pub fn iter_vars(&self) -> BayesNetIter<'a, N> {
+        BayesNetIter::new(&self.vars.nodes)
     }
 
-    /// Get the node in the graph at position **i** unchecked.
-    pub fn get_var(&self, i: usize) -> Rc<N> {
+    /// Get the node in the graph at position *i* unchecked.
+    pub fn get_var(&self, i: usize) -> Arc<N> {
         self.vars.get_node(i)
     }
 }
@@ -198,7 +177,7 @@ struct DiscreteDAG<'a, N>
     where N: DiscreteNode<'a>
 {
     _nlt: PhantomData<&'a ()>,
-    nodes: Vec<Rc<N>>,
+    nodes: Vec<Arc<N>>,
 }
 
 dag_impl!(DiscreteDAG, DiscreteNode; [DiscreteVar]);
@@ -258,9 +237,9 @@ impl CPT {
         }
 
         Ok(CPT {
-            data: elements,
-            indexes: indexes,
-        })
+               data: elements,
+               indexes: indexes,
+           })
     }
 }
 
@@ -272,19 +251,19 @@ pub struct DefDiscreteNode<'a, V: 'a>
     where V: DiscreteVar
 {
     pub dist: &'a V,
-    childs: RefCell<Vec<Rc<DefDiscreteNode<'a, V>>>>,
-    cpt: RefCell<HashMap<Choices, DType>>,
-    parents: RefCell<Vec<Weak<DefDiscreteNode<'a, V>>>>, // (categ, parent_ptr)
-    pos: RefCell<usize>, // position in the bayes net vec of self
+    childs: RwLock<Vec<Weak<DefDiscreteNode<'a, V>>>>,
+    cpt: RwLock<HashMap<Choices, DType>>,
+    parents: RwLock<Vec<Arc<DefDiscreteNode<'a, V>>>>, // (categ, parent_ptr)
+    pos: RwLock<usize>, // position in the bayes net vec of self
 }
 
 impl<'a, V: 'a + DiscreteVar> ::std::fmt::Debug for DefDiscreteNode<'a, V> {
     fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         write!(f,
                "DefDiscreteNode {{ dist: {d:?}, childs: {c}, parents: {p}, pos: {pos} }}",
-               c = self.childs.borrow().len(),
-               p = self.parents.borrow().len(),
-               pos = *self.pos.borrow(),
+               c = self.childs.read().unwrap().len(),
+               p = self.parents.read().unwrap().len(),
+               pos = *self.pos.read().unwrap(),
                d = self.dist)
     }
 }
@@ -305,12 +284,12 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
 
         // get the probabilities from the dist and insert as default cpt
         Ok(DefDiscreteNode {
-            dist: dist,
-            childs: RefCell::new(vec![]),
-            parents: RefCell::new(vec![]),
-            pos: RefCell::new(pos),
-            cpt: RefCell::new(HashMap::new()),
-        })
+               dist: dist,
+               childs: RwLock::new(vec![]),
+               parents: RwLock::new(vec![]),
+               pos: RwLock::new(pos),
+               cpt: RwLock::new(HashMap::new()),
+           })
     }
 
     fn get_dist(&self) -> &'a V {
@@ -318,7 +297,7 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
     }
 
     fn draw_sample(&self, rng: &mut RGSLRng, values: &[u8]) -> u8 {
-        let cpt = &*self.cpt.borrow();
+        let cpt = &*self.cpt.read().unwrap();
         let probs = cpt.get(values).unwrap();
         match *probs {
             DType::Bernoulli(ref dist) => dist.sample(rng),
@@ -332,46 +311,61 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
     }
 
     fn get_parents_dists(&self) -> Vec<&'a V> {
-        let parents = &*self.parents.borrow();
+        let parents = &*self.parents.read().unwrap();
         let mut dists = Vec::with_capacity(parents.len());
         for p in parents {
-            let p = p.upgrade().unwrap();
             dists.push(p.dist);
         }
         dists
     }
 
     fn get_childs_dists(&self) -> Vec<&'a V> {
-        let childs = &*self.childs.borrow();
+        let childs = &*self.childs.read().unwrap();
         let mut dists = Vec::with_capacity(childs.len());
         for c in childs {
-            dists.push(c.dist);
+            dists.push(c.upgrade().unwrap().dist);
         }
         dists
     }
 
-    fn add_parent(&self, parent: Weak<Self>) {
-        let parents = &mut *self.parents.borrow_mut();
-        parents.push(parent);
+    fn add_parent(&self, parent: Arc<Self>) {
+        let parents = &mut *self.parents.write().unwrap();
+        // check for duplicates:
+        let pos = parents
+            .iter()
+            .enumerate()
+            .find(|&(_, x)| &*x.get_dist() == parent.get_dist())
+            .map(|(i, _)| i);
+        if let None = pos {
+            parents.push(parent);
+        };
     }
 
-    fn add_child(&self, child: Rc<Self>) {
-        let parent_childs = &mut *self.childs.borrow_mut();
-        parent_childs.push(child);
+    fn add_child(&self, child: Arc<Self>) {
+        let parent_childs = &mut *self.childs.write().unwrap();
+        let pos = parent_childs
+            .iter()
+            .enumerate()
+            .find(|&(_, x)| &*x.upgrade().unwrap().get_dist() == child.get_dist())
+            .map(|(i, _)| i);
+        if let None = pos {
+            parent_childs.push(Arc::downgrade(&child));
+        }
     }
 
     fn build_cpt(&self, probs: CPT, parent_k: usize) -> Result<(), String> {
         use itertools::zip;
 
-        let parents = &*self.parents.borrow();
+        let parents = &*self.parents.read().unwrap();
         let rows1 = probs.dim_num()[0];
-        let rows0 = parents.iter().fold(1, |t, p| {
-            let i = {
-                let p = p.upgrade().unwrap();
-                p.dist.k_num()
-            };
-            t * (i as usize)
-        }) * parent_k;
+        let rows0 = parents
+            .iter()
+            .fold(1, |t, p| {
+                let i = {
+                    p.dist.k_num()
+                };
+                t * (i as usize)
+            }) * parent_k;
         if ((rows0 > parent_k) && (rows1 != rows0)) && (parent_k != rows1) {
             return Err("insufficient number of probability rows in the CPT".to_string());
         }
@@ -393,7 +387,7 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
         if sum < 1.0 {
             return Err("Conditional probability table must sum to 1".to_string());
         }
-        let mut self_cpt = self.cpt.borrow_mut();
+        let mut self_cpt = self.cpt.write().unwrap();
         *self_cpt = cpt;
         Ok(())
     }
@@ -448,3 +442,4 @@ impl DiscreteVar for DefDiscreteVar {
 use dists::AsContinuous;
 
 impl AsContinuous for DefDiscreteVar {}
+

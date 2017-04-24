@@ -258,20 +258,20 @@ mod test {
     #[allow(unused_must_use)]
     fn repr_eval_fol() {
         // indicative conditional
-        // (true |> true)
+        // (true := true)
         let rep = Representation::new();
         let fol = String::from("
-            ( drugDealer[$West,u=1] |> ( scum[$West,u=1] && good[$West,u=0] ) )
+            ( drugDealer[$West,u=1] := ( scum[$West,u=1] && good[$West,u=0] ) )
             ( drugDealer[$West,u=1] )
         ");
         let query = "( scum[$West,u=1] && good[$West,u=0] )".to_string();
         rep.tell(fol);
         assert_eq!(rep.ask(query).get_results_single(), Some(true));
 
-        // (false |> none)
+        // (false := none)
         let rep = Representation::new();
         let fol = String::from("
-            ( drugDealer[$West,u=1] |> ( scum[$West,u=1] && good[$West,u=0] ) )
+            ( drugDealer[$West,u=1] := ( scum[$West,u=1] && good[$West,u=0] ) )
             ( drugDealer[$West,u=0] )
         ");
         let query = "( scum[$West,u=1] && good[$West,u=0] )".to_string();

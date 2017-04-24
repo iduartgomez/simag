@@ -19,12 +19,12 @@ impl FDist {
     #[inline]
     pub fn pdf(&self, x: f64) -> f64 {
         use rgsl::randist::f_distribution::fdist_pdf;
-        
+
         fdist_pdf(x, self.d1, self.d2)
     }
 }
 
-use super::{Sample, CDF,};
+use super::{Sample, CDF};
 
 impl Sample for FDist {
     #[inline]

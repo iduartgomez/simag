@@ -1,4 +1,4 @@
-//! Support mathematical methods library for the `simAG` framework
+//! Support mathematical methods, utilities and tools library for the `simAG` framework
 
 extern crate float_cmp;
 extern crate itertools;

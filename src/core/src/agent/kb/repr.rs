@@ -49,7 +49,7 @@ impl Representation {
     ///
     /// `>>> r.tell("(professor[$Lucy,u=1])")`
     /// will include the individual '$Lucy' in the professor category)
-    /// `>>> r.tell("((let x) professor[x,u=1] |> person[x,u=1])")`
+    /// `>>> r.tell("((let x) professor[x,u=1] := person[x,u=1])")`
     /// all the individuals which are professors will be added to the
     /// person category, and the formula will be stored in the professor
     /// class for future use.

@@ -1,13 +1,13 @@
 //! Infrastructure to instantiate an statistical model with a given set of parameters.
 
 use std::hash::Hash;
-use std::rc::Rc;
+use std::sync::Arc;
 
 pub use self::discrete::{DiscreteModel, DefDiscreteModel, DefDiscreteNode, DefDiscreteVar, CPT};
 pub use self::discrete::{DiscreteNode, DiscreteVar};
 pub use self::continuous::{ContModel, DefContModel, DefContNode, DefContVar};
 pub use self::continuous::{ContNode, ContVar};
-pub use self::hybrid::{HybridModel, DefHybridModel, DefHybridNode, ChainGraph};
+pub use self::hybrid::{HybridModel, DefHybridModel, DefHybridNode, MarkovRndField, DefMarkovRndField};
 pub use self::hybrid::HybridNode;
 
 macro_rules! dag_impl {
@@ -41,7 +41,7 @@ macro_rules! dag_impl {
                     priority.push((i, node.clone()));
                 }
                 priority.sort_by(|&(ref i, _), &(ref j, _)| i.cmp(j));
-                let sorted: Vec<Rc<N>> = priority.into_iter()
+                let sorted: Vec<Arc<N>> = priority.into_iter()
                     .map(|(_, e)| e)
                     .collect();
                 self.nodes = sorted;
@@ -49,7 +49,7 @@ macro_rules! dag_impl {
             }
 
             #[inline]
-            fn get_node(&self, pos: usize) -> Rc<N> {
+            fn get_node(&self, pos: usize) -> Arc<N> {
                 self.nodes[pos].clone()
             }         
         }
@@ -111,25 +111,25 @@ macro_rules! dag_impl {
         }
 
         /// Bayesian Network iterator, visits all nodes from parents to childs
-        pub struct NetIter<'a, N>
+        pub struct BayesNetIter<'a, N>
             where N: $node<'a>
         {
             _nlt: PhantomData<&'a ()>,
-            unvisitted: VecDeque<Rc<N>>,
+            unvisitted: VecDeque<Arc<N>>,
             processed: HashSet<usize>,
-            queued: Rc<N>,
+            queued: Arc<N>,
             childs_visitted: usize,
         }
 
-        impl<'a, N> NetIter<'a, N>
+        impl<'a, N> BayesNetIter<'a, N>
             where N: $node<'a>
         {
-            fn new(nodes: &[Rc<N>]) -> NetIter<'a, N> {
+            fn new(nodes: &[Arc<N>]) -> BayesNetIter<'a, N> {
                 let mut processed = HashSet::new();
                 let mut unvisitted = VecDeque::from_iter(nodes.iter().cloned());
                 let first = unvisitted.pop_front().unwrap();
                 processed.insert(first.get_dist() as *const N::Var as usize);
-                NetIter {
+                BayesNetIter {
                     _nlt: PhantomData,
                     unvisitted: unvisitted,
                     processed: processed,
@@ -139,10 +139,10 @@ macro_rules! dag_impl {
             }
         }
 
-        impl<'a, N> Iterator for NetIter<'a, N>
+        impl<'a, N> Iterator for BayesNetIter<'a, N>
             where N: $node<'a>
         {
-            type Item = Rc<N>;
+            type Item = Arc<N>;
             fn next(&mut self) -> Option<Self::Item> {
                 loop {
                     while self.childs_visitted < self.queued.get_childs().len() {
@@ -173,14 +173,14 @@ macro_rules! dag_impl {
 macro_rules! node_impl {
     ($name:ident, $var_trait:ident) => {
         impl<'a, V: 'a + $var_trait> Node for $name<'a, V> {
-            fn get_child_unchecked(&self, pos: usize) -> Rc<Self> {
-                let childs = &*self.childs.borrow();
-                childs[pos].clone()
+            fn get_child_unchecked(&self, pos: usize) -> Arc<Self> {
+                let childs = &*self.childs.read().unwrap();
+                childs[pos].upgrade().unwrap()
             }
 
-            fn get_childs(&self) -> Vec<Rc<Self>> {
-                let childs = &*self.childs.borrow();
-                Vec::from_iter(childs.iter().cloned())
+            fn get_childs(&self) -> Vec<Arc<Self>> {
+                let childs = &*self.childs.read().unwrap();
+                Vec::from_iter(childs.iter().map(|&ref x| x.upgrade().unwrap()))
             }
 
             fn is_root(&self) -> bool {
@@ -188,27 +188,25 @@ macro_rules! node_impl {
             }
 
             fn position(&self) -> usize {
-                *self.pos.borrow()
+                *self.pos.read().unwrap()
             }
 
             fn get_parents_positions(&self) -> Vec<usize> {
-                let parents = &*self.parents.borrow();
+                let parents = &*self.parents.read().unwrap();
                 let mut positions = Vec::with_capacity(parents.len());
                 for p in parents {
-                    let p = p.upgrade().unwrap();
-                    positions.push(*p.pos.borrow());
+                    positions.push(*p.pos.read().unwrap());
                 }
                 positions
             }
 
             fn get_all_ancestors(&self) -> Vec<usize> {
-                let parents = &*self.parents.borrow();
+                let parents = &*self.parents.read().unwrap();
                 let mut anc = Vec::with_capacity(parents.len());
                 for p in parents {
-                    let p = p.upgrade().unwrap();
                     let mut ancestors = p.get_all_ancestors();
                     anc.append(&mut ancestors);
-                    anc.push(*p.pos.borrow());
+                    anc.push(*p.pos.read().unwrap());
                 }
                 anc.sort_by(|a, b| b.cmp(a));
                 anc.dedup();
@@ -216,26 +214,35 @@ macro_rules! node_impl {
             }
 
             fn get_childs_positions(&self) -> Vec<usize> {
-                let childs = &*self.childs.borrow();
+                let childs = &*self.childs.read().unwrap();
                 let mut positions = Vec::with_capacity(childs.len());
                 for c in childs {
-                    positions.push(*c.pos.borrow());
+                    let c = c.upgrade().unwrap();
+                    positions.push(*c.pos.read().unwrap());
                 }
                 positions
             }
 
             fn parents_num(&self) -> usize {
-                let parents = &*self.parents.borrow();
+                let parents = &*self.parents.read().unwrap();
                 parents.len()
             }
 
             fn childs_num(&self) -> usize {
-                let childs = &*self.childs.borrow();
+                let childs = &*self.childs.read().unwrap();
                 childs.len()
             }
 
             fn set_position(&self, pos: usize) {
-                *self.pos.borrow_mut() = pos;
+                *self.pos.write().unwrap() = pos;
+            }
+
+            
+            fn get_neighbours(&self) -> Vec<usize> {
+                let mut p = self.get_parents_positions();
+                let mut c = self.get_childs_positions();
+                p.append(&mut c);
+                p
             }
         }
     }
@@ -312,11 +319,11 @@ pub trait Observation {
     fn is_kind(&self) -> VariableKind;
 }
 
-pub trait Variable: Hash + PartialEq + Eq + ::std::fmt::Debug {
+pub trait Variable: Hash + PartialEq + Eq + ::std::fmt::Debug + Sync + Send {
     fn new() -> Self;
 
-    /// Returns the exact form of the distribution, where the distribution
-    /// type should be a discrete type.
+    /// Returns the exact form of the distribution, where the distribution type
+    /// should be concordant with the random variable type (discrete or continuous).
     fn dist_type(&self) -> &DType;
 
     /// Set the distribution type for the random variable.
@@ -324,10 +331,19 @@ pub trait Variable: Hash + PartialEq + Eq + ::std::fmt::Debug {
 }
 
 /// A node in the the DAG.
-pub trait Node: ::std::fmt::Debug {
-    fn get_child_unchecked(&self, pos: usize) -> Rc<Self>;
-    fn get_childs(&self) -> Vec<Rc<Self>>;
+pub trait Node: ::std::fmt::Debug + Send + Sync {
+    /// Gets a child of this node with *idx* in the list of childs.
+    ///
+    /// Panics if idx is out of bounds.
+    fn get_child_unchecked(&self, idx: usize) -> Arc<Self>;
+
+    /// Gets a list of the childs of this node.
+    fn get_childs(&self) -> Vec<Arc<Self>>;
+
+    /// Ret
     fn is_root(&self) -> bool;
+
+    /// Returns the index of the node within the network.
     fn position(&self) -> usize;
 
     /// Returns the node parents positions in the network.
@@ -349,9 +365,12 @@ pub trait Node: ::std::fmt::Debug {
 
     /// Returns the number of childs this node has.
     fn childs_num(&self) -> usize;
+
+    /// Return the indexes for the neighbours of this node.
+    fn get_neighbours(&self) -> Vec<usize>;
 }
 
-pub trait IterModel {
+pub trait IterModel: Send + Sync {
     type Iter: Iterator;
 
     /// Iterate the model variables in topographical order.
@@ -359,13 +378,23 @@ pub trait IterModel {
 
     /// Returns the total number of variables in the model.
     fn var_num(&self) -> usize;
+
+    /// Returns a list of the indexes of the neighbours of a node.
+    fn var_neighbours(&self, idx: usize) -> Vec<usize>;
 }
 
 // helper types:
 
-pub type Discrete = usize;
+pub type Discrete = u8;
 pub type Continuous = f64;
 pub type Boolean = bool;
+
+
+#[derive(Debug, Clone, Copy)]
+pub enum HybridRes {
+    Continuous(Continuous),
+    Discrete(Discrete),
+}
 
 impl Observation for Discrete {
     fn is_kind(&self) -> VariableKind {

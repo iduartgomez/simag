@@ -3,8 +3,8 @@
 //! -   Bayesian Belief Networks with encoded causality.
 //! -   Full contiditional networks with non-encoded causality (locality
 //!   is assumed and sampling from the Markob blanket).
-//! -   A sample space with random varibles and unknown non-encoded
-//!   causality (with possibley additional latent variables), non-locality
+//! -   A sample space with random variables and unknown non-encoded
+//!   causality (with possible additional latent variables), non-locality
 //!   assumed.
 //!
 //! At the same time they come with three variants:
@@ -13,54 +13,43 @@
 //! -   Pure continuous random variables models.
 //! -   Hybrid discrete and continuous random variables models.
 //!
-//! Each of the above follows a distinc strategy for sampling and testing.
+//! Each of the above follows a distinc strategy for sampling.
 
 mod discrete;
 mod continuous;
 mod hybrid;
 
 pub use self::discrete::Gibbs as DiscreteGibbs;
-pub use self::continuous::ExactNormalized;
-pub use self::hybrid::ExactNormalized as HybridExact;
+pub use self::continuous::ExactNormalized as ContinuousExactNormalized;
+pub use self::hybrid::ExactNormalized as HybridExactNormalized;
 
-use model::{DiscreteModel, DiscreteNode, ContModel, ContNode, HybridNode, IterModel};
+use model::{DiscreteModel, DiscreteNode, ContModel, ContNode, HybridNode, IterModel, HybridRes};
 
-pub type DefDiscreteSampler = DiscreteGibbs;
-pub type DefContSampler<'a> = ExactNormalized<'a>;
-pub type DefHybridSampler<'a> = HybridExact<'a>;
-
-pub trait Sampler
-    where Self: Sized + Clone
+pub trait MarginalSampler: Send + Sync
 {
     fn new(steeps: Option<usize>, burnin: Option<usize>) -> Self;
 }
 
-pub trait DiscreteSampler: Sampler {
-    /// Return a matrix of t x k dimension samples (t = steeps; k = number of vars).
-    fn get_samples<'a, N>(self, state_space: &DiscreteModel<'a, N, Self>) -> Vec<Vec<u8>>
+pub trait DiscMargSampler: MarginalSampler {
+    /// Returns a matrix of *t* x *k* dimensions of samples (*t* = steeps; *k* = number of variables).
+    fn get_samples<'a, N>(self, state_space: &DiscreteModel<'a, N>) -> Vec<Vec<u8>>
         where N: DiscreteNode<'a>;
 }
 
-pub trait ContinuousSampler<'a>: Sampler {
-    /// Return a matrix of t x k dimension samples (t = steeps; k = number of vars).
-    fn get_samples<N>(self, state_space: &ContModel<'a, N, Self>) -> Vec<Vec<f64>>
+pub trait ContMargSampler<'a>: MarginalSampler {
+    /// Returns a matrix of *t* x *k* dimensions of samples (*t* = steeps; *k* = number of variables).
+    fn get_samples<N>(self, state_space: &ContModel<'a, N>) -> Vec<Vec<f64>>
         where N: ContNode<'a>;
 }
 
 use std::ops::Deref;
 
-pub trait HybridSampler<'a>: Sampler {
-    /// Return a matrix of t x k dimension samples (t = steeps; k = number of vars).
-    fn get_samples<'b, M>(self, state_space: &M) -> Vec<Vec<HybridSamplerResult>>
+pub trait HybridMargSampler<'a>: MarginalSampler {
+    /// Returns a matrix of *t* x *k* dimensions of samples (*t* = steeps; *k* = number of variables).
+    fn get_samples<M>(self, state_space: &M) -> Vec<Vec<HybridRes>>
         where M: IterModel,
               <<<M as IterModel>::Iter as Iterator>::Item as Deref>::Target: HybridNode<'a>,
               <<M as IterModel>::Iter as Iterator>::Item: Deref;
-}
-
-#[derive(Debug)]
-pub enum HybridSamplerResult {
-    Continuous(f64),
-    Discrete(u8),
 }
 
 use std::collections::HashMap;
@@ -124,8 +113,8 @@ mod test {
     use rgsl::MatrixF64;
     use super::*;
 
-    #[test]
-    fn pt_cr() {
+    //#[test]
+    fn _pt_cr() {
         println!();
         // vars = "a/0", "b/1", "c/2", "d/3"
         let corr: Vec<f64> = vec![0.8, -0.8, -0.5, 0.5]; // rho_dc, rho_db, rho_ca, rho_ba

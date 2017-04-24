@@ -22,12 +22,12 @@ impl Exponential {
     #[inline]
     pub fn pdf(&self, x: f64) -> f64 {
         use rgsl::randist::exponential::exponential_pdf;
-        
+
         exponential_pdf(x, self.mean)
     }
 }
 
-use super::{Sample, CDF,};
+use super::{Sample, CDF};
 
 impl Sample for Exponential {
     #[inline]

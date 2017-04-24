@@ -123,10 +123,17 @@ impl Bernoulli {
         if val <= self.event_prob { 1 } else { 0 }
     }
 
+    #[inline]
+    pub fn inverse_cdf(&self, p: f64) -> u8 { 
+        if p <= self.event_prob { 1 } else { 0 }
+    }
+
+    #[inline]
     pub fn success(&self) -> f64 {
         self.event_prob
     }
 
+    #[inline]
     pub fn failure(&self) -> f64 {
         1. - self.event_prob
     }
@@ -158,7 +165,7 @@ impl RelaxedBernoulli {
         (self.t * a).powf(-e) * b.powf(-e) / (a.powf(-self.t) + b.powf(-self.t)).powi(2)
     }
 
-    /// Given a probability `p` between return if the event was a success or not.
+    /// Given a probability `p` return if the event was a success or not.
     #[inline]
     pub fn discretized(&self, p: f64) -> bool {
         p >= self.s

@@ -1234,7 +1234,7 @@ impl PIntermediate {
         } else {
             let PIntermediate { cond, rhs, lhs, .. } = self;
             match cond.unwrap() {
-                LogicOperator::ICond => {
+                LogicOperator::Entail => {
                     context.stype = SentKind::IExpr;
                     Particle::IndConditional(LogicIndCond::new(lhs.unwrap(), rhs.unwrap()))
                 }
@@ -1479,13 +1479,13 @@ fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), 
     fn has_icond_child(p: &Particle) -> Result<(), LogSentErr> {
         if let Some(n1_0) = p.get_next(0) {
             if let Particle::IndConditional(_) = *n1_0 {
-                return Err(LogSentErr::IExprICondLHS);
+                return Err(LogSentErr::IExprEntailLHS);
             }
             has_icond_child(&*n1_0)?;
         }
         if let Some(n1_1) = p.get_next(1) {
             if let Particle::IndConditional(_) = *n1_1 {
-                return Err(LogSentErr::IExprICondLHS);
+                return Err(LogSentErr::IExprEntailLHS);
             }
             has_icond_child(&*n1_1)?;
         }
@@ -1496,7 +1496,7 @@ fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), 
         if let Some(n1_0) = p.get_next(0) {
             // test that the lhs does not include any indicative conditional
             if n1_0.is_icond() {
-                return Err(LogSentErr::IExprICondLHS);
+                return Err(LogSentErr::IExprEntailLHS);
             }
             has_icond_child(&*n1_0)?;
         }
@@ -1538,7 +1538,7 @@ fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), 
     }
     if let Some(n1_0) = first.get_next_copy(0) {
         if let Particle::IndConditional(_) = *n1_0 {
-            return Err(LogSentErr::IExprICondLHS);
+            return Err(LogSentErr::IExprEntailLHS);
         }
         get_lhs_preds(n1_0, lhs)
     }
@@ -1558,9 +1558,9 @@ mod errors {
     #[derive(Debug, PartialEq)]
     pub enum LogSentErr {
         Boxed(Box<ParseErrF>),
-        RuleInclICond(usize),
+        RuleInclEntail(usize),
         IExprWrongOp,
-        IExprICondLHS,
+        IExprEntailLHS,
         IExprNotIcond,
         IConnectInChain,
         IConnectAfterAnd,
@@ -1587,23 +1587,23 @@ mod test {
         let source = String::from("
             # Err:
             ((let x y z)
-             ( ( cde[x,u=1] |> fn::fgh[y,u>0.5;x;z] ) |> hij[y,u=1] )
+             ( ( cde[x,u=1] := fn::fgh[y,u>0.5;x;z] ) := hij[y,u=1] )
             )
 
             # Err:
             ((let x y z)
-             ( abc[x,u=1]  |> (( cde[x,u=1] |> fn::fgh[y,u>0.5;x;z] ) && hij[y,u=1] ))
+             ( abc[x,u=1]  := (( cde[x,u=1] := fn::fgh[y,u>0.5;x;z] ) && hij[y,u=1] ))
             )
 
             # Ok:
             ((let x y z)
-             ( abc[x,u=1]  |> (
-                 ( cde[x,u=1] && fn::fgh[y,u>0.5;x;z] ) |> hij[y,u=1]
+             ( abc[x,u=1]  := (
+                 ( cde[x,u=1] && fn::fgh[y,u>0.5;x;z] ) := hij[y,u=1]
              )))
 
             # Ok:
             (( let x y z )
-             (( cde[x,u=1] && hij[y,u=1] && fn::fgh[y,u>0.5;x;z] ) |> abc[x,u=1]))
+             (( cde[x,u=1] && hij[y,u=1] && fn::fgh[y,u>0.5;x;z] ) := abc[x,u=1]))
         ");
         let tree = Parser::parse(source, true);
         assert!(tree.is_ok());

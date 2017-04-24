@@ -39,7 +39,7 @@ impl Normal {
     pub fn pdf(&self, x: f64) -> f64 {
         use rgsl::randist::gaussian::gaussian_pdf;
         use rgsl::randist::gaussian::ugaussian_pdf;
-        
+
         if self.std {
             ugaussian_pdf(x)
         } else {

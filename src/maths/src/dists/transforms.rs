@@ -22,9 +22,11 @@ pub trait GSRelaxation<T>
 /// for a distribution which implements the `GSRelaxation` trait.
 pub trait GumbelSoftmax: Clone + ::std::fmt::Debug + Sized {}
 
-pub trait AsContinuous
-    where Self: DiscreteVar + Sized
+/// Transforms a discrete random variable to a continuous random variable.
+pub trait AsContinuous: DiscreteVar + Sized
 {
+    /// Performs the the transformation. The default implementation of this method will
+    /// convert Bernoulli variables throught Gumbel-Softmax trick.
     fn as_continuous<C: ContVar>(&self) -> Result<C, ()> {
         let dist = match *self.dist_type() {
             DType::Bernoulli(ref dist) => DType::RelaxedBernoulli(dist.relaxed(None)), 
@@ -36,18 +38,18 @@ pub trait AsContinuous
     }
 }
 
-/// This trait is not used at the moment.
-pub trait AsDiscrete
-    where Self: ContVar + Sized
+/* this trait is not used at the moment.
+pub trait AsDiscrete: ContVar + Sized
 {
     fn as_discrete<C: DiscreteVar>(&self) -> Result<C, ()>;
 }
+*/
 
-/// Takes a random variable with an invertible distribution function F and returns
+/// Takes a random variable with an invertible distribution function *F* and returns
 /// a standard normal distribution.
-pub trait Normalization
-    where Self: ContVar + Sized
+pub trait Normalization: ContVar + Sized
 {
+    /// Returns a random variable of type `Self` with a Gaussian distribution.
     fn as_normal(&self, samples: usize) -> Self {
         let mut normal = Self::new();
         match *self.dist_type() {
@@ -115,6 +117,7 @@ pub trait Normalization
         }
     }
 
+    /// Converts self into the *default* continuous variable type implementation.
     fn into_default(self) -> DefContVar;
 }
 

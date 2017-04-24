@@ -19,12 +19,12 @@ impl Gamma {
     #[inline]
     pub fn pdf(&self, x: f64) -> f64 {
         use rgsl::randist::gamma::gamma_pdf;
-        
+
         gamma_pdf(x, self.a, self.b)
     }
 }
 
-use super::{Sample, CDF,};
+use super::{Sample, CDF};
 
 impl Sample for Gamma {
     #[inline]

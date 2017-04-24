@@ -15,7 +15,7 @@ fn build() {
     let duty_period = &vars["fly_duty_period"];
     let rest_time = &vars["rest_time_on_flight"];
 
-    let mut model = DefContModel::default();
+    let mut model = DefContModel::new();
     model.add_var(workload).unwrap();
     model.add_var(sleep).unwrap();
     model.add_var(fitness).unwrap();

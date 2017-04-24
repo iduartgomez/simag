@@ -1,64 +1,48 @@
-use std::cell::RefCell;
 use std::collections::{VecDeque, HashSet};
 use std::iter::{FromIterator, Iterator};
-use std::rc::{Rc, Weak};
+use std::sync::{Arc, Weak, RwLock};
 use std::marker::PhantomData;
 
 use RGSLRng;
 use super::{Node, ContVar, DiscreteVar, ContNode};
 use super::{DType, DefContVar, DefDiscreteVar};
-use sampling::{HybridSampler, DefHybridSampler, HybridSamplerResult};
+use sampling::HybridMargSampler;
 use dists::{Normalization, AsContinuous};
+use model::HybridRes;
 
 use itertools::Itertools;
 
-pub trait HybridNode<'a>: ContNode<'a>
-    where Self: Sized
-{
+pub trait HybridNode<'a>: ContNode<'a> + Sized {
     type Discrete: DiscreteVar + AsContinuous;
 
     /// Makes an hybrid model node from a discrete variable.
     fn new_with_discrete(var: &'a Self::Discrete, pos: usize) -> Result<Self, ()>;
+    fn was_discrete(&self) -> bool;
+    fn inverse_cdf(&self, p: f64) -> u8;
+    //fn draw_sample(&self, rng: &mut RGSLRng, values: &[HybridRes]) -> HybridRes;
 }
 
 #[derive(Debug)]
-pub struct HybridModel<'a, N, S>
-    where N: HybridNode<'a>,
-          S: HybridSampler<'a> + Clone
+pub struct HybridModel<'a, N>
+    where N: HybridNode<'a>
 {
     vars: HybridDAG<'a, N>,
-    sampler: S,
 }
 
-pub type DefHybridModel<'a> = HybridModel<'a,
-                                          DefHybridNode<'a, DefContVar, DefDiscreteVar>,
-                                          DefHybridSampler<'a>>;
+pub type DefHybridModel<'a> = HybridModel<'a, DefHybridNode<'a, DefContVar, DefDiscreteVar>>;
 
-impl<'a, N, S> HybridModel<'a, N, S>
-    where N: HybridNode<'a>,
-          S: HybridSampler<'a> + Clone
+impl<'a, N> HybridModel<'a, N>
+    where N: HybridNode<'a>
 {
-    /// Get a new instance of the default implementation of a continuous model.
-    pub fn default() -> DefHybridModel<'a> {
-        use sampling::Sampler;
-        HybridModel {
-            vars: HybridDAG::new(),
-            sampler: DefHybridSampler::new(None, None),
-        }
-    }
-
-    pub fn new(sampler: S) -> HybridModel<'a, N, S> {
-        HybridModel {
-            vars: HybridDAG::new(),
-            sampler: sampler,
-        }
+    pub fn new() -> HybridModel<'a, N> {
+        HybridModel { vars: HybridDAG::new() }
     }
 
     /// Add a new variable to the model.
     pub fn add_var(&mut self, var: &'a <N as ContNode<'a>>::Var) -> Result<(), ()> {
         let pos = self.vars.nodes.len();
         let node = N::new(var, pos)?;
-        self.vars.nodes.push(Rc::new(node));
+        self.vars.nodes.push(Arc::new(node));
         Ok(())
     }
 
@@ -78,19 +62,19 @@ impl<'a, N, S> HybridModel<'a, N, S>
         //  - the theoretical child cannot be a parent of the theoretical parent
         //    as the network is a DAG
         // find node and parents in the net
-        let node: Rc<N> = self.vars
+        let node: Arc<N> = self.vars
             .nodes
             .iter()
             .find(|n| (&**n).get_dist() == node)
             .cloned()
             .ok_or(())?;
-        let parent: Rc<N> = self.vars
+        let parent: Arc<N> = self.vars
             .nodes
             .iter()
             .find(|n| (&**n).get_dist() == parent)
             .cloned()
             .ok_or(())?;
-        node.add_parent(Rc::downgrade(&parent.clone()), rank_cr);
+        node.add_parent(parent.clone(), rank_cr);
         parent.add_child(node.clone());
         // check if it's a DAG and topologically sort the graph
         self.vars.topological_sort()
@@ -102,9 +86,9 @@ impl<'a, N, S> HybridModel<'a, N, S>
         unimplemented!()
     }
 
-    /// Sample the model in
-    pub fn sample(&self) -> Vec<Vec<HybridSamplerResult>> {
-        self.sampler.clone().get_samples(self)
+    /// Sample for the model marginal probabilities with the current elicited probabilities.
+    pub fn sample_marginals<S: HybridMargSampler<'a>>(&self, sampler: S) -> Vec<Vec<HybridRes>> {
+        sampler.get_samples(self)
     }
 
     /// Returns the total number of variables in the model.
@@ -112,23 +96,26 @@ impl<'a, N, S> HybridModel<'a, N, S>
         self.vars.nodes.len()
     }
 
-    /// Get the node in the graph at position **i** unchecked.
-    pub fn get_var(&self, i: usize) -> Rc<N> {
+    /// Get the node in the graph at position *i* unchecked.
+    pub fn get_var(&self, i: usize) -> Arc<N> {
         self.vars.get_node(i)
     }
 }
 
-impl<'a, N, S> super::IterModel for HybridModel<'a, N, S>
-    where N: HybridNode<'a>,
-          S: HybridSampler<'a> + Clone
+impl<'a, N> super::IterModel for HybridModel<'a, N>
+    where N: HybridNode<'a>
 {
-    type Iter = NetIter<'a, N>;
+    type Iter = BayesNetIter<'a, N>;
     fn iter_vars(&self) -> Self::Iter {
-        NetIter::new(&self.vars.nodes)
+        BayesNetIter::new(&self.vars.nodes)
     }
 
     fn var_num(&self) -> usize {
         self.vars.nodes.len()
+    }
+
+    fn var_neighbours(&self, idx: usize) -> Vec<usize> {
+        self.vars.nodes[idx].get_neighbours()
     }
 }
 
@@ -142,12 +129,12 @@ pub struct DefHybridNode<'a, C: 'a, D: 'a>
           D: DiscreteVar + AsContinuous
 {
     cont_dist: Option<&'a C>,
-    _disc_dist: Option<&'a D>,
+    disc_dist: Option<&'a D>,
     as_cont: Option<C>,
-    childs: RefCell<Vec<Rc<DefHybridNode<'a, C, D>>>>,
-    parents: RefCell<Vec<Weak<DefHybridNode<'a, C, D>>>>,
-    edges: RefCell<Vec<f64>>, // rank correlations assigned to edges
-    pos: RefCell<usize>,
+    childs: RwLock<Vec<Arc<DefHybridNode<'a, C, D>>>>,
+    parents: RwLock<Vec<Weak<DefHybridNode<'a, C, D>>>>,
+    edges: RwLock<Vec<f64>>, // rank correlations assigned to edges
+    pos: RwLock<usize>,
     was_discrete: bool,
 }
 
@@ -155,13 +142,13 @@ impl<'a, C: 'a, D: 'a> Node for DefHybridNode<'a, C, D>
     where C: ContVar,
           D: DiscreteVar + AsContinuous
 {
-    fn get_child_unchecked(&self, pos: usize) -> Rc<Self> {
-        let childs = &*self.childs.borrow();
+    fn get_child_unchecked(&self, pos: usize) -> Arc<Self> {
+        let childs = &*self.childs.read().unwrap();
         childs[pos].clone()
     }
 
-    fn get_childs(&self) -> Vec<Rc<Self>> {
-        let childs = &*self.childs.borrow();
+    fn get_childs(&self) -> Vec<Arc<Self>> {
+        let childs = &*self.childs.read().unwrap();
         Vec::from_iter(childs.iter().cloned())
     }
 
@@ -170,27 +157,27 @@ impl<'a, C: 'a, D: 'a> Node for DefHybridNode<'a, C, D>
     }
 
     fn position(&self) -> usize {
-        *self.pos.borrow()
+        *self.pos.read().unwrap()
     }
 
     fn get_parents_positions(&self) -> Vec<usize> {
-        let parents = &*self.parents.borrow();
+        let parents = &*self.parents.read().unwrap();
         let mut positions = Vec::with_capacity(parents.len());
         for p in parents {
             let p = p.upgrade().unwrap();
-            positions.push(*p.pos.borrow());
+            positions.push(*p.pos.read().unwrap());
         }
         positions
     }
 
     fn get_all_ancestors(&self) -> Vec<usize> {
-        let parents = &*self.parents.borrow();
+        let parents = &*self.parents.read().unwrap();
         let mut anc = Vec::with_capacity(parents.len());
         for p in parents {
             let p = p.upgrade().unwrap();
             let mut ancestors = p.get_all_ancestors();
             anc.append(&mut ancestors);
-            anc.push(*p.pos.borrow());
+            anc.push(*p.pos.read().unwrap());
         }
         anc.sort_by(|a, b| b.cmp(a));
         anc.dedup();
@@ -198,26 +185,33 @@ impl<'a, C: 'a, D: 'a> Node for DefHybridNode<'a, C, D>
     }
 
     fn get_childs_positions(&self) -> Vec<usize> {
-        let childs = &*self.childs.borrow();
+        let childs = &*self.childs.read().unwrap();
         let mut positions = Vec::with_capacity(childs.len());
         for c in childs {
-            positions.push(*c.pos.borrow());
+            positions.push(*c.pos.read().unwrap());
         }
         positions
     }
 
+    fn get_neighbours(&self) -> Vec<usize> {
+        let mut p = self.get_parents_positions();
+        let mut c = self.get_childs_positions();
+        p.append(&mut c);
+        p
+    }
+
     fn parents_num(&self) -> usize {
-        let parents = &*self.parents.borrow();
+        let parents = &*self.parents.read().unwrap();
         parents.len()
     }
 
     fn childs_num(&self) -> usize {
-        let childs = &*self.childs.borrow();
+        let childs = &*self.childs.read().unwrap();
         childs.len()
     }
 
     fn set_position(&self, pos: usize) {
-        *self.pos.borrow_mut() = pos;
+        *self.pos.write().unwrap() = pos;
     }
 }
 
@@ -229,16 +223,39 @@ impl<'a, C: 'a, D: 'a> HybridNode<'a> for DefHybridNode<'a, C, D>
     fn new_with_discrete(var: &'a Self::Discrete, pos: usize) -> Result<Self, ()> {
         let dist = var.as_continuous()?;
         Ok(DefHybridNode {
-            cont_dist: None,
-            _disc_dist: Some(var),
-            as_cont: Some(dist),
-            childs: RefCell::new(vec![]),
-            parents: RefCell::new(vec![]),
-            edges: RefCell::new(vec![]),
-            pos: RefCell::new(pos),
-            was_discrete: true,
-        })
+               cont_dist: None,
+               disc_dist: Some(var),
+               as_cont: Some(dist),
+               childs: RwLock::new(vec![]),
+               parents: RwLock::new(vec![]),
+               edges: RwLock::new(vec![]),
+               pos: RwLock::new(pos),
+               was_discrete: true,
+           })
     }
+
+    fn was_discrete(&self) -> bool {
+        self.was_discrete
+    }
+
+    fn inverse_cdf(&self, p: f64) -> u8 {
+        match *self.disc_dist.as_ref().unwrap().dist_type() {
+            DType::Bernoulli(ref dist) => dist.inverse_cdf(p),
+            _ => panic!(),
+        }
+    }
+
+    /*
+    fn draw_sample(&self, rng: &mut RGSLRng, values: &[HybridRes]) -> HybridRes {
+        /*
+        match val {
+            HybridRes::Continuous(val) => {},
+            HybridRes::Discrete(val) => {},
+        }
+        */
+        unimplemented!()
+    }
+    */
 }
 
 impl<'a, C: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, C, D>
@@ -265,15 +282,15 @@ impl<'a, C: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, C, D>
 
         // get the probabilities from the dist and insert as default cpt
         Ok(DefHybridNode {
-            cont_dist: Some(dist),
-            _disc_dist: None,
-            as_cont: None,
-            childs: RefCell::new(vec![]),
-            parents: RefCell::new(vec![]),
-            edges: RefCell::new(vec![]),
-            pos: RefCell::new(pos),
-            was_discrete: false,
-        })
+               cont_dist: Some(dist),
+               disc_dist: None,
+               as_cont: None,
+               childs: RwLock::new(vec![]),
+               parents: RwLock::new(vec![]),
+               edges: RwLock::new(vec![]),
+               pos: RwLock::new(pos),
+               was_discrete: false,
+           })
     }
 
     fn get_dist(&self) -> &C {
@@ -293,7 +310,7 @@ impl<'a, C: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, C, D>
     }
 
     fn get_parents_dists(&self) -> Vec<&'a C> {
-        let parents = &*self.parents.borrow();
+        let parents = &*self.parents.read().unwrap();
         let mut dists = Vec::with_capacity(parents.len());
         for p in parents {
             let p = p.upgrade().unwrap();
@@ -303,7 +320,7 @@ impl<'a, C: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, C, D>
     }
 
     fn get_childs_dists(&self) -> Vec<&'a C> {
-        let childs = &*self.childs.borrow();
+        let childs = &*self.childs.read().unwrap();
         let mut dists = Vec::with_capacity(childs.len());
         for c in childs {
             dists.push(c.cont_dist.unwrap());
@@ -311,21 +328,21 @@ impl<'a, C: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, C, D>
         dists
     }
 
-    fn add_parent(&self, parent: Weak<Self>, rank_cr: f64) {
-        let parents = &mut *self.parents.borrow_mut();
-        let edges = &mut *self.edges.borrow_mut();
-        parents.push(parent);
+    fn add_parent(&self, parent: Arc<Self>, rank_cr: f64) {
+        let parents = &mut *self.parents.write().unwrap();
+        let edges = &mut *self.edges.write().unwrap();
+        parents.push(Arc::downgrade(&parent));
         edges.push(rank_cr);
     }
 
-    fn add_child(&self, child: Rc<Self>) {
-        let parent_childs = &mut *self.childs.borrow_mut();
+    fn add_child(&self, child: Arc<Self>) {
+        let parent_childs = &mut *self.childs.write().unwrap();
         parent_childs.push(child);
     }
 
     fn get_edges(&self) -> Vec<(f64, usize)> {
-        let edges = &*self.edges.borrow();
-        let parents = &*self.parents.borrow();
+        let edges = &*self.edges.read().unwrap();
+        let parents = &*self.parents.read().unwrap();
         let mut edge_with_parent = Vec::with_capacity(parents.len());
         for (i, p) in parents.iter().enumerate() {
             let p = p.upgrade().unwrap();
@@ -335,22 +352,18 @@ impl<'a, C: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, C, D>
     }
 }
 
-// HybridDAG:
-
 #[derive(Debug)]
 struct HybridDAG<'a, N>
     where N: HybridNode<'a>
 {
     _nlt: PhantomData<&'a ()>,
-    nodes: Vec<Rc<N>>,
+    nodes: Vec<Arc<N>>,
 }
 
 dag_impl!(HybridDAG, HybridNode; [ContVar + Normalization]);
 
 
-type DefChainGraph<'a> = ChainGraph<'a,
-                                    DefHybridNode<'a, DefContVar, DefDiscreteVar>,
-                                    DefHybridSampler<'a>>;
+pub type DefMarkovRndField<'a> = MarkovRndField<'a, DefHybridNode<'a, DefContVar, DefDiscreteVar>>;
 
 /// A chain graph is composed by a set of nodes, a set of acyclic directed edges (or arcs) and/or
 /// a set of undirected edges.
@@ -361,36 +374,22 @@ type DefChainGraph<'a> = ChainGraph<'a,
 ///
 /// Sampling of this kind of graph is done thought Markov chain Monte Carlo methods, and the
 /// underlying graph is 'moralized' first (to an undirected graph), hence any edge weighting
-/// information would be lost (so it's unnecessary). To avoid this problem, the use of one of
-/// the other provided models is encouraged.
-pub struct ChainGraph<'a, N, S>
-    where N: HybridNode<'a>,
-          S: HybridSampler<'a>
+/// information would be lost (so it's unnecessary). To avoid this problem when necessary, the use
+/// of one of the other directed models is encouraged.
+pub struct MarkovRndField<'a, N>
+    where N: HybridNode<'a>
 {
     _nlt: PhantomData<&'a ()>,
-    sampler: S,
-    _edges: Vec<(Rc<N>, Rc<N>)>,
-    underlying: Vec<Rc<N>>,
+    _edges: Vec<(Arc<N>, Arc<N>)>,
+    underlying: Vec<Arc<N>>,
 }
 
-impl<'a, N, S> ChainGraph<'a, N, S>
-    where N: HybridNode<'a>,
-          S: HybridSampler<'a>
+impl<'a, N> MarkovRndField<'a, N>
+    where N: HybridNode<'a>
 {
-    pub fn new(sampler: S) -> ChainGraph<'a, N, S> {
-        ChainGraph {
+    pub fn new() -> MarkovRndField<'a, N> {
+        MarkovRndField {
             _nlt: PhantomData,
-            sampler: sampler,
-            _edges: vec![],
-            underlying: vec![],
-        }
-    }
-
-    pub fn default() -> DefChainGraph<'a> {
-        use sampling::Sampler;
-        ChainGraph {
-            _nlt: PhantomData,
-            sampler: DefHybridSampler::new(None, None),
             _edges: vec![],
             underlying: vec![],
         }
@@ -400,7 +399,7 @@ impl<'a, N, S> ChainGraph<'a, N, S>
     pub fn add_var(&mut self, var: &'a <N as ContNode<'a>>::Var) -> Result<(), ()> {
         let pos = self.underlying.len();
         let node = N::new(var, pos)?;
-        self.underlying.push(Rc::new(node));
+        self.underlying.push(Arc::new(node));
         Ok(())
     }
 
@@ -411,12 +410,12 @@ impl<'a, N, S> ChainGraph<'a, N, S>
                     a: &'a <N as ContNode<'a>>::Var,
                     b: &'a <N as ContNode<'a>>::Var)
                     -> Result<(), ()> {
-        let a: Rc<N> = self.underlying
+        let a: Arc<N> = self.underlying
             .iter()
             .find(|n| (&**n).get_dist() == a)
             .cloned()
             .ok_or(())?;
-        let b: Rc<N> = self.underlying
+        let b: Arc<N> = self.underlying
             .iter()
             .find(|n| (&**n).get_dist() == b)
             .cloned()
@@ -425,9 +424,9 @@ impl<'a, N, S> ChainGraph<'a, N, S>
         Ok(())
     }
 
-    /// Append a Bayesian network to the model, it will be "moralized" in the process,
+    /// Insert a Bayesian network into the model, it will be "moralized" in the process,
     /// losing all the implied causal information.
-    pub fn append_dag<So: HybridSampler<'a>>(&mut self, other: HybridModel<'a, N, So>) {
+    pub fn insert_dag(&mut self, other: HybridModel<'a, N>) {
         let HybridModel { vars: HybridDAG { mut nodes, .. }, .. } = other;
         let cnt = self.underlying.len();
         for node in &mut nodes {
@@ -438,7 +437,8 @@ impl<'a, N, S> ChainGraph<'a, N, S>
         for node in &self.underlying[cnt..] {
             let mut parents = node.get_parents_positions();
             parents.push(node.position());
-            let mut edges: Vec<(Rc<N>, Rc<N>)> = parents.iter()
+            let mut edges: Vec<(Arc<N>, Arc<N>)> = parents
+                .iter()
                 .tuple_combinations()
                 .map(|(a, b)| (self.underlying[*a].clone(), self.underlying[*b].clone()))
                 .collect();
@@ -452,24 +452,23 @@ impl<'a, N, S> ChainGraph<'a, N, S>
         unimplemented!()
     }
 
-    /// Sample the model in
-    pub fn sample(&self) -> Vec<Vec<HybridSamplerResult>> {
-        self.sampler.clone().get_samples(self)
+    /// Sample for the model marginal probabilities with the current elicited probabilities.
+    pub fn sample_marginals<S: HybridMargSampler<'a>>(&self, sampler: S) -> Vec<Vec<HybridRes>> {
+        sampler.get_samples(self)
     }
 
-    /// Get the node in the graph at position **i** unchecked.
-    pub fn get_var(&self, i: usize) -> Rc<N> {
+    /// Get the node in the graph at position *i* unchecked.
+    pub fn get_var(&self, i: usize) -> Arc<N> {
         self.underlying[i].clone()
     }
 }
 
-impl<'a, N, S> super::IterModel for ChainGraph<'a, N, S>
-    where N: HybridNode<'a>,
-          S: HybridSampler<'a> + Clone
+impl<'a, N> super::IterModel for MarkovRndField<'a, N>
+    where N: HybridNode<'a>
 {
-    type Iter = IterCG<'a, N>;
-    fn iter_vars(&self) -> IterCG<'a, N> {
-        IterCG {
+    type Iter = MarkovRndFieldIter<'a, N>;
+    fn iter_vars(&self) -> MarkovRndFieldIter<'a, N> {
+        MarkovRndFieldIter {
             _nlt: PhantomData,
             nodes: self.underlying.clone(),
             cnt: 0,
@@ -479,20 +478,33 @@ impl<'a, N, S> super::IterModel for ChainGraph<'a, N, S>
     fn var_num(&self) -> usize {
         self.underlying.len()
     }
+
+    fn var_neighbours(&self, idx: usize) -> Vec<usize> {
+        self._edges
+            .iter()
+            .filter_map(|&(ref a, ref b)| if a.position() == idx {
+                            Some(b.position())
+                        } else if b.position() == idx {
+                Some(a.position())
+            } else {
+                None
+            })
+            .collect::<Vec<_>>()
+    }
 }
 
-pub struct IterCG<'a, N>
+pub struct MarkovRndFieldIter<'a, N>
     where N: HybridNode<'a>
 {
     _nlt: PhantomData<&'a ()>,
-    nodes: Vec<Rc<N>>,
+    nodes: Vec<Arc<N>>,
     cnt: usize,
 }
 
-impl<'a, N> ::std::iter::Iterator for IterCG<'a, N>
+impl<'a, N> ::std::iter::Iterator for MarkovRndFieldIter<'a, N>
     where N: HybridNode<'a>
 {
-    type Item = Rc<N>;
+    type Item = Arc<N>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.cnt < self.nodes.len() {
@@ -504,3 +516,4 @@ impl<'a, N> ::std::iter::Iterator for IterCG<'a, N>
         }
     }
 }
+

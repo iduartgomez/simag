@@ -362,10 +362,10 @@ mod test {
             
             ((let x y)
              ((dog[x,u=1] && meat[y,u=1] && fn::eat[y,u=1;x]) 
-              |> fat[x,u=1]))
+              := fat[x,u=1]))
             
             ((let x)
-             ((fat[x,u=1] && dog[x,u=1]) |> (ugly[x,u=1] && sad[x,u=1])))
+             ((fat[x,u=1] && dog[x,u=1]) := (ugly[x,u=1] && sad[x,u=1])))
         ");
         rep.tell(fol).unwrap();
         let answ = rep.ask("(fat[$Pancho,u=1] && sad[$Pancho,u=1])".to_string());
@@ -374,7 +374,7 @@ mod test {
         let fol = String::from("
             (run[$Pancho,u=1])
             ((let x) 
-             ((run[x,u=1] && dog[x,u=1]) |> fat[x,u=0]))
+             ((run[x,u=1] && dog[x,u=1]) := fat[x,u=0]))
         ");
         rep.tell(fol).unwrap();
         let answ0 = rep.ask("(fat[$Pancho,u=0])".to_string());
@@ -395,7 +395,7 @@ mod test {
             ( fn::eat[$M1,u=1;$Pancho] )
             ( ( let x, y )
               ( ( dog[x,u=1] && meat[y,u=1] && fn::eat[y,u=1;x] ) 
-                |> fat[x,u=1] ) )
+                := fat[x,u=1] ) )
         ");
         rep.tell(fol).unwrap();
         let answ = rep.ask("(fat[$Pancho,u=1])".to_string());
@@ -403,7 +403,7 @@ mod test {
 
         let fol = String::from("
             ( run[$Pancho,u=1] )
-            (( let x ) (( dog[x,u=1] && run[x,u=1] ) |> fat[x,u=0] ))
+            (( let x ) (( dog[x,u=1] && run[x,u=1] ) := fat[x,u=0] ))
         ");
         rep.tell(fol).unwrap();
         let answ = rep.ask("(fat[$Pancho,u=0])".to_string());

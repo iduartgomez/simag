@@ -4,24 +4,41 @@ use std::f64::consts::PI;
 use rgsl::{MatrixF64, VectorF64};
 use rgsl;
 
-use super::{Sampler, ContinuousSampler};
+use super::{MarginalSampler, ContMargSampler};
 use model::{Variable, ContModel, ContNode, ContVar, DefContVar, DType};
 use dists::{Normal, Normalization, CDF};
 use err::ErrMsg;
 use RGSLRng;
 
-const ITER_TIMES: usize = 1000;
-const BURN_IN: usize = 0;
+const ITER_TIMES: usize = 2000;
+const _BURN_IN: usize = 500;
 
+
+/// An exact sampler intended for Bayesian nets (encoded causality through directed
+/// acyclic graphs) formed by pure continuous variables.
+///
+/// In a pure continuous Bayesian net, the following algorithm is used:
+///
+/// 1.  Every distribution is transformed to the standard unit normal distribution
+///     and previously sampled.
+/// 2.  Construct the vine for the standard normal variables.
+/// 3.  Compute the correlation matrix for the full joint distribution (correlation 0
+///     entails independence)
+/// 4.  Using a matrix obtained through factorization of the correlation matrix,
+///     compute the sample for each distribution and transform back to the original,
+///     distribution using the inverse cumulative distribution function.
+/// 5.  Repeat 4 as many times as specified by the `steeps` parameter of the sampler.
 #[derive(Debug)]
 pub struct ExactNormalized<'a> {
     steeps: usize,
-    burnin: usize,
     normalized: Vec<Normalized<'a>>,
     samples: Vec<Vec<f64>>,
     rng: RGSLRng,
     cr_matrix: MatrixF64,
 }
+
+unsafe impl<'a> Sync for ExactNormalized<'a> {}
+unsafe impl<'a> Send for ExactNormalized<'a> {}
 
 #[derive(Debug)]
 struct Normalized<'a> {
@@ -29,20 +46,15 @@ struct Normalized<'a> {
     original: &'a DType,
 }
 
-impl<'a> Sampler for ExactNormalized<'a> {
-    fn new(steeps: Option<usize>, burnin: Option<usize>) -> ExactNormalized<'a> {
+impl<'a> MarginalSampler for ExactNormalized<'a> {
+    fn new(steeps: Option<usize>, _burnin: Option<usize>) -> ExactNormalized<'a> {
         let steeps = match steeps {
             Some(val) => val,
             None => ITER_TIMES,
         };
 
-        let burnin = match burnin {
-            Some(val) => val,
-            None => BURN_IN,
-        };
         ExactNormalized {
             steeps: steeps,
-            burnin: burnin,
             normalized: vec![],
             samples: Vec::with_capacity(ITER_TIMES),
             rng: RGSLRng::new(),
@@ -52,7 +64,7 @@ impl<'a> Sampler for ExactNormalized<'a> {
 }
 
 impl<'a> ExactNormalized<'a> {
-    fn initialize<N>(&mut self, net: &ContModel<'a, N, ExactNormalized<'a>>)
+    fn initialize<N>(&mut self, net: &ContModel<'a, N>)
         where N: ContNode<'a>
     {
         //use super::partial_correlation;
@@ -91,19 +103,8 @@ impl<'a> ExactNormalized<'a> {
     }
 }
 
-impl<'a> ContinuousSampler<'a> for ExactNormalized<'a> {
-    /// In a pure continuous Bayesian net, the following algorithm is used:
-    ///
-    /// 1)  Every distribution is transformed to the standard unit normal distribution
-    ///     and previously sampled.
-    /// 2)  Construct the vine for the standard normal variables.
-    /// 3)  Compute the correlation matrix for the full joint distribution (correlation 0
-    ///     entails independence)
-    /// 4)  Using a matrix obtained through factorization of the correlation matrix,
-    ///     compute the sample for each distribution and transform back to the original,
-    ///     distribution using the inverse cumulative distribution function.
-    /// 5)  Repeat 4 as many times as specified by the `steeps` parameter of the sampler.
-    fn get_samples<N>(mut self, net: &ContModel<'a, N, ExactNormalized<'a>>) -> Vec<Vec<f64>>
+impl<'a> ContMargSampler<'a> for ExactNormalized<'a> {
+    fn get_samples<N>(mut self, net: &ContModel<'a, N>) -> Vec<Vec<f64>>
         where N: ContNode<'a>
     {
         use rgsl::blas::level2::dtrmv;
@@ -153,8 +154,7 @@ impl<'a> ContinuousSampler<'a> for ExactNormalized<'a> {
 impl<'a> ::std::clone::Clone for ExactNormalized<'a> {
     fn clone(&self) -> ExactNormalized<'a> {
         let steeps = Some(self.steeps);
-        let burnin = Some(self.burnin);
-        ExactNormalized::new(steeps, burnin)
+        ExactNormalized::new(steeps, None)
     }
 }
 

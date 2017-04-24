@@ -27,7 +27,7 @@ impl LogNormal {
     }
 }
 
-use super::{Sample, CDF,};
+use super::{Sample, CDF};
 
 impl Sample for LogNormal {
     #[inline]

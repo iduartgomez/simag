@@ -1,8 +1,7 @@
-use std::cell::RefCell;
 use std::collections::{VecDeque, HashSet};
 use std::hash::{Hash, Hasher};
 use std::iter::{FromIterator, Iterator};
-use std::rc::{Rc, Weak};
+use std::sync::{Arc, Weak, RwLock};
 use std::marker::PhantomData;
 
 use uuid::Uuid;
@@ -10,15 +9,14 @@ use uuid::Uuid;
 use RGSLRng;
 use super::{Node, Variable, Observation};
 use super::{DType, Continuous};
-use sampling::{ContinuousSampler, DefContSampler};
+use sampling::{ContMargSampler};
 use dists::{Sample, Normalization};
 use err::ErrMsg;
 
 // public traits for models:
 
 ///  Node trait for a continuous model.
-pub trait ContNode<'a>: Node
-    where Self: Sized
+pub trait ContNode<'a>: Node + Sized
 {
     type Var: 'a + ContVar + Normalization;
 
@@ -40,11 +38,11 @@ pub trait ContNode<'a>: Node
 
     /// Add a new parent to this child with given rank correlation.
     /// Does not add self as child implicitly!
-    fn add_parent(&self, parent: Weak<Self>, rank_cr: f64);
+    fn add_parent(&self, parent: Arc<Self>, rank_cr: f64);
 
     /// Add a child to this node, assumes rank correlation was provided to the child.
     /// Does not add self as parent implicitly!
-    fn add_child(&self, child: Rc<Self>);
+    fn add_child(&self, child: Arc<Self>);
 
     /// Get the values of the edges of this node with its parents, representing the rank
     /// correlation between the nodes. Returns the position of the parent for each edge
@@ -73,34 +71,21 @@ pub trait ContVar: Variable {
     fn get_obs_unchecked(&self, pos: usize) -> Self::Event;
 }
 
-pub type DefContModel<'a> = ContModel<'a, DefContNode<'a, DefContVar>, DefContSampler<'a>>;
+pub type DefContModel<'a> = ContModel<'a, DefContNode<'a, DefContVar>>;
 
 #[derive(Debug)]
-pub struct ContModel<'a, N, S>
-    where N: ContNode<'a>,
-          S: ContinuousSampler<'a> + Clone
+pub struct ContModel<'a, N>
+    where N: ContNode<'a>
 {
-    vars: ContDAG<'a, N>,
-    sampler: S,
+    vars: ContDAG<'a, N>
 }
 
-impl<'a, N, S> ContModel<'a, N, S>
-    where N: ContNode<'a>,
-          S: ContinuousSampler<'a>
+impl<'a, N> ContModel<'a, N>
+    where N: ContNode<'a>
 {
-    pub fn new(sampler: S) -> ContModel<'a, N, S> {
+    pub fn new() -> ContModel<'a, N> {
         ContModel {
-            vars: ContDAG::new(),
-            sampler: sampler,
-        }
-    }
-
-    /// Get a new instance of the default implementation of a continuous model.
-    pub fn default() -> DefContModel<'a> {
-        use sampling::Sampler;
-        ContModel {
-            vars: ContDAG::new(),
-            sampler: DefContSampler::new(None, None),
+            vars: ContDAG::new()
         }
     }
 
@@ -108,7 +93,7 @@ impl<'a, N, S> ContModel<'a, N, S>
     pub fn add_var(&mut self, var: &'a <N as ContNode<'a>>::Var) -> Result<(), ()> {
         let pos = self.vars.nodes.len();
         let node = N::new(var, pos)?;
-        self.vars.nodes.push(Rc::new(node));
+        self.vars.nodes.push(Arc::new(node));
         Ok(())
     }
 
@@ -128,19 +113,19 @@ impl<'a, N, S> ContModel<'a, N, S>
         //  - the theoretical child cannot be a parent of the theoretical parent
         //    as the network is a DAG
         // find node and parents in the net
-        let node: Rc<N> = self.vars
+        let node: Arc<N> = self.vars
             .nodes
             .iter()
             .find(|n| (&**n).get_dist() == node)
             .cloned()
             .ok_or(())?;
-        let parent: Rc<N> = self.vars
+        let parent: Arc<N> = self.vars
             .nodes
             .iter()
             .find(|n| (&**n).get_dist() == parent)
             .cloned()
             .ok_or(())?;
-        node.add_parent(Rc::downgrade(&parent.clone()), rank_cr);
+        node.add_parent(parent.clone(), rank_cr);
         parent.add_child(node.clone());
         // check if it's a DAG and topologically sort the graph
         self.vars.topological_sort()
@@ -152,9 +137,8 @@ impl<'a, N, S> ContModel<'a, N, S>
         unimplemented!()
     }
 
-    /// Sample the model in
-    pub fn sample(&self) -> Vec<Vec<f64>> {
-        let sampler = self.sampler.clone();
+    /// Sample for the model marginal probabilities with the current elicited probabilities.
+    pub fn sample_marginals<S: ContMargSampler<'a>>(&self, sampler: S) -> Vec<Vec<f64>> {
         sampler.get_samples(self)
     }
 
@@ -164,12 +148,12 @@ impl<'a, N, S> ContModel<'a, N, S>
     }
 
     /// Iterate the model variables in topographical order.
-    pub fn iter_vars(&self) -> NetIter<'a, N> {
-        NetIter::new(&self.vars.nodes)
+    pub fn iter_vars(&self) -> BayesNetIter<'a, N> {
+        BayesNetIter::new(&self.vars.nodes)
     }
 
-    /// Get the node in the graph at position **i** unchecked.
-    pub fn get_var(&self, i: usize) -> Rc<N> {
+    /// Get the node in the graph at position *i* unchecked.
+    pub fn get_var(&self, i: usize) -> Arc<N> {
         self.vars.get_node(i)
     }
 }
@@ -179,7 +163,7 @@ struct ContDAG<'a, N>
     where N: ContNode<'a>
 {
     _nlt: PhantomData<&'a ()>,
-    nodes: Vec<Rc<N>>,
+    nodes: Vec<Arc<N>>,
 }
 
 dag_impl!(ContDAG, ContNode; [ContVar + Normalization]);
@@ -192,21 +176,21 @@ pub struct DefContNode<'a, V: 'a>
     where V: ContVar
 {
     pub dist: &'a V,
-    childs: RefCell<Vec<Rc<DefContNode<'a, V>>>>,
-    parents: RefCell<Vec<Weak<DefContNode<'a, V>>>>,
-    edges: RefCell<Vec<f64>>, // rank correlations assigned to edges
-    pos: RefCell<usize>,
+    childs: RwLock<Vec<Weak<DefContNode<'a, V>>>>,
+    parents: RwLock<Vec<Arc<DefContNode<'a, V>>>>,
+    edges: RwLock<Vec<f64>>, // rank correlations assigned to edges
+    pos: RwLock<usize>,
 }
 
 impl<'a, V: 'a + ContVar> ::std::fmt::Debug for DefContNode<'a, V> {
     fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         write!(f,
                "DefContNode {{ dist: {d:?}, childs: {c}, parents: {p}, pos: {pos}, edges: {e:?} }}",
-               c = self.childs.borrow().len(),
-               p = self.parents.borrow().len(),
-               pos = *self.pos.borrow(),
+               c = self.childs.read().unwrap().len(),
+               p = self.parents.read().unwrap().len(),
+               pos = *self.pos.read().unwrap(),
                d = self.dist,
-               e = self.edges.borrow())
+               e = self.edges.read().unwrap())
     }
 }
 
@@ -236,10 +220,10 @@ impl<'a, V: 'a> ContNode<'a> for DefContNode<'a, V>
         // get the probabilities from the dist and insert as default cpt
         Ok(DefContNode {
             dist: dist,
-            childs: RefCell::new(vec![]),
-            parents: RefCell::new(vec![]),
-            edges: RefCell::new(vec![]),
-            pos: RefCell::new(pos),
+            childs: RwLock::new(vec![]),
+            parents: RwLock::new(vec![]),
+            edges: RwLock::new(vec![]),
+            pos: RwLock::new(pos),
         })
     }
 
@@ -252,42 +236,57 @@ impl<'a, V: 'a> ContNode<'a> for DefContNode<'a, V>
     }
 
     fn get_parents_dists(&self) -> Vec<&'a V> {
-        let parents = &*self.parents.borrow();
+        let parents = &*self.parents.read().unwrap();
         let mut dists = Vec::with_capacity(parents.len());
         for p in parents {
-            let p = p.upgrade().unwrap();
             dists.push(p.dist);
         }
         dists
     }
 
     fn get_childs_dists(&self) -> Vec<&'a V> {
-        let childs = &*self.childs.borrow();
+        let childs = &*self.childs.read().unwrap();
         let mut dists = Vec::with_capacity(childs.len());
         for c in childs {
-            dists.push(c.dist);
+            dists.push(c.upgrade().unwrap().dist);
         }
         dists
     }
 
-    fn add_parent(&self, parent: Weak<Self>, rank_cr: f64) {
-        let parents = &mut *self.parents.borrow_mut();
-        let edges = &mut *self.edges.borrow_mut();
-        parents.push(parent);
-        edges.push(rank_cr);
+    fn add_parent(&self, parent: Arc<Self>, rank_cr: f64) {
+        let parents = &mut *self.parents.write().unwrap();
+        let edges = &mut *self.edges.write().unwrap();
+        // check for duplicates:
+        let pos = parents
+            .iter()
+            .enumerate()
+            .find(|&(_, x)| &*x.get_dist() == parent.get_dist())
+            .map(|(i, _)| i);
+        if let Some(pos) = pos {
+            edges[pos] = rank_cr;
+        } else {
+            parents.push(parent);
+            edges.push(rank_cr);
+        };
     }
 
-    fn add_child(&self, child: Rc<Self>) {
-        let parent_childs = &mut *self.childs.borrow_mut();
-        parent_childs.push(child);
+    fn add_child(&self, child: Arc<Self>) {
+        let parent_childs = &mut *self.childs.write().unwrap();
+        let pos = parent_childs
+            .iter()
+            .enumerate()
+            .find(|&(_, x)| &*x.upgrade().unwrap().get_dist() == child.get_dist())
+            .map(|(i, _)| i);
+        if let None = pos {
+            parent_childs.push(Arc::downgrade(&child));
+        }
     }
 
     fn get_edges(&self) -> Vec<(f64, usize)> {
-        let edges = &*self.edges.borrow();
-        let parents = &*self.parents.borrow();
+        let edges = &*self.edges.read().unwrap();
+        let parents = &*self.parents.read().unwrap();
         let mut edge_with_parent = Vec::with_capacity(parents.len());
         for (i, p) in parents.iter().enumerate() {
-            let p = p.upgrade().unwrap();
             edge_with_parent.push((edges[i], p.position()));
         }
         edge_with_parent

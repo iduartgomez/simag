@@ -28,11 +28,11 @@ Example: `fn::loves[$Lucy,u=1;$John]`
 * `fn` defines a function. E.g: `fn::name` defined a function with name `name` (relational or otherwise depends on the context).
 
 ## Logic operators
-  * `&&`  :  and
-  * `||`  :  or
-  * `=>`  :  material implication
+  * `&&`   :  and
+  * `||`   :  or
+  * `=>`   :  material implication
   * `<=>`  :  biconditional
-  * `|>`  :  indicative implication
+  * `:=`   :  entailment
 
 # Full program examples
 
@@ -40,7 +40,7 @@ Complex sentences are composed of various atomic sentences connected by
 connectives/operators and/or sentences which use quantified variables
 (when used, variables must always be quantified).
 
-In the consequent of an indicative implication only && operator can be nested.
+In the consequent of an entailment only && operator can be nested.
 Parentheses can be used to split complex sentences for comprehension and 
 clarity. An example of a complex sentence:
 
@@ -48,7 +48,7 @@ clarity. An example of a complex sentence:
 (
     ( let x y ) 
     ( fn::takes[$analysis,u=1;x] && fn::takes[y,u=1;x] && course[y,u=1] && student[x,u=1] 
-      |> silly[x,u=1]a )
+      := silly[x,u=1]a )
 )
 ```
 

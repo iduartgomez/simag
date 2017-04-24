@@ -9,6 +9,9 @@ pub struct RGSLRng {
     cnt: usize,
 }
 
+unsafe impl Sync for RGSLRng {}
+unsafe impl Send for RGSLRng {}
+
 const ENTROPY: usize = 32 * 1024;
 
 impl RGSLRng {

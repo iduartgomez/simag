@@ -1,3 +1,5 @@
+/// Continuous and discrete probability distributions.
+
 mod categorical;
 
 mod beta;
