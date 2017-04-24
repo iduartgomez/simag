@@ -1,16 +1,19 @@
 //! Sampling for pure discrete models.
 
 use RGSLRng;
-use super::{MarginalSampler, DiscMargSampler};
+use super::{DiscSampler};
 use model::{DiscreteModel, DiscreteNode};
 
 const ITER_TIMES: usize = 2000;
 const BURN_IN: usize = 500;
 
-/// A Gibbs sampler inteded for Bayesian nets (encoded causality through directed
-/// acyclic graphs) formed by discrete variables.
+/// A Gibbs sampler inteded for Bayesian nets (encoded causality through directed acyclic graphs)
+/// formed by discrete variables.
+///
+/// Returns a matrix of *t* x *k* dimensions of samples (*t* = steeps; *k* = number of variables),
+/// samples each marginal distribution each steep.
 #[derive(Debug)]
-pub struct Gibbs {
+pub struct GibbsMarginal {
     steeps: usize,
     burnin: usize,
     samples: Vec<Vec<u8>>,
@@ -18,8 +21,8 @@ pub struct Gibbs {
     rng: RGSLRng,
 }
 
-impl MarginalSampler for Gibbs {
-    fn new(steeps: Option<usize>, burnin: Option<usize>) -> Gibbs {
+impl GibbsMarginal {
+    pub fn new(steeps: Option<usize>, burnin: Option<usize>) -> GibbsMarginal {
         let steeps = match steeps {
             Some(val) => val,
             None => ITER_TIMES,
@@ -30,7 +33,7 @@ impl MarginalSampler for Gibbs {
             None => BURN_IN,
         };
 
-        Gibbs {
+        GibbsMarginal {
             steeps: steeps,
             burnin: burnin,
             samples: Vec::with_capacity(steeps),
@@ -38,9 +41,7 @@ impl MarginalSampler for Gibbs {
             rng: RGSLRng::new(),
         }
     }
-}
 
-impl Gibbs {
     fn var_val<'a, N>(&mut self, t: usize, var: &N, var_pos: usize) -> u8
         where N: DiscreteNode<'a>
     {
@@ -74,8 +75,10 @@ impl Gibbs {
     }
 }
 
-impl DiscMargSampler for Gibbs {
-    fn get_samples<'a, N>(mut self, net: &DiscreteModel<'a, N>) -> Vec<Vec<u8>>
+impl DiscSampler for GibbsMarginal {
+    type Output = Vec<Vec<u8>>;
+    type Err = ();
+    fn get_samples<'a, N>(mut self, net: &DiscreteModel<'a, N>) -> Result<Self::Output, Self::Err>
         where N: DiscreteNode<'a>
     {
         let k = net.var_num();
@@ -90,14 +93,14 @@ impl DiscMargSampler for Gibbs {
                 self.samples.push(steep)
             }
         }
-        self.samples
+        Ok(self.samples)
     }
 }
 
-impl ::std::clone::Clone for Gibbs {
-    fn clone(&self) -> Gibbs {
+impl ::std::clone::Clone for GibbsMarginal {
+    fn clone(&self) -> GibbsMarginal {
         let steeps = Some(self.steeps);
         let burnin = Some(self.burnin);
-        Gibbs::new(steeps, burnin)
+        GibbsMarginal::new(steeps, burnin)
     }
 }

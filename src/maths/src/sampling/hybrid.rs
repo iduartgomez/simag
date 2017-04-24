@@ -5,7 +5,7 @@ use std::ops::Deref;
 use rgsl::{MatrixF64, VectorF64};
 use rgsl;
 
-use super::{MarginalSampler, HybridMargSampler, HybridRes};
+use super::{HybridSampler, HybridRes};
 use model::{Variable, HybridNode, ContVar, DefContVar, DType, IterModel};
 use dists::{Normal, Normalization, CDF};
 use err::ErrMsg;
@@ -14,8 +14,12 @@ use RGSLRng;
 const ITER_TIMES: usize = 2000;
 const BURN_IN: usize = 500;
 
-/// An exact sampler intended for Bayesian nets (encoded causality through directed
-/// acyclic graphs) formed by discreted and/or continuous variables.
+/// An efficient exact sampler intended for Bayesian nets (encoded causality through
+/// direct acyclic graphs) formed by discreted and/or continuous variables. Requires
+/// a rank correlation specification for each arc in the model.
+///
+/// Returns a matrix of *t* x *k* dimensions of samples (*t* = steeps; *k* = number of variables),
+/// samples each marginal distribution each steep.
 ///
 /// In a pure continuous Bayesian net, the following algorithm is used:
 ///
@@ -31,7 +35,9 @@ const BURN_IN: usize = 500;
 ///
 /// In addition to those steeps, for an hybrid network, the discrete variables are
 /// transformed to continuous variables through the available method implemented for
-/// the model's variable type.
+/// the discrete variable node. In the case of the provided rank correlations
+/// (not partial correlations!), is assumed that the discrete variables have a monotonic
+/// relationship with their parents/childs based on the order of their categories.
 #[derive(Debug)]
 pub struct ExactNormalized<'a> {
     steeps: usize,
@@ -51,8 +57,8 @@ struct Normalized<'a> {
     original: &'a DType,
 }
 
-impl<'a> MarginalSampler for ExactNormalized<'a> {
-    fn new(steeps: Option<usize>, burnin: Option<usize>) -> ExactNormalized<'a> {
+impl<'a> ExactNormalized<'a> {
+    pub fn new(steeps: Option<usize>, burnin: Option<usize>) -> ExactNormalized<'a> {
         let steeps = match steeps {
             Some(val) => val,
             None => ITER_TIMES,
@@ -72,10 +78,8 @@ impl<'a> MarginalSampler for ExactNormalized<'a> {
             cr_matrix: MatrixF64::new(1, 1).unwrap(),
         }
     }
-}
 
-impl<'a> ExactNormalized<'a> {
-    fn initialize<M>(&mut self, net: &M)
+    fn initialize<M>(&mut self, net: &M) -> Result<(), ()>
         where <<<M as IterModel>::Iter as Iterator>::Item as Deref>::Target: HybridNode<'a>,
               <<M as IterModel>::Iter as Iterator>::Item: Deref,
               M: IterModel
@@ -101,7 +105,7 @@ impl<'a> ExactNormalized<'a> {
             let dist = node.get_dist().as_normal(self.steeps).into_default();
             for (pt_cr, j) in node.get_edges() {
                 // ρ{i,j}|D = 2 * sin( π/6 * r{i,j}|D )
-                let rho_xy = 2.0 * (PI_DIV_SIX * pt_cr).sin();
+                let rho_xy = 2.0 * (PI_DIV_SIX * pt_cr.ok_or(())?).sin();
                 //cached.insert((i, j), rho_xy);
                 self.cr_matrix.set(i, j, rho_xy);
             }
@@ -118,11 +122,14 @@ impl<'a> ExactNormalized<'a> {
             };
             self.normalized.push(n);
         }
+        Ok(())
     }
 }
 
-impl<'a> HybridMargSampler<'a> for ExactNormalized<'a> {
-    fn get_samples<M>(mut self, net: &M) -> Vec<Vec<HybridRes>>
+impl<'a> HybridSampler<'a> for ExactNormalized<'a> {
+    type Output = Vec<Vec<HybridRes>>;
+    type Err = ();
+    fn get_samples<M>(mut self, net: &M) -> Result<Self::Output, Self::Err>
         where <<<M as IterModel>::Iter as Iterator>::Item as Deref>::Target: HybridNode<'a>,
               <<M as IterModel>::Iter as Iterator>::Item: Deref,
               M: IterModel
@@ -130,7 +137,7 @@ impl<'a> HybridMargSampler<'a> for ExactNormalized<'a> {
         use rgsl::blas::level2::dtrmv;
 
         let std = Normal::std();
-        self.initialize(net);
+        self.initialize(net)?;
         let d = self.normalized.len();
         for t in 0..self.steeps {
             let mut steep_sample = VectorF64::new(d).unwrap();
@@ -182,12 +189,11 @@ impl<'a> HybridMargSampler<'a> for ExactNormalized<'a> {
                         HybridRes::Continuous(dist.inverse_cdf(sample))
                     }
                     DType::RelaxedBernoulli(ref dist) => {
-                        let success = if dist.discretized(dist.inverse_cdf(sample)) {
-                            1
+                        if dist.discretized(dist.inverse_cdf(sample)) {
+                            HybridRes::Discrete(1)
                         } else {
-                            0
-                        };
-                        HybridRes::Discrete(success)
+                            HybridRes::Discrete(0)
+                        }
                     }
                     ref d => panic!(ErrMsg::DiscDistContNode.panic_msg_with_arg(d)),
                 };
@@ -195,7 +201,7 @@ impl<'a> HybridMargSampler<'a> for ExactNormalized<'a> {
             }
             self.samples.push(f);
         }
-        self.samples
+        Ok(self.samples)
     }
 }
 
@@ -220,7 +226,6 @@ impl<'a> ::std::clone::Clone for ExactNormalized<'a> {
 /// from the built Markov chain and the graph model. In each steep the univariates are 
 /// conditioned on the values of the variables in Markov blanket of variable *j* at steep *t* 
 /// (for variable *0...j-1*) and *t-1* (for variable *j+1...k).
-
 pub struct Gibbs {
     steeps: usize,
     burnin: usize,
@@ -234,8 +239,8 @@ struct VarData {
     blanket: Vec<usize>,
 }
 
-impl MarginalSampler for Gibbs {
-    fn new(steeps: Option<usize>, burnin: Option<usize>) -> Gibbs {
+impl<'a> Gibbs {
+    pub fn new(steeps: Option<usize>, burnin: Option<usize>) -> Gibbs {
         let steeps = match steeps {
             Some(val) => val,
             None => ITER_TIMES,
@@ -254,9 +259,7 @@ impl MarginalSampler for Gibbs {
             rng: RGSLRng::new(),
         }
     }
-}
 
-impl<'a> Gibbs {
     /// Choose an initial state and a support set for each variable and construct the target 
     /// proposal for each variable in the process.
     fn initialize<M>(&mut self, net: &M)
@@ -310,8 +313,10 @@ impl<'a> Gibbs {
     }
 }
 
-impl<'a> HybridMargSampler<'a> for Gibbs {
-    fn get_samples<M>(mut self, net: &M) -> Vec<Vec<HybridRes>>
+impl<'a> HybridSampler<'a> for Gibbs {
+    type Output = Vec<Vec<HybridRes>>;
+    type Err = ();
+    fn get_samples<M>(mut self, net: &M) -> Result<Self::Output, Self::Err>
         where <<<M as IterModel>::Iter as Iterator>::Item as Deref>::Target: HybridNode<'a>,
               <<M as IterModel>::Iter as Iterator>::Item: Deref,
               M: IterModel
@@ -328,7 +333,7 @@ impl<'a> HybridMargSampler<'a> for Gibbs {
                 self.samples.push(steep)
             }
         }
-        self.samples
+        Ok(self.samples)
     }
 }
 

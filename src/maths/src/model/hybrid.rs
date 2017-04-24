@@ -6,9 +6,8 @@ use std::marker::PhantomData;
 use RGSLRng;
 use super::{Node, ContVar, DiscreteVar, ContNode};
 use super::{DType, DefContVar, DefDiscreteVar};
-use sampling::HybridMargSampler;
+use sampling::HybridSampler;
 use dists::{Normalization, AsContinuous};
-use model::HybridRes;
 
 use itertools::Itertools;
 
@@ -21,7 +20,6 @@ pub trait HybridNode<'a>: ContNode<'a> + Sized {
     fn get_disc_dist(&self) -> Option<&'a Self::Discrete>;
     fn inverse_cdf(&self, p: f64) -> u8;
     fn remove_disc_parent(&self, var: &Self::Discrete);
-    fn remove_disc_child(&self, var: &Self::Discrete);
     //fn draw_sample(&self, rng: &mut RGSLRng, values: &[HybridRes]) -> HybridRes;
 }
 
@@ -58,7 +56,7 @@ impl<'a, N> HybridModel<'a, N>
     pub fn add_parent(&mut self,
                       node: &'a <N as ContNode<'a>>::Var,
                       parent: &'a <N as ContNode<'a>>::Var,
-                      rank_cr: f64)
+                      rank_cr: Option<f64>)
                       -> Result<(), ()> {
         // checks to perform:
         //  - both exist in the model
@@ -91,18 +89,20 @@ impl<'a, N> HybridModel<'a, N>
                .iter()
                .position(|n| (&**n).get_dist() == var) {
             if pos < self.vars.nodes.len() - 1 {
+                let parent = &self.vars.nodes[pos];
                 for node in &self.vars.nodes[pos + 1..] {
                     node.set_position(node.position() - 1);
                     node.remove_parent(var);
+                    parent.remove_child(node.get_dist());
                 }
             }
             self.vars.nodes.remove(pos);
         };
     }
 
-    /// Remove a continuous variable from the model, the childs will be disjoint if they don't
+    /// Remove a discrete variable from the model, the childs will be disjoint if they don't
     /// have an other parent.
-    pub fn remove_disc_parent_var(&mut self, var: &'a <N as HybridNode<'a>>::Discrete) {
+    pub fn remove_disc_var(&mut self, var: &'a <N as HybridNode<'a>>::Discrete) {
         if let Some(pos) = self.vars
                .nodes
                .iter()
@@ -112,17 +112,19 @@ impl<'a, N> HybridModel<'a, N>
                              false
                          }) {
             if pos < self.vars.nodes.len() - 1 {
+                let parent = &self.vars.nodes[pos];
                 for node in &self.vars.nodes[pos + 1..] {
                     node.set_position(node.position() - 1);
                     node.remove_disc_parent(var);
+                    parent.remove_child(node.get_dist());
                 }
             }
             self.vars.nodes.remove(pos);
         };
     }
 
-    /// Sample for the model marginal probabilities with the current elicited probabilities.
-    pub fn sample_marginals<S: HybridMargSampler<'a>>(&self, sampler: S) -> Vec<Vec<HybridRes>> {
+    /// Sample the model with a given sampler, with the current elicited probabilities.
+    pub fn sample<S: HybridSampler<'a>>(&self, sampler: S) -> Result<S::Output, S::Err> {
         sampler.get_samples(self)
     }
 
@@ -168,7 +170,7 @@ pub struct DefHybridNode<'a, C: 'a, D: 'a>
     as_cont: Option<C>,
     childs: RwLock<Vec<Weak<DefHybridNode<'a, C, D>>>>,
     parents: RwLock<Vec<Arc<DefHybridNode<'a, C, D>>>>,
-    edges: RwLock<Vec<f64>>, // rank correlations assigned to edges
+    edges: RwLock<Vec<Option<f64>>>, // rank correlations assigned to edges, if any
     pos: RwLock<usize>,
     was_discrete: bool,
 }
@@ -298,6 +300,7 @@ impl<'a, C: 'a, D: 'a> HybridNode<'a> for DefHybridNode<'a, C, D>
         }
     }
 
+    /*
     fn remove_disc_child(&self, var: &D) {
         let childs = &mut *self.childs.write().unwrap();
         if let Some(pos) = childs
@@ -309,17 +312,6 @@ impl<'a, C: 'a, D: 'a> HybridNode<'a> for DefHybridNode<'a, C, D>
                          }) {
             childs.remove(pos);
         }
-    }
-
-    /*
-    fn draw_sample(&self, rng: &mut RGSLRng, values: &[HybridRes]) -> HybridRes {
-        /*
-        match val {
-            HybridRes::Continuous(val) => {},
-            HybridRes::Discrete(val) => {},
-        }
-        */
-        unimplemented!()
     }
     */
 }
@@ -394,7 +386,7 @@ impl<'a, C: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, C, D>
         dists
     }
 
-    fn add_parent(&self, parent: Arc<Self>, rank_cr: f64) {
+    fn add_parent(&self, parent: Arc<Self>, rank_cr: Option<f64>) {
         let parents = &mut *self.parents.write().unwrap();
         let edges = &mut *self.edges.write().unwrap();
         parents.push(parent);
@@ -424,7 +416,7 @@ impl<'a, C: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, C, D>
         }
     }
 
-    fn get_edges(&self) -> Vec<(f64, usize)> {
+    fn get_edges(&self) -> Vec<(Option<f64>, usize)> {
         let edges = &*self.edges.read().unwrap();
         let parents = &*self.parents.read().unwrap();
         let mut edge_with_parent = Vec::with_capacity(parents.len());
@@ -463,7 +455,7 @@ pub struct MarkovRndField<'a, N>
     where N: HybridNode<'a>
 {
     _nlt: PhantomData<&'a ()>,
-    edges: Vec<(Arc<N>, Arc<N>)>,
+    edges: Vec<(Arc<N>, Arc<N>, Option<f64>)>,
     underlying: Vec<Arc<N>>,
 }
 
@@ -503,7 +495,7 @@ impl<'a, N> MarkovRndField<'a, N>
             .find(|n| (&**n).get_dist() == b)
             .cloned()
             .ok_or(())?;
-        self.edges.push((a, b));
+        self.edges.push((a, b, None));
         Ok(())
     }
 
@@ -520,10 +512,10 @@ impl<'a, N> MarkovRndField<'a, N>
         for node in &self.underlying[cnt..] {
             let mut parents = node.get_parents_positions();
             parents.push(node.position());
-            let mut edges: Vec<(Arc<N>, Arc<N>)> = parents
+            let mut edges = parents
                 .iter()
                 .tuple_combinations()
-                .map(|(a, b)| (self.underlying[*a].clone(), self.underlying[*b].clone()))
+                .map(|(a, b)| (self.underlying[*a].clone(), self.underlying[*b].clone(), None))
                 .collect();
             self.edges.append(&mut edges);
         }
@@ -545,7 +537,7 @@ impl<'a, N> MarkovRndField<'a, N>
     }
 
     /// Sample for the model marginal probabilities with the current elicited probabilities.
-    pub fn sample_marginals<S: HybridMargSampler<'a>>(&self, sampler: S) -> Vec<Vec<HybridRes>> {
+    pub fn sample<S: HybridSampler<'a>>(&self, sampler: S) -> Result<S::Output, S::Err> {
         sampler.get_samples(self)
     }
 
@@ -574,7 +566,7 @@ impl<'a, N> super::IterModel for MarkovRndField<'a, N>
     fn var_neighbours(&self, idx: usize) -> Vec<usize> {
         self.edges
             .iter()
-            .filter_map(|&(ref a, ref b)| if a.position() == idx {
+            .filter_map(|&(ref a, ref b, _)| if a.position() == idx {
                             Some(b.position())
                         } else if b.position() == idx {
                 Some(a.position())

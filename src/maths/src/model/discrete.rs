@@ -9,7 +9,7 @@ use uuid::Uuid;
 use RGSLRng;
 use super::{Node, Variable, Observation};
 use super::{DType, Discrete};
-use sampling::DiscMargSampler;
+use sampling::DiscSampler;
 use dists::{Categorical, Bernoulli};
 use err::ErrMsg;
 
@@ -42,13 +42,13 @@ pub trait DiscreteNode<'a>: Node + Sized {
     /// Add a new parent to this node. Does not add self as child implicitly!
     fn add_parent(&self, parent: Arc<Self>);
 
-    /// Remove a parent from this node. Does not removes self as child implicitly!
+    /// Remove a parent from this node. Does not remove self as child implicitly!
     fn remove_parent(&self, parent: &Self::Var);
 
     /// Add a child to this node. Does not add self as parent implicitly!
     fn add_child(&self, child: Arc<Self>);
 
-    /// Remove a child from this node. Does not removes self as parent implicitly!
+    /// Remove a child from this node. Does not remove self as parent implicitly!
     fn remove_child(&self, child: &Self::Var);
 
     fn build_cpt(&self, probabilities: CPT, k: usize) -> Result<(), String>;
@@ -179,8 +179,8 @@ impl<'a, N> DiscreteModel<'a, N>
         Ok(())
     }
 
-    /// Sample for the model marginal probabilities with the current elicited probabilities.
-    pub fn sample_marginals<S: DiscMargSampler>(&self, sampler: S) -> Vec<Vec<u8>> {
+    /// Sample the model with a given sampler, with the current elicited probabilities.
+    pub fn sample<S: DiscSampler>(&self, sampler: S) -> Result<S::Output, S::Err> {
         sampler.get_samples(self)
     }
 

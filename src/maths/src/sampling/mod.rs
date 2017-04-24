@@ -19,34 +19,32 @@ mod discrete;
 mod continuous;
 mod hybrid;
 
-pub use self::discrete::Gibbs as DiscreteGibbs;
-pub use self::continuous::ExactNormalized as ContinuousExactNormalized;
-pub use self::hybrid::ExactNormalized as HybridExactNormalized;
+pub use self::discrete::GibbsMarginal as DiscreteMarginalGibbs;
+pub use self::continuous::ExactNormalized as ContinuousMarginalExact;
+pub use self::hybrid::ExactNormalized as HybridMarginalExact;
 
 use model::{DiscreteModel, DiscreteNode, ContModel, ContNode, HybridNode, IterModel, HybridRes};
 
-pub trait MarginalSampler: Send + Sync
-{
-    fn new(steeps: Option<usize>, burnin: Option<usize>) -> Self;
-}
-
-pub trait DiscMargSampler: MarginalSampler {
-    /// Returns a matrix of *t* x *k* dimensions of samples (*t* = steeps; *k* = number of variables).
-    fn get_samples<'a, N>(self, state_space: &DiscreteModel<'a, N>) -> Vec<Vec<u8>>
+pub trait DiscSampler: Send + Sync {
+    type Output;
+    type Err;
+    fn get_samples<'a, N>(self, state_space: &DiscreteModel<'a, N>) -> Result<Self::Output, Self::Err>
         where N: DiscreteNode<'a>;
 }
 
-pub trait ContMargSampler<'a>: MarginalSampler {
-    /// Returns a matrix of *t* x *k* dimensions of samples (*t* = steeps; *k* = number of variables).
-    fn get_samples<N>(self, state_space: &ContModel<'a, N>) -> Vec<Vec<f64>>
+pub trait ContSampler<'a>: Send + Sync {
+    type Output;
+    type Err;
+    fn get_samples<N>(self, state_space: &ContModel<'a, N>) -> Result<Self::Output, Self::Err>
         where N: ContNode<'a>;
 }
 
 use std::ops::Deref;
 
-pub trait HybridMargSampler<'a>: MarginalSampler {
-    /// Returns a matrix of *t* x *k* dimensions of samples (*t* = steeps; *k* = number of variables).
-    fn get_samples<M>(self, state_space: &M) -> Vec<Vec<HybridRes>>
+pub trait HybridSampler<'a>: Send + Sync {
+    type Output;
+    type Err;
+    fn get_samples<M>(self, state_space: &M) -> Result<Self::Output, Self::Err>
         where M: IterModel,
               <<<M as IterModel>::Iter as Iterator>::Item as Deref>::Target: HybridNode<'a>,
               <<M as IterModel>::Iter as Iterator>::Item: Deref;

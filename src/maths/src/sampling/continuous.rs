@@ -4,7 +4,7 @@ use std::f64::consts::PI;
 use rgsl::{MatrixF64, VectorF64};
 use rgsl;
 
-use super::{MarginalSampler, ContMargSampler};
+use super::ContSampler;
 use model::{Variable, ContModel, ContNode, ContVar, DefContVar, DType};
 use dists::{Normal, Normalization, CDF};
 use err::ErrMsg;
@@ -14,8 +14,12 @@ const ITER_TIMES: usize = 2000;
 const _BURN_IN: usize = 500;
 
 
-/// An exact sampler intended for Bayesian nets (encoded causality through directed
-/// acyclic graphs) formed by pure continuous variables.
+/// An efficient exact sampler intended for Bayesian nets (encoded causality through
+/// direct acyclic graphs) formed by discreted and/or continuous variables. Requires
+/// a rank correlation specification for each arc in the model.
+///
+/// Returns a matrix of *t* x *k* dimensions of samples (*t* = steeps; *k* = number of variables),
+/// samples each marginal distribution each steep.
 ///
 /// In a pure continuous Bayesian net, the following algorithm is used:
 ///
@@ -46,8 +50,8 @@ struct Normalized<'a> {
     original: &'a DType,
 }
 
-impl<'a> MarginalSampler for ExactNormalized<'a> {
-    fn new(steeps: Option<usize>, _burnin: Option<usize>) -> ExactNormalized<'a> {
+impl<'a> ExactNormalized<'a> {
+    pub fn new(steeps: Option<usize>, _burnin: Option<usize>) -> ExactNormalized<'a> {
         let steeps = match steeps {
             Some(val) => val,
             None => ITER_TIMES,
@@ -61,10 +65,8 @@ impl<'a> MarginalSampler for ExactNormalized<'a> {
             cr_matrix: MatrixF64::new(1, 1).unwrap(),
         }
     }
-}
 
-impl<'a> ExactNormalized<'a> {
-    fn initialize<N>(&mut self, net: &ContModel<'a, N>)
+    fn initialize<N>(&mut self, net: &ContModel<'a, N>) -> Result<(), ()>
         where N: ContNode<'a>
     {
         //use super::partial_correlation;
@@ -87,7 +89,7 @@ impl<'a> ExactNormalized<'a> {
             let dist = node.get_dist().as_normal(self.steeps).into_default();
             for (pt_cr, j) in node.get_edges() {
                 // ρ{i,j}|D = 2 * sin( π/6 * r{i,j}|D )
-                let rho_xy = 2.0 * (PI_DIV_SIX * pt_cr).sin();
+                let rho_xy = 2.0 * (PI_DIV_SIX * pt_cr.ok_or(())?).sin();
                 //cached.insert((i, j), rho_xy);
                 self.cr_matrix.set(i, j, rho_xy);
             }
@@ -100,17 +102,20 @@ impl<'a> ExactNormalized<'a> {
             };
             self.normalized.push(n);
         }
+        Ok(())
     }
 }
 
-impl<'a> ContMargSampler<'a> for ExactNormalized<'a> {
-    fn get_samples<N>(mut self, net: &ContModel<'a, N>) -> Vec<Vec<f64>>
+impl<'a> ContSampler<'a> for ExactNormalized<'a> {
+    type Output = Vec<Vec<f64>>;
+    type Err = ();
+    fn get_samples<N>(mut self, net: &ContModel<'a, N>) -> Result<Self::Output, Self::Err>
         where N: ContNode<'a>
     {
         use rgsl::blas::level2::dtrmv;
 
         let std = Normal::std();
-        self.initialize(net);
+        self.initialize(net)?;
         let d = self.normalized.len();
         for t in 0..self.steeps {
             let mut steep_sample = VectorF64::new(d).unwrap();
@@ -147,7 +152,7 @@ impl<'a> ContMargSampler<'a> for ExactNormalized<'a> {
             }
             self.samples.push(f);
         }
-        self.samples
+        Ok(self.samples)
     }
 }
 
@@ -210,3 +215,4 @@ mod test {
         println!("s x A = {:?}\n", samples);
     }
 }
+
