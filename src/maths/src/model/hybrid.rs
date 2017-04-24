@@ -18,7 +18,10 @@ pub trait HybridNode<'a>: ContNode<'a> + Sized {
     /// Makes an hybrid model node from a discrete variable.
     fn new_with_discrete(var: &'a Self::Discrete, pos: usize) -> Result<Self, ()>;
     fn was_discrete(&self) -> bool;
+    fn get_disc_dist(&self) -> Option<&'a Self::Discrete>;
     fn inverse_cdf(&self, p: f64) -> u8;
+    fn remove_disc_parent(&self, var: &Self::Discrete);
+    fn remove_disc_child(&self, var: &Self::Discrete);
     //fn draw_sample(&self, rng: &mut RGSLRng, values: &[HybridRes]) -> HybridRes;
 }
 
@@ -80,16 +83,38 @@ impl<'a, N> HybridModel<'a, N>
         self.vars.topological_sort()
     }
 
-    /// Remove a variable from the model, the childs will be disjoint if they don't
+    /// Remove a continuous variable from the model, the childs will be disjoint if they don't
     /// have an other parent.
-    pub fn remove_var(&mut self, node: &'a <N as ContNode<'a>>::Var) {
+    pub fn remove_cont_var(&mut self, var: &'a <N as ContNode<'a>>::Var) {
         if let Some(pos) = self.vars
                .nodes
                .iter()
-               .position(|n| (&**n).get_dist() == node) {
+               .position(|n| (&**n).get_dist() == var) {
             if pos < self.vars.nodes.len() - 1 {
                 for node in &self.vars.nodes[pos + 1..] {
                     node.set_position(node.position() - 1);
+                    node.remove_parent(var);
+                }
+            }
+            self.vars.nodes.remove(pos);
+        };
+    }
+
+    /// Remove a continuous variable from the model, the childs will be disjoint if they don't
+    /// have an other parent.
+    pub fn remove_disc_parent_var(&mut self, var: &'a <N as HybridNode<'a>>::Discrete) {
+        if let Some(pos) = self.vars
+               .nodes
+               .iter()
+               .position(|n| if let Some(d) = n.get_disc_dist() {
+                             d == var
+                         } else {
+                             false
+                         }) {
+            if pos < self.vars.nodes.len() - 1 {
+                for node in &self.vars.nodes[pos + 1..] {
+                    node.set_position(node.position() - 1);
+                    node.remove_disc_parent(var);
                 }
             }
             self.vars.nodes.remove(pos);
@@ -247,10 +272,42 @@ impl<'a, C: 'a, D: 'a> HybridNode<'a> for DefHybridNode<'a, C, D>
         self.was_discrete
     }
 
+    fn get_disc_dist(&self) -> Option<&'a D> {
+        self.disc_dist
+    }
+
     fn inverse_cdf(&self, p: f64) -> u8 {
         match *self.disc_dist.as_ref().unwrap().dist_type() {
             DType::Bernoulli(ref dist) => dist.inverse_cdf(p),
             _ => panic!(),
+        }
+    }
+
+    fn remove_disc_parent(&self, var: &D) {
+        let parents = &mut *self.parents.write().unwrap();
+        if let Some(pos) = parents
+               .iter()
+               .position(|ref x| if let Some(disc) = x.get_disc_dist() {
+                             var == disc
+                         } else {
+                             false
+                         }) {
+            parents.remove(pos);
+            let edges = &mut *self.edges.write().unwrap();
+            edges.remove(pos);
+        }
+    }
+
+    fn remove_disc_child(&self, var: &D) {
+        let childs = &mut *self.childs.write().unwrap();
+        if let Some(pos) = childs
+               .iter()
+               .position(|ref x| if let Some(disc) = x.upgrade().unwrap().get_disc_dist() {
+                             var == disc
+                         } else {
+                             false
+                         }) {
+            childs.remove(pos);
         }
     }
 
@@ -344,7 +401,7 @@ impl<'a, C: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, C, D>
         edges.push(rank_cr);
     }
 
-    fn remove_parent(&self, parent: &'a C) {
+    fn remove_parent(&self, parent: &C) {
         let parents = &mut *self.parents.write().unwrap();
         if let Some(pos) = parents.iter().position(|ref x| &*x.get_dist() == parent) {
             parents.remove(pos);
@@ -356,6 +413,15 @@ impl<'a, C: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, C, D>
     fn add_child(&self, child: Arc<Self>) {
         let parent_childs = &mut *self.childs.write().unwrap();
         parent_childs.push(Arc::downgrade(&child));
+    }
+
+    fn remove_child(&self, child: &C) {
+        let childs = &mut *self.childs.write().unwrap();
+        if let Some(pos) = childs
+               .iter()
+               .position(|ref x| x.upgrade().unwrap().get_dist() == child) {
+            childs.remove(pos);
+        }
     }
 
     fn get_edges(&self) -> Vec<(f64, usize)> {

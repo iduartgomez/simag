@@ -41,12 +41,15 @@ pub trait ContNode<'a>: Node + Sized
     /// Does not add self as child implicitly!
     fn add_parent(&self, parent: Arc<Self>, rank_cr: f64);
 
-    /// Remove a parent from this node. Removes self as child implicitly.
-    fn remove_parent(&self, parent: &'a Self::Var);
+    /// Remove a parent from this node. Does not removes self as child implicitly!
+    fn remove_parent(&self, parent: &Self::Var);
 
     /// Add a child to this node, assumes rank correlation was provided to the child.
     /// Does not add self as parent implicitly!
     fn add_child(&self, child: Arc<Self>);
+
+    /// Remove a child from this node. Does not removes self as parent implicitly!
+    fn remove_child(&self, child: &Self::Var);
 
     /// Get the values of the edges of this node with its parents, representing the rank
     /// correlation between the nodes. Returns the position of the parent for each edge
@@ -143,9 +146,11 @@ impl<'a, N> ContModel<'a, N>
                .iter()
                .position(|n| (&**n).get_dist() == var) {
             if pos < self.vars.nodes.len() - 1 {
+                let parent = &self.vars.nodes[pos];
                 for node in &self.vars.nodes[pos + 1..] {
                     node.set_position(node.position() - 1);
                     node.remove_parent(var);
+                    parent.remove_child(node.get_dist());
                 }
             }
             self.vars.nodes.remove(pos);
@@ -282,7 +287,7 @@ impl<'a, V: 'a> ContNode<'a> for DefContNode<'a, V>
         };
     }
 
-    fn remove_parent(&self, parent: &'a V) {
+    fn remove_parent(&self, parent: &V) {
         let parents = &mut *self.parents.write().unwrap();
         if let Some(pos) = parents.iter().position(|ref x| &*x.get_dist() == parent) {
             parents.remove(pos);
@@ -300,6 +305,15 @@ impl<'a, V: 'a> ContNode<'a> for DefContNode<'a, V>
             .map(|(i, _)| i);
         if let None = pos {
             parent_childs.push(Arc::downgrade(&child));
+        }
+    }
+
+    fn remove_child(&self, child: &V) {
+        let childs = &mut *self.childs.write().unwrap();
+        if let Some(pos) = childs
+               .iter()
+               .position(|ref x| &*x.upgrade().unwrap().get_dist() == child) {
+            childs.remove(pos);
         }
     }
 

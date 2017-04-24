@@ -33,7 +33,10 @@ fn build() {
     model.add_parent(wet_grass, rain, cpt).unwrap();
 
     let choices = vec![vec![0_u8, 0], vec![0, 1], vec![1, 0], vec![1, 1]];
-    let elements = vec![vec![0.34_f64, 0.01], vec![0.01, 0.14], vec![0.05, 0.10], vec![0.01, 0.34]];
+    let elements = vec![vec![0.34_f64, 0.01],
+                        vec![0.01, 0.14],
+                        vec![0.05, 0.10],
+                        vec![0.01, 0.34]];
     let cpt = CPT::new(elements, choices).unwrap();
     model.add_parent(wet_grass, sprinkler, cpt).unwrap();
 }

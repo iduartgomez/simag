@@ -42,11 +42,14 @@ pub trait DiscreteNode<'a>: Node + Sized {
     /// Add a new parent to this node. Does not add self as child implicitly!
     fn add_parent(&self, parent: Arc<Self>);
 
-    /// Remove a parent from this node. Removes self as child implicitly.
-    fn remove_parent(&self, parent: &'a Self::Var);
+    /// Remove a parent from this node. Does not removes self as child implicitly!
+    fn remove_parent(&self, parent: &Self::Var);
 
     /// Add a child to this node. Does not add self as parent implicitly!
     fn add_child(&self, child: Arc<Self>);
+
+    /// Remove a child from this node. Does not removes self as parent implicitly!
+    fn remove_child(&self, child: &Self::Var);
 
     fn build_cpt(&self, probabilities: CPT, k: usize) -> Result<(), String>;
 }
@@ -160,13 +163,15 @@ impl<'a, N> DiscreteModel<'a, N>
                .iter()
                .position(|n| (&**n).get_dist() == var) {
             if pos < self.vars.nodes.len() - 1 {
+                let parent = &self.vars.nodes[pos];
                 for node in &self.vars.nodes[pos + 1..] {
                     node.set_position(node.position() - 1);
                     let cpt = probs
                         .remove(node.get_dist())
-                        .ok_or("CPT not provided".to_string())?;
+                        .ok_or(format!("CPT not provided for var: {:?}", node.get_dist()))?;
                     node.remove_parent(var);
                     node.build_cpt(cpt, 1)?;
+                    parent.remove_child(node.get_dist());
                 }
             }
             self.vars.nodes.remove(pos);
@@ -361,7 +366,7 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
         };
     }
 
-    fn remove_parent(&self, parent: &'a V) {
+    fn remove_parent(&self, parent: &V) {
         let parents = &mut *self.parents.write().unwrap();
         if let Some(pos) = parents.iter().position(|ref x| &*x.get_dist() == parent) {
             parents.remove(pos);
@@ -377,6 +382,15 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
             .map(|(i, _)| i);
         if let None = pos {
             parent_childs.push(Arc::downgrade(&child));
+        }
+    }
+
+    fn remove_child(&self, child: &V) {
+        let childs = &mut *self.childs.write().unwrap();
+        if let Some(pos) = childs
+               .iter()
+               .position(|ref x| &*x.upgrade().unwrap().get_dist() == child) {
+            childs.remove(pos);
         }
     }
 
