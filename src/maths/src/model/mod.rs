@@ -330,7 +330,7 @@ pub trait Variable: Hash + PartialEq + Eq + ::std::fmt::Debug + Sync + Send {
     fn set_dist(&mut self, dist: DType) -> Result<(), ()>;
 }
 
-/// A node in the the DAG.
+/// A node in the the the model.
 pub trait Node: ::std::fmt::Debug + Send + Sync {
     /// Gets a child of this node with *idx* in the list of childs.
     ///

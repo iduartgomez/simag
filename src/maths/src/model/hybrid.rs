@@ -83,7 +83,17 @@ impl<'a, N> HybridModel<'a, N>
     /// Remove a variable from the model, the childs will be disjoint if they don't
     /// have an other parent.
     pub fn remove_var(&mut self, node: &'a <N as ContNode<'a>>::Var) {
-        unimplemented!()
+        if let Some(pos) = self.vars
+               .nodes
+               .iter()
+               .position(|n| (&**n).get_dist() == node) {
+            if pos < self.vars.nodes.len() - 1 {
+                for node in &self.vars.nodes[pos + 1..] {
+                    node.set_position(node.position() - 1);
+                }
+            }
+            self.vars.nodes.remove(pos);
+        };
     }
 
     /// Sample for the model marginal probabilities with the current elicited probabilities.
@@ -131,8 +141,8 @@ pub struct DefHybridNode<'a, C: 'a, D: 'a>
     cont_dist: Option<&'a C>,
     disc_dist: Option<&'a D>,
     as_cont: Option<C>,
-    childs: RwLock<Vec<Arc<DefHybridNode<'a, C, D>>>>,
-    parents: RwLock<Vec<Weak<DefHybridNode<'a, C, D>>>>,
+    childs: RwLock<Vec<Weak<DefHybridNode<'a, C, D>>>>,
+    parents: RwLock<Vec<Arc<DefHybridNode<'a, C, D>>>>,
     edges: RwLock<Vec<f64>>, // rank correlations assigned to edges
     pos: RwLock<usize>,
     was_discrete: bool,
@@ -144,12 +154,12 @@ impl<'a, C: 'a, D: 'a> Node for DefHybridNode<'a, C, D>
 {
     fn get_child_unchecked(&self, pos: usize) -> Arc<Self> {
         let childs = &*self.childs.read().unwrap();
-        childs[pos].clone()
+        childs[pos].clone().upgrade().unwrap()
     }
 
     fn get_childs(&self) -> Vec<Arc<Self>> {
         let childs = &*self.childs.read().unwrap();
-        Vec::from_iter(childs.iter().cloned())
+        Vec::from_iter(childs.iter().cloned().map(|x| x.upgrade().unwrap()))
     }
 
     fn is_root(&self) -> bool {
@@ -164,7 +174,6 @@ impl<'a, C: 'a, D: 'a> Node for DefHybridNode<'a, C, D>
         let parents = &*self.parents.read().unwrap();
         let mut positions = Vec::with_capacity(parents.len());
         for p in parents {
-            let p = p.upgrade().unwrap();
             positions.push(*p.pos.read().unwrap());
         }
         positions
@@ -174,7 +183,6 @@ impl<'a, C: 'a, D: 'a> Node for DefHybridNode<'a, C, D>
         let parents = &*self.parents.read().unwrap();
         let mut anc = Vec::with_capacity(parents.len());
         for p in parents {
-            let p = p.upgrade().unwrap();
             let mut ancestors = p.get_all_ancestors();
             anc.append(&mut ancestors);
             anc.push(*p.pos.read().unwrap());
@@ -188,6 +196,7 @@ impl<'a, C: 'a, D: 'a> Node for DefHybridNode<'a, C, D>
         let childs = &*self.childs.read().unwrap();
         let mut positions = Vec::with_capacity(childs.len());
         for c in childs {
+            let c = c.upgrade().unwrap();
             positions.push(*c.pos.read().unwrap());
         }
         positions
@@ -313,7 +322,6 @@ impl<'a, C: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, C, D>
         let parents = &*self.parents.read().unwrap();
         let mut dists = Vec::with_capacity(parents.len());
         for p in parents {
-            let p = p.upgrade().unwrap();
             dists.push(p.cont_dist.unwrap());
         }
         dists
@@ -323,6 +331,7 @@ impl<'a, C: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, C, D>
         let childs = &*self.childs.read().unwrap();
         let mut dists = Vec::with_capacity(childs.len());
         for c in childs {
+            let c = c.upgrade().unwrap();
             dists.push(c.cont_dist.unwrap());
         }
         dists
@@ -331,13 +340,22 @@ impl<'a, C: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, C, D>
     fn add_parent(&self, parent: Arc<Self>, rank_cr: f64) {
         let parents = &mut *self.parents.write().unwrap();
         let edges = &mut *self.edges.write().unwrap();
-        parents.push(Arc::downgrade(&parent));
+        parents.push(parent);
         edges.push(rank_cr);
+    }
+
+    fn remove_parent(&self, parent: &'a C) {
+        let parents = &mut *self.parents.write().unwrap();
+        if let Some(pos) = parents.iter().position(|ref x| &*x.get_dist() == parent) {
+            parents.remove(pos);
+            let edges = &mut *self.edges.write().unwrap();
+            edges.remove(pos);
+        }
     }
 
     fn add_child(&self, child: Arc<Self>) {
         let parent_childs = &mut *self.childs.write().unwrap();
-        parent_childs.push(child);
+        parent_childs.push(Arc::downgrade(&child));
     }
 
     fn get_edges(&self) -> Vec<(f64, usize)> {
@@ -345,7 +363,6 @@ impl<'a, C: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, C, D>
         let parents = &*self.parents.read().unwrap();
         let mut edge_with_parent = Vec::with_capacity(parents.len());
         for (i, p) in parents.iter().enumerate() {
-            let p = p.upgrade().unwrap();
             edge_with_parent.push((edges[i], p.position()));
         }
         edge_with_parent
@@ -380,7 +397,7 @@ pub struct MarkovRndField<'a, N>
     where N: HybridNode<'a>
 {
     _nlt: PhantomData<&'a ()>,
-    _edges: Vec<(Arc<N>, Arc<N>)>,
+    edges: Vec<(Arc<N>, Arc<N>)>,
     underlying: Vec<Arc<N>>,
 }
 
@@ -390,7 +407,7 @@ impl<'a, N> MarkovRndField<'a, N>
     pub fn new() -> MarkovRndField<'a, N> {
         MarkovRndField {
             _nlt: PhantomData,
-            _edges: vec![],
+            edges: vec![],
             underlying: vec![],
         }
     }
@@ -420,7 +437,7 @@ impl<'a, N> MarkovRndField<'a, N>
             .find(|n| (&**n).get_dist() == b)
             .cloned()
             .ok_or(())?;
-        self._edges.push((a, b));
+        self.edges.push((a, b));
         Ok(())
     }
 
@@ -442,14 +459,23 @@ impl<'a, N> MarkovRndField<'a, N>
                 .tuple_combinations()
                 .map(|(a, b)| (self.underlying[*a].clone(), self.underlying[*b].clone()))
                 .collect();
-            self._edges.append(&mut edges);
+            self.edges.append(&mut edges);
         }
     }
 
     /// Remove a variable from the model, the childs will be disjoint if they don't
     /// have an other parent.
     pub fn remove_var(&mut self, node: &'a <N as ContNode<'a>>::Var) {
-        unimplemented!()
+        if let Some(pos) = self.underlying
+               .iter()
+               .position(|n| (&**n).get_dist() == node) {
+            if pos < self.underlying.len() - 1 {
+                for node in &self.underlying[pos + 1..] {
+                    node.set_position(node.position() - 1);
+                }
+            }
+            self.underlying.remove(pos);
+        };
     }
 
     /// Sample for the model marginal probabilities with the current elicited probabilities.
@@ -480,7 +506,7 @@ impl<'a, N> super::IterModel for MarkovRndField<'a, N>
     }
 
     fn var_neighbours(&self, idx: usize) -> Vec<usize> {
-        self._edges
+        self.edges
             .iter()
             .filter_map(|&(ref a, ref b)| if a.position() == idx {
                             Some(b.position())

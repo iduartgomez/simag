@@ -230,7 +230,7 @@ pub struct Gibbs {
 }
 
 struct VarData {
-    pos: usize,
+    _pos: usize,
     blanket: Vec<usize>,
 }
 
@@ -271,7 +271,7 @@ impl<'a> Gibbs {
         self.vars = Vec::with_capacity(net.var_num());
         for node in net.iter_vars() {
             let var = VarData {
-                pos: node.position(),
+                _pos: node.position(),
                 blanket: net.var_neighbours(node.position()),
             };
             self.vars.push(var);

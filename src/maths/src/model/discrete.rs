@@ -15,7 +15,8 @@ use err::ErrMsg;
 
 // public traits for models:
 
-/// Node trait for a discrete model.
+/// Node trait for a discrete model. This node is reference counted and inmutably shared
+/// throught Arc, add interior mutability if necessary.
 pub trait DiscreteNode<'a>: Node + Sized {
     type Var: 'a + DiscreteVar;
 
@@ -40,6 +41,9 @@ pub trait DiscreteNode<'a>: Node + Sized {
 
     /// Add a new parent to this node. Does not add self as child implicitly!
     fn add_parent(&self, parent: Arc<Self>);
+
+    /// Remove a parent from this node. Removes self as child implicitly.
+    fn remove_parent(&self, parent: &'a Self::Var);
 
     /// Add a child to this node. Does not add self as parent implicitly!
     fn add_child(&self, child: Arc<Self>);
@@ -147,8 +151,27 @@ impl<'a, N> DiscreteModel<'a, N>
 
     /// Remove a variable from the model, the childs will be disjoint if they don't
     /// have an other parent.
-    pub fn remove_var(&mut self, node: &'a <N as DiscreteNode<'a>>::Var) {
-        unimplemented!()
+    pub fn remove_var(&mut self,
+                      var: &'a <N as DiscreteNode<'a>>::Var,
+                      mut probs: HashMap<&'a <N as DiscreteNode<'a>>::Var, CPT>)
+                      -> Result<(), String> {
+        if let Some(pos) = self.vars
+               .nodes
+               .iter()
+               .position(|n| (&**n).get_dist() == var) {
+            if pos < self.vars.nodes.len() - 1 {
+                for node in &self.vars.nodes[pos + 1..] {
+                    node.set_position(node.position() - 1);
+                    let cpt = probs
+                        .remove(node.get_dist())
+                        .ok_or("CPT not provided".to_string())?;
+                    node.remove_parent(var);
+                    node.build_cpt(cpt, 1)?;
+                }
+            }
+            self.vars.nodes.remove(pos);
+        };
+        Ok(())
     }
 
     /// Sample for the model marginal probabilities with the current elicited probabilities.
@@ -331,14 +354,18 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
     fn add_parent(&self, parent: Arc<Self>) {
         let parents = &mut *self.parents.write().unwrap();
         // check for duplicates:
-        let pos = parents
-            .iter()
-            .enumerate()
-            .find(|&(_, x)| &*x.get_dist() == parent.get_dist())
-            .map(|(i, _)| i);
-        if let None = pos {
+        if let None = parents
+               .iter()
+               .position(|ref x| &*x.get_dist() == parent.get_dist()) {
             parents.push(parent);
         };
+    }
+
+    fn remove_parent(&self, parent: &'a V) {
+        let parents = &mut *self.parents.write().unwrap();
+        if let Some(pos) = parents.iter().position(|ref x| &*x.get_dist() == parent) {
+            parents.remove(pos);
+        }
     }
 
     fn add_child(&self, child: Arc<Self>) {

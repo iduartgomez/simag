@@ -15,7 +15,8 @@ use err::ErrMsg;
 
 // public traits for models:
 
-///  Node trait for a continuous model.
+/// Node trait for a continuous model. This node is reference counted and inmutably shared
+/// throught Arc, add interior mutability if necessary.
 pub trait ContNode<'a>: Node + Sized
 {
     type Var: 'a + ContVar + Normalization;
@@ -39,6 +40,9 @@ pub trait ContNode<'a>: Node + Sized
     /// Add a new parent to this child with given rank correlation.
     /// Does not add self as child implicitly!
     fn add_parent(&self, parent: Arc<Self>, rank_cr: f64);
+
+    /// Remove a parent from this node. Removes self as child implicitly.
+    fn remove_parent(&self, parent: &'a Self::Var);
 
     /// Add a child to this node, assumes rank correlation was provided to the child.
     /// Does not add self as parent implicitly!
@@ -133,8 +137,19 @@ impl<'a, N> ContModel<'a, N>
 
     /// Remove a variable from the model, the childs will be disjoint if they don't
     /// have an other parent.
-    pub fn remove_var(&mut self, node: &'a <N as ContNode<'a>>::Var) {
-        unimplemented!()
+    pub fn remove_var(&mut self, var: &'a <N as ContNode<'a>>::Var) {
+        if let Some(pos) = self.vars
+               .nodes
+               .iter()
+               .position(|n| (&**n).get_dist() == var) {
+            if pos < self.vars.nodes.len() - 1 {
+                for node in &self.vars.nodes[pos + 1..] {
+                    node.set_position(node.position() - 1);
+                    node.remove_parent(var);
+                }
+            }
+            self.vars.nodes.remove(pos);
+        };
     }
 
     /// Sample for the model marginal probabilities with the current elicited probabilities.
@@ -257,17 +272,23 @@ impl<'a, V: 'a> ContNode<'a> for DefContNode<'a, V>
         let parents = &mut *self.parents.write().unwrap();
         let edges = &mut *self.edges.write().unwrap();
         // check for duplicates:
-        let pos = parents
-            .iter()
-            .enumerate()
-            .find(|&(_, x)| &*x.get_dist() == parent.get_dist())
-            .map(|(i, _)| i);
-        if let Some(pos) = pos {
+        if let Some(pos) = parents
+                .iter()
+                .position(|ref x| &*x.get_dist() == parent.get_dist()) {
             edges[pos] = rank_cr;
         } else {
             parents.push(parent);
             edges.push(rank_cr);
         };
+    }
+
+    fn remove_parent(&self, parent: &'a V) {
+        let parents = &mut *self.parents.write().unwrap();
+        if let Some(pos) = parents.iter().position(|ref x| &*x.get_dist() == parent) {
+            parents.remove(pos);
+            let edges = &mut *self.edges.write().unwrap();
+            edges.remove(pos);
+        }
     }
 
     fn add_child(&self, child: Arc<Self>) {
