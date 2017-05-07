@@ -28,12 +28,14 @@ mod errors {
     use super::common::TimeFnErr;
     use super::logsent::LogSentErr;
 
+    use std::fmt;
+
     #[derive(Debug, PartialEq)]
     pub enum ParseErrF {
-        Msg(String),
         ReservedKW(String),
-        IUVal(f32),
-        IUValComp,
+        IUVal(f32), // illegal value in a truth value assignment/comparison
+        IUValNone, // no truth value found, but was required
+        IUValComp, // a comparison operator was used, but it should have been an assignment
         ExprWithVars(String),
         BothAreVars,
         ClassIsVar,
@@ -42,24 +44,22 @@ mod errors {
         WrongDef,
         LogSentErr(LogSentErr),
         TimeFnErr(TimeFnErr),
-        None,
+        SyntaxErr(String),
     }
 
-    impl ParseErrF {
-        #[allow(dead_code)]
-        fn format(_err: ParseErrB) -> String {
-            unimplemented!()
+    impl fmt::Display for ParseErrF {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            let msg = match *self {
+                ParseErrF::ReservedKW(ref kw) => format!("use of reserved keyword: {}", kw),
+                _ => { unimplemented!() }
+            };
+            write!(f, "{}", msg)
         }
     }
 
     impl<'a> From<ParseErrB<'a>> for ParseErrF {
         fn from(err: ParseErrB<'a>) -> ParseErrF {
-            if let ParseErrB::SyntaxErrorPos(arr) = err {
-                use std::str;
-                println!("@err: {:?}", unsafe { str::from_utf8_unchecked(arr) });
-
-            }
-            ParseErrF::Msg(String::from("failed"))
+            ParseErrF::SyntaxErr(format!("{}", err))
         }
     }
 }

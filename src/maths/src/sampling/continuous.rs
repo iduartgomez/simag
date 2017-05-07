@@ -4,7 +4,6 @@ use std::f64::consts::PI;
 use rgsl::{MatrixF64, VectorF64};
 use rgsl;
 
-use super::ContSampler;
 use model::{Variable, ContModel, ContNode, ContVar, DefContVar, DType};
 use dists::{Normal, Normalization, CDF};
 use err::ErrMsg;
@@ -51,7 +50,7 @@ struct Normalized<'a> {
 }
 
 impl<'a> ExactNormalized<'a> {
-    pub fn new(steeps: Option<usize>, _burnin: Option<usize>) -> ExactNormalized<'a> {
+    pub fn new(steeps: Option<usize>) -> ExactNormalized<'a> {
         let steeps = match steeps {
             Some(val) => val,
             None => ITER_TIMES,
@@ -104,12 +103,8 @@ impl<'a> ExactNormalized<'a> {
         }
         Ok(())
     }
-}
 
-impl<'a> ContSampler<'a> for ExactNormalized<'a> {
-    type Output = Vec<Vec<f64>>;
-    type Err = ();
-    fn get_samples<N>(mut self, net: &ContModel<'a, N>) -> Result<Self::Output, Self::Err>
+    pub fn get_samples<N>(mut self, net: &ContModel<'a, N>) -> Result<Vec<Vec<f64>>, ()>
         where N: ContNode<'a>
     {
         use rgsl::blas::level2::dtrmv;
@@ -159,7 +154,7 @@ impl<'a> ContSampler<'a> for ExactNormalized<'a> {
 impl<'a> ::std::clone::Clone for ExactNormalized<'a> {
     fn clone(&self) -> ExactNormalized<'a> {
         let steeps = Some(self.steeps);
-        ExactNormalized::new(steeps, None)
+        ExactNormalized::new(steeps)
     }
 }
 

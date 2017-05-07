@@ -1,7 +1,6 @@
 //! Sampling for pure discrete models.
 
 use RGSLRng;
-use super::{DiscSampler};
 use model::{DiscreteModel, DiscreteNode};
 
 const ITER_TIMES: usize = 2000;
@@ -73,12 +72,8 @@ impl GibbsMarginal {
         }
         self.samples.push(priors);
     }
-}
 
-impl DiscSampler for GibbsMarginal {
-    type Output = Vec<Vec<u8>>;
-    type Err = ();
-    fn get_samples<'a, N>(mut self, net: &DiscreteModel<'a, N>) -> Result<Self::Output, Self::Err>
+    pub fn get_samples<'a, N>(mut self, net: &DiscreteModel<'a, N>) -> Result<Vec<Vec<u8>>, ()>
         where N: DiscreteNode<'a>
     {
         let k = net.var_num();

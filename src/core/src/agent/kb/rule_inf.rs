@@ -259,7 +259,7 @@ mod test {
     fn repr_eval_fol() {
         // indicative conditional
         // (true := true)
-        let rep = Representation::new();
+        let mut rep = Representation::new();
         let fol = String::from("
             ( drugDealer[$West,u=1] := ( scum[$West,u=1] && good[$West,u=0] ) )
             ( drugDealer[$West,u=1] )
@@ -269,7 +269,7 @@ mod test {
         assert_eq!(rep.ask(query).get_results_single(), Some(true));
 
         // (false := none)
-        let rep = Representation::new();
+        let mut rep = Representation::new();
         let fol = String::from("
             ( drugDealer[$West,u=1] := ( scum[$West,u=1] && good[$West,u=0] ) )
             ( drugDealer[$West,u=0] )
@@ -280,7 +280,7 @@ mod test {
 
         // material implication statements
         // true (true => true)
-        let rep = Representation::new();
+        let mut rep = Representation::new();
         let fol = String::from("
             ( drugDealer[$West,u=1] => ( scum[$West,u=1] && good[$West,u=0] ) )
             ( drugDealer[$West,u=1] && scum[$West,u=1] && good[$West,u=0] )
@@ -290,7 +290,7 @@ mod test {
         assert_eq!(rep.ask(query).get_results_single(), Some(true));
 
         // true (false => true)
-        let rep = Representation::new();
+        let mut rep = Representation::new();
         let fol = String::from("
             ( drugDealer[$West,u=1] => ( scum[$West,u=1] && good[$West,u=0] ) )
             ( drugDealer[$West,u=0] && scum[$West,u=1] && good[$West,u=0] )
@@ -300,7 +300,7 @@ mod test {
         assert_eq!(rep.ask(query).get_results_single(), Some(true));
 
         // false (true => false)
-        let rep = Representation::new();
+        let mut rep = Representation::new();
         let fol = String::from("
             ( drugDealer[$West,u=1] => ( scum[$West,u=1] && good[$West,u=0] ) )
             ( drugDealer[$West,u=1] && scum[$West,u=0] && good[$West,u=1] )
@@ -312,7 +312,7 @@ mod test {
         assert_eq!(rep.ask(query1).get_results_single(), None);
 
         // true (false => false)
-        let rep = Representation::new();
+        let mut rep = Representation::new();
         let fol = String::from("
             ( drugDealer[$West,u=1] => ( scum[$West,u=1] && good[$West,u=0] ) )
             ( drugDealer[$West,u=0] && scum[$West,u=0] && good[$West,u=1] )
@@ -325,7 +325,7 @@ mod test {
 
         // equivalence statements
         // is false (false <=> true )
-        let rep = Representation::new();
+        let mut rep = Representation::new();
         let fol = String::from("
             ( drugDealer[$West,u=1] <=> ( scum[$West,u=1] && good[$West,u=0] ) )
             ( scum[$West,u=1] )
@@ -337,7 +337,7 @@ mod test {
         assert_eq!(rep.ask(query).get_results_single(), None);
 
         // is false (true <=> false )
-        let rep = Representation::new();
+        let mut rep = Representation::new();
         let fol = String::from("
             ( drugDealer[$West,u=1] <=> ( scum[$West,u=1] && good[$West,u=0] ) )
             ( drugDealer[$West,u=1] )
@@ -349,7 +349,7 @@ mod test {
         assert_eq!(rep.ask(query).get_results_single(), None);
 
         // is true ( true <=> true )
-        let rep = Representation::new();
+        let mut rep = Representation::new();
         let fol = String::from("
             ( drugDealer[$West,u=1] <=> ( scum[$West,u=1] && good[$West,u=0] ) )
             ( scum[$West,u=1] )
@@ -361,7 +361,7 @@ mod test {
         assert_eq!(rep.ask(query).get_results_single(), Some(true));
 
         // is true ( false <=> false )
-        let rep = Representation::new();
+        let mut rep = Representation::new();
         let fol = String::from("
             ( drugDealer[$West,u=1] <=> ( scum[$West,u=1] && good[$West,u=0] ) )
             ( scum[$West,u=0] )

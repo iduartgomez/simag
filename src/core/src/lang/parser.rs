@@ -33,6 +33,7 @@
 use std::str;
 use std::str::FromStr;
 use std::collections::VecDeque;
+use std::fmt;
 use std::thread;
 
 use nom::{ErrorKind, IResult};
@@ -107,7 +108,7 @@ impl Parser {
                         (ErrorKind::Custom(0), p) => Err(ParseErrB::NonTerminal(p)),
                         (ErrorKind::Custom(1), p) => Err(ParseErrB::NonNumber(p)),
                         (ErrorKind::Custom(11), p) => Err(ParseErrB::NotScope(p)),
-                        (ErrorKind::Custom(12), p) => Err(ParseErrB::UnbalDelim(p)),
+                        (ErrorKind::Custom(12), p) => Err(ParseErrB::ImbalDelim(p)),
                         (ErrorKind::Custom(13), p) => Err(ParseErrB::IllegalChain(p)),
                         (_, p) => Err(ParseErrB::SyntaxErrorPos(p)),
                     }
@@ -124,14 +125,62 @@ impl Parser {
 #[derive(Debug)]
 pub enum ParseErrB<'a> {
     SyntaxErrorU,
-    SyntaxError(Box<ParseErrB<'a>>),
+    //SyntaxError(Box<ParseErrB<'a>>),
     SyntaxErrorPos(&'a [u8]),
     NotScope(&'a [u8]),
-    UnbalDelim(&'a [u8]),
+    ImbalDelim(&'a [u8]),
     IllegalChain(&'a [u8]),
     NonTerminal(&'a [u8]),
     NonNumber(&'a [u8]),
     UnclosedComment(&'a [u8]),
+}
+
+impl<'a> fmt::Display for ParseErrB<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use std::str;
+        let msg = unsafe { 
+            match *self {
+                ParseErrB::SyntaxErrorU => {
+                    format!("syntax error")
+                }
+                //ParseErrB::SyntaxError(Box<ParseErrB<'a>>) => {}
+                ParseErrB::SyntaxErrorPos(arr) => {
+                    format!("syntax error at: {}", 
+                             str::from_utf8_unchecked(arr))
+                }
+                ParseErrB::NotScope(arr) => {
+                    format!("syntax error,
+                             scope is invalid or not found: {}", 
+                             str::from_utf8_unchecked(arr))
+                }
+                ParseErrB::ImbalDelim(arr) => {
+                    format!("syntax error, 
+                             open delimiters: {}", 
+                             str::from_utf8_unchecked(arr))
+                }
+                ParseErrB::IllegalChain(arr) => {
+                    format!("syntax error,
+                             incomplete operator chain: {}", 
+                             str::from_utf8_unchecked(arr))
+                }
+                ParseErrB::NonTerminal(arr) => {
+                    format!("syntax error,
+                             illegal character in terminal position: {}", 
+                             str::from_utf8_unchecked(arr))
+                }
+                ParseErrB::NonNumber(arr) => {
+                    format!("syntax error,
+                             illegal character found when parsing a number: {}", 
+                             str::from_utf8_unchecked(arr))
+                }
+                ParseErrB::UnclosedComment(arr) => {
+                    format!("syntax error, open comment delimiter: {}", 
+                             str::from_utf8_unchecked(arr))
+                }
+            }
+        };
+        write!(f, "{}", msg)
+    }
 }
 
 #[derive(Debug)]
@@ -767,8 +816,8 @@ named!(args(&[u8]) -> Vec<ArgBorrowed>, delimited!(
     )
 );
 
-fn to_arg_vec(a: ArgBorrowed) -> Vec<ArgBorrowed> {
-    vec![a]
+fn to_arg_vec(arg: ArgBorrowed) -> Vec<ArgBorrowed> {
+    vec![arg]
 }
 
 // op_arg =	(string|term) [comp_op (string|term)] ;

@@ -9,7 +9,6 @@ use uuid::Uuid;
 use RGSLRng;
 use super::{Node, Variable, Observation};
 use super::{DType, Continuous};
-use sampling::{ContSampler};
 use dists::{Sample, Normalization};
 use err::ErrMsg;
 
@@ -33,27 +32,24 @@ pub trait ContNode<'a>: Node + Sized
     /// Returns a reference to the distributions of the childs·
     fn get_childs_dists(&self) -> Vec<&'a Self::Var>;
 
-    /// Sample from the prior distribution, usually called on roots of the tree
-    /// to initialize each sampling steep.
+    /// Sample from the prior distribution.
     fn init_sample(&self, rng: &mut RGSLRng) -> f64;
 
-    /// Add a new parent to this child with given rank correlation (if any).
+    /// Add a new parent to this child with a given weight (if any).
     /// Does not add self as child implicitly!
-    fn add_parent(&self, parent: Arc<Self>, rank_cr: Option<f64>);
+    fn add_parent(&self, parent: Arc<Self>, weight: Option<f64>);
 
     /// Remove a parent from this node. Does not remove self as child implicitly!
     fn remove_parent(&self, parent: &Self::Var);
 
-    /// Add a child to this node, assumes rank correlation was provided to the child.
-    /// Does not add self as parent implicitly!
+    /// Add a child to this node. Does not add self as parent implicitly!
     fn add_child(&self, child: Arc<Self>);
 
     /// Remove a child from this node. Does not remove self as parent implicitly!
     fn remove_child(&self, child: &Self::Var);
 
-    /// Get the values of the edges of this node with its parents, representing the rank
-    /// correlation between the nodes. Returns the position of the parent for each edge
-    /// in the network.
+    /// Returns the position of the parent for each edge in the network and 
+    /// the values of the edges, if any,
     fn get_edges(&self) -> Vec<(Option<f64>, usize)>;
 }
 
@@ -105,7 +101,7 @@ impl<'a, N> ContModel<'a, N>
     }
 
     /// Adds a parent `dist` to a child `dist`, connecting both nodes directionally
-    /// with an arc. The arc value represents the rank correlation.
+    /// with an arc. Accepts an optional weight argument for the arc.
     ///
     /// Takes the distribution of a variable, and the parent variable distribution
     /// as arguments and returns a result indicating if the parent was added properly.
@@ -113,7 +109,7 @@ impl<'a, N> ContModel<'a, N>
     pub fn add_parent(&mut self,
                       node: &'a <N as ContNode<'a>>::Var,
                       parent: &'a <N as ContNode<'a>>::Var,
-                      rank_cr: Option<f64>)
+                      weight: Option<f64>)
                       -> Result<(), ()> {
         // checks to perform:
         //  - both exist in the model
@@ -132,7 +128,7 @@ impl<'a, N> ContModel<'a, N>
             .find(|n| (&**n).get_dist() == parent)
             .cloned()
             .ok_or(())?;
-        node.add_parent(parent.clone(), rank_cr);
+        node.add_parent(parent.clone(), weight);
         parent.add_child(node.clone());
         // check if it's a DAG and topologically sort the graph
         self.vars.topological_sort()
@@ -155,11 +151,6 @@ impl<'a, N> ContModel<'a, N>
             }
             self.vars.nodes.remove(pos);
         };
-    }
-
-    /// Sample the model with a given sampler, with the current elicited probabilities.
-    pub fn sample<S: ContSampler<'a>>(&self, sampler: S) -> Result<S::Output, S::Err> {
-        sampler.get_samples(self)
     }
 
     /// Returns the total number of variables in the model.
@@ -198,7 +189,7 @@ pub struct DefContNode<'a, V: 'a>
     pub dist: &'a V,
     childs: RwLock<Vec<Weak<DefContNode<'a, V>>>>,
     parents: RwLock<Vec<Arc<DefContNode<'a, V>>>>,
-    edges: RwLock<Vec<Option<f64>>>, // rank correlations assigned to edges, if any
+    edges: RwLock<Vec<Option<f64>>>, // weight assigned to edges, if any
     pos: RwLock<usize>,
 }
 
@@ -273,17 +264,17 @@ impl<'a, V: 'a> ContNode<'a> for DefContNode<'a, V>
         dists
     }
 
-    fn add_parent(&self, parent: Arc<Self>, rank_cr: Option<f64>) {
+    fn add_parent(&self, parent: Arc<Self>, weight: Option<f64>) {
         let parents = &mut *self.parents.write().unwrap();
         let edges = &mut *self.edges.write().unwrap();
         // check for duplicates:
         if let Some(pos) = parents
                 .iter()
                 .position(|ref x| &*x.get_dist() == parent.get_dist()) {
-            edges[pos] = rank_cr;
+            edges[pos] = weight;
         } else {
             parents.push(parent);
-            edges.push(rank_cr);
+            edges.push(weight);
         };
     }
 

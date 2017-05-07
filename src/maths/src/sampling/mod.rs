@@ -22,33 +22,9 @@ mod hybrid;
 pub use self::discrete::GibbsMarginal as DiscreteMarginalGibbs;
 pub use self::continuous::ExactNormalized as ContinuousMarginalExact;
 pub use self::hybrid::ExactNormalized as HybridMarginalExact;
+pub use self::hybrid::CCMRFMarginal;
 
-use model::{DiscreteModel, DiscreteNode, ContModel, ContNode, HybridNode, IterModel, HybridRes};
-
-pub trait DiscSampler: Send + Sync {
-    type Output;
-    type Err;
-    fn get_samples<'a, N>(self, state_space: &DiscreteModel<'a, N>) -> Result<Self::Output, Self::Err>
-        where N: DiscreteNode<'a>;
-}
-
-pub trait ContSampler<'a>: Send + Sync {
-    type Output;
-    type Err;
-    fn get_samples<N>(self, state_space: &ContModel<'a, N>) -> Result<Self::Output, Self::Err>
-        where N: ContNode<'a>;
-}
-
-use std::ops::Deref;
-
-pub trait HybridSampler<'a>: Send + Sync {
-    type Output;
-    type Err;
-    fn get_samples<M>(self, state_space: &M) -> Result<Self::Output, Self::Err>
-        where M: IterModel,
-              <<<M as IterModel>::Iter as Iterator>::Item as Deref>::Target: HybridNode<'a>,
-              <<M as IterModel>::Iter as Iterator>::Item: Deref;
-}
+use model::{HybridRes};
 
 use std::collections::HashMap;
 use rgsl::MatrixF64;

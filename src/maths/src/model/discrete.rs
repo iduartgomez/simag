@@ -9,7 +9,6 @@ use uuid::Uuid;
 use RGSLRng;
 use super::{Node, Variable, Observation};
 use super::{DType, Discrete};
-use sampling::DiscSampler;
 use dists::{Categorical, Bernoulli};
 use err::ErrMsg;
 
@@ -35,8 +34,7 @@ pub trait DiscreteNode<'a>: Node + Sized {
     /// state *t* and draws a sample based on the corresponding probabilities.
     fn draw_sample(&self, rng: &mut RGSLRng, values: &[u8]) -> u8;
 
-    /// Sample from the prior distribution, usually called on roots of the tree
-    /// to initialize each sampling steep.
+    /// Sample from the prior distribution.
     fn init_sample(&self, rng: &mut RGSLRng) -> u8;
 
     /// Add a new parent to this node. Does not add self as child implicitly!
@@ -177,11 +175,6 @@ impl<'a, N> DiscreteModel<'a, N>
             self.vars.nodes.remove(pos);
         };
         Ok(())
-    }
-
-    /// Sample the model with a given sampler, with the current elicited probabilities.
-    pub fn sample<S: DiscSampler>(&self, sampler: S) -> Result<S::Output, S::Err> {
-        sampler.get_samples(self)
     }
 
     /// Returns the total number of variables in the model.

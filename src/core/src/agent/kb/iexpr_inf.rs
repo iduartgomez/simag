@@ -1319,7 +1319,7 @@ mod test {
         ");
         let q01_01 = "(professor[$Lucy,u=1] && person[$Lucy,u=1])".to_string();
         let q01_02 = "(professor[$Lucy,u=1])".to_string();
-        let rep = Representation::new();
+        let mut rep = Representation::new();
         rep.tell(test_01).unwrap();
         assert_eq!(rep.ask(q01_01).get_results_single(), None);
         assert_eq!(rep.ask(q01_02).get_results_single(), Some(true));
@@ -1332,7 +1332,7 @@ mod test {
         ");
         let q02_01 = "(professor[$Lucy,u>0] && person[$Lucy,u<1])".to_string();
         let q02_02 = "(person[$John,u=1])".to_string();
-        let rep = Representation::new();
+        let mut rep = Representation::new();
         rep.tell(test_02).unwrap();
         assert_eq!(rep.ask(q02_01).get_results_single(), Some(false));
         assert_eq!(rep.ask(q02_02).get_results_single(), Some(true));
@@ -1351,7 +1351,7 @@ mod test {
             (( let x ) ( fn::enemy[x,u=1;$America] := hostile[x,u=1] ) )
         ");
         let q03_01 = "(criminal[$West,u=1]) && hostile[$Nono,u=1] && weapon[$M1,u=1]".to_string();
-        let rep = Representation::new();
+        let mut rep = Representation::new();
         rep.tell(test_03).unwrap();
         let answ = rep.ask(q03_01);
         assert_eq!(answ.get_results_single(), Some(true));
@@ -1363,7 +1363,7 @@ mod test {
             ((let x) (dean[x,u=1] := professor[x,u=1]))
         ");
         let q04_01 = "((let x) (professor[x,u=1]))".to_string();
-        let rep = Representation::new();
+        let mut rep = Representation::new();
         rep.tell(test_04).unwrap();
         let answ = rep.ask(q04_01);
         let a04_01 = answ.get_memberships(); //<-- fails
@@ -1377,7 +1377,7 @@ mod test {
         	(ugly[$Lucy,u=0.2])
         ");
         let q05_01 = "((let x) (x[$Lucy,u>0.5]))".to_string();
-        let rep = Representation::new();
+        let mut rep = Representation::new();
         rep.tell(test_05).unwrap();
         let mut results = HashSet::new();
         results.insert("professor");
@@ -1399,7 +1399,7 @@ mod test {
             ( fn::criticize[$John,u=1;$Lucy] )
         ");
         let q01_01 = "(fn::criticize[$John,u=1;$Lucy])".to_string();
-        let rep = Representation::new();
+        let mut rep = Representation::new();
         rep.tell(test_01).unwrap();
         assert_eq!(rep.ask(q01_01).get_results_single(), Some(true));
 
@@ -1409,7 +1409,7 @@ mod test {
             ( (let x) (animal[x,u=1] && female[x,u=1]) := fn::produce[milk,u=1;x] )
         ");
         let q02_01 = "(fn::produce[milk,u=1;cow])".to_string();
-        let rep = Representation::new();
+        let mut rep = Representation::new();
         rep.tell(test_02).unwrap();
         assert_eq!(rep.ask(q02_01).get_results_single(), Some(true));
 
@@ -1424,7 +1424,7 @@ mod test {
                  := fn::friend[x,u=0;y] ))
         ");
         let q03_01 = "(fn::friend[$Lucy,u=0;$John])".to_string();
-        let rep = Representation::new();
+        let mut rep = Representation::new();
         rep.tell(test_03).unwrap();
         assert_eq!(rep.ask(q03_01).get_results_single(), Some(true));
 
@@ -1437,7 +1437,7 @@ mod test {
             ((let x) ((female[x,u>0] && animal[x,u>0]) := fn::produce[milk,u=1;x]))
         ");
         let q04_01 = "((let x) (fn::produce[milk,u>0;x]))".to_string();
-        let rep = Representation::new();
+        let mut rep = Representation::new();
         rep.tell(test_04).unwrap();
         let answ = rep.ask(q04_01);
         let a04_01 = answ.get_relationships();
@@ -1452,7 +1452,7 @@ mod test {
             (fn::hates[$Vicky,u=0;dogs])
         ");
         let q05_01 = "((let x) (fn::x[$Vicky,u>0;$Lucy]))".to_string();
-        let rep = Representation::new();
+        let mut rep = Representation::new();
         rep.tell(test_05).unwrap();
         let mut results = HashSet::new();
         results.insert("loves");
@@ -1489,7 +1489,7 @@ mod test {
             ( fn::eat(time=\"2014-07-05T10:25:00Z\")[$M1,u=1;$Pancho] )
         ");
         let q01_01 = "(fat(time='Now')[$Pancho,u=1])".to_string();
-        let rep = Representation::new();
+        let mut rep = Representation::new();
         rep.tell(test_01).unwrap();
         assert_eq!(rep.ask(q01_01).get_results_single(), Some(true));
 
@@ -1504,12 +1504,12 @@ mod test {
             ( fat(time=\"2014-07-05T10:25:00Z\")[$Pancho,u=1] )
         ");
         let q02_01 = "(fn::eat(time='Now')[$M1,u=1;$Pancho])".to_string();
-        let rep = Representation::new();
+        let mut rep = Representation::new();
         rep.tell(test_02).unwrap();
         assert_eq!(rep.ask(q02_01).get_results_single(), Some(true));
 
         // Test 03
-        let rep = Representation::new();
+        let mut rep = Representation::new();
         let test_03_00 = String::from("
             (meat[$M1,u=1])
             (dog[$Pancho,u=1])

@@ -29,20 +29,20 @@ pub enum Predicate {
 }
 
 impl<'a> Predicate {
-    fn from(a: &'a ArgBorrowed<'a>,
+    fn from(arg: &'a ArgBorrowed<'a>,
             context: &'a mut ParseContext,
             name: &'a Terminal,
             is_func: bool)
             -> Result<Predicate, ParseErrF> {
         if name.is_grounded() {
-            match Terminal::from(&a.term, context) {
+            match Terminal::from(&arg.term, context) {
                 Ok(Terminal::FreeTerm(ft)) => {
-                    let t = FreeClsMemb::new(ft, a.uval, name)?;
+                    let t = FreeClsMemb::new(ft, arg.uval, name)?;
                     Ok(Predicate::FreeClsMemb(t))
                 }
                 Ok(Terminal::GroundedTerm(gt)) => {
                     let t =
-                        GroundedMemb::new(gt, a.uval, name.get_name().to_string(), None, context)?;
+                        GroundedMemb::new(gt, arg.uval, name.get_name().to_string(), None, context)?;
                     Ok(Predicate::GroundedMemb(t))
                 }
                 Ok(Terminal::Keyword(kw)) => Err(ParseErrF::ReservedKW(String::from(kw))),
@@ -52,14 +52,14 @@ impl<'a> Predicate {
             if context.is_tell {
                 return Err(ParseErrF::ClassIsVar);
             }
-            match Terminal::from(&a.term, context) {
+            match Terminal::from(&arg.term, context) {
                 Ok(Terminal::FreeTerm(_)) if !is_func => Err(ParseErrF::BothAreVars),
                 Ok(Terminal::FreeTerm(ft)) => {
-                    let t = FreeClsMemb::new(ft, a.uval, name)?;
+                    let t = FreeClsMemb::new(ft, arg.uval, name)?;
                     Ok(Predicate::FreeClsMemb(t))
                 }
                 Ok(Terminal::GroundedTerm(gt)) => {
-                    let t = FreeClsOwner::new(gt, a.uval, name)?;
+                    let t = FreeClsOwner::new(gt, arg.uval, name)?;
                     Ok(Predicate::FreeClsOwner(t))
                 }
                 Ok(Terminal::Keyword(kw)) => Err(ParseErrF::ReservedKW(String::from(kw))),
@@ -1378,8 +1378,11 @@ impl<'a> ClassDecl {
         };
         let args = {
             let mut v0 = Vec::with_capacity(other.args.len());
-            for a in &other.args {
-                let pred = Predicate::from(a, context, &class_name, false)?;
+            for arg in &other.args {
+                if arg.uval.is_none() {
+                    return Err(ParseErrF::IUValNone)
+                }
+                let pred = Predicate::from(arg, context, &class_name, false)?;
                 v0.push(pred);
             }
             v0

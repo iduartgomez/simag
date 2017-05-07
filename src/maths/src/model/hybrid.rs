@@ -6,7 +6,6 @@ use std::marker::PhantomData;
 use RGSLRng;
 use super::{Node, ContVar, DiscreteVar, ContNode};
 use super::{DType, DefContVar, DefDiscreteVar};
-use sampling::HybridSampler;
 use dists::{Normalization, AsContinuous};
 
 use itertools::Itertools;
@@ -20,7 +19,6 @@ pub trait HybridNode<'a>: ContNode<'a> + Sized {
     fn get_disc_dist(&self) -> Option<&'a Self::Discrete>;
     fn inverse_cdf(&self, p: f64) -> u8;
     fn remove_disc_parent(&self, var: &Self::Discrete);
-    //fn draw_sample(&self, rng: &mut RGSLRng, values: &[HybridRes]) -> HybridRes;
 }
 
 #[derive(Debug)]
@@ -48,7 +46,7 @@ impl<'a, N> HybridModel<'a, N>
     }
 
     /// Adds a parent `dist` to a child `dist`, connecting both nodes directionally
-    /// with an arc.
+    /// with an arc. Accepts an optional weight argument for the arc.
     ///
     /// Takes the distribution of a variable, and the parent variable distribution
     /// as arguments and returns a result indicating if the parent was added properly.
@@ -56,7 +54,7 @@ impl<'a, N> HybridModel<'a, N>
     pub fn add_parent(&mut self,
                       node: &'a <N as ContNode<'a>>::Var,
                       parent: &'a <N as ContNode<'a>>::Var,
-                      rank_cr: Option<f64>)
+                      weight: Option<f64>)
                       -> Result<(), ()> {
         // checks to perform:
         //  - both exist in the model
@@ -75,7 +73,7 @@ impl<'a, N> HybridModel<'a, N>
             .find(|n| (&**n).get_dist() == parent)
             .cloned()
             .ok_or(())?;
-        node.add_parent(parent.clone(), rank_cr);
+        node.add_parent(parent.clone(), weight);
         parent.add_child(node.clone());
         // check if it's a DAG and topologically sort the graph
         self.vars.topological_sort()
@@ -123,11 +121,6 @@ impl<'a, N> HybridModel<'a, N>
         };
     }
 
-    /// Sample the model with a given sampler, with the current elicited probabilities.
-    pub fn sample<S: HybridSampler<'a>>(&self, sampler: S) -> Result<S::Output, S::Err> {
-        sampler.get_samples(self)
-    }
-
     /// Returns the total number of variables in the model.
     pub fn var_num(&self) -> usize {
         self.vars.nodes.len()
@@ -170,7 +163,7 @@ pub struct DefHybridNode<'a, C: 'a, D: 'a>
     as_cont: Option<C>,
     childs: RwLock<Vec<Weak<DefHybridNode<'a, C, D>>>>,
     parents: RwLock<Vec<Arc<DefHybridNode<'a, C, D>>>>,
-    edges: RwLock<Vec<Option<f64>>>, // rank correlations assigned to edges, if any
+    edges: RwLock<Vec<Option<f64>>>, // weight assigned to edges, if any
     pos: RwLock<usize>,
     was_discrete: bool,
 }
@@ -386,11 +379,11 @@ impl<'a, C: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, C, D>
         dists
     }
 
-    fn add_parent(&self, parent: Arc<Self>, rank_cr: Option<f64>) {
+    fn add_parent(&self, parent: Arc<Self>, weight: Option<f64>) {
         let parents = &mut *self.parents.write().unwrap();
         let edges = &mut *self.edges.write().unwrap();
         parents.push(parent);
-        edges.push(rank_cr);
+        edges.push(weight);
     }
 
     fn remove_parent(&self, parent: &C) {
@@ -536,11 +529,6 @@ impl<'a, N> MarkovRndField<'a, N>
         };
     }
 
-    /// Sample for the model marginal probabilities with the current elicited probabilities.
-    pub fn sample<S: HybridSampler<'a>>(&self, sampler: S) -> Result<S::Output, S::Err> {
-        sampler.get_samples(self)
-    }
-
     /// Get the node in the graph at position *i* unchecked.
     pub fn get_var(&self, i: usize) -> Arc<N> {
         self.underlying[i].clone()
@@ -600,4 +588,3 @@ impl<'a, N> ::std::iter::Iterator for MarkovRndFieldIter<'a, N>
         }
     }
 }
-

@@ -23,7 +23,7 @@ impl Agent {
         self.representation.ask(source)
     }
 
-    pub fn tell(&self, source: String) -> Result<(), Vec<ParseErrF>> {
+    pub fn tell(&mut self, source: String) -> Result<(), Vec<ParseErrF>> {
         self.representation.tell(source)
     }
 }

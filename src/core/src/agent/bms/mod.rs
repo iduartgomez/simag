@@ -352,7 +352,7 @@ mod test {
 
     #[test]
     fn bms_rollback() {
-        let rep = Representation::new();
+        let mut rep = Representation::new();
 
         let fol = String::from("
             (ugly[$Pancho,u=0])
@@ -368,8 +368,10 @@ mod test {
              ((fat[x,u=1] && dog[x,u=1]) := (ugly[x,u=1] && sad[x,u=1])))
         ");
         rep.tell(fol).unwrap();
-        let answ = rep.ask("(fat[$Pancho,u=1] && sad[$Pancho,u=1])".to_string());
-        assert_eq!(answ.get_results_single(), Some(true));
+        {
+            let answ = rep.ask("(fat[$Pancho,u=1] && sad[$Pancho,u=1])".to_string());
+            assert_eq!(answ.get_results_single(), Some(true));
+        }
 
         let fol = String::from("
             (run[$Pancho,u=1])
@@ -387,7 +389,7 @@ mod test {
 
     #[test]
     fn bms_review_after_change() {
-        let rep = Representation::new();
+        let mut rep = Representation::new();
 
         let fol = String::from("            
             ( meat[$M1,u=1] )
@@ -398,19 +400,26 @@ mod test {
                 := fat[x,u=1] ) )
         ");
         rep.tell(fol).unwrap();
-        let answ = rep.ask("(fat[$Pancho,u=1])".to_string());
-        assert_eq!(answ.get_results_single(), Some(true));
+        {
+            let answ = rep.ask("(fat[$Pancho,u=1])".to_string());
+            assert_eq!(answ.get_results_single(), Some(true));
+        }
 
         let fol = String::from("
             ( run[$Pancho,u=1] )
             (( let x ) (( dog[x,u=1] && run[x,u=1] ) := fat[x,u=0] ))
         ");
         rep.tell(fol).unwrap();
-        let answ = rep.ask("(fat[$Pancho,u=0])".to_string());
-        assert_eq!(answ.get_results_single(), Some(true));
+        {
+            let answ = rep.ask("(fat[$Pancho,u=0])".to_string());
+            assert_eq!(answ.get_results_single(), Some(true));
+        }
+        
 
         rep.tell("(fn::eat[$M1,u=1;$Pancho])".to_string()).unwrap();
-        let answ = rep.ask("(fat[$Pancho,u=1])".to_string());
-        assert_eq!(answ.get_results_single(), Some(true));
+        {
+            let answ = rep.ask("(fat[$Pancho,u=1])".to_string());
+            assert_eq!(answ.get_results_single(), Some(true));
+        }
     }
 }

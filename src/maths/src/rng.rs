@@ -61,6 +61,7 @@ impl RGSLRng {
 
     fn reseed(&mut self) {
         let seed = self.thread_rng.next_u32() as usize;
+        self.cnt = 0;
         self.inner.set(seed);
     }
 

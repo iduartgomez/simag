@@ -5,8 +5,8 @@ use std::ops::Deref;
 use rgsl::{MatrixF64, VectorF64};
 use rgsl;
 
-use super::{HybridSampler, HybridRes};
-use model::{Variable, HybridNode, ContVar, DefContVar, DType, IterModel};
+use super::{HybridRes};
+use model::{Variable, HybridNode, ContVar, DefContVar, DType, IterModel, HybridModel};
 use dists::{Normal, Normalization, CDF};
 use err::ErrMsg;
 use RGSLRng;
@@ -41,7 +41,6 @@ const BURN_IN: usize = 500;
 #[derive(Debug)]
 pub struct ExactNormalized<'a> {
     steeps: usize,
-    burnin: usize,
     normalized: Vec<Normalized<'a>>,
     samples: Vec<Vec<HybridRes>>,
     rng: RGSLRng,
@@ -58,20 +57,14 @@ struct Normalized<'a> {
 }
 
 impl<'a> ExactNormalized<'a> {
-    pub fn new(steeps: Option<usize>, burnin: Option<usize>) -> ExactNormalized<'a> {
+    pub fn new(steeps: Option<usize>) -> ExactNormalized<'a> {
         let steeps = match steeps {
             Some(val) => val,
             None => ITER_TIMES,
         };
 
-        let burnin = match burnin {
-            Some(val) => val,
-            None => BURN_IN,
-        };
-
         ExactNormalized {
             steeps: steeps,
-            burnin: burnin,
             normalized: vec![],
             samples: Vec::with_capacity(ITER_TIMES),
             rng: RGSLRng::new(),
@@ -79,10 +72,8 @@ impl<'a> ExactNormalized<'a> {
         }
     }
 
-    fn initialize<M>(&mut self, net: &M) -> Result<(), ()>
-        where <<<M as IterModel>::Iter as Iterator>::Item as Deref>::Target: HybridNode<'a>,
-              <<M as IterModel>::Iter as Iterator>::Item: Deref,
-              M: IterModel
+    fn initialize<N>(&mut self, net: &HybridModel<'a, N>) -> Result<(), ()>
+        where N: HybridNode<'a>
     {
         use model::ContNode;
         //use super::partial_correlation;
@@ -111,11 +102,7 @@ impl<'a> ExactNormalized<'a> {
             }
             //let anc = node.get_all_ancestors();
             //partial_correlation(i, &anc, &mut cached, &mut self.cr_matrix);
-            let d = unsafe {
-                &*(node.get_dist() as *const _) 
-                as &'a <<<<M as IterModel>::Iter as Iterator>::Item as Deref>::Target 
-                             as ContNode>::Var 
-            };
+            let d = unsafe { &*(node.get_dist() as *const _) as &'a <N as ContNode>::Var };
             let n = Normalized {
                 var: dist,
                 original: d.dist_type(),
@@ -124,15 +111,9 @@ impl<'a> ExactNormalized<'a> {
         }
         Ok(())
     }
-}
 
-impl<'a> HybridSampler<'a> for ExactNormalized<'a> {
-    type Output = Vec<Vec<HybridRes>>;
-    type Err = ();
-    fn get_samples<M>(mut self, net: &M) -> Result<Self::Output, Self::Err>
-        where <<<M as IterModel>::Iter as Iterator>::Item as Deref>::Target: HybridNode<'a>,
-              <<M as IterModel>::Iter as Iterator>::Item: Deref,
-              M: IterModel
+    pub fn get_samples<N>(mut self, net: &HybridModel<'a, N>) -> Result<Vec<Vec<HybridRes>>, ()>
+        where N: HybridNode<'a>
     {
         use rgsl::blas::level2::dtrmv;
 
@@ -208,25 +189,16 @@ impl<'a> HybridSampler<'a> for ExactNormalized<'a> {
 impl<'a> ::std::clone::Clone for ExactNormalized<'a> {
     fn clone(&self) -> ExactNormalized<'a> {
         let steeps = Some(self.steeps);
-        let burnin = Some(self.burnin);
-        ExactNormalized::new(steeps, burnin)
+        ExactNormalized::new(steeps)
     }
 }
 
 
-/// Gibbs sampler for Markov Random Fields.
+/// Marginal sampler for Constrained Continuous Markov Random Field.
 ///
-/// This algorithm draws a sample for each variable in the model for *t* steeps
-/// and converges to the stationary distribution.
-///
-/// The initialization ans sampling sorting at each steep is done following this procedure:
-/// 1 -
-/// 
-/// Drawing from each full contional univariate distribution is done using the information
-/// from the built Markov chain and the graph model. In each steep the univariates are 
-/// conditioned on the values of the variables in Markov blanket of variable *j* at steep *t* 
-/// (for variable *0...j-1*) and *t-1* (for variable *j+1...k).
-pub struct Gibbs {
+/// This algorithm draws a sample from a proposal marginal distribution of a random variable 
+/// in the model for *t* steeps and converges to the stationary distribution for that variable.
+pub struct CCMRFMarginal {
     steeps: usize,
     burnin: usize,
     samples: Vec<Vec<HybridRes>>,
@@ -239,8 +211,8 @@ struct VarData {
     blanket: Vec<usize>,
 }
 
-impl<'a> Gibbs {
-    pub fn new(steeps: Option<usize>, burnin: Option<usize>) -> Gibbs {
+impl<'a> CCMRFMarginal {
+    pub fn new(steeps: Option<usize>, burnin: Option<usize>) -> CCMRFMarginal {
         let steeps = match steeps {
             Some(val) => val,
             None => ITER_TIMES,
@@ -251,7 +223,7 @@ impl<'a> Gibbs {
             None => BURN_IN,
         };
 
-        Gibbs {
+        CCMRFMarginal {
             steeps,
             burnin,
             samples: Vec::with_capacity(steeps),
@@ -311,12 +283,8 @@ impl<'a> Gibbs {
             }
         }
     }
-}
 
-impl<'a> HybridSampler<'a> for Gibbs {
-    type Output = Vec<Vec<HybridRes>>;
-    type Err = ();
-    fn get_samples<M>(mut self, net: &M) -> Result<Self::Output, Self::Err>
+    pub fn get_samples<M>(mut self, net: &M) -> Result<Vec<Vec<HybridRes>>, ()>
         where <<<M as IterModel>::Iter as Iterator>::Item as Deref>::Target: HybridNode<'a>,
               <<M as IterModel>::Iter as Iterator>::Item: Deref,
               M: IterModel
@@ -337,10 +305,10 @@ impl<'a> HybridSampler<'a> for Gibbs {
     }
 }
 
-impl ::std::clone::Clone for Gibbs {
-    fn clone(&self) -> Gibbs {
+impl ::std::clone::Clone for CCMRFMarginal {
+    fn clone(&self) -> CCMRFMarginal {
         let steeps = Some(self.steeps);
         let burnin = Some(self.burnin);
-        Gibbs::new(steeps, burnin)
+        CCMRFMarginal::new(steeps, burnin)
     }
 }

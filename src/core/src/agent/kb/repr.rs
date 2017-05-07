@@ -55,7 +55,7 @@ impl Representation {
     /// class for future use.
     ///
     /// For more examples check the LogSentence type docs.
-    pub fn tell(&self, source: String) -> Result<(), Vec<ParseErrF>> {
+    pub fn tell(&mut self, source: String) -> Result<(), Vec<ParseErrF>> {
         let pres = logic_parser(source, true);
         if pres.is_ok() {
             let mut pres: VecDeque<ParseTree> = pres.unwrap();
