@@ -80,7 +80,9 @@ impl<'b> InfResults<'b> {
     fn add_grounded(&self, obj: &str, pred: &str, res: Option<(bool, Option<Time>)>) {
         let obj = unsafe { ::std::mem::transmute::<&str, &'b str>(obj) };
         let mut lock = self.grounded_queries.write().unwrap();
-        lock.entry(pred.to_string()).or_insert(HashMap::new()).insert(obj, res);
+        lock.entry(pred.to_string())
+            .or_insert(HashMap::new())
+            .insert(obj, res);
     }
 
     pub fn get_results_single(&self) -> Option<bool> {
@@ -105,7 +107,8 @@ impl<'b> InfResults<'b> {
         (self)
          -> HashMap<QueryPred, HashMap<String, Option<(bool, Option<Time>)>>> {
         // WARNING: ObjName<'a> may (truly) outlive the content, own the &str first
-        let orig: &mut HashMap<QueryPred, HashMap<ObjName<'b>, Option<(bool, Option<Time>)>>> =
+        let orig: &mut HashMap<QueryPred,
+                               HashMap<ObjName<'b>, Option<(bool, Option<Time>)>>> =
             &mut *self.grounded_queries.write().unwrap();
         let mut res = HashMap::new();
         for (qpred, r) in orig.drain() {
@@ -156,60 +159,13 @@ impl<'b> InfResults<'b> {
                 }
             }
         }
-        HashMap::from_iter(res.into_iter().map(|(k, l)| {
-            (k, l.into_iter().map(|v| unsafe { &*v as &GroundedFunc }).collect::<Vec<_>>())
-        }))
-    }
-}
-
-/// Carries the inference results payload or the error type in case the query
-/// failed. A query can fail because it's either incomprehensible, in which case
-/// it will return a `QueryErr` variant, or because parsing of the ask request failed
-/// in which case it will return a `ParseErr` variant and it's payload.
-#[derive(Debug)]
-pub enum Answer<'a> {
-    Results(InfResults<'a>),
-    QueryErr,
-    ParseErr(ParseErrF),
-}
-
-impl<'a> Answer<'a> {
-    pub fn get_results_single(self) -> Option<bool> {
-        match self {
-            Answer::Results(result) => result.get_results_single(),
-            _ => panic!("simag: tried to unwrap a result from an error"),
-        }
-    }
-
-    #[allow(type_complexity)]
-    pub fn get_results_multiple
-        (self)
-         -> HashMap<QueryPred, HashMap<String, Option<(bool, Option<Time>)>>> {
-        match self {
-            Answer::Results(result) => result.get_results_multiple(),
-            _ => panic!("simag: tried to unwrap a result from an error"),
-        }
-    }
-
-    pub fn get_memberships(&'a self) -> HashMap<ObjName<'a>, Vec<&'a GroundedMemb>> {
-        match *self {
-            Answer::Results(ref result) => result.get_memberships(),
-            _ => panic!("simag: tried to unwrap a result from an error"),
-        }
-    }
-
-    pub fn get_relationships(&'a self) -> HashMap<ObjName<'a>, Vec<&'a GroundedFunc>> {
-        match *self {
-            Answer::Results(ref result) => result.get_relationships(),
-            _ => panic!("simag: tried to unwrap a result from an error"),
-        }
-    }
-
-    pub fn is_err(&self) -> bool {
-        match *self {
-            Answer::Results(_) => false,
-            _ => true,
-        }
+        HashMap::from_iter(res.into_iter()
+                               .map(|(k, l)| {
+                                        (k,
+                                         l.into_iter()
+                                             .map(|v| unsafe { &*v as &GroundedFunc })
+                                             .collect::<Vec<_>>())
+                                    }))
     }
 }
 
@@ -232,19 +188,19 @@ impl<'a> Inference<'a> {
                -> Result<Box<Inference<'a>>, ()> {
         let query = Arc::new(QueryProcessed::new().get_query(query_input)?);
         Ok(Box::new(Inference {
-            query: query.clone(),
-            kb: agent,
-            depth: depth,
-            ignore_current: ignore_current,
-            nodes: RwLock::new(HashMap::new()),
-            queue: RwLock::new(HashMap::new()),
-            results: InfResults::new(query),
-            _available_threads: RwLock::new(4_u32),
-        }))
+                        query: query.clone(),
+                        kb: agent,
+                        depth: depth,
+                        ignore_current: ignore_current,
+                        nodes: RwLock::new(HashMap::new()),
+                        queue: RwLock::new(HashMap::new()),
+                        results: InfResults::new(query),
+                        _available_threads: RwLock::new(4_u32),
+                    }))
     }
 
     pub fn get_results(self) -> Answer<'a> {
-        Answer::Results(self.results)
+        Answer(self.results)
     }
 
     /// Inference function from first-order logic sentences.
@@ -280,21 +236,23 @@ impl<'a> Inference<'a> {
                 let valid = l.as_ref().unwrap();
                 let node: &ProofNode = unsafe { &*(valid.node as *const ProofNode) };
                 let mut context = IExprResult::new(valid.args.clone(), node);
-                node.proof.solve(inf.kb, Some(valid.args.as_proof_input()), &mut context);
+                node.proof
+                    .solve(inf.kb, Some(valid.args.as_proof_input()), &mut context);
             }
         }
 
         crossbeam::scope(|scope| for (obj, preds) in &self.query.cls_queries_grounded {
-            for pred in preds {
-                let query = pred.get_parent();
-                scope.spawn(move || {
+                             for pred in preds {
+                                 let query = pred.get_parent();
+                                 scope.spawn(move || {
                     let result = if !self.ignore_current {
                         self.kb.class_membership(pred)
                     } else {
                         None
                     };
                     if result.is_some() {
-                        self.results.add_grounded(obj, query, Some((result.unwrap(), None)));
+                        self.results
+                            .add_grounded(obj, query, Some((result.unwrap(), None)));
                     } else {
                         self.results.add_grounded(obj, query, None);
                         // if no result was found from the kb directly
@@ -303,11 +261,11 @@ impl<'a> Inference<'a> {
                         queue_query(self, query, actv_query);
                     }
                 });
-            }
-        });
+                             }
+                         });
 
         crossbeam::scope(|scope| for pred in &self.query.func_queries_grounded {
-            scope.spawn(move || {
+                             scope.spawn(move || {
                 let query: &str = pred.get_name();
                 let mut result = None;
                 for (i, arg) in pred.get_args().iter().enumerate() {
@@ -316,7 +274,8 @@ impl<'a> Inference<'a> {
                         result = self.kb.has_relationship(pred, obj);
                     }
                     if result.is_some() {
-                        self.results.add_grounded(obj, query, Some((result.unwrap(), None)));
+                        self.results
+                            .add_grounded(obj, query, Some((result.unwrap(), None)));
                     } else {
                         self.results.add_grounded(obj, query, None);
                         let actv_query = ActiveQuery::new_with_func(i, pred.clone());
@@ -324,11 +283,11 @@ impl<'a> Inference<'a> {
                     }
                 }
             });
-        });
+                         });
 
         crossbeam::scope(|scope| for (var, classes) in &self.query.cls_queries_free {
-            for cls in classes {
-                scope.spawn(move || {
+                             for cls in classes {
+                                 scope.spawn(move || {
                     let cls_name = cls.get_parent();
                     let lock = self.kb.classes.read().unwrap();
                     if let Some(cls_curr) = lock.get(cls_name) {
@@ -339,12 +298,12 @@ impl<'a> Inference<'a> {
                         }
                     }
                 });
-            }
-        });
+                             }
+                         });
 
         crossbeam::scope(|scope| for (var, funcs) in &self.query.func_queries_free {
-            for func in funcs {
-                scope.spawn(move || {
+                             for func in funcs {
+                                 scope.spawn(move || {
                     let func_name = func.get_name();
                     let lock = &self.kb.classes.read().unwrap();
                     if let Some(cls_curr) = lock.get(func_name) {
@@ -352,30 +311,32 @@ impl<'a> Inference<'a> {
                         self.results.add_relationships(var, &members);
                     }
                 });
-            }
-        });
+                             }
+                         });
 
         crossbeam::scope(|scope| for (var, objs) in &self.query.cls_memb_query {
-            for obj in objs {
-                scope.spawn(move || {
+                             for obj in objs {
+                                 scope.spawn(move || {
                     let member_of = self.kb.get_class_membership(obj);
                     for m in member_of {
-                        self.results.add_membership(var, obj.get_name(), m.clone());
+                        self.results
+                            .add_membership(var, obj.get_name(), m.clone());
                     }
                 });
-            }
-        });
+                             }
+                         });
 
         crossbeam::scope(|scope| for (var, funcs) in &self.query.func_memb_query {
-            for func in funcs {
-                scope.spawn(move || {
-                    let relationships = self.kb.get_relationships(func);
-                    for funcs in relationships.values() {
-                        self.results.add_relationships(var, funcs);
-                    }
-                });
-            }
-        });
+                             for func in funcs {
+                                 scope.spawn(move || {
+                                                 let relationships = self.kb
+                                                     .get_relationships(func);
+                                                 for funcs in relationships.values() {
+                                                     self.results.add_relationships(var, funcs);
+                                                 }
+                                             });
+                             }
+                         });
     }
 }
 
@@ -398,7 +359,7 @@ impl ActiveQuery {
     #[inline]
     fn get_obj(&self) -> &str {
         match *self {
-            ActiveQuery::Class(ref decl) => decl.get_name(), 
+            ActiveQuery::Class(ref decl) => decl.get_name(),
             ActiveQuery::Func(pos, ref decl) => decl.get_arg_name(pos),
         }
     }
@@ -655,7 +616,8 @@ impl<'a> InfTrial<'a> {
                         let mut lock0 = inf.updated.lock().unwrap();
                         lock0.push(true);
                         let mut lock1 = inf.queue.write().unwrap();
-                        lock1.entry(node_raw)
+                        lock1
+                            .entry(node_raw)
                             .or_insert(HashSet::new())
                             .insert(args.hash_val);
                     }
@@ -694,14 +656,17 @@ impl<'a> InfTrial<'a> {
                         let mapped = ArgsProduct::product(assignments.unwrap());
                         if let Some(mapped) = mapped {
                             crossbeam::scope(|scope| for args in mapped {
-                                if let Some(ref valid) = *self.valid.lock().unwrap() {
-                                    if valid.node == &*node as *const ProofNode as usize {
-                                        break;
-                                    }
-                                }
-                                let args: ProofArgs = ProofArgs::new(args);
-                                scope.spawn(move || scoped_exec(self, node, args));
-                            });
+                                                 if let Some(ref valid) = *self.valid
+                                                                               .lock()
+                                                                               .unwrap() {
+                                                     if valid.node ==
+                                                        &*node as *const ProofNode as usize {
+                                                         break;
+                                                     }
+                                                 }
+                                                 let args: ProofArgs = ProofArgs::new(args);
+                                                 scope.spawn(move || scoped_exec(self, node, args));
+                                             });
                         }
                         if self.feedback.load(Ordering::SeqCst) {
                             for e in node.antecedents.clone() {
@@ -869,9 +834,9 @@ impl<'a> InfTrial<'a> {
                         let mut lock = nodes.write().unwrap();
                         let mut ls = lock.entry(name).or_insert(vec![]);
                         if ls.iter()
-                            .map(|x| x.proof.get_id())
-                            .find(|x| *x == sent.get_id())
-                            .is_none() {
+                               .map(|x| x.proof.get_id())
+                               .find(|x| *x == sent.get_id())
+                               .is_none() {
                             ls.push(node.clone());
                         }
                         ls.sort_by(|a, b| a.proof.created.cmp(&b.proof.created).reverse());
@@ -917,10 +882,11 @@ pub fn meet_sent_req<'a>(rep: &'a Representation,
         let mut meet_func_req = rep.by_relationship(funcs_list);
         let mut i0: HashMap<&str, usize> = HashMap::new();
         for v in meet_cls_req.values() {
-            for name in v.iter().map(|x| unsafe {
-                let t = &*(&**x as *const GroundedMemb);
-                t.get_name()
-            }) {
+            for name in v.iter()
+                    .map(|x| unsafe {
+                             let t = &*(&**x as *const GroundedMemb);
+                             t.get_name()
+                         }) {
                 let cnt: &mut usize = i0.entry(name).or_insert(0);
                 *cnt += 1;
             }
@@ -941,7 +907,10 @@ pub fn meet_sent_req<'a>(rep: &'a Representation,
             .map(|(k, _)| *k);
         if !meet_func_req.is_empty() && !meet_cls_req.is_empty() {
             let c1: HashSet<&str> = cls_filter.collect();
-            i2 = func_filter.filter_map(|n0| c1.get(&n0)).cloned().collect();
+            i2 = func_filter
+                .filter_map(|n0| c1.get(&n0))
+                .cloned()
+                .collect();
         } else if !meet_func_req.is_empty() {
             i2 = func_filter.collect();
         } else {
@@ -965,17 +934,17 @@ pub fn meet_sent_req<'a>(rep: &'a Representation,
             if results.contains_key(var) {
                 let v = results.get_mut(var).unwrap();
                 v.push(Arc::new(VarAssignment {
-                    name: name,
-                    classes: gr_memb,
-                    funcs: gr_relations,
-                }))
+                                    name: name,
+                                    classes: gr_memb,
+                                    funcs: gr_relations,
+                                }))
             } else {
                 results.insert(var,
                                vec![Arc::new(VarAssignment {
-                                        name: name.clone(),
-                                        classes: gr_memb,
-                                        funcs: gr_relations,
-                                    })]);
+                                                 name: name.clone(),
+                                                 classes: gr_memb,
+                                                 funcs: gr_relations,
+                                             })]);
             }
         }
         if !results.contains_key(var) {
@@ -1008,11 +977,11 @@ impl<'a> ArgsProduct<'a> {
         }
         if curr.is_some() {
             Some(ArgsProduct {
-                indexes: indexes,
-                input: input,
-                curr: curr.unwrap(),
-                done: HashSet::new(),
-            })
+                     indexes: indexes,
+                     input: input,
+                     curr: curr.unwrap(),
+                     done: HashSet::new(),
+                 })
         } else {
             None
         }
@@ -1278,12 +1247,18 @@ impl<'b> QueryProcessed<'b> {
 
     #[inline]
     fn push_to_clsquery_grounded(&mut self, term: &'b str, cls: Arc<GroundedMemb>) {
-        self.cls_queries_grounded.entry(term).or_insert(vec![]).push(cls);
+        self.cls_queries_grounded
+            .entry(term)
+            .or_insert(vec![])
+            .push(cls);
     }
 
     #[inline]
     fn push_to_clsquery_free(&mut self, term: &'b Var, cls: &'b FreeClsMemb) {
-        self.cls_queries_free.entry(term).or_insert(vec![]).push(cls);
+        self.cls_queries_free
+            .entry(term)
+            .or_insert(vec![])
+            .push(cls);
     }
 
     #[inline]
@@ -1293,17 +1268,26 @@ impl<'b> QueryProcessed<'b> {
 
     #[inline]
     fn push_to_fnquery_free(&mut self, term: &'b Var, func: &'b FuncDecl) {
-        self.func_queries_free.entry(term).or_insert(vec![]).push(func);
+        self.func_queries_free
+            .entry(term)
+            .or_insert(vec![])
+            .push(func);
     }
 
     #[inline]
     fn ask_class_memb(&mut self, term: &'b FreeClsOwner) {
-        self.cls_memb_query.entry(term.get_var_ref()).or_insert(vec![]).push(term);
+        self.cls_memb_query
+            .entry(term.get_var_ref())
+            .or_insert(vec![])
+            .push(term);
     }
 
     #[inline]
     fn ask_relationships(&mut self, term: &'b FuncDecl) {
-        self.func_memb_query.entry(term.get_parent().get_var_ref()).or_insert(vec![]).push(term);
+        self.func_memb_query
+            .entry(term.get_parent().get_var_ref())
+            .or_insert(vec![])
+            .push(term);
     }
 }
 

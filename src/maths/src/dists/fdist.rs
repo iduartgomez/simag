@@ -41,7 +41,7 @@ impl CDF for FDist {
         use rgsl::randist::f_distribution::fdist_P;
 
         if x.is_sign_negative() {
-            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self))
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self));
         }
         fdist_P(x, self.d1, self.d2)
     }
@@ -51,7 +51,7 @@ impl CDF for FDist {
         use rgsl::randist::f_distribution::fdist_Pinv;
 
         if x.is_sign_negative() {
-            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self))
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self));
         }
         fdist_Pinv(x, self.d1, self.d2)
     }

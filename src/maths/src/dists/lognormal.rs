@@ -1,4 +1,5 @@
 use RGSLRng;
+use err::ErrMsg;
 
 #[derive(Debug, Clone)]
 pub struct LogNormal {
@@ -22,7 +23,9 @@ impl LogNormal {
     pub fn pdf(&self, x: f64) -> f64 {
         use rgsl::randist::lognormal::lognormal_pdf;
 
-        assert!(x.is_sign_positive());
+        if x.is_sign_negative() {
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self));
+        }
         lognormal_pdf(x, self.zeta, self.sigma)
     }
 }
@@ -43,7 +46,9 @@ impl CDF for LogNormal {
     fn cdf(&self, x: f64) -> f64 {
         use rgsl::randist::lognormal::lognormal_P;
 
-        assert!(x.is_sign_positive());
+        if x.is_sign_negative() {
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self));
+        }
         lognormal_P(x, self.zeta, self.sigma)
     }
 
@@ -51,7 +56,9 @@ impl CDF for LogNormal {
     fn inverse_cdf(&self, x: f64) -> f64 {
         use rgsl::randist::lognormal::lognormal_Pinv;
 
-        assert!(x.is_sign_positive());
+        if x.is_sign_negative() {
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self));
+        }
         lognormal_Pinv(x, self.zeta, self.sigma)
     }
 }

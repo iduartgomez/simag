@@ -44,7 +44,7 @@ impl CDF for Exponential {
         use rgsl::randist::exponential::exponential_P;
 
         if x.is_sign_negative() {
-            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self))
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self));
         }
         exponential_P(x, self.mean)
     }
@@ -54,7 +54,7 @@ impl CDF for Exponential {
         use rgsl::randist::exponential::exponential_Pinv;
 
         if x.is_sign_negative() {
-            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self))
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self));
         }
         exponential_Pinv(x, self.mean)
     }

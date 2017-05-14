@@ -40,7 +40,7 @@ impl CDF for ChiSquared {
         use rgsl::randist::chi_squared::chisq_P;
 
         if x.is_sign_negative() {
-            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self))
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self));
         }
         chisq_P(x, self.k as f64)
     }
@@ -50,7 +50,7 @@ impl CDF for ChiSquared {
         use rgsl::randist::chi_squared::chisq_Pinv;
 
         if x.is_sign_negative() {
-            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self))
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self));
         }
         chisq_Pinv(x, self.k as f64)
     }

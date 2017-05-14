@@ -1,4 +1,5 @@
 use RGSLRng;
+use err::ErrMsg;
 
 #[derive(Debug, Clone)]
 pub struct Pareto {
@@ -22,7 +23,9 @@ impl Pareto {
     pub fn pdf(&self, x: f64) -> f64 {
         use rgsl::randist::pareto::pareto_pdf;
 
-        assert!(x.is_sign_positive());
+        if x.is_sign_negative() {
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self));
+        }
         pareto_pdf(x, self.alpha, self.scale)
     }
 }
@@ -43,7 +46,9 @@ impl CDF for Pareto {
     fn cdf(&self, x: f64) -> f64 {
         use rgsl::randist::pareto::pareto_P;
 
-        assert!(x.is_sign_positive());
+        if x.is_sign_negative() {
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self));
+        }
         pareto_P(x, self.alpha, self.scale)
     }
 
@@ -51,7 +56,9 @@ impl CDF for Pareto {
     fn inverse_cdf(&self, x: f64) -> f64 {
         use rgsl::randist::pareto::pareto_Pinv;
 
-        assert!(x.is_sign_positive());
+        if x.is_sign_negative() {
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self));
+        }
         pareto_Pinv(x, self.alpha, self.scale)
     }
 }

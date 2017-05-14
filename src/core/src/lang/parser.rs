@@ -145,36 +145,36 @@ impl<'a> fmt::Display for ParseErrB<'a> {
                 }
                 //ParseErrB::SyntaxError(Box<ParseErrB<'a>>) => {}
                 ParseErrB::SyntaxErrorPos(arr) => {
-                    format!("syntax error at: {}", 
+                    format!("syntax error at:\n{}", 
                              str::from_utf8_unchecked(arr))
                 }
                 ParseErrB::NotScope(arr) => {
                     format!("syntax error,
-                             scope is invalid or not found: {}", 
+                             scope is invalid or not found:\n{}", 
                              str::from_utf8_unchecked(arr))
                 }
                 ParseErrB::ImbalDelim(arr) => {
                     format!("syntax error, 
-                             open delimiters: {}", 
+                             open delimiters:\n{}", 
                              str::from_utf8_unchecked(arr))
                 }
                 ParseErrB::IllegalChain(arr) => {
                     format!("syntax error,
-                             incomplete operator chain: {}", 
+                             incomplete operator chain:\n{}", 
                              str::from_utf8_unchecked(arr))
                 }
                 ParseErrB::NonTerminal(arr) => {
                     format!("syntax error,
-                             illegal character in terminal position: {}", 
+                             illegal character in terminal position:\n{}", 
                              str::from_utf8_unchecked(arr))
                 }
                 ParseErrB::NonNumber(arr) => {
                     format!("syntax error,
-                             illegal character found when parsing a number: {}", 
+                             illegal character found when parsing a number:v{}", 
                              str::from_utf8_unchecked(arr))
                 }
                 ParseErrB::UnclosedComment(arr) => {
-                    format!("syntax error, open comment delimiter: {}", 
+                    format!("syntax error, open comment delimiter:\n{}", 
                              str::from_utf8_unchecked(arr))
                 }
             }

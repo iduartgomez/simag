@@ -41,7 +41,7 @@ impl CDF for Gamma {
         use rgsl::randist::gamma::gamma_P;
 
         if x.is_sign_negative() {
-            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self))
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self));
         }
         gamma_P(x, self.a, self.b)
     }
@@ -51,7 +51,7 @@ impl CDF for Gamma {
         use rgsl::randist::gamma::gamma_Pinv;
 
         if x.is_sign_negative() {
-            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self))
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self));
         }
         gamma_Pinv(x, self.a, self.b)
     }

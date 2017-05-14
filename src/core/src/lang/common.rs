@@ -361,10 +361,7 @@ impl GroundedMemb {
 impl ::std::cmp::PartialEq for GroundedMemb {
     #![allow(collapsible_if)]
     fn eq(&self, other: &GroundedMemb) -> bool {
-        if self.term != other.term {
-            panic!()
-        }
-        if self.parent != other.parent {
+        if self.term != other.term || self.parent != other.parent {
             panic!()
         }
         let op_lhs;
@@ -409,34 +406,10 @@ impl ::std::cmp::PartialEq for GroundedMemb {
                     }
                 }
             }
-            CompOperator::More => {
-                if op_rhs.is_equal() {
-                    val_lhs < val_rhs
-                } else {
-                    panic!()
-                }
-            }
-            CompOperator::Less => {
-                if op_rhs.is_equal() {
-                    val_lhs > val_rhs
-                } else {
-                    panic!()
-                }
-            }
-            CompOperator::MoreEqual => {
-                if op_rhs.is_equal() {
-                    val_lhs <= val_rhs
-                } else {
-                    panic!()
-                }
-            }
-            CompOperator::LessEqual => {
-                if op_rhs.is_equal() {
-                    val_lhs >= val_rhs
-                } else {
-                    panic!()
-                }
-            }
+            CompOperator::More => val_lhs < val_rhs,
+            CompOperator::Less => val_lhs > val_rhs,
+            CompOperator::MoreEqual => val_lhs <= val_rhs,
+            CompOperator::LessEqual => val_lhs >= val_rhs,
         }
     }
 }
@@ -482,9 +455,10 @@ impl GroundedFunc {
         if !free.variant.is_relational() || free.args.as_ref().unwrap().len() < 2 {
             return Err(());
         }
-        let name = match free.name {
-            Terminal::GroundedTerm(ref name) => name.clone(),
-            _ => panic!(),
+        let name = if let Terminal::GroundedTerm(ref name) = free.name {
+            name.clone()
+        } else {
+            return Err(());
         };
         let mut first = None;
         let mut second = None;
@@ -1648,7 +1622,7 @@ impl<'a> OpArg {
                     match load.1 {
                         OpArgTerm::TimePayload(TimeFn::IsVar) => Ok(OpArg::TimeVar),
                         OpArgTerm::TimePayload(load) => Ok(OpArg::TimeDecl(load)),
-                        _ => panic!(),
+                        _ => Err(ParseErrF::WrongDef),
                     }
                 }
             }

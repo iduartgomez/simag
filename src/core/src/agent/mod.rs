@@ -1,7 +1,7 @@
 mod kb;
 mod bms;
 
-pub use self::kb::{Class, Entity, Representation, VarAssignment};
+pub use self::kb::{Class, Entity, Representation, VarAssignment, Answer, QueryErr};
 pub use self::bms::{BmsWrapper};
 
 use lang::ParseErrF;
@@ -19,7 +19,7 @@ impl Agent {
         Agent { representation: kb::Representation::new() }
     }
 
-    pub fn ask(&self, source: String) -> kb::Answer {
+    pub fn ask(&self, source: String) -> Result<kb::Answer, kb::QueryErr> {
         self.representation.ask(source)
     }
 

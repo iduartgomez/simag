@@ -49,11 +49,16 @@ mod errors {
 
     impl fmt::Display for ParseErrF {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            let msg = match *self {
-                ParseErrF::ReservedKW(ref kw) => format!("use of reserved keyword: {}", kw),
+            let msg;
+            let t = match *self {
+                ParseErrF::ReservedKW(ref kw) => { 
+                    msg = format!("use of reserved keyword: {}", kw);
+                    msg.as_str()
+                }
+                ParseErrF::SyntaxErr(ref msg) => msg.as_str(),
                 _ => { unimplemented!() }
             };
-            write!(f, "{}", msg)
+            write!(f, "{}", t)
         }
     }
 

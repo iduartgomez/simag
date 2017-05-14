@@ -40,7 +40,7 @@ impl CDF for TDist {
         use rgsl::randist::t_distribution::tdist_P;
 
         if x.is_sign_negative() {
-            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self))
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self));
         }
         tdist_P(x, self.nu)
     }
@@ -50,7 +50,7 @@ impl CDF for TDist {
         use rgsl::randist::t_distribution::tdist_Pinv;
 
         if x.is_sign_negative() {
-            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self))
+            panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self));
         }
         tdist_Pinv(x, self.nu)
     }

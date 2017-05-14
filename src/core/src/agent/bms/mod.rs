@@ -80,6 +80,7 @@ impl BmsWrapper {
                             agent.ask_processed(QueryInput::AskRelationalFunc(func.clone()),
                                                0,
                                                true)
+                                .unwrap()
                                 .get_results_single();
                         if answ.is_none() {
                             let bms = &func.bms;
@@ -114,6 +115,7 @@ impl BmsWrapper {
                     if ask {
                         let answ =
                             agent.ask_processed(QueryInput::AskClassMember(cls.clone()), 0, true)
+                                .unwrap()
                                 .get_results_single();
                         if answ.is_none() {
                             let bms = cls.bms.as_ref().unwrap();

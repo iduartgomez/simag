@@ -13,7 +13,7 @@ extern crate float_cmp;
 mod lang;
 mod agent;
 
-pub use agent::Agent;
+pub use agent::{Agent, Answer, QueryErr};
 
 const TIME_EQ_DIFF: i64 = 1;
 const FLOAT_EQ_ULPS: i32 = 2;
