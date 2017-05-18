@@ -372,7 +372,7 @@ mod test {
         rep.tell(fol).unwrap();
         {
             let answ = rep.ask("(fat[$Pancho,u=1] && sad[$Pancho,u=1])".to_string());
-            assert_eq!(answ.get_results_single(), Some(true));
+            assert_eq!(answ.unwrap().get_results_single(), Some(true));
         }
 
         let fol = String::from("
@@ -382,11 +382,11 @@ mod test {
         ");
         rep.tell(fol).unwrap();
         let answ0 = rep.ask("(fat[$Pancho,u=0])".to_string());
-        assert_eq!(answ0.get_results_single(), Some(true));
+        assert_eq!(answ0.unwrap().get_results_single(), Some(true));
         let answ1 = rep.ask("(ugly[$Pancho,u=0])".to_string());
-        assert_eq!(answ1.get_results_single(), Some(true));
+        assert_eq!(answ1.unwrap().get_results_single(), Some(true));
         let answ2 = rep.ask("(sad[$Pancho,u=0])".to_string());
-        assert_eq!(answ2.get_results_single(), None);
+        assert_eq!(answ2.unwrap().get_results_single(), None);
     }
 
     #[test]
@@ -404,7 +404,7 @@ mod test {
         rep.tell(fol).unwrap();
         {
             let answ = rep.ask("(fat[$Pancho,u=1])".to_string());
-            assert_eq!(answ.get_results_single(), Some(true));
+            assert_eq!(answ.unwrap().get_results_single(), Some(true));
         }
 
         let fol = String::from("
@@ -414,14 +414,14 @@ mod test {
         rep.tell(fol).unwrap();
         {
             let answ = rep.ask("(fat[$Pancho,u=0])".to_string());
-            assert_eq!(answ.get_results_single(), Some(true));
+            assert_eq!(answ.unwrap().get_results_single(), Some(true));
         }
         
 
         rep.tell("(fn::eat[$M1,u=1;$Pancho])".to_string()).unwrap();
         {
             let answ = rep.ask("(fat[$Pancho,u=1])".to_string());
-            assert_eq!(answ.get_results_single(), Some(true));
+            assert_eq!(answ.unwrap().get_results_single(), Some(true));
         }
     }
 }

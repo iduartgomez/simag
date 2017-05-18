@@ -12,6 +12,7 @@ extern crate float_cmp;
 
 mod lang;
 mod agent;
+pub mod utils;
 
 pub use agent::{Agent, Answer, QueryErr};
 

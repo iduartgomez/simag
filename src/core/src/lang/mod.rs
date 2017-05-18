@@ -56,9 +56,9 @@ mod errors {
                     msg.as_str()
                 }
                 ParseErrF::SyntaxErr(ref msg) => msg.as_str(),
-                _ => { unimplemented!() }
+                _ => { "parse error" }
             };
-            write!(f, "{}", t)
+            write!(f, "simag parser: {}", t)
         }
     }
 

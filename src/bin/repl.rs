@@ -4,10 +4,9 @@ extern crate termion;
 extern crate simag_core;
 
 use std::io::{Read, Write, Bytes, stdout};
-use std::mem;
 use std::time;
 
-use simag_core::{Agent, Answer, QueryErr};
+use simag_core::utils::{Interpreter, SimagInterpreter, Action};
 use termion::event::{Event, Key, parse_event};
 use termion::raw::IntoRawMode;
 
@@ -47,53 +46,27 @@ impl<I, O, E> TermInterface<I, O, E>
                 self.cursor.cursor_effect(&mut self.stdout);
             }
             if let Some(Ok(c)) = self.stdin.next() {
-                match parse_event(c, &mut self.stdin) {
-                    Ok(Event::Key(key)) => {
-                        match self.parse_input(key) {
-                            Action::Continue => {
-                                self.cursor.effect_on = false;
-                                self.cursor.show(&mut self.stdout);
+                if c == b'\x1B' {
+                    match self.sequence() {
+                        Ok(action) => {
+                            if let Some(Action::Exit) = self.exec_action(action) {
+                                break;
                             }
-                            Action::Read => {
-                                self.reading = true;
-                                self.newline();
+                        }
+                        Err(val) => {
+                            if let Ok(event) = parse_event(val, &mut self.stdin) {
+                                if let Some(Action::Exit) = self.parse_event(event) {
+                                    break;
+                                }
                             }
-                            Action::Newline => {
-                                self.reading = false;
-                                self.newline();
-                            }
-                            Action::Discard => {
-                                self.cursor.move_down(&mut self.stdout, 1);
-                                self.print_str("Command cancelled");
-                                self.newline();
-                            }
-                            Action::Command(Command::Err) => {
-                                self.cursor.move_down(&mut self.stdout, 1);
-                                self.print_str("Unknown command");
-                                self.newline();
-                            }
-                            Action::Command(Command::Help) => {
-                                self.cursor.move_down(&mut self.stdout, 1);
-                                self.print_str("< HELP COMMAND >");
-                                self.newline();
-                            }
-                            Action::WriteLine(msg) => {
-                                self.cursor.move_down(&mut self.stdout, 1);
-                                self.print_multiline(msg.as_str());
-                                self.cursor.move_down(&mut self.stdout, 1);
-                                self.reading = false;
-                                self.newline();
-                            }
-                            Action::Exit |
-                            Action::Command(Command::Exit) => break,
-                            _ => {}
                         }
                     }
-                    Err(err) => {
-                        self.print_multiline(format!("{:?}", err).as_str());
-                        break;
+                } else {
+                    if let Ok(event) = parse_event(c, &mut self.stdin) {
+                        if let Some(Action::Exit) = self.parse_event(event) {
+                            break;
+                        }
                     }
-                    _ => {}
                 }
             }
         }
@@ -107,11 +80,131 @@ impl<I, O, E> TermInterface<I, O, E>
         self.flush();
     }
 
+    fn parse_event(&mut self, event: Event) -> Option<Action> {
+        if let Event::Key(key) = event {
+            let action = match key {
+                Key::Char(c) => {
+                    if c != '\n' {
+                        self.print_char(c);
+                    }
+                    self.interpreter.read(c)
+                }
+                Key::Backspace => {
+                    if self.cursor.column > 5 {
+                        self.delete();
+                        match self.interpreter.delete_last() {
+                            Some(Action::Discard) => {
+                                self.cursor.effect_on = true;
+                                self.reading = false;
+                                return Some(Action::None);
+                            }
+                            Some(other) => return Some(other),
+                            None => {}
+                        }
+                    }
+                    Action::Continue
+                }
+                Key::Ctrl('d') | Key::Esc => Action::Exit,
+                Key::Ctrl('c') => Action::Discard,
+                _ => Action::Continue,
+            };
+            self.exec_action(action)
+        } else {
+            None
+        }
+    }
+
+    fn sequence(&mut self) -> Result<Action, u8> {
+        let mut combo = &mut Combo { buffered: vec![] };
+        let mut end = false;
+        let mut num = false;
+
+        loop {
+            match self.stdin.next() {
+                Some(Ok(b'O')) => {
+                    combo.buffered.push(b'O');
+                    end = true;
+                }
+                Some(Ok(b'[')) => {
+                    combo.buffered.push(b'[');
+                    end = true;
+                }
+                Some(Ok(c)) if (c < 64 || c > 126) && num => {
+                    if combo.buffered.len() >= 4 {
+                        return Err(c);
+                    }
+                    combo.buffered.push(c);
+                }
+                Some(Ok(c @ b'0'...b'9')) if end => {
+                    combo.buffered.push(c);
+                    num = true;
+                }
+                Some(Ok(c)) if end => {
+                    combo.buffered.push(c);
+                    break;
+                }
+                None if num => break,
+                Some(Err(_)) => break,
+                _ => {}
+            }
+        }
+
+        Ok(if let Ok(event) = parse_event(b'\x1B', combo) {
+               self.parse_event(event)
+                   .map_or_else(|| Action::None, |x| x)
+           } else {
+               Action::None
+           })
+    }
+
+    fn exec_action(&mut self, action: Action) -> Option<Action> {
+        match action {
+            Action::Continue => {
+                self.cursor.effect_on = false;
+                self.cursor.show(&mut self.stdout);
+            }
+            Action::Read => {
+                self.reading = true;
+                self.newline();
+            }
+            Action::Newline => {
+                self.reading = false;
+                self.newline();
+            }
+            Action::Discard => {
+                self.cursor.move_down(&mut self.stdout, 1);
+                self.print_str("Command cancelled");
+                self.newline();
+            }
+            Action::Command(cmd) => {
+                self.cursor.move_down(&mut self.stdout, 1);
+                match Command::from(cmd.as_str()) {
+                    Command::Err => self.print_str("Unknown command"),
+                    Command::Help => self.print_str("< HELP COMMAND >"),
+                    Command::Exit => return Some(Action::Exit),
+                }
+                self.newline();
+            }
+            Action::Write(msg) => {
+                self.cursor.move_down(&mut self.stdout, 1);
+                self.print_multiline(msg.as_str());
+                self.cursor.move_down(&mut self.stdout, 1);
+                self.reading = false;
+                self.newline();
+            }
+            Action::Exit => return Some(Action::Exit),
+            _ => {}
+        }
+        None
+    }
+
     fn print_str(&mut self, output: &str) {
         write!(self.stdout, "{}", output).unwrap();
         if let Action::Newline = self.cursor
                .move_right(&mut self.stdout, output.len() as u16) {
-            self.newline();
+            self.cursor.move_down(&mut self.stdout, 1);
+            self.print_str(output);
+            return;
         }
         self.flush();
     }
@@ -119,7 +212,9 @@ impl<I, O, E> TermInterface<I, O, E>
     fn print_char(&mut self, output: char) {
         write!(self.stdout, "{}", output).unwrap();
         if let Action::Newline = self.cursor.move_right(&mut self.stdout, 1) {
-            self.newline();
+            self.cursor.move_down(&mut self.stdout, 1);
+            self.print_char(output);
+            return;
         }
         self.flush();
     }
@@ -162,29 +257,23 @@ impl<I, O, E> TermInterface<I, O, E>
         self.flush();
     }
 
-    fn parse_input(&mut self, input: Key) -> Action {
-        match input {
-            Key::Char(c) => {
-                if c != '\n' || c != '\r' {
-                    self.print_char(c);
-                }
-                self.interpreter.read(c)
-            }
-            Key::Backspace => {
-                if self.cursor.column > 5 {
-                    self.delete();
-                    self.interpreter.del();
-                }
-                Action::Continue
-            }
-            Key::Ctrl('d') | Key::Esc => Action::Exit,
-            Key::Ctrl('c') => Action::Discard,
-            _ => Action::Continue,
-        }
-    }
-
     fn flush(&mut self) {
         self.stdout.flush().unwrap();
+    }
+}
+
+struct Combo {
+    buffered: Vec<u8>,
+}
+
+impl Iterator for Combo {
+    type Item = Result<u8, ::std::io::Error>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if !self.buffered.is_empty() {
+            Some(Ok(self.buffered.pop().unwrap()))
+        } else {
+            None
+        }
     }
 }
 
@@ -277,129 +366,11 @@ impl<'a> From<&'a str> for Command {
     }
 }
 
-enum Action {
-    Read,
-    WriteLine(String),
-    Continue,
-    Exit,
-    Discard,
-    Newline,
-    Command(Command),
-    None,
-}
-
-struct SimagInter<'a> {
-    state: Agent,
-    result: Option<Answer<'a>>,
-    reading: bool,
-    ask: bool,
-    code_input: String,
-    command: String,
-}
-
-impl<'a> SimagInter<'a> {
-    fn new() -> SimagInter<'a> {
-        SimagInter {
-            state: Agent::default(),
-            result: None,
-            reading: false,
-            code_input: String::new(),
-            command: String::new(),
-            ask: false,
-        }
-    }
-
-    fn eval(&mut self) -> Result<Action, String> {
-        let mut input = String::new();
-        mem::swap(&mut self.code_input, &mut input);
-        if !self.ask {
-            match self.state.tell(input) {
-                Err(errors) => Err(format!("{}", errors.get(0).unwrap())),
-                Ok(_) => Ok(Action::Continue),
-            }
-        } else {
-            if let Some(r) = match self.state.ask(input) {
-                   Err(QueryErr::ParseErr(_)) |
-                   Err(QueryErr::QueryErr) => None,
-                   Ok(result) => unsafe {
-                let answ = mem::transmute::<Answer, Answer<'a>>(result);
-                Some(answ)
-            },
-               } {
-                self.result = Some(r);
-                Ok(Action::Continue)
-            } else {
-                self.result = None;
-                Err("Incorrect query".to_string())
-            }
-        }
-    }
-}
-
-impl<'a> Interpreter for SimagInter<'a> {
-    fn read(&mut self, input: char) -> Action {
-        match input {
-            '\n' | '\r' => {
-                if self.reading && !self.code_input.ends_with("\n") {
-                    self.code_input.push('\n');
-                    Action::Read
-                } else if self.reading {
-                    self.reading = false;
-                    let action = if let Err(msg) = self.eval() {
-                        Action::WriteLine(msg)
-                    } else {
-                        Action::Newline
-                    };
-                    self.ask = false;
-                    action
-                } else if !self.command.trim().is_empty() {
-                    let cmd = Action::Command(Command::from(self.command.as_str()));
-                    self.command = String::new();
-                    cmd
-                } else {
-                    Action::Newline
-                }
-            }
-            '(' if !self.reading => {
-                self.code_input.push('(');
-                self.reading = true;
-                Action::Continue
-            }
-            '?' if !self.reading => {
-                self.ask = true;
-                self.reading = true;
-                Action::Continue
-            }
-            c => {
-                if self.reading {
-                    self.code_input.push(c);
-                } else {
-                    self.command.push(c);
-                }
-                Action::Continue
-            }
-        }
-    }
-
-    fn del(&mut self) {
-        if self.reading {
-            self.code_input.pop();
-        } else {
-            self.command.pop();
-        }
-    }
-}
-
-trait Interpreter {
-    fn read(&mut self, input: char) -> Action;
-    fn del(&mut self);
-}
-
 fn main() {
     let stdout = stdout();
     let stdout = stdout.lock().into_raw_mode().unwrap();
     let stdin = termion::async_stdin();
-    let interpreter = SimagInter::new();
+    let interpreter = SimagInterpreter::new();
     let mut term = TermInterface::new(stdin, stdout, interpreter);
     write!(term.stdout,
            "{}{}{}",

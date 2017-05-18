@@ -668,6 +668,8 @@ pub struct Answer<'a>(pub InfResults<'a>);
 
 type ObjName<'a> = &'a str;
 type QueryPred = String;
+type AnswM<'a> = HashMap<ObjName<'a>, Vec<&'a GroundedMemb>>;
+type AnswF<'a> = HashMap<ObjName<'a>, Vec<&'a GroundedFunc>>;
 
 impl<'a> Answer<'a> {
     pub fn get_results_single(self) -> Option<bool> {
@@ -681,12 +683,20 @@ impl<'a> Answer<'a> {
         self.0.get_results_multiple()
     }
 
-    pub fn get_memberships(&'a self) -> HashMap<ObjName<'a>, Vec<&'a GroundedMemb>> {
-        self.0.get_memberships()
+    pub fn get_memberships<'b>(&self) -> HashMap<ObjName<'b>, Vec<&'b GroundedMemb>> {
+        use std::mem;
+        unsafe {
+            let d = self.0.get_memberships();
+            mem::transmute::<AnswM, AnswM<'b>>(d)
+        }
     }
 
-    pub fn get_relationships(&'a self) -> HashMap<ObjName<'a>, Vec<&'a GroundedFunc>> {
-        self.0.get_relationships()
+    pub fn get_relationships<'b>(&self) -> HashMap<ObjName<'b>, Vec<&'b GroundedFunc>> {
+        use std::mem;
+        unsafe {
+            let d = self.0.get_relationships();
+            mem::transmute::<AnswF, AnswF<'b>>(d)
+        }
     }
 }
 
@@ -1309,3 +1319,4 @@ fn rollback_from_rule(agent: &Representation, rule: Arc<LogSentence>) {
     use super::rule_inf::rules_inference_rollback;
     rules_inference_rollback(agent, rule);
 }
+

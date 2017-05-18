@@ -118,54 +118,58 @@ impl<'b> InfResults<'b> {
         res
     }
 
-    pub fn get_memberships(&self) -> HashMap<ObjName<'b>, Vec<&GroundedMemb>> {
-        let lock = self.membership.read().unwrap();
-        let mut res: HashMap<ObjName<'b>, Vec<&GroundedMemb>> = HashMap::new();
-        for preds in lock.values() {
-            for members in preds.values() {
-                for gr in members {
-                    let gr = unsafe { &*(&**gr as *const GroundedMemb) as &GroundedMemb };
-                    if res.contains_key(gr.get_name()) {
-                        let prev = res.get_mut(gr.get_name()).unwrap();
-                        prev.push(gr);
-                    } else {
-                        let mut new = vec![];
-                        new.push(gr);
-                        res.insert(gr.get_name(), new);
-                    }
-                }
-            }
-        }
-        res
-    }
-
-    pub fn get_relationships(&self) -> HashMap<ObjName<'b>, Vec<&GroundedFunc>> {
-        let lock = self.relationships.read().unwrap();
-        let mut res: HashMap<ObjName<'b>, HashSet<*const GroundedFunc>> = HashMap::new();
-        for relations in lock.values() {
-            for relation_ls in relations.values() {
-                for grfunc in relation_ls {
-                    for name in grfunc.get_args_names() {
-                        let name = unsafe { mem::transmute::<&str, &'b str>(name) };
-                        if res.contains_key(name) {
-                            let prev = res.get_mut(name).unwrap();
-                            prev.insert(&**grfunc as *const GroundedFunc);
+    pub fn get_memberships(&self) -> HashMap<ObjName<'b>, Vec<&'b GroundedMemb>> {
+        unsafe {
+            let lock = self.membership.read().unwrap();
+            let mut res: HashMap<ObjName<'b>, Vec<&GroundedMemb>> = HashMap::new();
+            for preds in lock.values() {
+                for members in preds.values() {
+                    for gr in members {
+                        let gr = &*(&**gr as *const GroundedMemb) as &'b GroundedMemb;
+                        if res.contains_key(gr.get_name()) {
+                            let prev = res.get_mut(gr.get_name()).unwrap();
+                            prev.push(gr);
                         } else {
-                            let mut new = HashSet::new();
-                            new.insert(&**grfunc as *const GroundedFunc);
-                            res.insert(name, new);
+                            let mut new = vec![];
+                            new.push(gr);
+                            res.insert(gr.get_name(), new);
                         }
                     }
                 }
             }
+            res
         }
-        HashMap::from_iter(res.into_iter()
-                               .map(|(k, l)| {
-                                        (k,
-                                         l.into_iter()
-                                             .map(|v| unsafe { &*v as &GroundedFunc })
-                                             .collect::<Vec<_>>())
-                                    }))
+    }
+
+    pub fn get_relationships(&self) -> HashMap<ObjName<'b>, Vec<&'b GroundedFunc>> {
+        unsafe {
+            let lock = self.relationships.read().unwrap();
+            let mut res: HashMap<ObjName<'b>, HashSet<*const GroundedFunc>> = HashMap::new();
+            for relations in lock.values() {
+                for relation_ls in relations.values() {
+                    for grfunc in relation_ls {
+                        for name in grfunc.get_args_names() {
+                            let name = mem::transmute::<&str, &'b str>(name);
+                            if res.contains_key(name) {
+                                let prev = res.get_mut(name).unwrap();
+                                prev.insert(&**grfunc as *const GroundedFunc);
+                            } else {
+                                let mut new = HashSet::new();
+                                new.insert(&**grfunc as *const GroundedFunc);
+                                res.insert(name, new);
+                            }
+                        }
+                    }
+                }
+            }
+            HashMap::from_iter(res.into_iter()
+                                   .map(|(k, l)| {
+                                            (k,
+                                             l.into_iter()
+                                                 .map(|v| &*v as &'b GroundedFunc)
+                                                 .collect::<Vec<_>>())
+                                        }))
+        }
     }
 }
 
@@ -1305,8 +1309,8 @@ mod test {
         let q01_02 = "(professor[$Lucy,u=1])".to_string();
         let mut rep = Representation::new();
         rep.tell(test_01).unwrap();
-        assert_eq!(rep.ask(q01_01).get_results_single(), None);
-        assert_eq!(rep.ask(q01_02).get_results_single(), Some(true));
+        assert_eq!(rep.ask(q01_01).unwrap().get_results_single(), None);
+        assert_eq!(rep.ask(q01_02).unwrap().get_results_single(), Some(true));
 
         let test_02 = String::from("
             ( professor[$Lucy,u=1] )
@@ -1318,8 +1322,8 @@ mod test {
         let q02_02 = "(person[$John,u=1])".to_string();
         let mut rep = Representation::new();
         rep.tell(test_02).unwrap();
-        assert_eq!(rep.ask(q02_01).get_results_single(), Some(false));
-        assert_eq!(rep.ask(q02_02).get_results_single(), Some(true));
+        assert_eq!(rep.ask(q02_01).unwrap().get_results_single(), Some(false));
+        assert_eq!(rep.ask(q02_02).unwrap().get_results_single(), Some(true));
 
         let test_03 = String::from("
             ( fn::owns[$M1,u=1;$Nono] )
@@ -1338,7 +1342,7 @@ mod test {
         let mut rep = Representation::new();
         rep.tell(test_03).unwrap();
         let answ = rep.ask(q03_01);
-        assert_eq!(answ.get_results_single(), Some(true));
+        assert_eq!(answ.unwrap().get_results_single(), Some(true));
 
         let test_04 = String::from("
             # query for all 'professor'
@@ -1350,7 +1354,7 @@ mod test {
         let mut rep = Representation::new();
         rep.tell(test_04).unwrap();
         let answ = rep.ask(q04_01);
-        let a04_01 = answ.get_memberships(); //<-- fails
+        let a04_01 = answ.unwrap().get_memberships();
         assert!(a04_01.contains_key("$Lucy"));
         assert!(a04_01.contains_key("$John"));
 
@@ -1367,7 +1371,7 @@ mod test {
         results.insert("professor");
         results.insert("person");
         let answ = rep.ask(q05_01);
-        let a05_01 = answ.get_memberships();
+        let a05_01 = answ.unwrap().get_memberships();
         let mut cmp = HashSet::new();
         for a in a05_01.get("$Lucy").unwrap() {
             cmp.insert(a.get_parent());
@@ -1385,7 +1389,7 @@ mod test {
         let q01_01 = "(fn::criticize[$John,u=1;$Lucy])".to_string();
         let mut rep = Representation::new();
         rep.tell(test_01).unwrap();
-        assert_eq!(rep.ask(q01_01).get_results_single(), Some(true));
+        assert_eq!(rep.ask(q01_01).unwrap().get_results_single(), Some(true));
 
         let test_02 = String::from("
             ( animal[cow,u=1] )
@@ -1395,7 +1399,7 @@ mod test {
         let q02_01 = "(fn::produce[milk,u=1;cow])".to_string();
         let mut rep = Representation::new();
         rep.tell(test_02).unwrap();
-        assert_eq!(rep.ask(q02_01).get_results_single(), Some(true));
+        assert_eq!(rep.ask(q02_01).unwrap().get_results_single(), Some(true));
 
         let test_03 = String::from("
             ( professor[$Lucy,u=1] )
@@ -1410,7 +1414,7 @@ mod test {
         let q03_01 = "(fn::friend[$Lucy,u=0;$John])".to_string();
         let mut rep = Representation::new();
         rep.tell(test_03).unwrap();
-        assert_eq!(rep.ask(q03_01).get_results_single(), Some(true));
+        assert_eq!(rep.ask(q03_01).unwrap().get_results_single(), Some(true));
 
         let test_04 = String::from("
             # retrieve all objs which fit to a criteria
@@ -1424,7 +1428,7 @@ mod test {
         let mut rep = Representation::new();
         rep.tell(test_04).unwrap();
         let answ = rep.ask(q04_01);
-        let a04_01 = answ.get_relationships();
+        let a04_01 = answ.unwrap().get_relationships();
         assert!(a04_01.contains_key("$Lucy"));
         assert!(a04_01.contains_key("$Lulu"));
         assert!(a04_01.contains_key("$Vicky"));
@@ -1442,7 +1446,7 @@ mod test {
         results.insert("loves");
         results.insert("worships");
         let answ = rep.ask(q05_01);
-        let a05_01 = answ.get_relationships();
+        let a05_01 = answ.unwrap().get_relationships();
         let mut cnt = 0;
         for a in a05_01.get("$Vicky").unwrap() {
             cnt += 1;
@@ -1453,7 +1457,7 @@ mod test {
 
         let q05_02 = "((let x, y) (fn::x[$Vicky,u=0;y]))".to_string();
         let answ = rep.ask(q05_02);
-        let a05_02 = answ.get_relationships();
+        let a05_02 = answ.unwrap().get_relationships();
         let mut cnt = 0;
         for a in a05_02.get("$Vicky").unwrap() {
             cnt += 1;
@@ -1475,7 +1479,7 @@ mod test {
         let q01_01 = "(fat(time='Now')[$Pancho,u=1])".to_string();
         let mut rep = Representation::new();
         rep.tell(test_01).unwrap();
-        assert_eq!(rep.ask(q01_01).get_results_single(), Some(true));
+        assert_eq!(rep.ask(q01_01).unwrap().get_results_single(), Some(true));
 
         let test_02 = String::from("
         	(( let x, y, t1: time=\"2015-07-05T10:25:00Z\", t2: time )
@@ -1490,7 +1494,7 @@ mod test {
         let q02_01 = "(fn::eat(time='Now')[$M1,u=1;$Pancho])".to_string();
         let mut rep = Representation::new();
         rep.tell(test_02).unwrap();
-        assert_eq!(rep.ask(q02_01).get_results_single(), Some(true));
+        assert_eq!(rep.ask(q02_01).unwrap().get_results_single(), Some(true));
 
         // Test 03
         let mut rep = Representation::new();
@@ -1508,7 +1512,7 @@ mod test {
         ");
         rep.tell(test_03_01).unwrap();
         let q03_01 = "(fat[$Pancho,u=1])".to_string();
-        assert_eq!(rep.ask(q03_01).get_results_single(), Some(true));
+        assert_eq!(rep.ask(q03_01).unwrap().get_results_single(), Some(true));
 
         let test_03_02 = String::from("
             (run(time='2015-01-01T00:00:00Z')[$Pancho,u=1])
@@ -1516,7 +1520,7 @@ mod test {
         ");
         rep.tell(test_03_02).unwrap();
         let q03_02 = "(fat[$Pancho,u=0])".to_string();
-        assert_eq!(rep.ask(q03_02).get_results_single(), Some(true));
+        assert_eq!(rep.ask(q03_02).unwrap().get_results_single(), Some(true));
 
         let test_03_03 = String::from("
             (run(time='2015-01-01T00:00:00Z')[$Pancho,u=1])
@@ -1528,7 +1532,7 @@ mod test {
         ");
         rep.tell(test_03_03).unwrap();
         let q03_03 = "(fat[$Pancho,u=1])".to_string();
-        assert_eq!(rep.ask(q03_03).get_results_single(), Some(true));
+        assert_eq!(rep.ask(q03_03).unwrap().get_results_single(), Some(true));
 
         let test_03_04 = String::from("
             (fn::eat(time='2015-01-02T00:00:00Z', overwrite)[$M1,u=1;$Pancho])
@@ -1536,6 +1540,7 @@ mod test {
         ");
         rep.tell(test_03_04).unwrap();
         let q03_04 = "(fat[$Pancho,u=0])".to_string();
-        assert_eq!(rep.ask(q03_04).get_results_single(), Some(true));
+        assert_eq!(rep.ask(q03_04).unwrap().get_results_single(), Some(true));
     }
 }
+

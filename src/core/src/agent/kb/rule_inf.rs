@@ -266,7 +266,7 @@ mod test {
         ");
         let query = "( scum[$West,u=1] && good[$West,u=0] )".to_string();
         rep.tell(fol);
-        assert_eq!(rep.ask(query).get_results_single(), Some(true));
+        assert_eq!(rep.ask(query).unwrap().get_results_single(), Some(true));
 
         // (false := none)
         let mut rep = Representation::new();
@@ -276,7 +276,7 @@ mod test {
         ");
         let query = "( scum[$West,u=1] && good[$West,u=0] )".to_string();
         rep.tell(fol);
-        assert_eq!(rep.ask(query).get_results_single(), None);
+        assert_eq!(rep.ask(query).unwrap().get_results_single(), None);
 
         // material implication statements
         // true (true => true)
@@ -287,7 +287,7 @@ mod test {
         ");
         let query = "( drugDealer[$West,u=1] && scum[$West,u=1] && good[$West,u=0] )".to_string();
         rep.tell(fol);
-        assert_eq!(rep.ask(query).get_results_single(), Some(true));
+        assert_eq!(rep.ask(query).unwrap().get_results_single(), Some(true));
 
         // true (false => true)
         let mut rep = Representation::new();
@@ -297,7 +297,7 @@ mod test {
         ");
         let query = "( drugDealer[$West,u=0] && scum[$West,u=1] && good[$West,u=0] )".to_string();
         rep.tell(fol);
-        assert_eq!(rep.ask(query).get_results_single(), Some(true));
+        assert_eq!(rep.ask(query).unwrap().get_results_single(), Some(true));
 
         // false (true => false)
         let mut rep = Representation::new();
@@ -308,8 +308,8 @@ mod test {
         let query0 = "( drugDealer[$West,u=1] )".to_string();
         let query1 = "( scum[$West,u=0] && good[$West,u=1] )".to_string();
         rep.tell(fol);
-        assert_eq!(rep.ask(query0).get_results_single(), Some(true));
-        assert_eq!(rep.ask(query1).get_results_single(), None);
+        assert_eq!(rep.ask(query0).unwrap().get_results_single(), Some(true));
+        assert_eq!(rep.ask(query1).unwrap().get_results_single(), None);
 
         // true (false => false)
         let mut rep = Representation::new();
@@ -320,8 +320,8 @@ mod test {
         let query0 = "( drugDealer[$West,u=0] )".to_string();
         let query1 = "( scum[$West,u=0] && good[$West,u=1] )".to_string();
         rep.tell(fol);
-        assert_eq!(rep.ask(query0).get_results_single(), Some(true));
-        assert_eq!(rep.ask(query1).get_results_single(), Some(true));
+        assert_eq!(rep.ask(query0).unwrap().get_results_single(), Some(true));
+        assert_eq!(rep.ask(query1).unwrap().get_results_single(), Some(true));
 
         // equivalence statements
         // is false (false <=> true )
@@ -334,7 +334,7 @@ mod test {
         ");
         let query = "( drugDealer[$West,u=0] )".to_string();
         rep.tell(fol);
-        assert_eq!(rep.ask(query).get_results_single(), None);
+        assert_eq!(rep.ask(query).unwrap().get_results_single(), None);
 
         // is false (true <=> false )
         let mut rep = Representation::new();
@@ -346,7 +346,7 @@ mod test {
         ");
         let query = "( scum[$West,u=1] && good[$West,u=0] )".to_string();
         rep.tell(fol);
-        assert_eq!(rep.ask(query).get_results_single(), None);
+        assert_eq!(rep.ask(query).unwrap().get_results_single(), None);
 
         // is true ( true <=> true )
         let mut rep = Representation::new();
@@ -358,7 +358,7 @@ mod test {
         ");
         let query = "( drugDealer[$West,u=1] && scum[$West,u=1] && good[$West,u=0] )".to_string();
         rep.tell(fol);
-        assert_eq!(rep.ask(query).get_results_single(), Some(true));
+        assert_eq!(rep.ask(query).unwrap().get_results_single(), Some(true));
 
         // is true ( false <=> false )
         let mut rep = Representation::new();
@@ -370,6 +370,6 @@ mod test {
         ");
         let query = "( drugDealer[$West,u=0] && scum[$West,u=0] && good[$West,u=1] )".to_string();
         rep.tell(fol);
-        assert_eq!(rep.ask(query).get_results_single(), Some(true));
+        assert_eq!(rep.ask(query).unwrap().get_results_single(), Some(true));
     }
 }
