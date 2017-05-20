@@ -5,6 +5,7 @@ extern crate itertools;
 extern crate rand;
 extern crate uuid;
 extern crate rgsl;
+//extern crate statrs;
 //extern crate ndarray;
 
 pub mod model;

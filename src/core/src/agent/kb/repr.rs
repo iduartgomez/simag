@@ -102,12 +102,14 @@ impl Representation {
         let pres = logic_parser(source, false);
         if pres.is_ok() {
             let pres = QueryInput::ManyQueries(pres.unwrap());
-            let mut inf = match Inference::new(self, pres, usize::max_value(), false) {
-                Ok(inf) => inf,
-                Err(()) => return Err(QueryErr::QueryErr),
-            };
+            let num_threads = 0; // TODO: pass the number of threads available for inference
+            let mut inf =
+                match Inference::new(self, pres, usize::max_value(), false, num_threads) {
+                    Ok(inf) => inf,
+                    Err(()) => return Err(QueryErr::QueryErr),
+                };
             {
-                let inf_r = unsafe { &mut *(&mut inf as *mut Box<Inference>) };
+                let inf_r = unsafe { &mut *(&mut inf as *mut Inference) };
                 inf_r.infer_facts();
             }
             Ok(inf.get_results())
@@ -121,12 +123,13 @@ impl Representation {
                          depth: usize,
                          ignore_current: bool)
                          -> Result<Answer, QueryErr> {
-        let mut inf = match Inference::new(self, source, depth, ignore_current) {
+        let num_threads = 0; // TODO: pass the number of threads available for inference
+        let mut inf = match Inference::new(self, source, depth, ignore_current, num_threads) {
             Ok(inf) => inf,
             Err(()) => return Err(QueryErr::QueryErr),
         };
         {
-            let inf_r = unsafe { &mut *(&mut inf as *mut Box<Inference>) };
+            let inf_r = unsafe { &mut *(&mut inf as *mut Inference) };
             inf_r.infer_facts();
         }
         Ok(inf.get_results())
@@ -972,7 +975,7 @@ impl ClassMember {
         match *self {
             ClassMember::Entity(ref obj) |
             ClassMember::Class(ref obj) => obj.clone(),
-            _ => panic!(),
+            ClassMember::Func(_) => panic!(),
         }
     }
 
@@ -980,7 +983,8 @@ impl ClassMember {
     fn unwrap_fn(&self) -> Arc<GroundedFunc> {
         match *self {
             ClassMember::Func(ref f) => f.clone(),
-            _ => panic!(),
+            ClassMember::Entity(_) |
+            ClassMember::Class(_) => panic!(),
         }
     }
 }

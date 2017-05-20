@@ -997,7 +997,7 @@ impl Particle {
                 p.substitute(agent, assignments, time_assign, context, rhs)
             }
             Particle::Atom(ref p) => p.substitute(agent, assignments, time_assign, context),
-            _ => panic!(),
+            Particle::Implication(_) | Particle::Equivalence(_) => {}
         }
     }
 
@@ -1058,7 +1058,11 @@ impl Particle {
     fn pred_ref(&self) -> &Assert {
         match *self {
             Particle::Atom(ref p) => &*p.pred,
-            _ => panic!(),
+            Particle::Conjunction(_) | 
+            Particle::Disjunction(_) | 
+            Particle::Equivalence(_) | 
+            Particle::Implication(_) | 
+            Particle::IndConditional(_) => panic!(),
         }
     }
 
@@ -1066,7 +1070,11 @@ impl Particle {
     fn clone_pred(&self) -> Rc<Assert> {
         match *self {
             Particle::Atom(ref p) => p.pred.clone(),
-            _ => panic!(),
+            Particle::Conjunction(_) | 
+            Particle::Disjunction(_) | 
+            Particle::Equivalence(_) | 
+            Particle::Implication(_) | 
+            Particle::IndConditional(_) => panic!(),
         }
     }
 
@@ -1622,11 +1630,15 @@ mod test {
             &Particle::IndConditional(ref p) => {
                 match &*p.next_lhs {
                     &Particle::Conjunction(ref op) => {
-                        match &*op.next_lhs {
-                            &Particle::Atom(ref atm) => {
+                        match *op.next_lhs {
+                            Particle::Atom(ref atm) => {
                                 assert_eq!(atm.get_name(), "cde");
                             }
-                            _ => panic!(),
+                            Particle::Conjunction(_) | 
+                            Particle::Disjunction(_) | 
+                            Particle::Equivalence(_) | 
+                            Particle::Implication(_) | 
+                            Particle::IndConditional(_) => panic!(),
                         };
                         match &*op.next_rhs {
                             &Particle::Conjunction(ref op) => {

@@ -17,7 +17,7 @@ use super::repr::*;
 use super::VarAssignment;
 use lang::*;
 
-use crossbeam;
+use rayon;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
@@ -181,26 +181,28 @@ pub struct Inference<'a> {
     nodes: RwLock<HashMap<&'a str, Vec<ProofNode<'a>>>>,
     queue: RwLock<HashMap<usize, HashSet<PArgVal>>>, // K: *const ProofNode<'a>
     results: InfResults<'a>,
-    _available_threads: RwLock<u32>,
+    tpool: rayon::ThreadPool,
 }
 
 impl<'a> Inference<'a> {
     pub fn new(agent: &'a Representation,
                query_input: QueryInput,
                depth: usize,
-               ignore_current: bool)
-               -> Result<Box<Inference<'a>>, ()> {
+               ignore_current: bool,
+               num_threads: usize)
+               -> Result<Inference<'a>, ()> {
         let query = Arc::new(QueryProcessed::new().get_query(query_input)?);
-        Ok(Box::new(Inference {
-                        query: query.clone(),
-                        kb: agent,
-                        depth: depth,
-                        ignore_current: ignore_current,
-                        nodes: RwLock::new(HashMap::new()),
-                        queue: RwLock::new(HashMap::new()),
-                        results: InfResults::new(query),
-                        _available_threads: RwLock::new(4_u32),
-                    }))
+        let config = rayon::Configuration::new().num_threads(num_threads);
+        Ok(Inference {
+               query: query.clone(),
+               kb: agent,
+               depth: depth,
+               ignore_current: ignore_current,
+               nodes: RwLock::new(HashMap::new()),
+               queue: RwLock::new(HashMap::new()),
+               results: InfResults::new(query),
+               tpool: rayon::ThreadPool::new(config).unwrap(),
+           })
     }
 
     pub fn get_results(self) -> Answer<'a> {
@@ -215,6 +217,8 @@ impl<'a> Inference<'a> {
     /// knowledge is produced then it's passed to an other procedure for
     /// addition to the KB.
     pub fn infer_facts(&self) {
+        use rayon::prelude::*;
+
         fn queue_query(inf: &Inference, query: &str, actv_query: ActiveQuery) {
             let mut pass = InfTrial::new(inf, actv_query.clone());
             pass.get_rules(vec![query]);
@@ -245,102 +249,119 @@ impl<'a> Inference<'a> {
             }
         }
 
-        crossbeam::scope(|scope| for (obj, preds) in &self.query.cls_queries_grounded {
-                             for pred in preds {
-                                 let query = pred.get_parent();
-                                 scope.spawn(move || {
-                    let result = if !self.ignore_current {
-                        self.kb.class_membership(pred)
-                    } else {
-                        None
-                    };
-                    if result.is_some() {
-                        self.results
-                            .add_grounded(obj, query, Some((result.unwrap(), None)));
-                    } else {
-                        self.results.add_grounded(obj, query, None);
-                        // if no result was found from the kb directly
-                        // make an inference from a grounded fact
-                        let actv_query = ActiveQuery::new_with_class(pred.clone());
-                        queue_query(self, query, actv_query);
-                    }
-                });
-                             }
-                         });
 
-        crossbeam::scope(|scope| for pred in &self.query.func_queries_grounded {
-                             scope.spawn(move || {
-                let query: &str = pred.get_name();
-                let mut result = None;
-                for (i, arg) in pred.get_args().iter().enumerate() {
-                    let obj = arg.get_name();
-                    if !self.ignore_current {
-                        result = self.kb.has_relationship(pred, obj);
-                    }
-                    if result.is_some() {
-                        self.results
-                            .add_grounded(obj, query, Some((result.unwrap(), None)));
-                    } else {
-                        self.results.add_grounded(obj, query, None);
-                        let actv_query = ActiveQuery::new_with_func(i, pred.clone());
-                        queue_query(self, query, actv_query);
-                    }
-                }
-            });
-                         });
-
-        crossbeam::scope(|scope| for (var, classes) in &self.query.cls_queries_free {
-                             for cls in classes {
-                                 scope.spawn(move || {
-                    let cls_name = cls.get_parent();
-                    let lock = self.kb.classes.read().unwrap();
-                    if let Some(cls_curr) = lock.get(cls_name) {
-                        let members: Vec<Arc<GroundedMemb>> = cls_curr.get_members(cls);
-                        for m in members {
-                            let t = unsafe { &*(&*m as *const GroundedMemb) as &GroundedMemb };
-                            self.results.add_membership(var, t.get_name(), m.clone());
+        self.tpool
+            .install(|| {
+                self.query
+                    .cls_queries_grounded
+                    .par_iter()
+                    .for_each(|(obj, preds)| {
+                        for pred in preds {
+                            let query = pred.get_parent();
+                            let result = if !self.ignore_current {
+                                self.kb.class_membership(pred)
+                            } else {
+                                None
+                            };
+                            if result.is_some() {
+                                self.results
+                                    .add_grounded(obj, query, Some((result.unwrap(), None)));
+                            } else {
+                                self.results.add_grounded(obj, query, None);
+                                // if no result was found from the kb directly
+                                // make an inference from a grounded fact
+                                let actv_query = ActiveQuery::new_with_class(pred.clone());
+                                queue_query(self, query, actv_query);
+                            }
                         }
-                    }
-                });
-                             }
-                         });
+                    });
+            });
 
-        crossbeam::scope(|scope| for (var, funcs) in &self.query.func_queries_free {
-                             for func in funcs {
-                                 scope.spawn(move || {
-                    let func_name = func.get_name();
-                    let lock = &self.kb.classes.read().unwrap();
-                    if let Some(cls_curr) = lock.get(func_name) {
-                        let members: Vec<Arc<GroundedFunc>> = cls_curr.get_funcs(func);
-                        self.results.add_relationships(var, &members);
-                    }
-                });
-                             }
-                         });
+        self.tpool
+            .install(|| {
+                self.query
+                    .func_queries_grounded
+                    .par_iter()
+                    .for_each(|pred| {
+                        let query: &str = pred.get_name();
+                        let mut result = None;
+                        for (i, arg) in pred.get_args().iter().enumerate() {
+                            let obj = arg.get_name();
+                            if !self.ignore_current {
+                                result = self.kb.has_relationship(pred, obj);
+                            }
+                            if result.is_some() {
+                                self.results
+                                    .add_grounded(obj, query, Some((result.unwrap(), None)));
+                            } else {
+                                self.results.add_grounded(obj, query, None);
+                                let actv_query = ActiveQuery::new_with_func(i, pred.clone());
+                                queue_query(self, query, actv_query);
+                            }
+                        }
+                    });
+            });
 
-        crossbeam::scope(|scope| for (var, objs) in &self.query.cls_memb_query {
-                             for obj in objs {
-                                 scope.spawn(move || {
-                    let member_of = self.kb.get_class_membership(obj);
-                    for m in member_of {
-                        self.results
-                            .add_membership(var, obj.get_name(), m.clone());
-                    }
-                });
-                             }
-                         });
+        self.tpool
+            .install(|| {
+                self.query
+                    .cls_queries_free
+                    .par_iter()
+                    .for_each(|(var, classes)| for cls in classes {
+                        let cls_name = cls.get_parent();
+                        let lock = self.kb.classes.read().unwrap();
+                        if let Some(cls_curr) = lock.get(cls_name) {
+                            let members: Vec<Arc<GroundedMemb>> = cls_curr.get_members(cls);
+                            for m in members {
+                                let t =
+                                    unsafe { &*(&*m as *const GroundedMemb) as &GroundedMemb };
+                                self.results.add_membership(var, t.get_name(), m.clone());
+                            }
+                        }
+                      });
+            });
 
-        crossbeam::scope(|scope| for (var, funcs) in &self.query.func_memb_query {
-                             for func in funcs {
-                                 scope.spawn(move || {
-                                                 let relationships = self.kb
-                                                     .get_relationships(func);
-                                                 for funcs in relationships.values() {
-                                                     self.results.add_relationships(var, funcs);
-                                                 }
-                                             });
-                             }
-                         });
+        self.tpool
+            .install(|| {
+                self.query
+                    .func_queries_free
+                    .par_iter()
+                    .for_each(|(var, funcs)| for func in funcs {
+                        let func_name = func.get_name();
+                        let lock = &self.kb.classes.read().unwrap();
+                        if let Some(cls_curr) = lock.get(func_name) {
+                            let members: Vec<Arc<GroundedFunc>> = cls_curr.get_funcs(func);
+                            self.results.add_relationships(var, &members);
+                        }
+                    });
+            });
+
+        self.tpool
+            .install(|| {
+                self.query
+                    .cls_memb_query
+                    .par_iter()
+                    .for_each(|(var, objs)| for obj in objs {
+                        let member_of = self.kb.get_class_membership(obj);
+                        for m in member_of {
+                            self.results
+                                .add_membership(var, obj.get_name(), m.clone());
+                        }
+                     });
+            });
+
+        self.tpool
+            .install(|| {
+                self.query
+                    .func_memb_query
+                    .par_iter()
+                    .for_each(|(var, funcs)| for func in funcs {
+                        let relationships = self.kb.get_relationships(func);
+                        for funcs in relationships.values() {
+                            self.results.add_relationships(var, funcs);
+                        }
+                     });
+            });
     }
 }
 
@@ -388,7 +409,7 @@ impl ActiveQuery {
     fn get_func(&self) -> &GroundedFunc {
         match *self {
             ActiveQuery::Func(_, ref gf) => &*gf,
-            _ => panic!(),
+            ActiveQuery::Class(_) => panic!(),
         }
     }
 
@@ -396,7 +417,7 @@ impl ActiveQuery {
     fn get_cls(&self) -> &GroundedMemb {
         match *self {
             ActiveQuery::Class(ref gt) => &*gt,
-            _ => panic!(),
+            ActiveQuery::Func(_, _) => panic!(),
         }
     }
 }
@@ -578,7 +599,7 @@ struct InfTrial<'a> {
     results: usize, // &'a InfResults<'a>,
     depth: usize,
     depth_cnt: RwLock<usize>,
-    _available_threads: RwLock<u32>,
+    tpool: &'a rayon::ThreadPool,
 }
 
 impl<'a> InfTrial<'a> {
@@ -596,7 +617,7 @@ impl<'a> InfTrial<'a> {
             results: results,
             depth: inf.depth,
             depth_cnt: RwLock::new(0_usize),
-            _available_threads: RwLock::new(4_u32),
+            tpool: &inf.tpool,
         }
     }
 
@@ -659,18 +680,15 @@ impl<'a> InfTrial<'a> {
                         // lazily iterate over all possible combinations of the substitutions
                         let mapped = ArgsProduct::product(assignments.unwrap());
                         if let Some(mapped) = mapped {
-                            crossbeam::scope(|scope| for args in mapped {
-                                                 if let Some(ref valid) = *self.valid
-                                                                               .lock()
-                                                                               .unwrap() {
-                                                     if valid.node ==
-                                                        &*node as *const ProofNode as usize {
-                                                         break;
-                                                     }
-                                                 }
-                                                 let args: ProofArgs = ProofArgs::new(args);
-                                                 scope.spawn(move || scoped_exec(self, node, args));
-                                             });
+                            for args in mapped {
+                                if let Some(ref valid) = *self.valid.lock().unwrap() {
+                                    if valid.node == &*node as *const ProofNode as usize {
+                                        break;
+                                    }
+                                }
+                                let args: ProofArgs = ProofArgs::new(args);
+                                self.tpool.install(|| scoped_exec(self, node, args));
+                            }
                         }
                         if self.feedback.load(Ordering::SeqCst) {
                             for e in node.antecedents.clone() {

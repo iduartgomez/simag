@@ -242,7 +242,7 @@ impl<'a> ASTNode<'a> {
     pub fn get_op(&self) -> LogicOperator {
         match *self {
             ASTNode::Scope(ref node) => *node.logic_op.as_ref().unwrap(),
-            _ => panic!(),
+            ASTNode::Assert(_) | ASTNode::Chain(_) | ASTNode::None => panic!(),
         }
     }
 
@@ -1081,7 +1081,7 @@ impl LogicOperator {
         } else if m == IMPL_OP {
             LogicOperator::Implication
         } else {
-            panic!()
+            panic!() // will never happen
         }
     }
 

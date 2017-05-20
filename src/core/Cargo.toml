@@ -7,4 +7,4 @@ authors = ["IDG <iduartgomez@gmail.com>"]
 float-cmp = "^0.2"
 nom = { version = "^2.1", features = ["verbose-errors"] }
 chrono = "^0.3"
-crossbeam = "^0.2"
+rayon = "^0.7"

@@ -7,7 +7,7 @@
 
 #[macro_use] extern crate nom;
 extern crate chrono;
-extern crate crossbeam;
+extern crate rayon;
 extern crate float_cmp;
 
 mod lang;

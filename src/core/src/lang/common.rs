@@ -114,7 +114,7 @@ impl<'a> Predicate {
         match *self {
             Predicate::GroundedMemb(ref t) => t.get_name(),
             Predicate::FreeClsOwner(ref t) => &t.term,
-            _ => panic!(),
+            Predicate::FreeClsMemb(_) => panic!(),
         }
     }
 
@@ -681,7 +681,10 @@ impl FreeClsMemb {
                         val_free.approx_eq_ulps(&val_grounded, FLOAT_EQ_ULPS)
                     }
                 }
-                _ => panic!(),
+                CompOperator::Less |
+                CompOperator::More |
+                CompOperator::MoreEqual |
+                CompOperator::LessEqual => panic!(),
             }
         } else {
             true
@@ -970,7 +973,7 @@ impl<'a> FuncDecl {
         let FuncDecl { name, args, op_args, .. } = self;
         let name = match name {
             Terminal::GroundedTerm(name) => name,
-            _ => panic!(),
+            Terminal::FreeTerm(_) | Terminal::Keyword(_) => panic!(),
         };
         let mut first = None;
         let mut second = None;
@@ -980,7 +983,7 @@ impl<'a> FuncDecl {
         for (i, a) in args.drain(..).enumerate() {
             let n_a = match a {
                 Predicate::GroundedMemb(term) => term,
-                _ => panic!(),
+                Predicate::FreeClsMemb(_) | Predicate::FreeClsOwner(_) => panic!(),
             };
             if i == 0 {
                 val = n_a.get_value();
@@ -1534,8 +1537,7 @@ impl ::std::iter::IntoIterator for ClassDecl {
         for _ in 0..self.args.len() {
             match self.args.pop() {
                 Some(Predicate::GroundedMemb(grfact)) => v.push(grfact),
-                Some(_) => panic!(),
-                None => {}
+                Some(_) | None => {}
             }
         }
         v.into_iter()
@@ -2059,10 +2061,8 @@ mod logsent {
                        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
                        context: &mut T)
                        -> Option<bool> {
-            match self.variant {
-                FuncVariants::Relational => {}
-                FuncVariants::TimeCalc => return self.time_resolution(time_assign),
-                _ => panic!(),
+            if let FuncVariants::TimeCalc = self.variant {
+                return self.time_resolution(time_assign);
             }
             if self.is_grounded() {
                 let sbj = self.args.as_ref().unwrap();
