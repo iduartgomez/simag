@@ -24,7 +24,7 @@ use std::sync::{Arc, RwLock};
 ///     classes -> Sets of objects (entities or subclasses) that share a common property.
 ///     | This includes 'classes of relationships' and other 'functions'.
 #[derive(Default, Debug)]
-pub struct Representation {
+pub(crate) struct Representation {
     pub entities: RwLock<HashMap<String, Entity>>,
     pub classes: RwLock<HashMap<String, Class>>,
 }
@@ -56,7 +56,8 @@ impl Representation {
     ///
     /// For more examples check the LogSentence type docs.
     pub fn tell(&mut self, source: String) -> Result<(), Vec<ParseErrF>> {
-        let pres = logic_parser(source, true);
+        let num_threads = 0; // TODO: pass the number of threads available for inference
+        let pres = logic_parser(source.as_str(), true, num_threads);
         if pres.is_ok() {
             let mut pres: VecDeque<ParseTree> = pres.unwrap();
             let mut errors = Vec::new();
@@ -99,10 +100,10 @@ impl Representation {
 
     /// Asks the KB if some fact is true and returns the answer to the query.
     pub fn ask(&self, source: String) -> Result<Answer, QueryErr> {
-        let pres = logic_parser(source, false);
+        let num_threads = 0; // TODO: pass the number of threads available for inference
+        let pres = logic_parser(source.as_str(), false, num_threads);
         if pres.is_ok() {
             let pres = QueryInput::ManyQueries(pres.unwrap());
-            let num_threads = 0; // TODO: pass the number of threads available for inference
             let mut inf =
                 match Inference::new(self, pres, usize::max_value(), false, num_threads) {
                     Ok(inf) => inf,
@@ -119,10 +120,10 @@ impl Representation {
     }
 
     pub fn ask_processed(&self,
-                         source: QueryInput,
-                         depth: usize,
-                         ignore_current: bool)
-                         -> Result<Answer, QueryErr> {
+                                source: QueryInput,
+                                depth: usize,
+                                ignore_current: bool)
+                                -> Result<Answer, QueryErr> {
         let num_threads = 0; // TODO: pass the number of threads available for inference
         let mut inf = match Inference::new(self, source, depth, ignore_current, num_threads) {
             Ok(inf) => inf,
@@ -136,8 +137,8 @@ impl Representation {
     }
 
     pub fn up_membership<T: ProofResContext>(&self,
-                                             assert: Arc<GroundedMemb>,
-                                             context: Option<&T>) {
+                                                    assert: Arc<GroundedMemb>,
+                                                    context: Option<&T>) {
         let parent_exists = self.classes
             .read()
             .unwrap()
@@ -173,10 +174,7 @@ impl Representation {
                 decl = ClassMember::Entity(assert.clone());
             }
         } else {
-            let class_exists = self.classes
-                .read()
-                .unwrap()
-                .contains_key(assert.get_name());
+            let class_exists = self.classes.read().unwrap().contains_key(assert.get_name());
             if class_exists {
                 let lock = self.classes.read().unwrap();
                 let class = lock.get(assert.get_name()).unwrap();
@@ -201,7 +199,9 @@ impl Representation {
         }
     }
 
-    pub fn up_relation<T: ProofResContext>(&self, assert: Arc<GroundedFunc>, context: Option<&T>) {
+    pub fn up_relation<T: ProofResContext>(&self,
+                                                  assert: Arc<GroundedFunc>,
+                                                  context: Option<&T>) {
         // it doesn't matter this is overwritten, as if it exists, it exists for all
         let is_new = Rc::new(::std::cell::RefCell::new(true));
         let process_arg = |a: &GroundedMemb| {
@@ -243,10 +243,7 @@ impl Representation {
             let new_check = is_new.clone();
             *new_check.borrow_mut() = is_new1;
         };
-        let relation_exists = self.classes
-            .read()
-            .unwrap()
-            .contains_key(assert.get_name());
+        let relation_exists = self.classes.read().unwrap().contains_key(assert.get_name());
         if !relation_exists {
             let relationship = Class::new(assert.get_name().to_string(), ClassKind::Relationship);
             self.classes
@@ -440,10 +437,7 @@ impl Representation {
                     Assert::FuncDecl(_) => Class::new(name.to_string(), ClassKind::Relationship),
                 };
                 nc.add_rule(rule.clone());
-                self.classes
-                    .write()
-                    .unwrap()
-                    .insert(name.to_string(), nc);
+                self.classes.write().unwrap().insert(name.to_string(), nc);
             }
         }
         rollback_from_rule(self, rule.clone());
@@ -452,8 +446,8 @@ impl Representation {
     /// Takes a vector of class names and returns a hash map with those classes as keys
     /// and the memberships to those classes.
     pub fn by_class<'a, 'b>(&'a self,
-                            classes: &'b [&str])
-                            -> HashMap<&'b str, Vec<Arc<GroundedMemb>>> {
+                                   classes: &'b [&str])
+                                   -> HashMap<&'b str, Vec<Arc<GroundedMemb>>> {
         let mut dict = HashMap::new();
         let lock = self.classes.read().unwrap();
         for cls in classes {
@@ -510,7 +504,10 @@ impl Representation {
         dict
     }
 
-    pub fn get_obj_from_class(&self, class: &str, subject: &str) -> Option<Arc<GroundedMemb>> {
+    pub fn get_obj_from_class(&self,
+                                     class: &str,
+                                     subject: &str)
+                                     -> Option<Arc<GroundedMemb>> {
         if subject.starts_with('$') {
             let entity_exists = self.entities.read().unwrap().contains_key(subject);
             if entity_exists {
@@ -599,9 +596,9 @@ impl Representation {
     }
 
     pub fn get_relationship(&self,
-                            pred: &GroundedFunc,
-                            subject: &str)
-                            -> Option<Arc<GroundedFunc>> {
+                                   pred: &GroundedFunc,
+                                   subject: &str)
+                                   -> Option<Arc<GroundedFunc>> {
         if subject.starts_with('$') {
             if let Some(entity) = self.entities.read().unwrap().get(subject) {
                 if let Some(current) = entity.has_relationship(pred) {
@@ -624,7 +621,9 @@ impl Representation {
         None
     }
 
-    pub fn get_relationships(&self, func: &FuncDecl) -> HashMap<&str, Vec<Arc<GroundedFunc>>> {
+    pub fn get_relationships(&self,
+                                    func: &FuncDecl)
+                                    -> HashMap<&str, Vec<Arc<GroundedFunc>>> {
         let mut res = HashMap::new();
         for (pos, arg) in func.get_args().enumerate() {
             if !arg.is_var() {
@@ -667,14 +666,16 @@ pub enum QueryErr {
 
 /// Answer to a query and inference results payload.
 #[derive(Debug)]
-pub struct Answer<'a>(pub InfResults<'a>);
+pub struct Answer<'a>(InfResults<'a>);
 
 type ObjName<'a> = &'a str;
 type QueryPred = String;
-type AnswM<'a> = HashMap<ObjName<'a>, Vec<&'a GroundedMemb>>;
-type AnswF<'a> = HashMap<ObjName<'a>, Vec<&'a GroundedFunc>>;
 
 impl<'a> Answer<'a> {
+    pub(crate) fn new(results: InfResults<'a>) -> Answer<'a> {
+        Answer(results)
+    }
+
     pub fn get_results_single(self) -> Option<bool> {
         self.0.get_results_single()
     }
@@ -685,21 +686,12 @@ impl<'a> Answer<'a> {
          -> HashMap<QueryPred, HashMap<String, Option<(bool, Option<Time>)>>> {
         self.0.get_results_multiple()
     }
-
-    pub fn get_memberships<'b>(&self) -> HashMap<ObjName<'b>, Vec<&'b GroundedMemb>> {
-        use std::mem;
-        unsafe {
-            let d = self.0.get_memberships();
-            mem::transmute::<AnswM, AnswM<'b>>(d)
-        }
+    pub(crate) fn get_memberships(&self) -> HashMap<ObjName<'a>, Vec<&'a GroundedMemb>> {
+        self.0.get_memberships()
     }
 
-    pub fn get_relationships<'b>(&self) -> HashMap<ObjName<'b>, Vec<&'b GroundedFunc>> {
-        use std::mem;
-        unsafe {
-            let d = self.0.get_relationships();
-            mem::transmute::<AnswF, AnswF<'b>>(d)
-        }
+    pub(crate) fn get_relationships(&self) -> HashMap<ObjName<'a>, Vec<&'a GroundedFunc>> {
+        self.0.get_relationships()
     }
 }
 
@@ -731,7 +723,7 @@ impl<'a> Answer<'a> {
 ///     * relations: Functions between objects and/or classes.
 ///
 #[derive(Debug)]
-pub struct Entity {
+pub(crate) struct Entity {
     pub name: String,
     classes: RwLock<HashMap<String, Arc<GroundedMemb>>>,
     relations: RwLock<HashMap<String, Vec<Arc<GroundedFunc>>>>,
@@ -999,7 +991,7 @@ impl ClassMember {
 /// All the attributes of a class are inherited by their members
 /// (to a fuzzy degree).
 #[derive(Debug)]
-pub struct Class {
+pub(crate) struct Class {
     pub name: String,
     classes: RwLock<HashMap<String, Arc<GroundedMemb>>>,
     relations: RwLock<HashMap<String, Vec<Arc<GroundedFunc>>>>,
@@ -1281,10 +1273,7 @@ impl Class {
 
     /// Add a grounded relationship of this kind of relationship
     fn add_relation_to_class(&self, func: Arc<GroundedFunc>) {
-        self.members
-            .write()
-            .unwrap()
-            .push(ClassMember::Func(func));
+        self.members.write().unwrap().push(ClassMember::Func(func));
     }
 
     fn add_belief(&self, belief: Arc<LogSentence>, parent: &str) {

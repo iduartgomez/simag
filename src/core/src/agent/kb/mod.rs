@@ -6,9 +6,13 @@
 mod iexpr_inf;
 mod rule_inf;
 mod repr;
+#[cfg(test)]
+mod test;
 
-pub use self::iexpr_inf::*;
-pub use self::repr::*;
+pub(crate) use self::iexpr_inf::*;
+pub(crate) use self::repr::*;
+
+pub use self::repr::{Answer, QueryErr};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,7 +20,7 @@ use std::sync::Arc;
 use lang::{GroundedMemb, GroundedFunc};
 
 #[derive(Debug, Clone)]
-pub struct VarAssignment<'a> {
+pub(crate) struct VarAssignment<'a> {
     pub name: &'a str,
     classes: HashMap<&'a str, Arc<GroundedMemb>>,
     funcs: HashMap<&'a str, Vec<Arc<GroundedFunc>>>,

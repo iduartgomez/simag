@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// Serves to keep the believes alive in memory, fix inconsistencies and
 /// serialize any information.
 #[derive(Debug)]
-pub struct BmsWrapper {
+pub(crate) struct BmsWrapper {
     records: RwLock<Vec<BmsRecord>>,
     pub overwrite: AtomicBool,
 }

@@ -2,10 +2,10 @@ mod common;
 mod parser;
 mod logsent;
 
-pub use self::common::*;
+pub(crate) use self::common::*;
+pub(crate) use self::parser::{CompOperator, ParseTree};
+pub(crate) use self::logsent::{LogSentence, SentID, ProofResContext};
 pub use self::errors::ParseErrF;
-pub use self::parser::{CompOperator, ParseTree};
-pub use self::logsent::{LogSentence, SentID, ProofResContext};
 
 use chrono::{DateTime, UTC};
 
@@ -17,8 +17,11 @@ use std::collections::VecDeque;
 ///
 /// It includes a a scanner and parser for the synthatical analysis which translate
 /// to the **program** in form of a `ParseResult` to be feed to an Agent.
-pub fn logic_parser(source: String, tell: bool) -> Result<VecDeque<ParseTree>, ParseErrF> {
-    self::parser::Parser::parse(source, tell)
+pub(crate) fn logic_parser(source: &str,
+                           tell: bool,
+                           thread_num: usize)
+                           -> Result<VecDeque<ParseTree>, ParseErrF> {
+    parser::Parser::parse(source, tell, thread_num)
 }
 
 pub type Time = DateTime<UTC>;
@@ -51,12 +54,12 @@ mod errors {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             let msg;
             let t = match *self {
-                ParseErrF::ReservedKW(ref kw) => { 
+                ParseErrF::ReservedKW(ref kw) => {
                     msg = format!("use of reserved keyword: {}", kw);
                     msg.as_str()
                 }
                 ParseErrF::SyntaxErr(ref msg) => msg.as_str(),
-                _ => { "parse error" }
+                _ => "parse error",
             };
             write!(f, "simag parser: {}", t)
         }
@@ -68,3 +71,4 @@ mod errors {
         }
     }
 }
+

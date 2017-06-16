@@ -21,7 +21,7 @@ use lang::common::*;
 use lang::parser::*;
 
 pub use self::errors::LogSentErr;
-pub type SentID = usize;
+pub(crate) type SentID = usize;
 
 /// Type to store a first-order logic complex sentence.
 ///
@@ -29,7 +29,7 @@ pub type SentID = usize;
 /// it in an usable form for the agent to classify and reason about
 /// objects and relations, cannot be instantiated directly.
 #[derive(Debug)]
-pub struct LogSentence {
+pub(crate) struct LogSentence {
     particles: Vec<Rc<Particle>>,
     vars: Option<Vec<Arc<Var>>>,
     skolem: Option<Vec<Arc<Skolem>>>,
@@ -376,7 +376,7 @@ impl<'a> LogSentence {
     }
 }
 
-pub struct LhsPreds<'a> {
+pub(crate) struct LhsPreds<'a> {
     preds: Vec<Vec<&'a Assert>>,
     index: Vec<(usize, bool)>,
     curr: usize,
@@ -484,7 +484,7 @@ impl<'a> ::std::iter::Iterator for LhsPreds<'a> {
     }
 }
 
-pub struct SentVarReq<'a> {
+pub(crate) struct SentVarReq<'a> {
     iter: LhsPreds<'a>,
 }
 
@@ -575,7 +575,7 @@ impl fmt::Display for LogSentence {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum SentKind {
+pub(crate) enum SentKind {
     IExpr,
     Expr,
     Rule,
@@ -1116,7 +1116,7 @@ impl fmt::Display for Particle {
     }
 }
 
-pub trait ProofResContext {
+pub(crate) trait ProofResContext {
     fn set_result(&mut self, res: Option<bool>);
 
     fn get_id(&self) -> SentID;
@@ -1154,7 +1154,7 @@ pub trait ProofResContext {
     fn is_inconsistent(&self) -> bool;
 }
 
-pub trait LogSentResolution<T: ProofResContext> {
+pub(crate) trait LogSentResolution<T: ProofResContext> {
     fn grounded_eq(&self,
                    agent: &agent::Representation,
                    assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
@@ -1171,7 +1171,7 @@ pub trait LogSentResolution<T: ProofResContext> {
 
 // infrastructure to construct compiled logsentences:
 
-pub struct ParseContext {
+pub(crate) struct ParseContext {
     pub stype: SentKind,
     pub vars: Vec<Arc<Var>>,
     pub skols: Vec<Arc<Skolem>>,
@@ -1613,7 +1613,7 @@ mod test {
             (( let x y z )
              (( cde[x,u=1] && hij[y,u=1] && fn::fgh[y,u>0.5;x;z] ) := abc[x,u=1]))
         ");
-        let tree = Parser::parse(source, true);
+        let tree = Parser::parse(source.as_str(), true, 0);
         assert!(tree.is_ok());
         let mut tree = tree.unwrap();
 

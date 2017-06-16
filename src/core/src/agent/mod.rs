@@ -1,10 +1,11 @@
 mod kb;
 mod bms;
 
-pub use self::kb::{Class, Entity, Representation, VarAssignment, Answer, QueryErr};
-pub use self::bms::{BmsWrapper};
+pub(crate) use self::kb::{VarAssignment, Representation};
+pub(crate) use self::bms::{BmsWrapper};
 
-use lang::ParseErrF;
+pub use self::kb::{Answer, QueryErr};
+pub use lang::ParseErrF;
 
 /// Represent an alive object which can interact with environment.
 ///

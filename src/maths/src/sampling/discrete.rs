@@ -92,10 +92,16 @@ impl GibbsMarginal {
     }
 }
 
-impl ::std::clone::Clone for GibbsMarginal {
+impl Clone for GibbsMarginal {
     fn clone(&self) -> GibbsMarginal {
         let steeps = Some(self.steeps);
         let burnin = Some(self.burnin);
         GibbsMarginal::new(steeps, burnin)
+    }
+}
+
+impl Default for GibbsMarginal {
+    fn default() -> GibbsMarginal {
+        Self::new(None, None)
     }
 }

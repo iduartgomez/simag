@@ -10,8 +10,8 @@ extern crate chrono;
 extern crate rayon;
 extern crate float_cmp;
 
-mod lang;
-mod agent;
+pub(crate) mod lang;
+pub(crate) mod agent;
 pub mod utils;
 
 pub use agent::{Agent, Answer, QueryErr};

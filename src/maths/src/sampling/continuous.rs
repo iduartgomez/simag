@@ -151,10 +151,16 @@ impl<'a> ExactNormalized<'a> {
     }
 }
 
-impl<'a> ::std::clone::Clone for ExactNormalized<'a> {
+impl<'a> Clone for ExactNormalized<'a> {
     fn clone(&self) -> ExactNormalized<'a> {
         let steeps = Some(self.steeps);
         ExactNormalized::new(steeps)
+    }
+}
+
+impl<'a> Default for ExactNormalized<'a> {
+    fn default() -> ExactNormalized<'a> {
+        Self::new(None)
     }
 }
 

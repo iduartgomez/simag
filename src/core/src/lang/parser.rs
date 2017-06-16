@@ -34,11 +34,13 @@ use std::str;
 use std::str::FromStr;
 use std::collections::VecDeque;
 use std::fmt;
-use std::thread;
 
 use nom::{ErrorKind, IResult};
 use nom::{is_alphanumeric, is_digit};
 use nom;
+
+use rayon;
+use rayon::prelude::*;
 
 use lang::logsent::*;
 use lang::common::*;
@@ -52,54 +54,52 @@ const IMPL_OP: &'static [u8] = b"=>";
 
 const EMPTY: &'static [u8] = b" ";
 
-pub struct Parser;
+pub(crate) struct Parser;
 impl Parser {
     /// Lexerless (mostly) recursive descent parser. Takes a string and outputs a correct ParseTree.
-    pub fn parse(mut input: String, tell: bool) -> Result<VecDeque<ParseTree>, ParseErrF> {
+    pub fn parse(input: &str, tell: bool, thread_num: usize) -> Result<VecDeque<ParseTree>, ParseErrF> {
         // store is a vec where the sequence of characters after cleaning up comments
         // will be stored, both have to be extended to 'static lifetime so they can be
-        fn extend_lifetime<'b, T>(r: &'b mut T) -> &'static mut T {
-            unsafe { ::std::mem::transmute::<&'b mut T, &'static mut T>(r) }
-        }
-        let input_ref = extend_lifetime(&mut input);
-        let mut store = vec![];
-        let store_ref = extend_lifetime(&mut store);
-        let scopes = match Self::feed(input_ref.as_bytes(), store_ref) {
-            Ok(scopes) => scopes,
+        //use rayon::iter::IntoParallelIterator;
+        let mut clean = vec![];
+        let scopes = match Self::p1(input.as_bytes(), &mut clean) {
+            Ok(scopes) => scopes.into_par_iter(),
             Err(err) => return Err(ParseErrF::from(err)),
         };
         // walk the AST output and, if correct, output a final parse tree
-        let mut parse_trees = vec![];
-        for ast in scopes {
-            let res = thread::spawn(move || ParseTree::process_ast(ast, tell));
-            parse_trees.push(res);
+        let tpool = rayon::ThreadPool::new(rayon::Configuration::new().num_threads(thread_num)).unwrap();
+        let parse_trees: Vec<Result<ParseTree, ParseErrF>> = tpool.install(|| {
+            scopes
+                .map(|ast| { 
+                    ParseTree::process_ast(ast, tell)
+                })
+                .collect()
+        });
+
+        let mut results: VecDeque<ParseTree> = VecDeque::new();
+        for res in parse_trees {
+            match res {
+                Ok(parsed) => results.push_back(parsed),
+                Err(err) => results.push_back(ParseTree::ParseErr(err)),
+            }
         }
-        let results: VecDeque<ParseTree> = parse_trees.drain(..)
-            .map(|res| {
-                let res = res.join();
-                match res.unwrap() {
-                    Ok(parsed) => parsed,
-                    Err(err) => ParseTree::ParseErr(err),
-                }
-            })
-            .collect();
         Ok(results)
     }
 
-    /// First pass: will tokenize and output an AST
-    fn feed<'a>(input: &'a [u8], p2: &'a mut Vec<u8>) -> Result<Vec<ASTNode<'a>>, ParseErrB<'a>> {
+    /// Tokenize and output an AST
+    fn p1<'b: 'a, 'a>(input: &'a [u8], p2: &'b mut Vec<u8>) -> Result<Vec<ASTNode<'b>>, ParseErrB<'a>> {
         // clean up every comment to facilitate further parsing
+        // TODO: clea up or ignore comments without having to collect over the initial slice
         let p1 = match remove_comments(input) {
             IResult::Done(_, done) => done,
-            IResult::Error(nom::Err::Position(_, p)) => return Err(ParseErrB::UnclosedComment(p)),
+            IResult::Error(nom::Err::Position(_, _)) => return Err(ParseErrB::UnclosedComment),
             _ => return Err(ParseErrB::SyntaxErrorU),
         };
-        for v in p1 {
-            for b in v {
-                p2.push(*b)
+        for s in p1 {
+            for c in s {
+                p2.push(c.clone());
             }
         }
-
         let scopes = get_blocks(&p2[..]);
         if scopes.is_err() {
             match scopes.unwrap_err() {
@@ -123,7 +123,7 @@ impl Parser {
 }
 
 #[derive(Debug)]
-pub enum ParseErrB<'a> {
+pub(crate) enum ParseErrB<'a> {
     SyntaxErrorU,
     //SyntaxError(Box<ParseErrB<'a>>),
     SyntaxErrorPos(&'a [u8]),
@@ -132,7 +132,7 @@ pub enum ParseErrB<'a> {
     IllegalChain(&'a [u8]),
     NonTerminal(&'a [u8]),
     NonNumber(&'a [u8]),
-    UnclosedComment(&'a [u8]),
+    UnclosedComment,
 }
 
 impl<'a> fmt::Display for ParseErrB<'a> {
@@ -173,9 +173,8 @@ impl<'a> fmt::Display for ParseErrB<'a> {
                              illegal character found when parsing a number:v{}", 
                              str::from_utf8_unchecked(arr))
                 }
-                ParseErrB::UnclosedComment(arr) => {
-                    format!("syntax error, open comment delimiter:\n{}", 
-                             str::from_utf8_unchecked(arr))
+                ParseErrB::UnclosedComment => {
+                    format!("syntax error, open comment delimiter")
                 }
             }
         };
@@ -184,7 +183,7 @@ impl<'a> fmt::Display for ParseErrB<'a> {
 }
 
 #[derive(Debug)]
-pub enum ParseTree {
+pub(crate) enum ParseTree {
     Assertion(Vec<Assert>),
     IExpr(LogSentence),
     Expr(LogSentence),
@@ -226,7 +225,7 @@ impl ParseTree {
 }
 
 #[derive(Debug)]
-pub enum ASTNode<'a> {
+pub(crate) enum ASTNode<'a> {
     Assert(AssertBorrowed<'a>),
     Scope(Box<Scope<'a>>),
     Chain(Vec<ASTNode<'a>>),
@@ -301,7 +300,7 @@ impl<'a> ASTNode<'a> {
 }
 
 #[derive(Debug)]
-pub struct Scope<'a> {
+pub(crate) struct Scope<'a> {
     pub vars: Option<Vec<VarDeclBorrowed<'a>>>,
     pub logic_op: Option<LogicOperator>,
     pub next: ASTNode<'a>,
@@ -321,23 +320,23 @@ impl<'a> Scope<'a> {
 }
 
 #[derive(Debug)]
-pub enum AssertBorrowed<'a> {
+pub(crate) enum AssertBorrowed<'a> {
     FuncDecl(FuncDeclBorrowed<'a>),
     ClassDecl(ClassDeclBorrowed<'a>),
 }
 
 #[derive(Debug)]
-pub enum VarDeclBorrowed<'a> {
+pub(crate) enum VarDeclBorrowed<'a> {
     Var(VarBorrowed<'a>),
     Skolem(SkolemBorrowed<'a>),
 }
 
-fn get_blocks(input: &[u8]) -> IResult<&[u8], Vec<ASTNode>> {
-    let input = remove_multispace(input);
-    if input.len() == 0 {
-        // empty program
-        return IResult::Done(EMPTY, vec![]);
-    }
+fn get_blocks(input: &[u8]) -> IResult<&[u8], Vec<ASTNode>> 
+{
+    let input = match remove_multispace(input) {
+        Some(view) => view,
+        None => return IResult::Done(EMPTY, vec![]),
+    };
     // find the positions of the closing delimiters and try until it fails
     let mut mcd = ::std::collections::VecDeque::new();
     let mut lp = 0;
@@ -638,7 +637,7 @@ fn flat_vars(input: Option<DeclVars>) -> Option<Vec<VarDeclBorrowed>> {
 
 // skol_decl = '(' 'exists' $(term[':'op_arg]),+ ')' ;
 #[derive(Debug)]
-pub struct SkolemBorrowed<'a> {
+pub(crate) struct SkolemBorrowed<'a> {
     pub name: TerminalBorrowed<'a>,
     pub op_arg: Option<OpArgBorrowed<'a>>,
 }
@@ -675,7 +674,7 @@ named!(skolem(&[u8]) -> Vec<VarDeclBorrowed>, do_parse!(
 
 // var_decl = '(' 'let' $(term[':'op_arg]),+ ')' ;
 #[derive(Debug, PartialEq)]
-pub struct VarBorrowed<'a> {
+pub(crate) struct VarBorrowed<'a> {
     pub name: TerminalBorrowed<'a>,
     pub op_arg: Option<OpArgBorrowed<'a>>,
 }
@@ -713,7 +712,7 @@ named!(variable(&[u8]) -> Vec<VarDeclBorrowed>, do_parse!(
 // func_decl = 'fn::' term ['(' op_args ')'] args
 // 			 | 'fn::' term '(' op_args ')' ;
 #[derive(Debug, PartialEq)]
-pub struct FuncDeclBorrowed<'a> {
+pub(crate) struct FuncDeclBorrowed<'a> {
     pub name: TerminalBorrowed<'a>,
     pub args: Option<Vec<ArgBorrowed<'a>>>,
     pub op_args: Option<Vec<OpArgBorrowed<'a>>>,
@@ -727,7 +726,7 @@ impl<'a> FuncDeclBorrowed<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum FuncVariants {
+pub(crate) enum FuncVariants {
     Relational,
     NonRelational,
     TimeCalc,
@@ -772,7 +771,7 @@ named!(func_decl(&[u8]) -> FuncDeclBorrowed,
 
 // class_decl = term ['(' op_args ')'] args ;
 #[derive(Debug, PartialEq)]
-pub struct ClassDeclBorrowed<'a> {
+pub(crate) struct ClassDeclBorrowed<'a> {
     pub name: TerminalBorrowed<'a>,
     pub args: Vec<ArgBorrowed<'a>>,
     pub op_args: Option<Vec<OpArgBorrowed<'a>>>,
@@ -793,7 +792,7 @@ named!(class_decl(&[u8]) -> ClassDeclBorrowed, ws!(do_parse!(
 
 // arg	= term [',' uval] ;
 #[derive(Debug, PartialEq)]
-pub struct ArgBorrowed<'a> {
+pub(crate) struct ArgBorrowed<'a> {
     pub term: TerminalBorrowed<'a>,
     pub uval: Option<UVal>,
 }
@@ -822,7 +821,7 @@ fn to_arg_vec(arg: ArgBorrowed) -> Vec<ArgBorrowed> {
 
 // op_arg =	(string|term) [comp_op (string|term)] ;
 #[derive(Debug, PartialEq)]
-pub struct OpArgBorrowed<'a> {
+pub(crate) struct OpArgBorrowed<'a> {
     pub term: OpArgTermBorrowed<'a>,
     pub comp: Option<(CompOperator, OpArgTermBorrowed<'a>)>,
 }
@@ -859,7 +858,7 @@ fn to_op_arg_vec(a: OpArgBorrowed) -> Vec<OpArgBorrowed> {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum OpArgTermBorrowed<'a> {
+pub(crate) enum OpArgTermBorrowed<'a> {
     Terminal(&'a [u8]),
     String(&'a [u8]),
 }
@@ -876,7 +875,7 @@ impl<'a> OpArgTermBorrowed<'a> {
 
 // uval = 'u' comp_op number;
 #[derive(Debug, PartialEq, Clone, Copy)]
-pub struct UVal {
+pub(crate) struct UVal {
     pub op: CompOperator,
     pub val: Number,
 }
@@ -893,7 +892,7 @@ named!(uval <UVal>, ws!(do_parse!(
 
 // number = -?[0-9\.]+
 #[derive(Debug, PartialEq, Clone, Copy)]
-pub enum Number {
+pub(crate) enum Number {
     SignedFloat(f32),
     UnsignedFloat(f32),
     SignedInteger(i32),
@@ -956,7 +955,7 @@ fn string(input: &[u8]) -> IResult<&[u8], &[u8]> {
 
 // terminal = [a-zA-Z0-9_]+ ;
 #[derive(PartialEq)]
-pub struct TerminalBorrowed<'a>(pub &'a [u8]);
+pub(crate) struct TerminalBorrowed<'a>(pub &'a [u8]);
 
 impl<'a> TerminalBorrowed<'a> {
     pub fn from_slice(i: &'a [u8]) -> TerminalBorrowed<'a> {
@@ -985,7 +984,7 @@ fn terminal(input: &[u8]) -> IResult<&[u8], &[u8]> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub enum CompOperator {
+pub(crate) enum CompOperator {
     Equal,
     Less,
     More,
@@ -1060,7 +1059,7 @@ impl CompOperator {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum LogicOperator {
+pub(crate) enum LogicOperator {
     Entail,
     And,
     Or,
@@ -1108,12 +1107,12 @@ named!(logic_operator,
 named!(remove_comments(&[u8]) -> Vec<&[u8]>,
     many1!(
         do_parse!(
-            before: comment_tag >>
+            non_comment: comment_tag >>
             opt!(alt!(
                 recognize!(delimited!(char!('#'), is_not!("\n"), alt!(is_a!("\n") | eof ))) |
                 recognize!(delimited!(tag!("/*"), take_until!("*/"), tag!("*/")))
             )) >>
-            (before)
+            (non_comment)
         )
     )
 );
@@ -1153,11 +1152,12 @@ fn comment_tag(input: &[u8]) -> IResult<&[u8], &[u8]> {
 }
 
 // white spaces and newlines parsing tools:
-fn remove_multispace(input: &[u8]) -> &[u8] {
+fn remove_multispace(input: &[u8]) -> Option<&[u8]> 
+{
     let trimmed = take_while!(input, is_multispace);
     match trimmed {
-        IResult::Done(r, _) => r,
-        _ => input,
+        IResult::Done(r, _) => Some(r),
+        _ => None,
     }
 }
 
@@ -1191,51 +1191,51 @@ mod test {
                 comment
             */
         ";
-        let mut data = Vec::new();
-        let scanned = Parser::feed(source, &mut data);
+        let mut clean = vec![];
+        let scanned = Parser::p1(source, &mut clean);
         assert!(scanned.is_ok());
 
         // split per scopes and declarations
         let source = b"
             ( american[x,u=1] && ( weapon[y,u=1] && hostile[z,u=1] ) )
         ";
-        let mut data = Vec::new();
-        let scanned = Parser::feed(source, &mut data);
+        let mut clean = vec![];
+        let scanned = Parser::p1(source, &mut clean);
         assert!(scanned.is_ok());
 
         let source = b"
             ( ( american[x,u=1] && hostile[z,u=1] ) && hostile[z,u=1] )
         ";
-        let mut data = Vec::new();
-        let scanned = Parser::feed(source, &mut data);
+        let mut clean = vec![];
+        let scanned = Parser::p1(source, &mut clean);
         assert!(scanned.is_ok());
 
         let source = b"
             ( american[x,u=1] && hostile[z,u=1] && ( weapon[y,u=1]) )
         ";
-        let mut data = Vec::new();
-        let scanned = Parser::feed(source, &mut data);
+        let mut clean = vec![];
+        let scanned = Parser::p1(source, &mut clean);
         assert!(scanned.is_err());
 
         let source = b"
             ( ( american[x,u=1] ) && hostile[z,u=1] && weapon[y,u=1] )
         ";
-        let mut data = Vec::new();
-        let scanned = Parser::feed(source, &mut data);
+        let mut clean = vec![];
+        let scanned = Parser::p1(source, &mut clean);
         assert!(scanned.is_err());
 
         let source = b"
             ( ( ( american[x,u=1] ) ) && hostile[z,u=1] && ( ( weapon[y,u=1] ) ) )
         ";
-        let mut data = Vec::new();
-        let scanned = Parser::feed(source, &mut data);
+        let mut clean = vec![];
+        let scanned = Parser::p1(source, &mut clean);
         assert!(scanned.is_err());
 
         let source = b"
             ( american[x,u=1] && ( ( hostile[z,u=1] ) ) && weapon[y,u=1] )
         ";
-        let mut data = Vec::new();
-        let scanned = Parser::feed(source, &mut data);
+        let mut clean = vec![];
+        let scanned = Parser::p1(source, &mut clean);
         assert!(scanned.is_err());
 
         let source = b"
@@ -1243,8 +1243,8 @@ mod test {
         ((let x y) ((american[x,u=1] && hostile[z,u=1]) := criminal[x,u=1]))
         ((let x y) (american[x,u=1] && hostile[z,u=1]) := criminal[x,u=1])
         ";
-        let mut data = Vec::new();
-        let scanned = Parser::feed(source, &mut data);
+        let mut clean = vec![];
+        let scanned = Parser::p1(source, &mut clean);
         assert!(scanned.is_ok());
         let out = scanned.unwrap();
         assert_eq!(out.len(), 3);

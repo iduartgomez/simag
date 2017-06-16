@@ -1,18 +1,16 @@
 use std::f64::consts::PI;
-use std::ops::Deref;
-//use std::collections::{HashMap};
 
 use rgsl::{MatrixF64, VectorF64};
 use rgsl;
 
-use super::{HybridRes};
-use model::{Variable, HybridNode, ContVar, DefContVar, DType, IterModel, HybridModel};
+use super::HybridRes;
+use model::{Variable, HybridNode, ContVar, ContNode, DefContVar, DType, IterModel, HybridModel};
 use dists::{Normal, Normalization, CDF};
 use err::ErrMsg;
 use RGSLRng;
 
 const ITER_TIMES: usize = 2000;
-const BURN_IN: usize = 500;
+const _BURN_IN: usize = 500;
 
 /// An efficient exact sampler intended for Bayesian nets (encoded causality through
 /// direct acyclic graphs) formed by discreted and/or continuous variables. Requires
@@ -139,36 +137,16 @@ impl<'a> ExactNormalized<'a> {
                 let sample = std.cdf(steep_sample.get(i));
                 let sample = match *self.normalized[i].original {
                     DType::Normal(ref dist) => HybridRes::Continuous(sample + dist.mu),
-                    DType::Exponential(ref dist) => {
-                        HybridRes::Continuous(dist.inverse_cdf(sample))
-                    }
-                    DType::Beta(ref dist) => {
-                        HybridRes::Continuous(dist.inverse_cdf(sample))
-                    }
-                    DType::Gamma(ref dist) => {
-                        HybridRes::Continuous(dist.inverse_cdf(sample))
-                    }
-                    DType::ChiSquared(ref dist) => {
-                        HybridRes::Continuous(dist.inverse_cdf(sample))
-                    }
-                    DType::TDist(ref dist) => {
-                        HybridRes::Continuous(dist.inverse_cdf(sample))
-                    }
-                    DType::FDist(ref dist) => {
-                        HybridRes::Continuous(dist.inverse_cdf(sample))
-                    }
-                    DType::Cauchy(ref dist) => {
-                        HybridRes::Continuous(dist.inverse_cdf(sample))
-                    }
-                    DType::LogNormal(ref dist) => {
-                        HybridRes::Continuous(dist.inverse_cdf(sample))
-                    }
-                    DType::Logistic(ref dist) => {
-                        HybridRes::Continuous(dist.inverse_cdf(sample))
-                    }
-                    DType::Pareto(ref dist) => {
-                        HybridRes::Continuous(dist.inverse_cdf(sample))
-                    }
+                    DType::Exponential(ref dist) => HybridRes::Continuous(dist.inverse_cdf(sample)),
+                    DType::Beta(ref dist) => HybridRes::Continuous(dist.inverse_cdf(sample)),
+                    DType::Gamma(ref dist) => HybridRes::Continuous(dist.inverse_cdf(sample)),
+                    DType::ChiSquared(ref dist) => HybridRes::Continuous(dist.inverse_cdf(sample)),
+                    DType::TDist(ref dist) => HybridRes::Continuous(dist.inverse_cdf(sample)),
+                    DType::FDist(ref dist) => HybridRes::Continuous(dist.inverse_cdf(sample)),
+                    DType::Cauchy(ref dist) => HybridRes::Continuous(dist.inverse_cdf(sample)),
+                    DType::LogNormal(ref dist) => HybridRes::Continuous(dist.inverse_cdf(sample)),
+                    DType::Logistic(ref dist) => HybridRes::Continuous(dist.inverse_cdf(sample)),
+                    DType::Pareto(ref dist) => HybridRes::Continuous(dist.inverse_cdf(sample)),
                     DType::RelaxedBernoulli(ref dist) => {
                         if dist.discretized(dist.inverse_cdf(sample)) {
                             HybridRes::Discrete(1)
@@ -186,7 +164,13 @@ impl<'a> ExactNormalized<'a> {
     }
 }
 
-impl<'a> ::std::clone::Clone for ExactNormalized<'a> {
+impl<'a> Default for ExactNormalized<'a> {
+    fn default() -> ExactNormalized<'a> {
+        Self::new(None)
+    }
+}
+
+impl<'a> Clone for ExactNormalized<'a> {
     fn clone(&self) -> ExactNormalized<'a> {
         let steeps = Some(self.steeps);
         ExactNormalized::new(steeps)
@@ -196,83 +180,64 @@ impl<'a> ::std::clone::Clone for ExactNormalized<'a> {
 
 /// Marginal sampler for Constrained Continuous Markov Random Field.
 ///
-/// This algorithm draws a sample from a proposal marginal distribution of a random variable 
+/// This algorithm draws a sample from a proposal marginal distribution of a random variable
 /// in the model for *t* steeps and converges to the stationary distribution for that variable.
 pub struct CCMRFMarginal {
     steeps: usize,
-    burnin: usize,
-    samples: Vec<Vec<HybridRes>>,
-    vars: Vec<VarData>,
+    samples: Vec<HybridRes>,
     rng: RGSLRng,
 }
 
-struct VarData {
-    _pos: usize,
-    blanket: Vec<usize>,
+struct VarInfo<'a, T: ContNode<'a>> {
+    blanket: Vec<<T as ContNode<'a>>::Var>,
+    // aprox: DType,
 }
 
 impl<'a> CCMRFMarginal {
-    pub fn new(steeps: Option<usize>, burnin: Option<usize>) -> CCMRFMarginal {
+    pub fn new(steeps: Option<usize>) -> CCMRFMarginal {
         let steeps = match steeps {
             Some(val) => val,
             None => ITER_TIMES,
         };
-
-        let burnin = match burnin {
-            Some(val) => val,
-            None => BURN_IN,
-        };
-
         CCMRFMarginal {
             steeps,
-            burnin,
             samples: Vec::with_capacity(steeps),
-            vars: vec![],
             rng: RGSLRng::new(),
         }
     }
 
-    /// Choose an initial state and a support set for each variable and construct the target 
+    /// Choose an initial state and a support set for each variable and construct the target
     /// proposal for each variable in the process.
-    fn initialize<M>(&mut self, net: &M)
-        where <<<M as IterModel>::Iter as Iterator>::Item as Deref>::Target: HybridNode<'a>,
-              <<M as IterModel>::Iter as Iterator>::Item: Deref,
-              M: IterModel
+    fn initialize<N>(&mut self, var: &N) -> VarInfo<'a, N>
+        where N: HybridNode<'a>
     {
-        use model::ContNode;
-        use model::Node;
-
-        let mut priors = Vec::with_capacity(net.var_num());
-        self.vars = Vec::with_capacity(net.var_num());
-        for node in net.iter_vars() {
-            let var = VarData {
-                _pos: node.position(),
-                blanket: net.var_neighbours(node.position()),
-            };
-            self.vars.push(var);
-            let sample = if !node.was_discrete() {
-                HybridRes::Continuous(node.init_sample(&mut self.rng))
-            } else {
-                HybridRes::Discrete(node.inverse_cdf(node.init_sample(&mut self.rng)))
-            };
-            priors.push(sample);
-        }
-        self.samples.push(priors);
+        /*
+        let blanket = var.get_markov_blanket();
+        // find an aproximate distribution
+        //let aprox = ...;
+        */
+        let info = VarInfo { blanket: vec![] };
+        let prior = if !var.was_discrete() {
+            HybridRes::Continuous(var.init_sample(&mut self.rng))
+        } else {
+            HybridRes::Discrete(var.inverse_cdf(var.init_sample(&mut self.rng)))
+        };
+        self.samples.push(prior);
+        info
     }
 
-    fn var_val<N: HybridNode<'a>>(&mut self, t: usize, var: &N, pos: usize) -> HybridRes
+    fn var_val<N>(&mut self, var: &N, info: &VarInfo<'a, N>) -> HybridRes
+        where N: HybridNode<'a>
     {
-        let var_data = &self.vars[pos];
-        let mut mb_values = Vec::with_capacity(var_data.blanket.len());
-        if !var_data.blanket.is_empty() {
-            for i in &var_data.blanket {
-                if i < &pos {
-                    mb_values.push(self.samples[t][*i]);
-                } else {
-                    mb_values.push(self.samples[t - 1][*i]);
-                }
+        if !info.blanket.is_empty() {
+            /*
+            let sample = info.aprox.draw_sample();
+            if !var.was_discrete() {
+                HybridRes::Continuous(sample)
+            } else {
+                HybridRes::Discrete(var.inverse_cdf(sample))
             }
-            //var.draw_sample(&mut self.rng, &mb_values)
+            */
             unimplemented!()
         } else {
             let sample = var.init_sample(&mut self.rng);
@@ -284,31 +249,28 @@ impl<'a> CCMRFMarginal {
         }
     }
 
-    pub fn get_samples<M>(mut self, net: &M) -> Result<Vec<Vec<HybridRes>>, ()>
-        where <<<M as IterModel>::Iter as Iterator>::Item as Deref>::Target: HybridNode<'a>,
-              <<M as IterModel>::Iter as Iterator>::Item: Deref,
-              M: IterModel
+    pub fn get_samples<N>(mut self, var: &N) -> Result<Vec<HybridRes>, ()>
+        where N: HybridNode<'a>
     {
-        let k = net.var_num();
-        self.initialize(net);
-        for t in 0..self.steeps + self.burnin {
-            let mut steep = Vec::with_capacity(k);
-            for (i, var_dist) in net.iter_vars().enumerate() {
-                let choice = self.var_val(t, &*var_dist, i);
-                steep.push(choice);
-            }
-            if t >= self.burnin {
-                self.samples.push(steep)
-            }
+        let var_info = self.initialize(var);
+        for _ in 0..self.steeps {
+            let sample = self.var_val(var, &var_info);
+            self.samples.push(sample);
         }
         Ok(self.samples)
     }
 }
 
-impl ::std::clone::Clone for CCMRFMarginal {
+impl Clone for CCMRFMarginal {
     fn clone(&self) -> CCMRFMarginal {
         let steeps = Some(self.steeps);
-        let burnin = Some(self.burnin);
-        CCMRFMarginal::new(steeps, burnin)
+        CCMRFMarginal::new(steeps)
     }
 }
+
+impl Default for CCMRFMarginal {
+    fn default() -> CCMRFMarginal {
+        Self::new(None)
+    }
+}
+

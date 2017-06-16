@@ -22,7 +22,7 @@ use std::sync::atomic::AtomicBool;
 // Predicate types:
 
 #[derive(Debug, Clone)]
-pub enum Predicate {
+pub(crate) enum Predicate {
     FreeClsMemb(FreeClsMemb),
     GroundedMemb(GroundedMemb),
     FreeClsOwner(FreeClsOwner),
@@ -139,13 +139,13 @@ impl<'a> Predicate {
 // Grounded types:
 
 #[derive(Debug, Clone)]
-pub enum Grounded {
+pub(crate) enum Grounded {
     Function(Weak<GroundedFunc>),
     Class(Weak<GroundedMemb>),
 }
 
 #[derive(Debug, Clone)]
-pub enum GroundedRef<'a> {
+pub(crate) enum GroundedRef<'a> {
     Function(&'a GroundedFunc),
     Class(&'a GroundedMemb),
 }
@@ -171,7 +171,7 @@ impl<'a> GroundedRef<'a> {
 /// Not meant to be instantiated directly, but asserted from logic
 /// sentences or processed from `ClassDecl` on `tell` mode.
 #[derive(Debug)]
-pub struct GroundedMemb {
+pub(crate) struct GroundedMemb {
     term: String,
     value: RwLock<Option<f32>>,
     operator: Option<CompOperator>,
@@ -359,10 +359,10 @@ impl GroundedMemb {
 }
 
 impl ::std::cmp::PartialEq for GroundedMemb {
-    #![allow(collapsible_if)]
+    #[allow(collapsible_if)]
     fn eq(&self, other: &GroundedMemb) -> bool {
         if self.term != other.term || self.parent != other.parent {
-            panic!()
+            return false;
         }
         let op_lhs;
         let op_rhs;
@@ -432,7 +432,7 @@ impl ::std::clone::Clone for GroundedMemb {
 /// Are not meant to be instantiated directly, but asserted from logic
 /// sentences or processed from `FuncDecl` on `tell` mode.
 #[derive(Debug)]
-pub struct GroundedFunc {
+pub(crate) struct GroundedFunc {
     name: String,
     args: [GroundedMemb; 2],
     third: Option<GroundedMemb>,
@@ -604,7 +604,7 @@ impl ::std::clone::Clone for GroundedFunc {
 // Free types:
 
 #[derive(Debug, Clone)]
-pub struct FreeClsMemb {
+pub(crate) struct FreeClsMemb {
     term: Arc<Var>,
     value: Option<f32>,
     operator: Option<CompOperator>,
@@ -653,7 +653,7 @@ impl FreeClsMemb {
     /// (panics otherwise).
     pub fn grounded_eq(&self, other: &GroundedMemb) -> bool {
         if self.parent.get_name() != other.parent {
-            panic!()
+            return false;
         }
         if self.value.is_some() {
             let val_free = self.value.unwrap();
@@ -693,7 +693,7 @@ impl FreeClsMemb {
 }
 
 #[derive(Debug, Clone)]
-pub struct FreeClsOwner {
+pub(crate) struct FreeClsOwner {
     term: String,
     value: Option<f32>,
     operator: Option<CompOperator>,
@@ -801,7 +801,7 @@ fn match_uval(uval: Option<UVal>) -> Result<UValDestruct, ParseErrF> {
 // Assert types:
 
 #[derive(Debug, Clone)]
-pub enum Assert {
+pub(crate) enum Assert {
     FuncDecl(FuncDecl),
     ClassDecl(ClassDecl),
 }
@@ -935,7 +935,7 @@ impl Assert {
 }
 
 #[derive(Debug, Clone)]
-pub struct FuncDecl {
+pub(crate) struct FuncDecl {
     name: Terminal,
     args: Option<Vec<Predicate>>,
     pub op_args: Option<Vec<OpArg>>,
@@ -1331,7 +1331,7 @@ impl<'a> FuncDecl {
 }
 
 #[derive(Debug, Clone)]
-pub struct ClassDecl {
+pub(crate) struct ClassDecl {
     name: Terminal,
     args: Vec<Predicate>,
     pub op_args: Option<Vec<OpArg>>,
@@ -1544,7 +1544,7 @@ impl ::std::iter::IntoIterator for ClassDecl {
     }
 }
 
-pub struct DeclArgsIter<'a> {
+pub(crate) struct DeclArgsIter<'a> {
     data_ref: &'a Vec<Predicate>,
     count: usize,
 }
@@ -1563,7 +1563,7 @@ impl<'a> ::std::iter::Iterator for DeclArgsIter<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum OpArg {
+pub(crate) enum OpArg {
     Generic(OpArgTerm, Option<(CompOperator, OpArgTerm)>),
     OverWrite,
     TimeDecl(TimeFn),
@@ -1713,7 +1713,7 @@ impl<'a> OpArg {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum TimeFn {
+pub(crate) enum TimeFn {
     Now,
     Time(Time),
     IsVar,
@@ -1759,7 +1759,7 @@ impl TimeFn {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum OpArgTerm {
+pub(crate) enum OpArgTerm {
     Terminal(Terminal),
     String(String),
     TimePayload(TimeFn),
@@ -1841,14 +1841,14 @@ impl<'a> OpArgTerm {
 }
 
 #[derive(Debug, Clone)]
-pub struct Var {
+pub(crate) struct Var {
     pub name: String,
     op_arg: Option<OpArg>,
     pub kind: VarKind,
 }
 
 #[derive(Debug, Clone)]
-pub enum VarKind {
+pub(crate) enum VarKind {
     Normal,
     Time,
     TimeDecl,
@@ -1894,13 +1894,6 @@ impl Var {
         (&*v1 as *const Var) == (self as *const Var)
     }
 
-    pub fn is_normal(&self) -> bool {
-        match self.kind {
-            VarKind::Normal => true,
-            _ => false,
-        }
-    }
-
     fn is_time_var(&self) -> bool {
         match self.kind {
             VarKind::Time | VarKind::TimeDecl => true,
@@ -1927,7 +1920,7 @@ impl ::std::hash::Hash for Var {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
-pub struct Skolem {
+pub(crate) struct Skolem {
     pub name: String,
     op_arg: Option<OpArg>,
 }
@@ -1956,7 +1949,7 @@ impl Skolem {
 }
 
 #[derive(Debug, PartialEq, Clone, Eq, Hash)]
-pub enum Terminal {
+pub(crate) enum Terminal {
     FreeTerm(Arc<Var>),
     GroundedTerm(String),
     Keyword(&'static str),

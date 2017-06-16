@@ -17,8 +17,6 @@ use super::repr::*;
 use super::VarAssignment;
 use lang::*;
 
-use rayon;
-
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::iter::FromIterator;
@@ -26,6 +24,9 @@ use std::mem;
 use std::rc::Rc;
 use std::sync::{Mutex, RwLock, Arc};
 use std::sync::atomic::{AtomicBool, Ordering};
+
+use rayon;
+use rayon::prelude::*;
 
 type ObjName<'a> = &'a str;
 type QueryPred = String;
@@ -37,7 +38,7 @@ type QueryResRels<'a> = HashMap<ObjName<'a>, Vec<Arc<GroundedFunc>>>;
 /// The data can be manipulated and filtered throught various methods returning
 /// whatever is requested by the consumer.
 #[derive(Debug)]
-pub struct InfResults<'b> {
+pub(crate) struct InfResults<'b> {
     grounded_queries: RwLock<HashMap<QueryPred, GroundedRes<'b>>>,
     membership: RwLock<HashMap<&'b Var, QueryResMemb<'b>>>,
     relationships: RwLock<HashMap<&'b Var, QueryResRels<'b>>>,
@@ -173,7 +174,7 @@ impl<'b> InfResults<'b> {
     }
 }
 
-pub struct Inference<'a> {
+pub(crate) struct Inference<'a> {
     query: Arc<QueryProcessed<'a>>,
     kb: &'a Representation,
     depth: usize,
@@ -206,7 +207,8 @@ impl<'a> Inference<'a> {
     }
 
     pub fn get_results(self) -> Answer<'a> {
-        Answer(self.results)
+        // TODO: filter results based on query composition
+        Answer::new(self.results)
     }
 
     /// Inference function from first-order logic sentences.
@@ -217,151 +219,155 @@ impl<'a> Inference<'a> {
     /// knowledge is produced then it's passed to an other procedure for
     /// addition to the KB.
     pub fn infer_facts(&self) {
-        use rayon::prelude::*;
+        self.tpool.install(|| self.query_cls_gr());
+        self.tpool.install(|| self.query_func_gr());
+        self.tpool.install(|| self.query_cls_free());
+        self.tpool.install(|| self.query_func_free());
+        self.tpool.install(|| self.query_cls_memb());
+        self.tpool.install(|| self.query_func_memb());
+    }
 
-        fn queue_query(inf: &Inference, query: &str, actv_query: ActiveQuery) {
-            let mut pass = InfTrial::new(inf, actv_query.clone());
-            pass.get_rules(vec![query]);
-            // run the query, if there is no result and there is an update,
-            // then loop again, else stop
-            loop {
-                pass.unify(query, VecDeque::new(), HashSet::new());
-                {
-                    let lock0 = pass.updated.lock().unwrap();
-                    let lock1 = pass.feedback.load(Ordering::SeqCst);
-                    if !lock0.contains(&true) || !lock1 {
-                        break;
+    fn queue_query(&self, query: &str, actv_query: ActiveQuery) {
+        let mut pass = InfTrial::new(self, actv_query.clone());
+        pass.get_rules(vec![query]);
+        // run the query, if there is no result and there is an update,
+        // then loop again, else stop
+        loop {
+            pass.unify(query, VecDeque::new(), HashSet::new());
+            {
+                let lock0 = pass.updated.lock().unwrap();
+                let lock1 = pass.feedback.load(Ordering::SeqCst);
+                if !lock0.contains(&true) || !lock1 {
+                    break;
+                }
+            }
+            pass.updated = Mutex::new(vec![]);
+        }
+        let obj = actv_query.get_obj();
+        let pred = actv_query.get_pred();
+        if pass.valid.lock().unwrap().is_none() {
+            self.results.add_grounded(obj, pred, None);
+        } else {
+            let l = pass.valid.lock().unwrap();
+            let valid = l.as_ref().unwrap();
+            let node: &ProofNode = unsafe { &*(valid.node as *const ProofNode) };
+            let mut context = IExprResult::new(valid.args.clone(), node);
+            node.proof
+                .solve(self.kb, Some(valid.args.as_proof_input()), &mut context);
+        }
+    }
+
+    #[inline]
+    fn query_cls_gr(&self) {
+        self.query
+            .cls_queries_grounded
+            .par_iter()
+            .for_each(|(obj, preds)| {
+                for pred in preds {
+                    let query = pred.get_parent();
+                    let result = if !self.ignore_current {
+                        self.kb.class_membership(pred)
+                    } else {
+                        None
+                    };
+                    if result.is_some() {
+                        self.results
+                            .add_grounded(obj, query, Some((result.unwrap(), None)));
+                    } else {
+                        self.results.add_grounded(obj, query, None);
+                        // if no result was found from the kb directly
+                        // make an inference from a grounded fact
+                        let actv_query = ActiveQuery::new_with_class(pred.clone());
+                        self.queue_query(query, actv_query);
                     }
                 }
-                pass.updated = Mutex::new(vec![]);
-            }
-            let obj = actv_query.get_obj();
-            let pred = actv_query.get_pred();
-            if pass.valid.lock().unwrap().is_none() {
-                inf.results.add_grounded(obj, pred, None);
-            } else {
-                let l = pass.valid.lock().unwrap();
-                let valid = l.as_ref().unwrap();
-                let node: &ProofNode = unsafe { &*(valid.node as *const ProofNode) };
-                let mut context = IExprResult::new(valid.args.clone(), node);
-                node.proof
-                    .solve(inf.kb, Some(valid.args.as_proof_input()), &mut context);
-            }
-        }
-
-
-        self.tpool
-            .install(|| {
-                self.query
-                    .cls_queries_grounded
-                    .par_iter()
-                    .for_each(|(obj, preds)| {
-                        for pred in preds {
-                            let query = pred.get_parent();
-                            let result = if !self.ignore_current {
-                                self.kb.class_membership(pred)
-                            } else {
-                                None
-                            };
-                            if result.is_some() {
-                                self.results
-                                    .add_grounded(obj, query, Some((result.unwrap(), None)));
-                            } else {
-                                self.results.add_grounded(obj, query, None);
-                                // if no result was found from the kb directly
-                                // make an inference from a grounded fact
-                                let actv_query = ActiveQuery::new_with_class(pred.clone());
-                                queue_query(self, query, actv_query);
-                            }
-                        }
-                    });
             });
+    }
 
-        self.tpool
-            .install(|| {
-                self.query
-                    .func_queries_grounded
-                    .par_iter()
-                    .for_each(|pred| {
-                        let query: &str = pred.get_name();
-                        let mut result = None;
-                        for (i, arg) in pred.get_args().iter().enumerate() {
-                            let obj = arg.get_name();
-                            if !self.ignore_current {
-                                result = self.kb.has_relationship(pred, obj);
-                            }
-                            if result.is_some() {
-                                self.results
-                                    .add_grounded(obj, query, Some((result.unwrap(), None)));
-                            } else {
-                                self.results.add_grounded(obj, query, None);
-                                let actv_query = ActiveQuery::new_with_func(i, pred.clone());
-                                queue_query(self, query, actv_query);
-                            }
-                        }
-                    });
+    #[inline]
+    fn query_func_gr(&self) {
+        self.query
+            .func_queries_grounded
+            .par_iter()
+            .for_each(|pred| {
+                let query: &str = pred.get_name();
+                let mut result = None;
+                for (i, arg) in pred.get_args().iter().enumerate() {
+                    let obj = arg.get_name();
+                    if !self.ignore_current {
+                        result = self.kb.has_relationship(pred, obj);
+                    }
+                    if result.is_some() {
+                        self.results
+                            .add_grounded(obj, query, Some((result.unwrap(), None)));
+                    } else {
+                        self.results.add_grounded(obj, query, None);
+                        let actv_query = ActiveQuery::new_with_func(i, pred.clone());
+                        self.queue_query(query, actv_query);
+                    }
+                }
             });
+    }
 
-        self.tpool
-            .install(|| {
-                self.query
-                    .cls_queries_free
-                    .par_iter()
-                    .for_each(|(var, classes)| for cls in classes {
-                        let cls_name = cls.get_parent();
-                        let lock = self.kb.classes.read().unwrap();
-                        if let Some(cls_curr) = lock.get(cls_name) {
-                            let members: Vec<Arc<GroundedMemb>> = cls_curr.get_members(cls);
-                            for m in members {
-                                let t =
-                                    unsafe { &*(&*m as *const GroundedMemb) as &GroundedMemb };
-                                self.results.add_membership(var, t.get_name(), m.clone());
-                            }
-                        }
+    #[inline]
+    fn query_cls_free(&self) {
+        self.query
+            .cls_queries_free
+            .par_iter()
+            .for_each(|(var, classes)| for cls in classes {
+                          let cls_name = cls.get_parent();
+                          let lock = self.kb.classes.read().unwrap();
+                          if let Some(cls_curr) = lock.get(cls_name) {
+                              let members: Vec<Arc<GroundedMemb>> = cls_curr.get_members(cls);
+                              for m in members {
+                                  let t =
+                                      unsafe { &*(&*m as *const GroundedMemb) as &GroundedMemb };
+                                  self.results.add_membership(var, t.get_name(), m.clone());
+                              }
+                          }
                       });
-            });
+    }
 
-        self.tpool
-            .install(|| {
-                self.query
-                    .func_queries_free
-                    .par_iter()
-                    .for_each(|(var, funcs)| for func in funcs {
-                        let func_name = func.get_name();
-                        let lock = &self.kb.classes.read().unwrap();
-                        if let Some(cls_curr) = lock.get(func_name) {
-                            let members: Vec<Arc<GroundedFunc>> = cls_curr.get_funcs(func);
-                            self.results.add_relationships(var, &members);
-                        }
-                    });
-            });
+    #[inline]
+    fn query_func_free(&self) {
+        self.query
+            .func_queries_free
+            .par_iter()
+            .for_each(|(var, funcs)| for func in funcs {
+                          let func_name = func.get_name();
+                          let lock = &self.kb.classes.read().unwrap();
+                          if let Some(cls_curr) = lock.get(func_name) {
+                              let members: Vec<Arc<GroundedFunc>> = cls_curr.get_funcs(func);
+                              self.results.add_relationships(var, &members);
+                          }
+                      });
+    }
 
-        self.tpool
-            .install(|| {
-                self.query
-                    .cls_memb_query
-                    .par_iter()
-                    .for_each(|(var, objs)| for obj in objs {
-                        let member_of = self.kb.get_class_membership(obj);
-                        for m in member_of {
-                            self.results
-                                .add_membership(var, obj.get_name(), m.clone());
-                        }
-                     });
-            });
+    #[inline]
+    fn query_cls_memb(&self) {
+        self.query
+            .cls_memb_query
+            .par_iter()
+            .for_each(|(var, objs)| for obj in objs {
+                          let member_of = self.kb.get_class_membership(obj);
+                          for m in member_of {
+                              self.results
+                                  .add_membership(var, obj.get_name(), m.clone());
+                          }
+                      });
+    }
 
-        self.tpool
-            .install(|| {
-                self.query
-                    .func_memb_query
-                    .par_iter()
-                    .for_each(|(var, funcs)| for func in funcs {
-                        let relationships = self.kb.get_relationships(func);
-                        for funcs in relationships.values() {
-                            self.results.add_relationships(var, funcs);
-                        }
-                     });
-            });
+    #[inline]
+    fn query_func_memb(&self) {
+        self.query
+            .func_memb_query
+            .par_iter()
+            .for_each(|(var, funcs)| for func in funcs {
+                          let relationships = self.kb.get_relationships(func);
+                          for funcs in relationships.values() {
+                              self.results.add_relationships(var, funcs);
+                          }
+                      });
     }
 }
 
@@ -492,7 +498,7 @@ struct ValidAnswer {
 }
 
 #[derive(Debug)]
-pub struct IExprResult {
+pub(crate) struct IExprResult {
     result: Option<bool>,
     newest_grfact: Time,
     antecedents: Vec<Grounded>,
@@ -869,7 +875,7 @@ impl<'a> InfTrial<'a> {
     }
 }
 
-pub fn meet_sent_req<'a>(rep: &'a Representation,
+pub(crate) fn meet_sent_req<'a>(rep: &'a Representation,
                          req: &'a HashMap<&Var, Vec<&'a Assert>>)
                          -> Option<HashMap<&'a Var, Vec<Arc<VarAssignment<'a>>>>> {
     let mut results: HashMap<&Var, Vec<Arc<VarAssignment>>> = HashMap::new();
@@ -977,7 +983,7 @@ pub fn meet_sent_req<'a>(rep: &'a Representation,
 }
 
 #[derive(Debug)]
-pub struct ArgsProduct<'a> {
+pub(crate) struct ArgsProduct<'a> {
     indexes: HashMap<&'a Var, (usize, bool)>,
     input: HashMap<&'a Var, Vec<Arc<VarAssignment<'a>>>>,
     curr: &'a Var,
@@ -1116,7 +1122,7 @@ impl<'a> Hash for ProofNode<'a> {
 }
 
 #[derive(Debug)]
-pub enum QueryInput {
+pub(crate) enum QueryInput {
     AskRelationalFunc(Arc<GroundedFunc>),
     AskClassMember(Arc<GroundedMemb>),
     ManyQueries(VecDeque<ParseTree>),
@@ -1312,253 +1318,3 @@ impl<'b> QueryProcessed<'b> {
             .push(term);
     }
 }
-
-#[cfg(test)]
-mod test {
-    use agent::kb::repr::Representation;
-    use std::collections::HashSet;
-
-    #[test]
-    fn repr_inference_ask_pred() {
-        let test_01 = String::from("
-            ( professor[$Lucy,u=1] )
-        ");
-        let q01_01 = "(professor[$Lucy,u=1] && person[$Lucy,u=1])".to_string();
-        let q01_02 = "(professor[$Lucy,u=1])".to_string();
-        let mut rep = Representation::new();
-        rep.tell(test_01).unwrap();
-        assert_eq!(rep.ask(q01_01).unwrap().get_results_single(), None);
-        assert_eq!(rep.ask(q01_02).unwrap().get_results_single(), Some(true));
-
-        let test_02 = String::from("
-            ( professor[$Lucy,u=1] )
-            ( dean[$John,u=1] )
-            ( ( let x ) ( dean[x,u=1] := professor[x,u=1] ) )
-            ( ( let x ) ( professor[x,u=1] := person[x,u=1] ) )
-        ");
-        let q02_01 = "(professor[$Lucy,u>0] && person[$Lucy,u<1])".to_string();
-        let q02_02 = "(person[$John,u=1])".to_string();
-        let mut rep = Representation::new();
-        rep.tell(test_02).unwrap();
-        assert_eq!(rep.ask(q02_01).unwrap().get_results_single(), Some(false));
-        assert_eq!(rep.ask(q02_02).unwrap().get_results_single(), Some(true));
-
-        let test_03 = String::from("
-            ( fn::owns[$M1,u=1;$Nono] )
-            ( missile[$M1,u=1] )
-            ( american[$West,u=1] )
-            ( fn::enemy[$Nono,u=1;$America] )
-            (( let x, y, z )
-             (( american[x,u=1] && weapon[y,u=1] && fn::sells[y,u=1;x;z] && hostile[z,u=1]  )
-                 := criminal[x,u=1] ))
-            (( let x )
-             (( fn::owns[x,u=1;$Nono] && missile[x,u=1] ) := fn::sells[x,u=1;$West;$Nono] ))
-            (( let x ) ( missile[x,u=1] := weapon[x,u=1] ) )
-            (( let x ) ( fn::enemy[x,u=1;$America] := hostile[x,u=1] ) )
-        ");
-        let q03_01 = "(criminal[$West,u=1]) && hostile[$Nono,u=1] && weapon[$M1,u=1]".to_string();
-        let mut rep = Representation::new();
-        rep.tell(test_03).unwrap();
-        let answ = rep.ask(q03_01);
-        assert_eq!(answ.unwrap().get_results_single(), Some(true));
-
-        let test_04 = String::from("
-            # query for all 'professor'
-            ( professor[$Lucy,u=1] )
-            ( dean[$John,u=1] )
-            ((let x) (dean[x,u=1] := professor[x,u=1]))
-        ");
-        let q04_01 = "((let x) (professor[x,u=1]))".to_string();
-        let mut rep = Representation::new();
-        rep.tell(test_04).unwrap();
-        let answ = rep.ask(q04_01);
-        let a04_01 = answ.unwrap().get_memberships();
-        assert!(a04_01.contains_key("$Lucy"));
-        assert!(a04_01.contains_key("$John"));
-
-        let test_05 = String::from("
-            # query for all classes '$Lucy' is member of
-            (professor[$Lucy,u=1])
-        	((let x) (professor[x,u=1] := person[x,u=1]))
-        	(ugly[$Lucy,u=0.2])
-        ");
-        let q05_01 = "((let x) (x[$Lucy,u>0.5]))".to_string();
-        let mut rep = Representation::new();
-        rep.tell(test_05).unwrap();
-        let mut results = HashSet::new();
-        results.insert("professor");
-        results.insert("person");
-        let answ = rep.ask(q05_01);
-        let a05_01 = answ.unwrap().get_memberships();
-        let mut cmp = HashSet::new();
-        for a in a05_01.get("$Lucy").unwrap() {
-            cmp.insert(a.get_parent());
-        }
-        assert_eq!(results, cmp);
-    }
-
-    #[test]
-    fn repr_inference_ask_func() {
-        let test_01 = String::from("
-            ( professor[$Lucy,u=1] )
-            ( dean[$John,u=1] )
-            ( fn::criticize[$John,u=1;$Lucy] )
-        ");
-        let q01_01 = "(fn::criticize[$John,u=1;$Lucy])".to_string();
-        let mut rep = Representation::new();
-        rep.tell(test_01).unwrap();
-        assert_eq!(rep.ask(q01_01).unwrap().get_results_single(), Some(true));
-
-        let test_02 = String::from("
-            ( animal[cow,u=1] )
-            ( female[cow,u=1] )
-            ( (let x) (animal[x,u=1] && female[x,u=1]) := fn::produce[milk,u=1;x] )
-        ");
-        let q02_01 = "(fn::produce[milk,u=1;cow])".to_string();
-        let mut rep = Representation::new();
-        rep.tell(test_02).unwrap();
-        assert_eq!(rep.ask(q02_01).unwrap().get_results_single(), Some(true));
-
-        let test_03 = String::from("
-            ( professor[$Lucy,u=1] )
-            ( dean[$John,u=1] )
-            ( fn::criticize[$John,u=1;$Lucy] )
-            ( (let x) ( dean[x,u=1] := professor[x,u=1] ) )
-            ( (let x) ( professor[x,u=1] := person[x,u=1] ) )
-            ( (let x, y)
-              (( person[x,u=1] && person[y,u=1] && dean[y,u=1] && fn::criticize[y,u=1;x] )
-                 := fn::friend[x,u=0;y] ))
-        ");
-        let q03_01 = "(fn::friend[$Lucy,u=0;$John])".to_string();
-        let mut rep = Representation::new();
-        rep.tell(test_03).unwrap();
-        assert_eq!(rep.ask(q03_01).unwrap().get_results_single(), Some(true));
-
-        let test_04 = String::from("
-            # retrieve all objs which fit to a criteria
-            (fn::produce[milk,u=1;$Lulu])
-            (cow[$Lucy,u=1])
-            (goat[$Vicky,u=1])
-            ((let x) ((cow[x,u=1] || goat[x,u=1]) := (female[x,u=1] && animal[x,u=1])))
-            ((let x) ((female[x,u>0] && animal[x,u>0]) := fn::produce[milk,u=1;x]))
-        ");
-        let q04_01 = "((let x) (fn::produce[milk,u>0;x]))".to_string();
-        let mut rep = Representation::new();
-        rep.tell(test_04).unwrap();
-        let answ = rep.ask(q04_01);
-        let a04_01 = answ.unwrap().get_relationships();
-        assert!(a04_01.contains_key("$Lucy"));
-        assert!(a04_01.contains_key("$Lulu"));
-        assert!(a04_01.contains_key("$Vicky"));
-
-        let test_05 = String::from("
-            # retrieve all relations between objects
-            (fn::loves[$Vicky,u=1;$Lucy])
-            (fn::worships[$Vicky,u=1;cats])
-            (fn::hates[$Vicky,u=0;dogs])
-        ");
-        let q05_01 = "((let x) (fn::x[$Vicky,u>0;$Lucy]))".to_string();
-        let mut rep = Representation::new();
-        rep.tell(test_05).unwrap();
-        let mut results = HashSet::new();
-        results.insert("loves");
-        results.insert("worships");
-        let answ = rep.ask(q05_01);
-        let a05_01 = answ.unwrap().get_relationships();
-        let mut cnt = 0;
-        for a in a05_01.get("$Vicky").unwrap() {
-            cnt += 1;
-            assert!(results.contains(a.get_name()));
-            assert!(a.get_name() != "hates");
-        }
-        assert_eq!(cnt, 2);
-
-        let q05_02 = "((let x, y) (fn::x[$Vicky,u=0;y]))".to_string();
-        let answ = rep.ask(q05_02);
-        let a05_02 = answ.unwrap().get_relationships();
-        let mut cnt = 0;
-        for a in a05_02.get("$Vicky").unwrap() {
-            cnt += 1;
-            assert!(a.get_name() == "hates");
-        }
-        assert_eq!(cnt, 1);
-    }
-
-    #[test]
-    fn repr_inference_time_calc() {
-        let test_01 = String::from("
-            (( let x, y, t1:time, t2:time=\"Now\" )
-             (( dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x] && fn::time_calc(t1<t2) )
-              := fat(time=t2)[x,u=1] ))
-            ( dog[$Pancho,u=1] )
-            ( meat[$M1,u=1] )
-            ( fn::eat(time=\"2014-07-05T10:25:00Z\")[$M1,u=1;$Pancho] )
-        ");
-        let q01_01 = "(fat(time='Now')[$Pancho,u=1])".to_string();
-        let mut rep = Representation::new();
-        rep.tell(test_01).unwrap();
-        assert_eq!(rep.ask(q01_01).unwrap().get_results_single(), Some(true));
-
-        let test_02 = String::from("
-        	(( let x, y, t1: time=\"2015-07-05T10:25:00Z\", t2: time )
-             ( ( dog[x,u=1] && meat[y,u=1] && fat(t2=time)[x,u=1] && fn::time_calc(t2<t1) )
-               := fn::eat(time=t1)[y,u=1;x]
-             )
-            )
-            ( dog[$Pancho,u=1] )
-            ( meat[$M1,u=1] )
-            ( fat(time=\"2014-07-05T10:25:00Z\")[$Pancho,u=1] )
-        ");
-        let q02_01 = "(fn::eat(time='Now')[$M1,u=1;$Pancho])".to_string();
-        let mut rep = Representation::new();
-        rep.tell(test_02).unwrap();
-        assert_eq!(rep.ask(q02_01).unwrap().get_results_single(), Some(true));
-
-        // Test 03
-        let mut rep = Representation::new();
-        let test_03_00 = String::from("
-            (meat[$M1,u=1])
-            (dog[$Pancho,u=1])
-        ");
-        rep.tell(test_03_00).unwrap();
-
-        let test_03_01 = String::from("
-            (fn::eat(time='2015-01-01T00:00:00Z')[$M1,u=1;$Pancho])
-            ((let x, y)
-              ((dog[x,u=1] && meat[y,u=1] && fn::eat[y,u=1;x])
-                := fat[x,u=1]))
-        ");
-        rep.tell(test_03_01).unwrap();
-        let q03_01 = "(fat[$Pancho,u=1])".to_string();
-        assert_eq!(rep.ask(q03_01).unwrap().get_results_single(), Some(true));
-
-        let test_03_02 = String::from("
-            (run(time='2015-01-01T00:00:00Z')[$Pancho,u=1])
-            ((let x) (( dog[x,u=1] && run[x,u=1] ) := fat[x,u=0]))
-        ");
-        rep.tell(test_03_02).unwrap();
-        let q03_02 = "(fat[$Pancho,u=0])".to_string();
-        assert_eq!(rep.ask(q03_02).unwrap().get_results_single(), Some(true));
-
-        let test_03_03 = String::from("
-            (run(time='2015-01-01T00:00:00Z')[$Pancho,u=1])
-            (fn::eat(time='2015-02-01T00:00:00Z')[$M1,u=1;$Pancho])
-            ((let x, y, t1:time, t2:time)
-             (run(t1=time)[x,u=1] && fn::eat(t2=time)[y,u=1;x]
-              && dog[x,u=1] && meat[y,u=1] && fn::time_calc(t1<t2))
-             := (fat[x,u=1] || fat[x,u=0]))
-        ");
-        rep.tell(test_03_03).unwrap();
-        let q03_03 = "(fat[$Pancho,u=1])".to_string();
-        assert_eq!(rep.ask(q03_03).unwrap().get_results_single(), Some(true));
-
-        let test_03_04 = String::from("
-            (fn::eat(time='2015-01-02T00:00:00Z', overwrite)[$M1,u=1;$Pancho])
-            (run(time='2015-02-01T00:00:00Z', overwrite)[$Pancho,u=1])
-        ");
-        rep.tell(test_03_04).unwrap();
-        let q03_04 = "(fat[$Pancho,u=0])".to_string();
-        assert_eq!(rep.ask(q03_04).unwrap().get_results_single(), Some(true));
-    }
-}
-

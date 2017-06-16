@@ -1,9 +1,9 @@
 use std::mem;
 
-use agent::{Agent, Answer, QueryErr};
+use agent::{Representation, Answer, QueryErr};
 
 pub struct SimagInterpreter<'a> {
-    state: Agent,
+    state: Representation,
     result: Option<Answer<'a>>,
     reading: bool,
     ask: bool,
@@ -14,7 +14,7 @@ pub struct SimagInterpreter<'a> {
 impl<'a> SimagInterpreter<'a> {
     pub fn new() -> SimagInterpreter<'a> {
         SimagInterpreter {
-            state: Agent::default(),
+            state: Representation::default(),
             result: None,
             reading: false,
             source: String::new(),

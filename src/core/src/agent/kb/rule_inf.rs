@@ -10,7 +10,7 @@ use lang::*;
 /// in the representation.
 ///
 /// If it's not the case, then false is retuned.
-pub fn rules_inference_lookahead(agent: &Representation,
+pub(crate) fn rules_inference_lookahead(agent: &Representation,
                                  rules: Vec<Arc<LogSentence>>,
                                  grounded: GroundedRef)
                                  -> bool {
@@ -40,7 +40,7 @@ pub fn rules_inference_lookahead(agent: &Representation,
 ///
 /// If it's not the case, then changes are rolled back (from newest to oldest) until
 /// they are consistent with the new rule.
-pub fn rules_inference_rollback(agent: &Representation, rule: Arc<LogSentence>) {
+pub(crate) fn rules_inference_rollback(agent: &Representation, rule: Arc<LogSentence>) {
     // test the rule
     let mut context = RuleResContext::new(&*rule, None);
     // if the rule has any special var, get proper assignments
@@ -247,129 +247,5 @@ impl<'a> ProofResContext for RuleResContext<'a> {
             None => None,
             Some(GroundedRef::Class(cmp)) => Some(cmp == cls),
         }
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    #[allow(unused_must_use)]
-    fn repr_eval_fol() {
-        // indicative conditional
-        // (true := true)
-        let mut rep = Representation::new();
-        let fol = String::from("
-            ( drugDealer[$West,u=1] := ( scum[$West,u=1] && good[$West,u=0] ) )
-            ( drugDealer[$West,u=1] )
-        ");
-        let query = "( scum[$West,u=1] && good[$West,u=0] )".to_string();
-        rep.tell(fol);
-        assert_eq!(rep.ask(query).unwrap().get_results_single(), Some(true));
-
-        // (false := none)
-        let mut rep = Representation::new();
-        let fol = String::from("
-            ( drugDealer[$West,u=1] := ( scum[$West,u=1] && good[$West,u=0] ) )
-            ( drugDealer[$West,u=0] )
-        ");
-        let query = "( scum[$West,u=1] && good[$West,u=0] )".to_string();
-        rep.tell(fol);
-        assert_eq!(rep.ask(query).unwrap().get_results_single(), None);
-
-        // material implication statements
-        // true (true => true)
-        let mut rep = Representation::new();
-        let fol = String::from("
-            ( drugDealer[$West,u=1] => ( scum[$West,u=1] && good[$West,u=0] ) )
-            ( drugDealer[$West,u=1] && scum[$West,u=1] && good[$West,u=0] )
-        ");
-        let query = "( drugDealer[$West,u=1] && scum[$West,u=1] && good[$West,u=0] )".to_string();
-        rep.tell(fol);
-        assert_eq!(rep.ask(query).unwrap().get_results_single(), Some(true));
-
-        // true (false => true)
-        let mut rep = Representation::new();
-        let fol = String::from("
-            ( drugDealer[$West,u=1] => ( scum[$West,u=1] && good[$West,u=0] ) )
-            ( drugDealer[$West,u=0] && scum[$West,u=1] && good[$West,u=0] )
-        ");
-        let query = "( drugDealer[$West,u=0] && scum[$West,u=1] && good[$West,u=0] )".to_string();
-        rep.tell(fol);
-        assert_eq!(rep.ask(query).unwrap().get_results_single(), Some(true));
-
-        // false (true => false)
-        let mut rep = Representation::new();
-        let fol = String::from("
-            ( drugDealer[$West,u=1] => ( scum[$West,u=1] && good[$West,u=0] ) )
-            ( drugDealer[$West,u=1] && scum[$West,u=0] && good[$West,u=1] )
-        ");
-        let query0 = "( drugDealer[$West,u=1] )".to_string();
-        let query1 = "( scum[$West,u=0] && good[$West,u=1] )".to_string();
-        rep.tell(fol);
-        assert_eq!(rep.ask(query0).unwrap().get_results_single(), Some(true));
-        assert_eq!(rep.ask(query1).unwrap().get_results_single(), None);
-
-        // true (false => false)
-        let mut rep = Representation::new();
-        let fol = String::from("
-            ( drugDealer[$West,u=1] => ( scum[$West,u=1] && good[$West,u=0] ) )
-            ( drugDealer[$West,u=0] && scum[$West,u=0] && good[$West,u=1] )
-        ");
-        let query0 = "( drugDealer[$West,u=0] )".to_string();
-        let query1 = "( scum[$West,u=0] && good[$West,u=1] )".to_string();
-        rep.tell(fol);
-        assert_eq!(rep.ask(query0).unwrap().get_results_single(), Some(true));
-        assert_eq!(rep.ask(query1).unwrap().get_results_single(), Some(true));
-
-        // equivalence statements
-        // is false (false <=> true )
-        let mut rep = Representation::new();
-        let fol = String::from("
-            ( drugDealer[$West,u=1] <=> ( scum[$West,u=1] && good[$West,u=0] ) )
-            ( scum[$West,u=1] )
-            ( good[$West,u=0] )
-            ( drugDealer[$West,u=0] )
-        ");
-        let query = "( drugDealer[$West,u=0] )".to_string();
-        rep.tell(fol);
-        assert_eq!(rep.ask(query).unwrap().get_results_single(), None);
-
-        // is false (true <=> false )
-        let mut rep = Representation::new();
-        let fol = String::from("
-            ( drugDealer[$West,u=1] <=> ( scum[$West,u=1] && good[$West,u=0] ) )
-            ( drugDealer[$West,u=1] )
-            ( scum[$West,u=0] )
-            ( good[$West,u=1] )
-        ");
-        let query = "( scum[$West,u=1] && good[$West,u=0] )".to_string();
-        rep.tell(fol);
-        assert_eq!(rep.ask(query).unwrap().get_results_single(), None);
-
-        // is true ( true <=> true )
-        let mut rep = Representation::new();
-        let fol = String::from("
-            ( drugDealer[$West,u=1] <=> ( scum[$West,u=1] && good[$West,u=0] ) )
-            ( scum[$West,u=1] )
-            ( good[$West,u=0] )
-            ( drugDealer[$West,u=1] )
-        ");
-        let query = "( drugDealer[$West,u=1] && scum[$West,u=1] && good[$West,u=0] )".to_string();
-        rep.tell(fol);
-        assert_eq!(rep.ask(query).unwrap().get_results_single(), Some(true));
-
-        // is true ( false <=> false )
-        let mut rep = Representation::new();
-        let fol = String::from("
-            ( drugDealer[$West,u=1] <=> ( scum[$West,u=1] && good[$West,u=0] ) )
-            ( scum[$West,u=0] )
-            ( good[$West,u=1] )
-            ( drugDealer[$West,u=0] )
-        ");
-        let query = "( drugDealer[$West,u=0] && scum[$West,u=0] && good[$West,u=1] )".to_string();
-        rep.tell(fol);
-        assert_eq!(rep.ask(query).unwrap().get_results_single(), Some(true));
     }
 }
