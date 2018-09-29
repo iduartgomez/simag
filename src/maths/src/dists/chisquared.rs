@@ -1,5 +1,5 @@
-use RGSLRng;
 use err::ErrMsg;
+use RGSLRng;
 
 #[derive(Debug, Clone)]
 pub struct ChiSquared {
@@ -12,14 +12,14 @@ impl ChiSquared {
             return Err(());
         }
 
-        Ok(ChiSquared { k: k })
+        Ok(ChiSquared { k })
     }
 
     #[inline]
     pub fn pdf(&self, x: f64) -> f64 {
         use rgsl::randist::chi_squared::chisq_pdf;
 
-        chisq_pdf(x, self.k as f64)
+        chisq_pdf(x, f64::from(self.k))
     }
 }
 
@@ -30,7 +30,7 @@ impl Sample for ChiSquared {
     fn sample(&self, rng: &mut RGSLRng) -> f64 {
         use rgsl::randist::chi_squared::chisq;
 
-        chisq(rng.get_gen(), self.k as f64)
+        chisq(rng.get_gen(), f64::from(self.k))
     }
 }
 
@@ -42,7 +42,7 @@ impl CDF for ChiSquared {
         if x.is_sign_negative() {
             panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self));
         }
-        chisq_P(x, self.k as f64)
+        chisq_P(x, f64::from(self.k))
     }
 
     #[inline]
@@ -52,6 +52,6 @@ impl CDF for ChiSquared {
         if x.is_sign_negative() {
             panic!(ErrMsg::PositiveReal.panic_msg_with_arg(&self));
         }
-        chisq_Pinv(x, self.k as f64)
+        chisq_Pinv(x, f64::from(self.k))
     }
 }

@@ -25,14 +25,14 @@ fn build() {
     model.add_var(duty_period).unwrap();
     model.add_var(rest_time).unwrap();
 
-    model.add_parent(fitness, sleep, -0.9).unwrap();
-    model.add_parent(fitness, workload, 0.9).unwrap();
-    model.add_parent(alertness, fitness, 0.85).unwrap();
-    model.add_parent(alertness, nighttime, -0.4).unwrap();
-    model.add_parent(alertness, opload, -0.8).unwrap();
-    model.add_parent(opload, nighttime, -0.95).unwrap();
-    model.add_parent(opload, duty_period, 0.5).unwrap();
-    model.add_parent(rest_time, duty_period, 0.8).unwrap();
+    model.add_parent(fitness, sleep, Some(-0.9)).unwrap();
+    model.add_parent(fitness, workload, Some(0.9)).unwrap();
+    model.add_parent(alertness, fitness, Some(0.85)).unwrap();
+    model.add_parent(alertness, nighttime, Some(-0.4)).unwrap();
+    model.add_parent(alertness, opload, Some(-0.8)).unwrap();
+    model.add_parent(opload, nighttime, Some(-0.95)).unwrap();
+    model.add_parent(opload, duty_period, Some(0.5)).unwrap();
+    model.add_parent(rest_time, duty_period, Some(0.8)).unwrap();
 }
 
 #[ignore]

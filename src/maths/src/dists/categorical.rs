@@ -1,6 +1,6 @@
 use std::u8;
 
-use super::{GumbelSoftmax, GSRelaxation, Sample, CDF};
+use super::{GSRelaxation, GumbelSoftmax, Sample, CDF};
 use RGSLRng;
 
 use itertools;
@@ -26,9 +26,11 @@ impl Categorical {
             let overflow = categories.len() - (u8::MAX as usize);
             return Err(format!("overflow by: {} categories", overflow));
         } else if categories.len() < 3 {
-            return Err("requires at least three categories, use Bernoulli distribution for \
-                        distributions with 2 categories"
-                .to_string());
+            return Err(
+                "requires at least three categories, use Bernoulli distribution for \
+                 distributions with 2 categories"
+                    .to_string(),
+            );
         }
 
         let mut intervals = vec![0_f64; categories.len()];
@@ -61,12 +63,13 @@ impl Categorical {
         use std::cmp::Ordering;
 
         let val = rng.uniform_pos();
-        let res = self.cdf
-            .binary_search_by(|x| if x < &val {
+        let res = self.cdf.binary_search_by(|x| {
+            if x < &val {
                 Ordering::Less
             } else {
                 Ordering::Greater
-            });
+            }
+        });
         res.unwrap_err() as u8
     }
 
@@ -74,10 +77,12 @@ impl Categorical {
     pub fn pmf(&self, x: u8) -> f64 {
         let x = x as usize;
         if x > self.event_prob.len() - 1 {
-            panic!("simag: index out of bounds; the number of categories for this random variable \
-                    are `{}`, idx provided was `{}`",
-                   self.event_prob.len(),
-                   x)
+            panic!(
+                "simag: index out of bounds; the number of categories for this random variable \
+                 are `{}`, idx provided was `{}`",
+                self.event_prob.len(),
+                x
+            )
         }
         self.event_prob[x]
     }
@@ -86,10 +91,12 @@ impl Categorical {
     pub fn cmf(&self, x: u8) -> f64 {
         let x = x as usize;
         if x > self.cdf.len() - 1 {
-            panic!("simag: index out of bounds; the number of categories for this random variable \
-                    are `{}`, idx provided was `{}`",
-                   self.cdf.len(),
-                   x)
+            panic!(
+                "simag: index out of bounds; the number of categories for this random variable \
+                 are `{}`, idx provided was `{}`",
+                self.cdf.len(),
+                x
+            )
         }
         self.cdf[x]
     }
@@ -120,12 +127,20 @@ impl Bernoulli {
     #[inline]
     pub fn sample(&self, rng: &mut RGSLRng) -> u8 {
         let val = rng.uniform_pos();
-        if val <= self.event_prob { 1 } else { 0 }
+        if val <= self.event_prob {
+            1
+        } else {
+            0
+        }
     }
 
     #[inline]
-    pub fn inverse_cdf(&self, p: f64) -> u8 { 
-        if p <= self.event_prob { 1 } else { 0 }
+    pub fn inverse_cdf(&self, p: f64) -> u8 {
+        if p <= self.event_prob {
+            1
+        } else {
+            0
+        }
     }
 
     #[inline]
@@ -144,7 +159,7 @@ impl GSRelaxation<RelaxedBernoulli> for Bernoulli {
         let t = if let Some(t) = temperature { t } else { 0.5 };
         RelaxedBernoulli {
             l: self.event_prob / 1. - self.event_prob,
-            t: t,
+            t,
             s: self.event_prob,
         }
     }
@@ -221,7 +236,7 @@ mod test {
                 success += 1.;
             }
         }
-        let mean = success / trials as f64;
+        let mean = success / f64::from(trials);
         println!("mean: {}, err: {}", mean, err);
         assert!(err < 0.05);
         assert!((mean > 0.65) && (mean < 0.75));

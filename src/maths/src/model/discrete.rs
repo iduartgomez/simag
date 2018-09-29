@@ -80,6 +80,15 @@ where
     vars: DiscreteDAG<'a, N>,
 }
 
+impl<'a, N> Default for DiscreteModel<'a, N>
+where
+    N: DiscreteNode<'a>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<'a, N> DiscreteModel<'a, N>
 where
     N: DiscreteNode<'a>,
@@ -366,9 +375,10 @@ where
     fn add_parent(&self, parent: Arc<Self>) {
         let parents = &mut *self.parents.write().unwrap();
         // check for duplicates:
-        if let None = parents
+        if parents
             .iter()
             .position(|ref x| &*x.get_dist() == parent.get_dist())
+            .is_none()
         {
             parents.push(parent);
         };
@@ -388,7 +398,7 @@ where
             .enumerate()
             .find(|&(_, x)| &*x.upgrade().unwrap().get_dist() == child.get_dist())
             .map(|(i, _)| i);
-        if let None = pos {
+        if pos.is_none() {
             parent_childs.push(Arc::downgrade(&child));
         }
     }

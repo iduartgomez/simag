@@ -1,12 +1,12 @@
-use std::collections::{VecDeque, HashSet};
+use std::collections::{HashSet, VecDeque};
 use std::iter::{FromIterator, Iterator};
-use std::sync::{Arc, Weak, RwLock};
 use std::marker::PhantomData;
+use std::sync::{Arc, RwLock, Weak};
 
-use RGSLRng;
-use super::{Node, ContVar, DiscreteVar, ContNode};
+use super::{ContNode, ContVar, DiscreteVar, Node};
 use super::{DType, DefContVar, DefDiscreteVar};
-use dists::{Normalization, AsContinuous};
+use dists::{AsContinuous, Normalization};
+use RGSLRng;
 
 use itertools::Itertools;
 
@@ -23,18 +23,31 @@ pub trait HybridNode<'a>: ContNode<'a> + Sized {
 
 #[derive(Debug)]
 pub struct HybridModel<'a, N>
-    where N: HybridNode<'a>
+where
+    N: HybridNode<'a>,
 {
     vars: HybridDAG<'a, N>,
 }
 
 pub type DefHybridModel<'a> = HybridModel<'a, DefHybridNode<'a, DefContVar, DefDiscreteVar>>;
 
+impl<'a, N> Default for HybridModel<'a, N>
+where
+    N: HybridNode<'a>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<'a, N> HybridModel<'a, N>
-    where N: HybridNode<'a>
+where
+    N: HybridNode<'a>,
 {
     pub fn new() -> HybridModel<'a, N> {
-        HybridModel { vars: HybridDAG::new() }
+        HybridModel {
+            vars: HybridDAG::new(),
+        }
     }
 
     /// Add a new variable to the model.
@@ -51,23 +64,26 @@ impl<'a, N> HybridModel<'a, N>
     /// Takes the distribution of a variable, and the parent variable distribution
     /// as arguments and returns a result indicating if the parent was added properly.
     /// Both variables have to be added previously to the model.
-    pub fn add_parent(&mut self,
-                      node: &'a <N as ContNode<'a>>::Var,
-                      parent: &'a <N as ContNode<'a>>::Var,
-                      weight: Option<f64>)
-                      -> Result<(), ()> {
+    pub fn add_parent(
+        &mut self,
+        node: &'a <N as ContNode<'a>>::Var,
+        parent: &'a <N as ContNode<'a>>::Var,
+        weight: Option<f64>,
+    ) -> Result<(), ()> {
         // checks to perform:
         //  - both exist in the model
         //  - the theoretical child cannot be a parent of the theoretical parent
         //    as the network is a DAG
         // find node and parents in the net
-        let node: Arc<N> = self.vars
+        let node: Arc<N> = self
+            .vars
             .nodes
             .iter()
             .find(|n| (&**n).get_dist() == node)
             .cloned()
             .ok_or(())?;
-        let parent: Arc<N> = self.vars
+        let parent: Arc<N> = self
+            .vars
             .nodes
             .iter()
             .find(|n| (&**n).get_dist() == parent)
@@ -82,10 +98,12 @@ impl<'a, N> HybridModel<'a, N>
     /// Remove a continuous variable from the model, the childs will be disjoint if they don't
     /// have an other parent.
     pub fn remove_cont_var(&mut self, var: &'a <N as ContNode<'a>>::Var) {
-        if let Some(pos) = self.vars
-               .nodes
-               .iter()
-               .position(|n| (&**n).get_dist() == var) {
+        if let Some(pos) = self
+            .vars
+            .nodes
+            .iter()
+            .position(|n| (&**n).get_dist() == var)
+        {
             if pos < self.vars.nodes.len() - 1 {
                 let parent = &self.vars.nodes[pos];
                 for node in &self.vars.nodes[pos + 1..] {
@@ -101,14 +119,13 @@ impl<'a, N> HybridModel<'a, N>
     /// Remove a discrete variable from the model, the childs will be disjoint if they don't
     /// have an other parent.
     pub fn remove_disc_var(&mut self, var: &'a <N as HybridNode<'a>>::Discrete) {
-        if let Some(pos) = self.vars
-               .nodes
-               .iter()
-               .position(|n| if let Some(d) = n.get_disc_dist() {
-                             d == var
-                         } else {
-                             false
-                         }) {
+        if let Some(pos) = self.vars.nodes.iter().position(|n| {
+            if let Some(d) = n.get_disc_dist() {
+                d == var
+            } else {
+                false
+            }
+        }) {
             if pos < self.vars.nodes.len() - 1 {
                 let parent = &self.vars.nodes[pos];
                 for node in &self.vars.nodes[pos + 1..] {
@@ -133,7 +150,8 @@ impl<'a, N> HybridModel<'a, N>
 }
 
 impl<'a, N> super::IterModel for HybridModel<'a, N>
-    where N: HybridNode<'a>
+where
+    N: HybridNode<'a>,
 {
     type Iter = BayesNetIter<'a, N>;
     fn iter_vars(&self) -> Self::Iter {
@@ -155,8 +173,9 @@ impl<'a, N> super::IterModel for HybridModel<'a, N>
 /// distribution to the network.
 #[derive(Debug)]
 pub struct DefHybridNode<'a, C: 'a, D: 'a>
-    where C: ContVar,
-          D: DiscreteVar + AsContinuous
+where
+    C: ContVar,
+    D: DiscreteVar + AsContinuous,
 {
     cont_dist: Option<&'a C>,
     disc_dist: Option<&'a D>,
@@ -169,8 +188,9 @@ pub struct DefHybridNode<'a, C: 'a, D: 'a>
 }
 
 impl<'a, C: 'a, D: 'a> Node for DefHybridNode<'a, C, D>
-    where C: ContVar,
-          D: DiscreteVar + AsContinuous
+where
+    C: ContVar,
+    D: DiscreteVar + AsContinuous,
 {
     fn get_child_unchecked(&self, pos: usize) -> Arc<Self> {
         let childs = &*self.childs.read().unwrap();
@@ -245,22 +265,23 @@ impl<'a, C: 'a, D: 'a> Node for DefHybridNode<'a, C, D>
 }
 
 impl<'a, C: 'a, D: 'a> HybridNode<'a> for DefHybridNode<'a, C, D>
-    where C: ContVar + Normalization,
-          D: DiscreteVar + AsContinuous
+where
+    C: ContVar + Normalization,
+    D: DiscreteVar + AsContinuous,
 {
     type Discrete = D;
     fn new_with_discrete(var: &'a Self::Discrete, pos: usize) -> Result<Self, ()> {
         let dist = var.as_continuous()?;
         Ok(DefHybridNode {
-               cont_dist: None,
-               disc_dist: Some(var),
-               as_cont: Some(dist),
-               childs: RwLock::new(vec![]),
-               parents: RwLock::new(vec![]),
-               edges: RwLock::new(vec![]),
-               pos: RwLock::new(pos),
-               was_discrete: true,
-           })
+            cont_dist: None,
+            disc_dist: Some(var),
+            as_cont: Some(dist),
+            childs: RwLock::new(vec![]),
+            parents: RwLock::new(vec![]),
+            edges: RwLock::new(vec![]),
+            pos: RwLock::new(pos),
+            was_discrete: true,
+        })
     }
 
     fn was_discrete(&self) -> bool {
@@ -280,13 +301,13 @@ impl<'a, C: 'a, D: 'a> HybridNode<'a> for DefHybridNode<'a, C, D>
 
     fn remove_disc_parent(&self, var: &D) {
         let parents = &mut *self.parents.write().unwrap();
-        if let Some(pos) = parents
-               .iter()
-               .position(|ref x| if let Some(disc) = x.get_disc_dist() {
-                             var == disc
-                         } else {
-                             false
-                         }) {
+        if let Some(pos) = parents.iter().position(|ref x| {
+            if let Some(disc) = x.get_disc_dist() {
+                var == disc
+            } else {
+                false
+            }
+        }) {
             parents.remove(pos);
             let edges = &mut *self.edges.write().unwrap();
             edges.remove(pos);
@@ -310,38 +331,39 @@ impl<'a, C: 'a, D: 'a> HybridNode<'a> for DefHybridNode<'a, C, D>
 }
 
 impl<'a, C: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, C, D>
-    where C: ContVar + Normalization,
-          D: DiscreteVar + AsContinuous
+where
+    C: ContVar + Normalization,
+    D: DiscreteVar + AsContinuous,
 {
     type Var = C;
 
     fn new(dist: &'a C, pos: usize) -> Result<Self, ()> {
         match *dist.dist_type() {
-            DType::Normal(_) |
-            DType::Beta(_) |
-            DType::Exponential(_) |
-            DType::Gamma(_) |
-            DType::ChiSquared(_) |
-            DType::TDist(_) |
-            DType::FDist(_) |
-            DType::Cauchy(_) |
-            DType::LogNormal(_) |
-            DType::Logistic(_) |
-            DType::Pareto(_) => {}
+            DType::Normal(_)
+            | DType::Beta(_)
+            | DType::Exponential(_)
+            | DType::Gamma(_)
+            | DType::ChiSquared(_)
+            | DType::TDist(_)
+            | DType::FDist(_)
+            | DType::Cauchy(_)
+            | DType::LogNormal(_)
+            | DType::Logistic(_)
+            | DType::Pareto(_) => {}
             _ => return Err(()),
         }
 
         // get the probabilities from the dist and insert as default cpt
         Ok(DefHybridNode {
-               cont_dist: Some(dist),
-               disc_dist: None,
-               as_cont: None,
-               childs: RwLock::new(vec![]),
-               parents: RwLock::new(vec![]),
-               edges: RwLock::new(vec![]),
-               pos: RwLock::new(pos),
-               was_discrete: false,
-           })
+            cont_dist: Some(dist),
+            disc_dist: None,
+            as_cont: None,
+            childs: RwLock::new(vec![]),
+            parents: RwLock::new(vec![]),
+            edges: RwLock::new(vec![]),
+            pos: RwLock::new(pos),
+            was_discrete: false,
+        })
     }
 
     fn get_dist(&self) -> &C {
@@ -403,8 +425,9 @@ impl<'a, C: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, C, D>
     fn remove_child(&self, child: &C) {
         let childs = &mut *self.childs.write().unwrap();
         if let Some(pos) = childs
-               .iter()
-               .position(|ref x| x.upgrade().unwrap().get_dist() == child) {
+            .iter()
+            .position(|ref x| x.upgrade().unwrap().get_dist() == child)
+        {
             childs.remove(pos);
         }
     }
@@ -422,14 +445,14 @@ impl<'a, C: 'a, D: 'a> ContNode<'a> for DefHybridNode<'a, C, D>
 
 #[derive(Debug)]
 struct HybridDAG<'a, N>
-    where N: HybridNode<'a>
+where
+    N: HybridNode<'a>,
 {
     _nlt: PhantomData<&'a ()>,
     nodes: Vec<Arc<N>>,
 }
 
 dag_impl!(HybridDAG, HybridNode; [ContVar + Normalization]);
-
 
 pub type DefMarkovRndField<'a> = MarkovRndField<'a, DefHybridNode<'a, DefContVar, DefDiscreteVar>>;
 
@@ -444,8 +467,10 @@ pub type DefMarkovRndField<'a> = MarkovRndField<'a, DefHybridNode<'a, DefContVar
 /// underlying graph is 'moralized' first (to an undirected graph), hence any edge weighting
 /// information would be lost (so it's unnecessary). To avoid this problem when necessary, the use
 /// of one of the other directed models is encouraged.
+#[derive(Default)]
 pub struct MarkovRndField<'a, N>
-    where N: HybridNode<'a>
+where
+    N: HybridNode<'a>,
 {
     _nlt: PhantomData<&'a ()>,
     edges: Vec<(Arc<N>, Arc<N>, Option<f64>)>,
@@ -453,7 +478,8 @@ pub struct MarkovRndField<'a, N>
 }
 
 impl<'a, N> MarkovRndField<'a, N>
-    where N: HybridNode<'a>
+where
+    N: HybridNode<'a>,
 {
     pub fn new() -> MarkovRndField<'a, N> {
         MarkovRndField {
@@ -474,16 +500,19 @@ impl<'a, N> MarkovRndField<'a, N>
     /// Adds an (undirected) edge between two variables.
     ///
     /// Both variables have to be added previously to the model.
-    pub fn add_edge(&mut self,
-                    a: &'a <N as ContNode<'a>>::Var,
-                    b: &'a <N as ContNode<'a>>::Var)
-                    -> Result<(), ()> {
-        let a: Arc<N> = self.underlying
+    pub fn add_edge(
+        &mut self,
+        a: &'a <N as ContNode<'a>>::Var,
+        b: &'a <N as ContNode<'a>>::Var,
+    ) -> Result<(), ()> {
+        let a: Arc<N> = self
+            .underlying
             .iter()
             .find(|n| (&**n).get_dist() == a)
             .cloned()
             .ok_or(())?;
-        let b: Arc<N> = self.underlying
+        let b: Arc<N> = self
+            .underlying
             .iter()
             .find(|n| (&**n).get_dist() == b)
             .cloned()
@@ -495,7 +524,10 @@ impl<'a, N> MarkovRndField<'a, N>
     /// Insert a Bayesian network into the model, it will be "moralized" in the process,
     /// losing all the implied causal information.
     pub fn insert_dag(&mut self, other: HybridModel<'a, N>) {
-        let HybridModel { vars: HybridDAG { mut nodes, .. }, .. } = other;
+        let HybridModel {
+            vars: HybridDAG { mut nodes, .. },
+            ..
+        } = other;
         let cnt = self.underlying.len();
         for node in &mut nodes {
             node.set_position(node.position() + cnt);
@@ -508,8 +540,13 @@ impl<'a, N> MarkovRndField<'a, N>
             let mut edges = parents
                 .iter()
                 .tuple_combinations()
-                .map(|(a, b)| (self.underlying[*a].clone(), self.underlying[*b].clone(), None))
-                .collect();
+                .map(|(a, b)| {
+                    (
+                        self.underlying[*a].clone(),
+                        self.underlying[*b].clone(),
+                        None,
+                    )
+                }).collect();
             self.edges.append(&mut edges);
         }
     }
@@ -517,9 +554,11 @@ impl<'a, N> MarkovRndField<'a, N>
     /// Remove a variable from the model, the childs will be disjoint if they don't
     /// have an other parent.
     pub fn remove_var(&mut self, node: &'a <N as ContNode<'a>>::Var) {
-        if let Some(pos) = self.underlying
-               .iter()
-               .position(|n| (&**n).get_dist() == node) {
+        if let Some(pos) = self
+            .underlying
+            .iter()
+            .position(|n| (&**n).get_dist() == node)
+        {
             if pos < self.underlying.len() - 1 {
                 for node in &self.underlying[pos + 1..] {
                     node.set_position(node.position() - 1);
@@ -536,7 +575,8 @@ impl<'a, N> MarkovRndField<'a, N>
 }
 
 impl<'a, N> super::IterModel for MarkovRndField<'a, N>
-    where N: HybridNode<'a>
+where
+    N: HybridNode<'a>,
 {
     type Iter = MarkovRndFieldIter<'a, N>;
     fn iter_vars(&self) -> MarkovRndFieldIter<'a, N> {
@@ -554,19 +594,21 @@ impl<'a, N> super::IterModel for MarkovRndField<'a, N>
     fn var_neighbours(&self, idx: usize) -> Vec<usize> {
         self.edges
             .iter()
-            .filter_map(|&(ref a, ref b, _)| if a.position() == idx {
-                            Some(b.position())
-                        } else if b.position() == idx {
-                Some(a.position())
-            } else {
-                None
-            })
-            .collect::<Vec<_>>()
+            .filter_map(|&(ref a, ref b, _)| {
+                if a.position() == idx {
+                    Some(b.position())
+                } else if b.position() == idx {
+                    Some(a.position())
+                } else {
+                    None
+                }
+            }).collect::<Vec<_>>()
     }
 }
 
 pub struct MarkovRndFieldIter<'a, N>
-    where N: HybridNode<'a>
+where
+    N: HybridNode<'a>,
 {
     _nlt: PhantomData<&'a ()>,
     nodes: Vec<Arc<N>>,
@@ -574,7 +616,8 @@ pub struct MarkovRndFieldIter<'a, N>
 }
 
 impl<'a, N> ::std::iter::Iterator for MarkovRndFieldIter<'a, N>
-    where N: HybridNode<'a>
+where
+    N: HybridNode<'a>,
 {
     type Item = Arc<N>;
 

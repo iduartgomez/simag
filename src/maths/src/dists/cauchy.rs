@@ -12,7 +12,7 @@ impl Cauchy {
             return Err(());
         }
 
-        Ok(Cauchy { mu: mu, gamma })
+        Ok(Cauchy { mu, gamma })
     }
 
     pub fn std(gamma: f64) -> Result<Cauchy, ()> {

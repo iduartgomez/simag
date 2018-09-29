@@ -83,6 +83,15 @@ where
     vars: ContDAG<'a, N>,
 }
 
+impl<'a, N> Default for ContModel<'a, N>
+where
+    N: ContNode<'a>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<'a, N> ContModel<'a, N>
 where
     N: ContNode<'a>,
@@ -306,7 +315,7 @@ where
             .enumerate()
             .find(|&(_, x)| &*x.upgrade().unwrap().get_dist() == child.get_dist())
             .map(|(i, _)| i);
-        if let None = pos {
+        if pos.is_none() {
             parent_childs.push(Arc::downgrade(&child));
         }
     }

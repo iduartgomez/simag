@@ -28,7 +28,7 @@ impl Normal {
             Ok(Normal::std())
         } else {
             Ok(Normal {
-                mu: mu,
+                mu,
                 sigma: sigma.abs(),
                 std: false,
             })
