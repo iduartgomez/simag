@@ -16,8 +16,8 @@ use float_cmp::ApproxEqUlps;
 use std::collections::HashMap;
 use std::iter::FromIterator;
 use std::str;
-use std::sync::{RwLock, Arc, Weak};
 use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, RwLock, Weak};
 
 // Predicate types:
 
@@ -29,11 +29,12 @@ pub(crate) enum Predicate {
 }
 
 impl<'a> Predicate {
-    fn from(arg: &'a ArgBorrowed<'a>,
-            context: &'a mut ParseContext,
-            name: &'a Terminal,
-            is_func: bool)
-            -> Result<Predicate, ParseErrF> {
+    fn from(
+        arg: &'a ArgBorrowed<'a>,
+        context: &'a mut ParseContext,
+        name: &'a Terminal,
+        is_func: bool,
+    ) -> Result<Predicate, ParseErrF> {
         if name.is_grounded() {
             match Terminal::from(&arg.term, context) {
                 Ok(Terminal::FreeTerm(ft)) => {
@@ -41,8 +42,13 @@ impl<'a> Predicate {
                     Ok(Predicate::FreeClsMemb(t))
                 }
                 Ok(Terminal::GroundedTerm(gt)) => {
-                    let t =
-                        GroundedMemb::new(gt, arg.uval, name.get_name().to_string(), None, context)?;
+                    let t = GroundedMemb::new(
+                        gt,
+                        arg.uval,
+                        name.get_name().to_string(),
+                        None,
+                        context,
+                    )?;
                     Ok(Predicate::GroundedMemb(t))
                 }
                 Ok(Terminal::Keyword(kw)) => Err(ParseErrF::ReservedKW(String::from(kw))),
@@ -165,7 +171,6 @@ impl<'a> GroundedRef<'a> {
     }
 }
 
-
 /// Grounded membership of an entity to a class.
 ///
 /// Not meant to be instantiated directly, but asserted from logic
@@ -181,14 +186,15 @@ pub(crate) struct GroundedMemb {
 
 impl GroundedMemb {
     //! Internally the mutable parts are wrapped in `RwLock` types, as they can be accessed
-    //! from a multithreaded environment. This provides enough atomicity so most of 
+    //! from a multithreaded environment. This provides enough atomicity so most of
     //! the time it won't be blocking other reads.
-    fn new(term: String,
-           uval: Option<UVal>,
-           parent: String,
-           times: Option<Vec<(Time, Option<f32>)>>,
-           context: &ParseContext)
-           -> Result<GroundedMemb, ParseErrF> {
+    fn new(
+        term: String,
+        uval: Option<UVal>,
+        parent: String,
+        times: Option<Vec<(Time, Option<f32>)>>,
+        context: &ParseContext,
+    ) -> Result<GroundedMemb, ParseErrF> {
         let val;
         let op;
         let bms;
@@ -244,11 +250,11 @@ impl GroundedMemb {
             bms = None;
         }
         Ok(GroundedMemb {
-            term: term,
+            term,
             value: RwLock::new(val),
             operator: op,
-            parent: parent,
-            bms: bms,
+            parent,
+            bms,
         })
     }
 
@@ -285,10 +291,12 @@ impl GroundedMemb {
         }
     }
 
-    pub fn update(&self,
-                  agent: &Representation,
-                  data: &GroundedMemb,
-                  was_produced: Option<SentID>) {
+    pub fn update(
+        &self,
+        agent: &Representation,
+        data: &GroundedMemb,
+        was_produced: Option<SentID>,
+    ) {
         let new_val: Option<f32>;
         {
             let mut value_lock = self.value.write().unwrap();
@@ -298,11 +306,11 @@ impl GroundedMemb {
         if let Some(ref bms) = self.bms {
             if data.bms.is_some() {
                 let data_bms = data.bms.as_ref().unwrap();
-                bms.update(GroundedRef::Class(self), agent, data_bms, was_produced)
+                bms.update(&GroundedRef::Class(self), agent, data_bms, was_produced)
             } else {
                 let data_bms = BmsWrapper::new(false);
                 data_bms.new_record(None, new_val, None);
-                bms.update(GroundedRef::Class(self), agent, &data_bms, was_produced)
+                bms.update(&GroundedRef::Class(self), agent, &data_bms, was_produced)
             }
         }
     }
@@ -332,7 +340,7 @@ impl GroundedMemb {
             value: RwLock::new(val),
             operator: op,
             parent: free.parent.get_name().to_string(),
-            bms: bms,
+            bms,
         }
     }
 
@@ -426,7 +434,7 @@ impl ::std::clone::Clone for GroundedMemb {
     }
 }
 
-/// Grounded relational functions describe relations between two objects, 
+/// Grounded relational functions describe relations between two objects,
 /// or two objets and a third indirect object.
 ///
 /// Are not meant to be instantiated directly, but asserted from logic
@@ -448,10 +456,11 @@ impl ::std::cmp::PartialEq for GroundedFunc {
 impl ::std::cmp::Eq for GroundedFunc {}
 
 impl GroundedFunc {
-    pub fn from_free(free: &FuncDecl,
-                     assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                     time_assign: &HashMap<&Var, Arc<BmsWrapper>>)
-                     -> Result<GroundedFunc, ()> {
+    pub fn from_free(
+        free: &FuncDecl,
+        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+    ) -> Result<GroundedFunc, ()> {
         if !free.variant.is_relational() || free.args.as_ref().unwrap().len() < 2 {
             return Err(());
         }
@@ -467,7 +476,7 @@ impl GroundedFunc {
         for (i, a) in free.args.as_ref().unwrap().iter().enumerate() {
             let n_a = match *a {
                 Predicate::FreeClsMemb(ref free) => {
-                    let assigned = if let Some(ref assignments) = *assignments {
+                    let assigned = if let Some(assignments) = assignments {
                         assignments
                     } else {
                         return Err(());
@@ -492,9 +501,9 @@ impl GroundedFunc {
         }
         let time_data = free.get_own_time_data(time_assign, value);
         Ok(GroundedFunc {
-            name: name,
+            name,
             args: [first.unwrap(), second.unwrap()],
-            third: third,
+            third,
             bms: Arc::new(time_data),
         })
     }
@@ -543,8 +552,8 @@ impl GroundedFunc {
         }
     }
 
-    pub fn name_in_pos(&self, name: &str, pos: &usize) -> bool {
-        if (*pos < 2) && (self.args[*pos].get_name() == name) {
+    pub fn name_in_pos(&self, name: &str, pos: usize) -> bool {
+        if (pos < 2) && (self.args[pos].get_name() == name) {
             return true;
         }
         if self.third.is_some() && self.third.as_ref().unwrap().get_name() == name {
@@ -572,16 +581,19 @@ impl GroundedFunc {
         }
     }
 
-    pub fn update(&self,
-                  agent: &Representation,
-                  data: &GroundedFunc,
-                  was_produced: Option<SentID>) {
+    pub fn update(
+        &self,
+        agent: &Representation,
+        data: &GroundedFunc,
+        was_produced: Option<SentID>,
+    ) {
         {
             let mut value_lock = self.args[0].value.write().unwrap();
             *value_lock = *data.args[0].value.read().unwrap();
         }
         let data_bms = &data.bms;
-        self.bms.update(GroundedRef::Function(self), agent, data_bms, was_produced);
+        self.bms
+            .update(&GroundedRef::Function(self), agent, data_bms, was_produced);
     }
 
     pub fn update_value(&self, val: Option<f32>) {
@@ -612,13 +624,14 @@ pub(crate) struct FreeClsMemb {
 }
 
 impl FreeClsMemb {
-    fn new(term: Arc<Var>,
-           uval: Option<UVal>,
-           parent: &Terminal)
-           -> Result<FreeClsMemb, ParseErrF> {
+    fn new(
+        term: Arc<Var>,
+        uval: Option<UVal>,
+        parent: &Terminal,
+    ) -> Result<FreeClsMemb, ParseErrF> {
         let (val, op) = match_uval(uval)?;
         Ok(FreeClsMemb {
-            term: term,
+            term,
             value: val,
             operator: op,
             parent: parent.clone(),
@@ -674,17 +687,17 @@ impl FreeClsMemb {
                     } else if self_op.is_less() {
                         val_grounded < val_free
                     } else if self_op.is_less_eq() {
-                        (val_grounded < val_free) |
-                        val_free.approx_eq_ulps(&val_grounded, FLOAT_EQ_ULPS)
+                        (val_grounded < val_free)
+                            | val_free.approx_eq_ulps(&val_grounded, FLOAT_EQ_ULPS)
                     } else {
-                        (val_grounded > val_free) |
-                        val_free.approx_eq_ulps(&val_grounded, FLOAT_EQ_ULPS)
+                        (val_grounded > val_free)
+                            | val_free.approx_eq_ulps(&val_grounded, FLOAT_EQ_ULPS)
                     }
                 }
-                CompOperator::Less |
-                CompOperator::More |
-                CompOperator::MoreEqual |
-                CompOperator::LessEqual => panic!(),
+                CompOperator::Less
+                | CompOperator::More
+                | CompOperator::MoreEqual
+                | CompOperator::LessEqual => panic!(),
             }
         } else {
             true
@@ -707,7 +720,7 @@ impl FreeClsOwner {
         let t_bms = BmsWrapper::new(false);
         t_bms.new_record(None, val, None);
         Ok(FreeClsOwner {
-            term: term,
+            term,
             value: val,
             operator: op,
             parent: parent.get_var(),
@@ -824,10 +837,11 @@ impl Assert {
     }
 
     #[inline]
-    pub fn get_times(&self,
-                     agent: &agent::Representation,
-                     var_assign: &Option<HashMap<&Var, &agent::VarAssignment>>)
-                     -> Option<Arc<BmsWrapper>> {
+    pub fn get_times(
+        &self,
+        agent: &agent::Representation,
+        var_assign: Option<&HashMap<&Var, &agent::VarAssignment>>,
+    ) -> Option<Arc<BmsWrapper>> {
         match *self {
             Assert::FuncDecl(ref f) => f.get_times(agent, var_assign),
             Assert::ClassDecl(ref c) => c.get_times(agent, var_assign),
@@ -899,13 +913,13 @@ impl Assert {
     }
 
     #[inline]
-    pub fn grounded_eq<T: ProofResContext>(&self,
-                                           agent: &agent::Representation,
-                                           assignments: &Option<HashMap<&Var,
-                                                                        &agent::VarAssignment>>,
-                                           time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
-                                           context: &mut T)
-                                           -> Option<bool> {
+    pub fn grounded_eq<T: ProofResContext>(
+        &self,
+        agent: &agent::Representation,
+        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        context: &mut T,
+    ) -> Option<bool> {
         match *self {
             Assert::FuncDecl(ref f) => f.grounded_eq(agent, assignments, time_assign, context),
             Assert::ClassDecl(ref c) => c.grounded_eq(agent, assignments, time_assign, context),
@@ -913,12 +927,13 @@ impl Assert {
     }
 
     #[inline]
-    pub fn substitute<T: ProofResContext>(&self,
-                                          agent: &agent::Representation,
-                                          assignments: &Option<HashMap<&Var,
-                                                                       &agent::VarAssignment>>,
-                                          time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
-                                          context: &mut T) {
+    pub fn substitute<T: ProofResContext>(
+        &self,
+        agent: &agent::Representation,
+        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        context: &mut T,
+    ) {
         match *self {
             Assert::FuncDecl(ref f) => f.substitute(agent, assignments, time_assign, context),
             Assert::ClassDecl(ref c) => c.substitute(agent, assignments, time_assign, context),
@@ -943,9 +958,10 @@ pub(crate) struct FuncDecl {
 }
 
 impl<'a> FuncDecl {
-    pub fn from(other: &FuncDeclBorrowed<'a>,
-                context: &mut ParseContext)
-                -> Result<FuncDecl, ParseErrF> {
+    pub fn from(
+        other: &FuncDeclBorrowed<'a>,
+        context: &mut ParseContext,
+    ) -> Result<FuncDecl, ParseErrF> {
         let mut variant = other.variant;
         let func_name = match Terminal::from(&other.name, context) {
             Err(ParseErrF::ReservedKW(val)) => {
@@ -970,7 +986,12 @@ impl<'a> FuncDecl {
 
     /// Assumes all arguments are grounded and converts to a GroundedFunc (panics otherwise).
     pub fn into_grounded(self) -> GroundedFunc {
-        let FuncDecl { name, args, op_args, .. } = self;
+        let FuncDecl {
+            name,
+            args,
+            op_args,
+            ..
+        } = self;
         let name = match name {
             Terminal::GroundedTerm(name) => name,
             Terminal::FreeTerm(_) | Terminal::Keyword(_) => panic!(),
@@ -1017,9 +1038,9 @@ impl<'a> FuncDecl {
         }
         time_data.overwrite = AtomicBool::new(ow);
         GroundedFunc {
-            name: name,
+            name,
             args: [first.unwrap(), second.unwrap()],
-            third: third,
+            third,
             bms: Arc::new(time_data),
         }
     }
@@ -1072,10 +1093,11 @@ impl<'a> FuncDecl {
         }
     }
 
-    pub fn get_own_time_data(&self,
-                             assignments: &HashMap<&Var, Arc<BmsWrapper>>,
-                             value: Option<f32>)
-                             -> BmsWrapper {
+    pub fn get_own_time_data(
+        &self,
+        assignments: &HashMap<&Var, Arc<BmsWrapper>>,
+        value: Option<f32>,
+    ) -> BmsWrapper {
         if self.op_args.is_none() {
             let t_bms = BmsWrapper::new(false);
             t_bms.new_record(None, value, None);
@@ -1085,8 +1107,7 @@ impl<'a> FuncDecl {
         let mut ow = false;
         for arg in self.op_args.as_ref().unwrap() {
             match *arg {
-                OpArg::TimeDecl(_) |
-                OpArg::TimeVarAssign(_) => {
+                OpArg::TimeDecl(_) | OpArg::TimeVarAssign(_) => {
                     v = Some(arg.get_time_payload(assignments, value));
                 }
                 OpArg::OverWrite => {
@@ -1118,10 +1139,11 @@ impl<'a> FuncDecl {
         false
     }
 
-    fn get_times(&self,
-                 agent: &agent::Representation,
-                 var_assign: &Option<HashMap<&Var, &agent::VarAssignment>>)
-                 -> Option<Arc<BmsWrapper>> {
+    fn get_times(
+        &self,
+        agent: &agent::Representation,
+        var_assign: Option<&HashMap<&Var, &agent::VarAssignment>>,
+    ) -> Option<Arc<BmsWrapper>> {
         if self.is_grounded() {
             let sbj = self.args.as_ref().unwrap();
             let grfunc = self.clone().into_grounded();
@@ -1131,9 +1153,7 @@ impl<'a> FuncDecl {
                 return None;
             }
         } else {
-            if var_assign.is_none() {
-                return None;
-            }
+            var_assign?;
             let f = HashMap::new();
             if let Ok(grfunc) = GroundedFunc::from_free(self, var_assign, &f) {
                 for arg in self.get_args() {
@@ -1169,9 +1189,10 @@ impl<'a> FuncDecl {
         id
     }
 
-    fn decl_timecalc_fn(other: &FuncDeclBorrowed<'a>,
-                        context: &mut ParseContext)
-                        -> Result<FuncDecl, ParseErrF> {
+    fn decl_timecalc_fn(
+        other: &FuncDeclBorrowed<'a>,
+        context: &mut ParseContext,
+    ) -> Result<FuncDecl, ParseErrF> {
         if other.args.is_some() || other.op_args.is_none() {
             return Err(ParseErrF::WrongDef);
         }
@@ -1186,8 +1207,10 @@ impl<'a> FuncDecl {
                     match arg {
                         // Generic(OpArgTerm, Option<(CompOperator, OpArgTerm)>)
                         OpArg::Generic(ref v0, Some((_, ref v1))) => {
-                            if (!v0.is_var() | !v1.is_var()) ||
-                               (!v0.get_var_ref().is_time_var() | !v1.get_var_ref().is_time_var()) {
+                            if (!v0.is_var() | !v1.is_var())
+                                || (!v0.get_var_ref().is_time_var()
+                                    | !v1.get_var_ref().is_time_var())
+                            {
                                 return Err(TimeFnErr::IsNotVar.into());
                             }
                         }
@@ -1205,15 +1228,16 @@ impl<'a> FuncDecl {
         Ok(FuncDecl {
             name: Terminal::Keyword("time_calc"),
             args: None,
-            op_args: op_args,
+            op_args,
             variant: FuncVariants::TimeCalc,
         })
     }
 
-    fn decl_relational_fn(other: &FuncDeclBorrowed<'a>,
-                          context: &mut ParseContext,
-                          name: Terminal)
-                          -> Result<FuncDecl, ParseErrF> {
+    fn decl_relational_fn(
+        other: &FuncDeclBorrowed<'a>,
+        context: &mut ParseContext,
+        name: Terminal,
+    ) -> Result<FuncDecl, ParseErrF> {
         let op_args = match other.op_args {
             Some(ref oargs) => {
                 let mut v0 = Vec::with_capacity(oargs.len());
@@ -1249,17 +1273,18 @@ impl<'a> FuncDecl {
             return Err(ParseErrF::WrongArgNumb);
         }
         Ok(FuncDecl {
-            name: name,
+            name,
             args: Some(args),
-            op_args: op_args,
+            op_args,
             variant: FuncVariants::Relational,
         })
     }
 
-    fn decl_nonrelational_fn(other: &FuncDeclBorrowed<'a>,
-                             context: &mut ParseContext,
-                             name: Terminal)
-                             -> Result<FuncDecl, ParseErrF> {
+    fn decl_nonrelational_fn(
+        other: &FuncDeclBorrowed<'a>,
+        context: &mut ParseContext,
+        name: Terminal,
+    ) -> Result<FuncDecl, ParseErrF> {
         let op_args = match other.op_args {
             Some(ref oargs) => {
                 let mut v0 = Vec::with_capacity(oargs.len());
@@ -1275,9 +1300,9 @@ impl<'a> FuncDecl {
             None => None,
         };
         Ok(FuncDecl {
-            name: name,
+            name,
             args: None,
-            op_args: op_args,
+            op_args,
             variant: FuncVariants::NonRelational,
         })
     }
@@ -1318,8 +1343,6 @@ impl<'a> FuncDecl {
         }
     }
 
-
-
     fn time_resolution(&self, assignments: &HashMap<&Var, Arc<BmsWrapper>>) -> Option<bool> {
         for arg in self.op_args.as_ref().unwrap() {
             if !arg.compare_time_args(assignments) {
@@ -1338,9 +1361,10 @@ pub(crate) struct ClassDecl {
 }
 
 impl<'a> ClassDecl {
-    pub fn from(other: &ClassDeclBorrowed<'a>,
-                context: &mut ParseContext)
-                -> Result<ClassDecl, ParseErrF> {
+    pub fn from(
+        other: &ClassDeclBorrowed<'a>,
+        context: &mut ParseContext,
+    ) -> Result<ClassDecl, ParseErrF> {
         let class_name = Terminal::from(&other.name, context)?;
         let op_args = match other.op_args {
             Some(ref oargs) => {
@@ -1357,7 +1381,7 @@ impl<'a> ClassDecl {
             let mut v0 = Vec::with_capacity(other.args.len());
             for arg in &other.args {
                 if arg.uval.is_none() {
-                    return Err(ParseErrF::IUValNone)
+                    return Err(ParseErrF::IUValNone);
                 }
                 let pred = Predicate::from(arg, context, &class_name, false)?;
                 v0.push(pred);
@@ -1366,8 +1390,8 @@ impl<'a> ClassDecl {
         };
         Ok(ClassDecl {
             name: class_name,
-            args: args,
-            op_args: op_args,
+            args,
+            op_args,
         })
     }
 
@@ -1392,10 +1416,11 @@ impl<'a> ClassDecl {
         &self.name
     }
 
-    pub fn get_own_time_data(&self,
-                             assignments: &HashMap<&Var, Arc<BmsWrapper>>,
-                             value: Option<f32>)
-                             -> BmsWrapper {
+    pub fn get_own_time_data(
+        &self,
+        assignments: &HashMap<&Var, Arc<BmsWrapper>>,
+        value: Option<f32>,
+    ) -> BmsWrapper {
         if self.op_args.is_none() {
             let bms = BmsWrapper::new(false);
             bms.new_record(None, value, None);
@@ -1405,8 +1430,7 @@ impl<'a> ClassDecl {
         let mut ow = false;
         for arg in self.op_args.as_ref().unwrap() {
             match *arg {
-                OpArg::TimeDecl(_) |
-                OpArg::TimeVarAssign(_) => {
+                OpArg::TimeDecl(_) | OpArg::TimeVarAssign(_) => {
                     v = Some(arg.get_time_payload(assignments, value));
                 }
                 OpArg::OverWrite => {
@@ -1438,16 +1462,15 @@ impl<'a> ClassDecl {
         false
     }
 
-    fn get_times(&self,
-                 agent: &agent::Representation,
-                 var_assign: &Option<HashMap<&Var, &agent::VarAssignment>>)
-                 -> Option<Arc<BmsWrapper>> {
+    fn get_times(
+        &self,
+        agent: &agent::Representation,
+        var_assign: Option<&HashMap<&Var, &agent::VarAssignment>>,
+    ) -> Option<Arc<BmsWrapper>> {
         let arg = &self.args[0];
         match *arg {
             Predicate::FreeClsMemb(ref free) => {
-                if var_assign.is_none() {
-                    return None;
-                }
+                var_assign?;
                 if let Some(entity) = var_assign.as_ref().unwrap().get(&*free.term) {
                     if let Some(grounded) = entity.get_class(free.parent.get_name()) {
                         if free.grounded_eq(grounded) {
@@ -1476,9 +1499,7 @@ impl<'a> ClassDecl {
     }
 
     pub fn get_time_payload(&self, value: Option<f32>) -> Option<BmsWrapper> {
-        if self.op_args.is_none() {
-            return None;
-        }
+        self.op_args.as_ref()?;
         for arg in self.op_args.as_ref().unwrap() {
             if let OpArg::TimeDecl(ref decl) = *arg {
                 return Some(decl.get_time_payload(value));
@@ -1506,8 +1527,11 @@ impl<'a> ClassDecl {
     fn contains_var(&self, var: &Var) -> bool {
         for a in &self.args {
             match *a {
-                Predicate::FreeClsMemb(ref term) if &*term.term as *const Var ==
-                                                    &*var as *const Var => return true,
+                Predicate::FreeClsMemb(ref term)
+                    if &*term.term as *const Var == &*var as *const Var =>
+                {
+                    return true
+                }
                 _ => continue,
             }
         }
@@ -1575,46 +1599,43 @@ pub(crate) enum OpArg {
 impl<'a> OpArg {
     pub fn from(other: &OpArgBorrowed<'a>, context: &mut ParseContext) -> Result<OpArg, ParseErrF> {
         let t0 = match OpArgTerm::from(&other.term, context) {
-            Err(ParseErrF::ReservedKW(kw)) => {
-                match &*kw {
-                    "time" => {
-                        let targ = OpArg::ignore_kw(other, "time", context)?;
-                        return Ok(targ);
-                    }
-                    "overwrite" => return Ok(OpArg::OverWrite),
-                    _ => return Err(ParseErrF::ReservedKW(kw)),
+            Err(ParseErrF::ReservedKW(kw)) => match &*kw {
+                "time" => {
+                    let targ = OpArg::ignore_kw(other, "time", context)?;
+                    return Ok(targ);
                 }
-            }
+                "overwrite" => return Ok(OpArg::OverWrite),
+                _ => return Err(ParseErrF::ReservedKW(kw)),
+            },
             Err(err) => return Err(err),
             Ok(arg) => arg,
         };
         let comp = match other.comp {
-            Some((op, ref tors)) => {
-                match OpArgTerm::from(tors, context) {
-                    Ok(t) => Some((op, t)),
-                    Err(ParseErrF::ReservedKW(kw)) => {
-                        if &kw == "time" {
-                            if t0.is_var() {
-                                return Ok(OpArg::TimeVarFrom(t0.get_var()));
-                            } else {
-                                return Err(ParseErrF::WrongDef);
-                            }
+            Some((op, ref tors)) => match OpArgTerm::from(tors, context) {
+                Ok(t) => Some((op, t)),
+                Err(ParseErrF::ReservedKW(kw)) => {
+                    if &kw == "time" {
+                        if t0.is_var() {
+                            return Ok(OpArg::TimeVarFrom(t0.get_var()));
                         } else {
-                            return Err(ParseErrF::ReservedKW(kw));
+                            return Err(ParseErrF::WrongDef);
                         }
+                    } else {
+                        return Err(ParseErrF::ReservedKW(kw));
                     }
-                    Err(err) => return Err(err),
                 }
-            }
+                Err(err) => return Err(err),
+            },
             None => None,
         };
         Ok(OpArg::Generic(t0, comp))
     }
 
-    fn ignore_kw(other: &OpArgBorrowed<'a>,
-                 kw: &str,
-                 context: &mut ParseContext)
-                 -> Result<OpArg, ParseErrF> {
+    fn ignore_kw(
+        other: &OpArgBorrowed<'a>,
+        kw: &str,
+        context: &mut ParseContext,
+    ) -> Result<OpArg, ParseErrF> {
         match kw {
             "time" => {
                 let load = OpArgTerm::time_payload(other.comp.as_ref(), context)?;
@@ -1635,8 +1656,7 @@ impl<'a> OpArg {
     #[inline]
     fn contains_var(&self, var1: &Var) -> bool {
         match *self {
-            OpArg::TimeVarAssign(ref var0) |
-            OpArg::TimeVarFrom(ref var0) => &**var0 == var1,
+            OpArg::TimeVarAssign(ref var0) | OpArg::TimeVarFrom(ref var0) => &**var0 == var1,
             _ => false,
         }
     }
@@ -1660,10 +1680,11 @@ impl<'a> OpArg {
         }
     }
 
-    fn get_time_payload(&self,
-                        assignments: &HashMap<&Var, Arc<BmsWrapper>>,
-                        value: Option<f32>)
-                        -> BmsWrapper {
+    fn get_time_payload(
+        &self,
+        assignments: &HashMap<&Var, Arc<BmsWrapper>>,
+        value: Option<f32>,
+    ) -> BmsWrapper {
         let bms = BmsWrapper::new(false);
         match *self {
             OpArg::TimeDecl(TimeFn::Time(ref payload)) => {
@@ -1750,7 +1771,7 @@ impl TimeFn {
     fn generate_uid(&self) -> Vec<u8> {
         let mut id = vec![];
         match *self {
-            TimeFn::Time(ref time) => id.append(&mut format!("{}", time).into_bytes()), 
+            TimeFn::Time(ref time) => id.append(&mut format!("{}", time).into_bytes()),
             TimeFn::Now => id.push(2),
             TimeFn::IsVar => id.push(3),
         }
@@ -1766,23 +1787,25 @@ pub(crate) enum OpArgTerm {
 }
 
 impl<'a> OpArgTerm {
-    fn from(other: &OpArgTermBorrowed<'a>,
-            context: &mut ParseContext)
-            -> Result<OpArgTerm, ParseErrF> {
+    fn from(
+        other: &OpArgTermBorrowed<'a>,
+        context: &mut ParseContext,
+    ) -> Result<OpArgTerm, ParseErrF> {
         match *other {
             OpArgTermBorrowed::Terminal(slice) => {
                 let t = Terminal::from_slice(slice, context)?;
                 Ok(OpArgTerm::Terminal(t))
             }
-            OpArgTermBorrowed::String(slice) => {
-                Ok(OpArgTerm::String(String::from_utf8_lossy(slice).into_owned()))
-            }
+            OpArgTermBorrowed::String(slice) => Ok(OpArgTerm::String(
+                String::from_utf8_lossy(slice).into_owned(),
+            )),
         }
     }
 
-    fn time_payload(other: Option<&(CompOperator, OpArgTermBorrowed<'a>)>,
-                    context: &mut ParseContext)
-                    -> Result<(CompOperator, OpArgTerm), ParseErrF> {
+    fn time_payload(
+        other: Option<&(CompOperator, OpArgTermBorrowed<'a>)>,
+        context: &mut ParseContext,
+    ) -> Result<(CompOperator, OpArgTerm), ParseErrF> {
         match other {
             None => Ok((CompOperator::Equal, OpArgTerm::TimePayload(TimeFn::IsVar))),
             Some(&(ref op, ref term)) => {
@@ -1810,7 +1833,7 @@ impl<'a> OpArgTerm {
     fn generate_uid(&self) -> Vec<u8> {
         match *self {
             OpArgTerm::Terminal(ref t) => t.generate_uid(),
-            OpArgTerm::String(ref s) => Vec::from_iter(s.as_bytes().iter().cloned()), 
+            OpArgTerm::String(ref s) => Vec::from_iter(s.as_bytes().iter().cloned()),
             OpArgTerm::TimePayload(ref t) => t.generate_uid(),
         }
     }
@@ -1856,7 +1879,10 @@ pub(crate) enum VarKind {
 
 impl Var {
     pub fn from<'a>(input: &VarBorrowed<'a>, context: &mut ParseContext) -> Result<Var, ParseErrF> {
-        let &VarBorrowed { name: TerminalBorrowed(name), ref op_arg } = input;
+        let &VarBorrowed {
+            name: TerminalBorrowed(name),
+            ref op_arg,
+        } = input;
         let mut kind = VarKind::Normal;
         let op_arg = match *op_arg {
             Some(ref op_arg) => {
@@ -1878,11 +1904,7 @@ impl Var {
         if reserved(&name) {
             return Err(ParseErrF::ReservedKW(name));
         }
-        Ok(Var {
-            name: name,
-            op_arg: op_arg,
-            kind: kind,
-        })
+        Ok(Var { name, op_arg, kind })
     }
 
     pub fn get_times(&self) -> BmsWrapper {
@@ -1926,10 +1948,14 @@ pub(crate) struct Skolem {
 }
 
 impl Skolem {
-    pub fn from<'a>(input: &SkolemBorrowed<'a>,
-                    context: &mut ParseContext)
-                    -> Result<Skolem, ParseErrF> {
-        let &SkolemBorrowed { name: TerminalBorrowed(name), ref op_arg } = input;
+    pub fn from<'a>(
+        input: &SkolemBorrowed<'a>,
+        context: &mut ParseContext,
+    ) -> Result<Skolem, ParseErrF> {
+        let &SkolemBorrowed {
+            name: TerminalBorrowed(name),
+            ref op_arg,
+        } = input;
         let op_arg = match *op_arg {
             Some(ref op_arg) => {
                 let t = OpArg::from(op_arg, context)?;
@@ -1941,10 +1967,7 @@ impl Skolem {
         if reserved(&name) {
             return Err(ParseErrF::ReservedKW(name));
         }
-        Ok(Skolem {
-            name: name,
-            op_arg: op_arg,
-        })
+        Ok(Skolem { name, op_arg })
     }
 }
 
@@ -1956,9 +1979,10 @@ pub(crate) enum Terminal {
 }
 
 impl<'a> Terminal {
-    fn from(other: &TerminalBorrowed<'a>,
-            context: &mut ParseContext)
-            -> Result<Terminal, ParseErrF> {
+    fn from(
+        other: &TerminalBorrowed<'a>,
+        context: &mut ParseContext,
+    ) -> Result<Terminal, ParseErrF> {
         let &TerminalBorrowed(slice) = other;
         let name = unsafe { String::from(str::from_utf8_unchecked(slice)) };
         if reserved(&name) {
@@ -2048,12 +2072,13 @@ mod logsent {
     impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
         /// Compares two relational functions, if they include free terms variable values
         /// assignments must be provided or will return None or panic in worst case.
-        fn grounded_eq(&self,
-                       agent: &agent::Representation,
-                       assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                       time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
-                       context: &mut T)
-                       -> Option<bool> {
+        fn grounded_eq(
+            &self,
+            agent: &agent::Representation,
+            assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+            time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+            context: &mut T,
+        ) -> Option<bool> {
             if let FuncVariants::TimeCalc = self.variant {
                 return self.time_resolution(time_assign);
             }
@@ -2062,7 +2087,7 @@ mod logsent {
                 let grfunc = self.clone().into_grounded();
                 if context.compare_relation(&grfunc) {
                     let cmp = context.has_relationship(&grfunc);
-                    if let Some(false) = *&cmp {
+                    if let Some(false) = cmp {
                         context.set_inconsistent(true);
                         return Some(false);
                     } else {
@@ -2072,7 +2097,7 @@ mod logsent {
                     agent.has_relationship(&grfunc, sbj[0].get_name())
                 }
             } else {
-                let assigned = if let Some(ref assigned) = *assignments {
+                let assigned = if let Some(assigned) = assignments {
                     assigned
                 } else {
                     return None;
@@ -2084,8 +2109,9 @@ mod logsent {
                                 if let Some(current) = entity.get_relationship(&grfunc) {
                                     let a = Grounded::Function(Arc::downgrade(&current.clone()));
                                     context.push_antecedents(a);
-                                    if let Some(time) = current.bms
-                                        .newest_date(context.newest_grfact()) {
+                                    if let Some(time) =
+                                        current.bms.newest_date(context.newest_grfact())
+                                    {
                                         context.set_newest_grfact(time);
                                     }
                                     if **current != grfunc {
@@ -2101,14 +2127,16 @@ mod logsent {
                 None
             }
         }
-        fn substitute(&self,
-                      agent: &agent::Representation,
-                      assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                      time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
-                      context: &mut T) {
+        fn substitute(
+            &self,
+            agent: &agent::Representation,
+            assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+            time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+            context: &mut T,
+        ) {
             if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, time_assign) {
                 context.push_grounded_func(grfunc.clone(), grfunc.bms.get_last_date());
-                agent.up_relation(Arc::new(grfunc), Some(context));
+                agent.up_relation(&Arc::new(grfunc), Some(context));
             }
         }
     }
@@ -2116,25 +2144,28 @@ mod logsent {
     impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
         /// Compare each term of a class declaration if they are comparable, and returns
         /// the result of such comparison (or none in case they are not comparable).
-        fn grounded_eq(&self,
-                       agent: &agent::Representation,
-                       assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                       _: &HashMap<&Var, Arc<BmsWrapper>>,
-                       context: &mut T)
-                       -> Option<bool> {
+        fn grounded_eq(
+            &self,
+            agent: &agent::Representation,
+            assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+            _: &HashMap<&Var, Arc<BmsWrapper>>,
+            context: &mut T,
+        ) -> Option<bool> {
             for a in &self.args {
                 match *a {
                     Predicate::FreeClsMemb(ref free) => {
-                        if assignments.is_none() {
-                            return None;
-                        }
+                        assignments?;
                         if let Some(entity) = assignments.as_ref().unwrap().get(&*free.term) {
                             if let Some(current) = entity.get_class(free.parent.get_name()) {
-                                context.push_antecedents(Grounded::Class(Arc::downgrade(&current.clone())));
-                                if let Some(time) = current.bms
+                                context.push_antecedents(Grounded::Class(Arc::downgrade(
+                                    &current.clone(),
+                                )));
+                                if let Some(time) = current
+                                    .bms
                                     .as_ref()
                                     .unwrap()
-                                    .newest_date(context.newest_grfact()) {
+                                    .newest_date(context.newest_grfact())
+                                {
                                     context.set_newest_grfact(time);
                                 }
                                 if !free.grounded_eq(current) {
@@ -2150,7 +2181,7 @@ mod logsent {
                     Predicate::GroundedMemb(ref compare) => {
                         if context.compare_cls(compare) {
                             let cmp = context.has_cls_memb(compare);
-                            if let Some(false) = *&cmp {
+                            if let Some(false) = cmp {
                                 context.set_inconsistent(true);
                                 return Some(false);
                             } else {
@@ -2161,10 +2192,12 @@ mod logsent {
                             if let Some(current) = entity {
                                 let grounded = Grounded::Class(Arc::downgrade(&current.clone()));
                                 context.push_antecedents(grounded);
-                                if let Some(time) = current.bms
+                                if let Some(time) = current
+                                    .bms
                                     .as_ref()
                                     .unwrap()
-                                    .newest_date(context.newest_grfact()) {
+                                    .newest_date(context.newest_grfact())
+                                {
                                     context.set_newest_grfact(time);
                                 }
                                 if *current != *compare {
@@ -2181,11 +2214,13 @@ mod logsent {
             Some(true)
         }
 
-        fn substitute(&self,
-                      agent: &agent::Representation,
-                      assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                      time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
-                      context: &mut T) {
+        fn substitute(
+            &self,
+            agent: &agent::Representation,
+            assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+            time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+            context: &mut T,
+        ) {
             let time_data = self.get_own_time_data(time_assign, None);
             for a in &self.args {
                 let grfact = match *a {
@@ -2202,9 +2237,11 @@ mod logsent {
                 let t = time_data.clone();
                 t.replace_last_val(grfact.get_value());
                 grfact.overwrite_time_data(&t);
-                context.push_grounded_cls(grfact.clone(),
-                                          grfact.bms.as_ref().unwrap().get_last_date());
-                agent.up_membership(Arc::new(grfact), Some(context))
+                context.push_grounded_cls(
+                    grfact.clone(),
+                    grfact.bms.as_ref().unwrap().get_last_date(),
+                );
+                agent.up_membership(&Arc::new(grfact), Some(context))
             }
         }
     }

@@ -55,6 +55,7 @@ impl Representation {
     /// class for future use.
     ///
     /// For more examples check the LogSentence type docs.
+    #[allow(needless_pass_by_value)]
     pub fn tell(&mut self, source: String) -> Result<(), Vec<ParseErrF>> {
         let num_threads = 0; // TODO: pass the number of threads available for inference
         let pres = logic_parser(source.as_str(), true, num_threads);
@@ -73,18 +74,20 @@ impl Representation {
                                     let t = time_data.clone();
                                     t.replace_last_val(a.get_value());
                                     a.overwrite_time_data(&t);
-                                    let x: Option<&super::IExprResult> = None;
-                                    self.up_membership(Arc::new(a), x)
+                                    let x: Option<
+                                        &super::IExprResult,
+                                    > = None;
+                                    self.up_membership(&Arc::new(a), x)
                                 }
                             } else {
                                 let a = Arc::new(assertion.unwrap_fn().into_grounded());
                                 let x: Option<&super::IExprResult> = None;
-                                self.up_relation(a, x)
+                                self.up_relation(&a, x)
                             }
                         }
                     }
-                    ParseTree::IExpr(iexpr) => self.add_belief(Arc::new(iexpr)),
-                    ParseTree::Expr(rule) => self.add_rule(Arc::new(rule)),
+                    ParseTree::IExpr(iexpr) => self.add_belief(&Arc::new(iexpr)),
+                    ParseTree::Expr(rule) => self.add_rule(&Arc::new(rule)),
                     ParseTree::ParseErr(err) => errors.push(err),
                 }
             }
@@ -99,16 +102,16 @@ impl Representation {
     }
 
     /// Asks the KB if some fact is true and returns the answer to the query.
+    #[allow(needless_pass_by_value)]
     pub fn ask(&self, source: String) -> Result<Answer, QueryErr> {
         let num_threads = 0; // TODO: pass the number of threads available for inference
         let pres = logic_parser(source.as_str(), false, num_threads);
         if pres.is_ok() {
             let pres = QueryInput::ManyQueries(pres.unwrap());
-            let mut inf =
-                match Inference::new(self, pres, usize::max_value(), false, num_threads) {
-                    Ok(inf) => inf,
-                    Err(()) => return Err(QueryErr::QueryErr),
-                };
+            let mut inf = match Inference::new(self, pres, usize::max_value(), false, num_threads) {
+                Ok(inf) => inf,
+                Err(()) => return Err(QueryErr::QueryErr),
+            };
             {
                 let inf_r = unsafe { &mut *(&mut inf as *mut Inference) };
                 inf_r.infer_facts();
@@ -119,11 +122,12 @@ impl Representation {
         }
     }
 
-    pub fn ask_processed(&self,
-                                source: QueryInput,
-                                depth: usize,
-                                ignore_current: bool)
-                                -> Result<Answer, QueryErr> {
+    pub fn ask_processed(
+        &self,
+        source: QueryInput,
+        depth: usize,
+        ignore_current: bool,
+    ) -> Result<Answer, QueryErr> {
         let num_threads = 0; // TODO: pass the number of threads available for inference
         let mut inf = match Inference::new(self, source, depth, ignore_current, num_threads) {
             Ok(inf) => inf,
@@ -136,10 +140,13 @@ impl Representation {
         Ok(inf.get_results())
     }
 
-    pub fn up_membership<T: ProofResContext>(&self,
-                                                    assert: Arc<GroundedMemb>,
-                                                    context: Option<&T>) {
-        let parent_exists = self.classes
+    pub fn up_membership<T: ProofResContext>(
+        &self,
+        assert: &Arc<GroundedMemb>,
+        context: Option<&T>,
+    ) {
+        let parent_exists = self
+            .classes
             .read()
             .unwrap()
             .contains_key(assert.get_parent());
@@ -153,14 +160,15 @@ impl Representation {
         let decl;
         let is_new: bool;
         if (assert.get_name()).starts_with('$') {
-            let entity_exists = self.entities
+            let entity_exists = self
+                .entities
                 .read()
                 .unwrap()
                 .contains_key(assert.get_name());
             if entity_exists {
                 let lock = self.entities.read().unwrap();
                 let entity = lock.get(assert.get_name()).unwrap();
-                is_new = entity.add_class_membership(self, assert.clone(), context);
+                is_new = entity.add_class_membership(self, assert, context);
                 decl = ClassMember::Entity(assert.clone());
             } else {
                 let entity = Entity::new(assert.get_name().to_string());
@@ -170,7 +178,7 @@ impl Representation {
                     .insert(entity.name.clone(), entity);
                 let lock = self.entities.read().unwrap();
                 let entity = lock.get(assert.get_name()).unwrap();
-                is_new = entity.add_class_membership(self, assert.clone(), context);
+                is_new = entity.add_class_membership(self, assert, context);
                 decl = ClassMember::Entity(assert.clone());
             }
         } else {
@@ -178,7 +186,7 @@ impl Representation {
             if class_exists {
                 let lock = self.classes.read().unwrap();
                 let class = lock.get(assert.get_name()).unwrap();
-                is_new = class.add_class_membership(self, assert.clone(), context);
+                is_new = class.add_class_membership(self, assert, context);
                 decl = ClassMember::Class(assert.clone());
             } else {
                 let class = Class::new(assert.get_name().to_string(), ClassKind::Membership);
@@ -188,7 +196,7 @@ impl Representation {
                     .insert(class.name.clone(), class);
                 let lock = self.classes.read().unwrap();
                 let class = lock.get(assert.get_name()).unwrap();
-                is_new = class.add_class_membership(self, assert.clone(), context);
+                is_new = class.add_class_membership(self, assert, context);
                 decl = ClassMember::Class(assert.clone());
             }
         }
@@ -199,9 +207,7 @@ impl Representation {
         }
     }
 
-    pub fn up_relation<T: ProofResContext>(&self,
-                                                  assert: Arc<GroundedFunc>,
-                                                  context: Option<&T>) {
+    pub fn up_relation<T: ProofResContext>(&self, assert: &Arc<GroundedFunc>, context: Option<&T>) {
         // it doesn't matter this is overwritten, as if it exists, it exists for all
         let is_new = Rc::new(::std::cell::RefCell::new(true));
         let process_arg = |a: &GroundedMemb| {
@@ -212,7 +218,7 @@ impl Representation {
                 if entity_exists {
                     let lock = self.entities.read().unwrap();
                     let entity = lock.get(subject).unwrap();
-                    is_new1 = entity.add_relationship(self, assert.clone(), context);
+                    is_new1 = entity.add_relationship(self, assert, context);
                 } else {
                     let entity = Entity::new(subject.to_string());
                     self.entities
@@ -221,7 +227,7 @@ impl Representation {
                         .insert(entity.name.clone(), entity);
                     let lock = self.entities.read().unwrap();
                     let entity = lock.get(subject).unwrap();
-                    is_new1 = entity.add_relationship(self, assert.clone(), context);
+                    is_new1 = entity.add_relationship(self, assert, context);
                 }
             } else {
                 let class_exists = self.classes.read().unwrap().contains_key(subject);
@@ -261,12 +267,14 @@ impl Representation {
         }
     }
 
-    fn add_belief(&self, belief: Arc<LogSentence>) {
-        fn update(subject: &str,
-                  name: &str,
-                  is_entity: bool,
-                  belief: Arc<LogSentence>,
-                  repr: &Representation) {
+    fn add_belief(&self, belief: &Arc<LogSentence>) {
+        fn update(
+            subject: &str,
+            name: &str,
+            is_entity: bool,
+            belief: &Arc<LogSentence>,
+            repr: &Representation,
+        ) {
             if is_entity {
                 let entity_exists = repr.entities.read().unwrap().contains_key(subject);
                 if entity_exists {
@@ -301,7 +309,8 @@ impl Representation {
         for p in belief.get_all_predicates() {
             match *p {
                 Assert::ClassDecl(ref cls_decl) => {
-                    let class_exists = self.classes
+                    let class_exists = self
+                        .classes
                         .read()
                         .unwrap()
                         .contains_key(cls_decl.get_name());
@@ -313,8 +322,8 @@ impl Representation {
                             .unwrap()
                             .add_belief(belief.clone(), cls_decl.get_name())
                     } else {
-                        let class = Class::new(cls_decl.get_name().to_string(),
-                                               ClassKind::Membership);
+                        let class =
+                            Class::new(cls_decl.get_name().to_string(), ClassKind::Membership);
                         class.add_belief(belief.clone(), cls_decl.get_name());
                         self.classes
                             .write()
@@ -325,9 +334,9 @@ impl Representation {
                         if !arg.is_var() {
                             let subject = arg.get_name();
                             if subject.starts_with('$') {
-                                update(subject, cls_decl.get_name(), true, belief.clone(), self)
+                                update(subject, cls_decl.get_name(), true, &belief, self)
                             } else {
-                                update(subject, cls_decl.get_name(), false, belief.clone(), self)
+                                update(subject, cls_decl.get_name(), false, &belief, self)
                             }
                         }
                     }
@@ -336,7 +345,8 @@ impl Representation {
                     if !fn_decl.is_relational() {
                         continue;
                     }
-                    let class_exists = self.classes
+                    let class_exists = self
+                        .classes
                         .read()
                         .unwrap()
                         .contains_key(fn_decl.get_name());
@@ -348,8 +358,8 @@ impl Representation {
                             .unwrap()
                             .add_belief(belief.clone(), fn_decl.get_name())
                     } else {
-                        let class = Class::new(fn_decl.get_name().to_string(),
-                                               ClassKind::Relationship);
+                        let class =
+                            Class::new(fn_decl.get_name().to_string(), ClassKind::Relationship);
                         class.add_belief(belief.clone(), fn_decl.get_name());
                         self.classes
                             .write()
@@ -360,9 +370,9 @@ impl Representation {
                         if !arg.is_var() {
                             let subject = arg.get_name();
                             if subject.starts_with('$') {
-                                update(subject, fn_decl.get_name(), true, belief.clone(), self)
+                                update(subject, fn_decl.get_name(), true, &belief, self)
                             } else {
-                                update(subject, fn_decl.get_name(), false, belief.clone(), self)
+                                update(subject, fn_decl.get_name(), false, &belief, self)
                             }
                         }
                     }
@@ -370,38 +380,41 @@ impl Representation {
             }
         }
 
-        let iter_cls_candidates = |cls_decl: &ClassDecl,
-                                   candidates: &HashMap<&Var, Vec<Arc<VarAssignment>>>| for a in
-            cls_decl.get_args() {
-            match *a {
-                Predicate::FreeClsMemb(ref free) => {
-                    if let Some(ls) = candidates.get(free.get_var_ref()) {
-                        for entity in ls {
-                            let grfact = Arc::new(GroundedMemb::from_free(free, entity.name));
-                            self.ask_processed(QueryInput::AskClassMember(grfact), 0, true)
-                                .unwrap();
+        let iter_cls_candidates =
+            |cls_decl: &ClassDecl, candidates: &HashMap<&Var, Vec<Arc<VarAssignment>>>| {
+                for a in cls_decl.get_args() {
+                    match *a {
+                        Predicate::FreeClsMemb(ref free) => {
+                            if let Some(ls) = candidates.get(free.get_var_ref()) {
+                                for entity in ls {
+                                    let grfact =
+                                        Arc::new(GroundedMemb::from_free(free, entity.name));
+                                    self.ask_processed(QueryInput::AskClassMember(grfact), 0, true)
+                                        .unwrap();
+                                }
+                            }
+                        }
+                        _ => continue,
+                    }
+                }
+            };
+        let iter_func_candidates =
+            |func_decl: &FuncDecl, candidates: &HashMap<&Var, Vec<Arc<VarAssignment>>>| {
+                let mapped = ArgsProduct::product(candidates.clone());
+                if let Some(mapped) = mapped {
+                    let f = HashMap::new();
+                    for args in mapped {
+                        let args = HashMap::from_iter(args.iter().map(|&(v, ref a)| (v, &**a)));
+                        if let Ok(grfunc) = GroundedFunc::from_free(func_decl, Some(&args), &f) {
+                            self.ask_processed(
+                                QueryInput::AskRelationalFunc(Arc::new(grfunc)),
+                                0,
+                                true,
+                            ).unwrap();
                         }
                     }
                 }
-                _ => continue,
-            }
-        };
-        let iter_func_candidates = |func_decl: &FuncDecl,
-                                    candidates: &HashMap<&Var, Vec<Arc<VarAssignment>>>| {
-            let mapped = ArgsProduct::product(candidates.clone());
-            if let Some(mapped) = mapped {
-                let f = HashMap::new();
-                for args in mapped {
-                    let args = HashMap::from_iter(args.iter().map(|&(v, ref a)| (v, &**a)));
-                    if let Ok(grfunc) = GroundedFunc::from_free(func_decl, &Some(args), &f) {
-                        self.ask_processed(QueryInput::AskRelationalFunc(Arc::new(grfunc)),
-                                           0,
-                                           true)
-                            .unwrap();
-                    }
-                }
-            }
-        };
+            };
 
         for var_req in belief.get_lhs_predicates().into_sent_req() {
             if let Some(candidates) = meet_sent_req(self, &var_req) {
@@ -422,7 +435,7 @@ impl Representation {
         }
     }
 
-    fn add_rule(&self, rule: Arc<LogSentence>) {
+    fn add_rule(&self, rule: &Arc<LogSentence>) {
         let preds = rule.get_all_predicates();
         for p in preds {
             let name = p.get_name();
@@ -440,14 +453,15 @@ impl Representation {
                 self.classes.write().unwrap().insert(name.to_string(), nc);
             }
         }
-        rollback_from_rule(self, rule.clone());
+        rollback_from_rule(self, &rule);
     }
 
     /// Takes a vector of class names and returns a hash map with those classes as keys
     /// and the memberships to those classes.
-    pub fn by_class<'a, 'b>(&'a self,
-                                   classes: &'b [&str])
-                                   -> HashMap<&'b str, Vec<Arc<GroundedMemb>>> {
+    pub fn by_class<'a, 'b>(
+        &'a self,
+        classes: &'b [&str],
+    ) -> HashMap<&'b str, Vec<Arc<GroundedMemb>>> {
         let mut dict = HashMap::new();
         let lock = self.classes.read().unwrap();
         for cls in classes {
@@ -458,8 +472,7 @@ impl Representation {
             let mut v = vec![];
             for e in &**cls_ref.unwrap().members.read().unwrap() {
                 match *e {
-                    ClassMember::Class(ref m) |
-                    ClassMember::Entity(ref m) => {
+                    ClassMember::Class(ref m) | ClassMember::Entity(ref m) => {
                         if m.get_value().is_some() {
                             v.push(m.clone());
                         }
@@ -476,10 +489,10 @@ impl Representation {
     /// names as keys and a hash map of the objects which have one relation of that kind
     /// as value (with a list of the grounded functions for each object).
     #[allow(type_complexity)]
-    pub fn by_relationship<'a, 'b>
-        (&'a self,
-         funcs: &'b [&'b FuncDecl])
-         -> HashMap<&'b str, HashMap<&'a str, Vec<Arc<GroundedFunc>>>> {
+    pub fn by_relationship<'a, 'b>(
+        &'a self,
+        funcs: &'b [&'b FuncDecl],
+    ) -> HashMap<&'b str, HashMap<&'a str, Vec<Arc<GroundedFunc>>>> {
         let mut dict = HashMap::new();
         let lock = self.classes.read().unwrap();
         for func in funcs {
@@ -504,10 +517,7 @@ impl Representation {
         dict
     }
 
-    pub fn get_obj_from_class(&self,
-                                     class: &str,
-                                     subject: &str)
-                                     -> Option<Arc<GroundedMemb>> {
+    pub fn get_obj_from_class(&self, class: &str, subject: &str) -> Option<Arc<GroundedMemb>> {
         if subject.starts_with('$') {
             let entity_exists = self.entities.read().unwrap().contains_key(subject);
             if entity_exists {
@@ -595,10 +605,11 @@ impl Representation {
         None
     }
 
-    pub fn get_relationship(&self,
-                                   pred: &GroundedFunc,
-                                   subject: &str)
-                                   -> Option<Arc<GroundedFunc>> {
+    pub fn get_relationship(
+        &self,
+        pred: &GroundedFunc,
+        subject: &str,
+    ) -> Option<Arc<GroundedFunc>> {
         if subject.starts_with('$') {
             if let Some(entity) = self.entities.read().unwrap().get(subject) {
                 if let Some(current) = entity.has_relationship(pred) {
@@ -621,9 +632,7 @@ impl Representation {
         None
     }
 
-    pub fn get_relationships(&self,
-                                    func: &FuncDecl)
-                                    -> HashMap<&str, Vec<Arc<GroundedFunc>>> {
+    pub fn get_relationships(&self, func: &FuncDecl) -> HashMap<&str, Vec<Arc<GroundedFunc>>> {
         let mut res = HashMap::new();
         for (pos, arg) in func.get_args().enumerate() {
             if !arg.is_var() {
@@ -681,9 +690,9 @@ impl<'a> Answer<'a> {
     }
 
     #[allow(type_complexity)]
-    pub fn get_results_multiple
-        (self)
-         -> HashMap<QueryPred, HashMap<String, Option<(bool, Option<Time>)>>> {
+    pub fn get_results_multiple(
+        self,
+    ) -> HashMap<QueryPred, HashMap<String, Option<(bool, Option<Time>)>>> {
         self.0.get_results_multiple()
     }
     pub(crate) fn get_memberships(&self) -> HashMap<ObjName<'a>, Vec<&'a GroundedMemb>> {
@@ -733,7 +742,7 @@ pub(crate) struct Entity {
 impl Entity {
     fn new(name: String) -> Entity {
         Entity {
-            name: name,
+            name,
             classes: RwLock::new(HashMap::new()),
             relations: RwLock::new(HashMap::new()),
             beliefs: RwLock::new(HashMap::new()),
@@ -756,18 +765,20 @@ impl Entity {
             .collect::<Vec<_>>()
     }
 
-    fn add_class_membership<T: ProofResContext>(&self,
-                                                agent: &Representation,
-                                                grounded: Arc<GroundedMemb>,
-                                                context: Option<&T>)
-                                                -> bool {
+    fn add_class_membership<T: ProofResContext>(
+        &self,
+        agent: &Representation,
+        grounded: &Arc<GroundedMemb>,
+        context: Option<&T>,
+    ) -> bool {
         let name = grounded.get_parent();
         if let Some(context) = context {
-            if !context.is_substituting() &&
-               lookahead_rules(agent, name, GroundedRef::Class(&*grounded)) {
+            if !context.is_substituting()
+                && lookahead_rules(agent, name, &GroundedRef::Class(&*grounded))
+            {
                 return false;
             }
-        } else if lookahead_rules(agent, name, GroundedRef::Class(&*grounded)) {
+        } else if lookahead_rules(agent, name, &GroundedRef::Class(&*grounded)) {
             return false;
         }
         let stmt_exists = {
@@ -783,7 +794,7 @@ impl Entity {
                     .bms
                     .as_ref()
                     .unwrap()
-                    .update_producers(Grounded::Class(Arc::downgrade(&current.clone())), context);
+                    .update_producers(&Grounded::Class(Arc::downgrade(&current.clone())), context);
             } else {
                 current.update(agent, &*grounded, None);
             }
@@ -793,7 +804,7 @@ impl Entity {
             if let Some(context) = context {
                 let bms = grounded.bms.as_ref().unwrap();
                 bms.last_was_produced(Some(context.get_id()));
-                bms.update_producers(Grounded::Class(Arc::downgrade(&grounded.clone())), context);
+                bms.update_producers(&Grounded::Class(Arc::downgrade(&grounded.clone())), context);
             }
             lock.insert(name.to_string(), grounded.clone());
             true
@@ -812,24 +823,26 @@ impl Entity {
         None
     }
 
-    fn get_relationships(&self,
-                         pos: usize,
-                         compare: &Predicate)
-                         -> HashMap<&str, Vec<Arc<GroundedFunc>>> {
+    fn get_relationships(
+        &self,
+        pos: usize,
+        compare: &Predicate,
+    ) -> HashMap<&str, Vec<Arc<GroundedFunc>>> {
         let mut res = HashMap::new();
         let (op, val) = compare.get_uval();
         let lock = self.relations.read().unwrap();
         for functions in lock.values() {
             for f in functions {
-                if f.name_in_pos(&*self.name, &pos) {
+                if f.name_in_pos(&*self.name, pos) {
                     let t = unsafe { &*(&**f as *const GroundedFunc) };
                     let rel_name = t.get_name();
                     match op {
                         None => res.entry(rel_name).or_insert(vec![]).push(f.clone()),
                         Some(CompOperator::Equal) => {
                             if f.get_value()
-                                   .unwrap()
-                                   .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS) {
+                                .unwrap()
+                                .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
+                            {
                                 res.entry(rel_name).or_insert(vec![]).push(f.clone())
                             }
                         }
@@ -844,18 +857,20 @@ impl Entity {
                             }
                         }
                         Some(CompOperator::LessEqual) => {
-                            if *val.as_ref().unwrap() > f.get_value().unwrap() ||
-                               f.get_value()
-                                   .unwrap()
-                                   .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS) {
+                            if *val.as_ref().unwrap() > f.get_value().unwrap() || f
+                                .get_value()
+                                .unwrap()
+                                .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
+                            {
                                 res.entry(rel_name).or_insert(vec![]).push(f.clone())
                             }
                         }
                         Some(CompOperator::MoreEqual) => {
-                            if *val.as_ref().unwrap() < f.get_value().unwrap() ||
-                               f.get_value()
-                                   .unwrap()
-                                   .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS) {
+                            if *val.as_ref().unwrap() < f.get_value().unwrap() || f
+                                .get_value()
+                                .unwrap()
+                                .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
+                            {
                                 res.entry(rel_name).or_insert(vec![]).push(f.clone())
                             }
                         }
@@ -869,18 +884,20 @@ impl Entity {
     /// Adds a new relationship for the entity.
     /// Returns 'true' in case the relationship didn't exist previously,
     /// 'false' otherwise. If it already existed, it's value is updated.
-    fn add_relationship<T: ProofResContext>(&self,
-                                            agent: &Representation,
-                                            func: Arc<GroundedFunc>,
-                                            context: Option<&T>)
-                                            -> bool {
+    fn add_relationship<T: ProofResContext>(
+        &self,
+        agent: &Representation,
+        func: &Arc<GroundedFunc>,
+        context: Option<&T>,
+    ) -> bool {
         let name = func.get_name();
         if let Some(context) = context {
-            if !context.is_substituting() &&
-               lookahead_rules(agent, name, GroundedRef::Function(&*func)) {
+            if !context.is_substituting()
+                && lookahead_rules(agent, name, &GroundedRef::Function(&*func))
+            {
                 return false;
             }
-        } else if lookahead_rules(agent, name, GroundedRef::Function(&*func)) {
+        } else if lookahead_rules(agent, name, &GroundedRef::Function(&*func)) {
             return false;
         }
         let stmt_exists = {
@@ -896,9 +913,10 @@ impl Entity {
                     if f.comparable(&*func) {
                         if let Some(context) = context {
                             f.update(agent, &*func, Some(context.get_id()));
-                            f.bms
-                                .update_producers(Grounded::Function(Arc::downgrade(&f.clone())),
-                                                  context);
+                            f.bms.update_producers(
+                                &Grounded::Function(Arc::downgrade(&f.clone())),
+                                context,
+                            );
                         } else {
                             f.update(agent, &*func, None);
                         }
@@ -911,9 +929,10 @@ impl Entity {
                 let mut lock = self.relations.write().unwrap();
                 if let Some(context) = context {
                     func.bms.last_was_produced(Some(context.get_id()));
-                    func.bms
-                        .update_producers(Grounded::Function(Arc::downgrade(&func.clone())),
-                                          context);
+                    func.bms.update_producers(
+                        &Grounded::Function(Arc::downgrade(&func.clone())),
+                        context,
+                    );
                 }
                 let funcs_type = lock.get_mut(name).unwrap();
                 funcs_type.push(func.clone());
@@ -926,7 +945,7 @@ impl Entity {
             if let Some(context) = context {
                 func.bms.last_was_produced(Some(context.get_id()));
                 func.bms
-                    .update_producers(Grounded::Function(Arc::downgrade(&func.clone())), context);
+                    .update_producers(&Grounded::Function(Arc::downgrade(&func.clone())), context);
             }
             lock.insert(name.to_string(), vec![func.clone()]);
             true
@@ -965,8 +984,7 @@ impl ClassMember {
     #[inline]
     fn unwrap_memb(&self) -> Arc<GroundedMemb> {
         match *self {
-            ClassMember::Entity(ref obj) |
-            ClassMember::Class(ref obj) => obj.clone(),
+            ClassMember::Entity(ref obj) | ClassMember::Class(ref obj) => obj.clone(),
             ClassMember::Func(_) => panic!(),
         }
     }
@@ -975,8 +993,7 @@ impl ClassMember {
     fn unwrap_fn(&self) -> Arc<GroundedFunc> {
         match *self {
             ClassMember::Func(ref f) => f.clone(),
-            ClassMember::Entity(_) |
-            ClassMember::Class(_) => panic!(),
+            ClassMember::Entity(_) | ClassMember::Class(_) => panic!(),
         }
     }
 }
@@ -1004,12 +1021,12 @@ pub(crate) struct Class {
 impl Class {
     fn new(name: String, kind: ClassKind) -> Class {
         Class {
-            name: name,
+            name,
             classes: RwLock::new(HashMap::new()),
             relations: RwLock::new(HashMap::new()),
             beliefs: RwLock::new(HashMap::new()),
             rules: RwLock::new(Vec::new()),
-            kind: kind,
+            kind,
             members: RwLock::new(Vec::new()),
         }
     }
@@ -1031,18 +1048,20 @@ impl Class {
     }
 
     /// Set a superclass of this class
-    fn add_class_membership<T: ProofResContext>(&self,
-                                                agent: &Representation,
-                                                grounded: Arc<GroundedMemb>,
-                                                context: Option<&T>)
-                                                -> bool {
+    fn add_class_membership<T: ProofResContext>(
+        &self,
+        agent: &Representation,
+        grounded: &Arc<GroundedMemb>,
+        context: Option<&T>,
+    ) -> bool {
         let name = grounded.get_parent();
         if let Some(context) = context {
-            if !context.is_substituting() &&
-               lookahead_rules(agent, name, GroundedRef::Class(&*grounded)) {
+            if !context.is_substituting()
+                && lookahead_rules(agent, name, &GroundedRef::Class(&*grounded))
+            {
                 return false;
             }
-        } else if lookahead_rules(agent, name, GroundedRef::Class(&*grounded)) {
+        } else if lookahead_rules(agent, name, &GroundedRef::Class(&*grounded)) {
             return false;
         }
         let stmt_exists = {
@@ -1058,7 +1077,7 @@ impl Class {
                     .bms
                     .as_ref()
                     .unwrap()
-                    .update_producers(Grounded::Class(Arc::downgrade(&current.clone())), context);
+                    .update_producers(&Grounded::Class(Arc::downgrade(&current.clone())), context);
             } else {
                 current.update(agent, &*grounded, None);
             }
@@ -1068,7 +1087,7 @@ impl Class {
             if let Some(context) = context {
                 let bms = grounded.bms.as_ref().unwrap();
                 bms.last_was_produced(Some(context.get_id()));
-                bms.update_producers(Grounded::Class(Arc::downgrade(&grounded.clone())), context);
+                bms.update_producers(&Grounded::Class(Arc::downgrade(&grounded.clone())), context);
             }
             lock.insert(name.to_string(), grounded.clone());
             true
@@ -1100,24 +1119,26 @@ impl Class {
         None
     }
 
-    fn get_relationships(&self,
-                         pos: usize,
-                         compare: &Predicate)
-                         -> HashMap<&str, Vec<Arc<GroundedFunc>>> {
+    fn get_relationships(
+        &self,
+        pos: usize,
+        compare: &Predicate,
+    ) -> HashMap<&str, Vec<Arc<GroundedFunc>>> {
         let mut res = HashMap::new();
         let (op, val) = compare.get_uval();
         let lock = self.relations.read().unwrap();
         for functions in lock.values() {
             for f in functions {
-                if f.name_in_pos(&*self.name, &pos) {
+                if f.name_in_pos(&*self.name, pos) {
                     let t = unsafe { &*(&**f as *const GroundedFunc) };
                     let rel_name = t.get_name();
                     match op {
                         None => res.entry(rel_name).or_insert(vec![]).push(f.clone()),
                         Some(CompOperator::Equal) => {
                             if f.get_value()
-                                   .unwrap()
-                                   .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS) {
+                                .unwrap()
+                                .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
+                            {
                                 res.entry(rel_name).or_insert(vec![]).push(f.clone())
                             }
                         }
@@ -1132,18 +1153,20 @@ impl Class {
                             }
                         }
                         Some(CompOperator::LessEqual) => {
-                            if *val.as_ref().unwrap() > f.get_value().unwrap() ||
-                               f.get_value()
-                                   .unwrap()
-                                   .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS) {
+                            if *val.as_ref().unwrap() > f.get_value().unwrap() || f
+                                .get_value()
+                                .unwrap()
+                                .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
+                            {
                                 res.entry(rel_name).or_insert(vec![]).push(f.clone())
                             }
                         }
                         Some(CompOperator::MoreEqual) => {
-                            if *val.as_ref().unwrap() < f.get_value().unwrap() ||
-                               f.get_value()
-                                   .unwrap()
-                                   .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS) {
+                            if *val.as_ref().unwrap() < f.get_value().unwrap() || f
+                                .get_value()
+                                .unwrap()
+                                .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
+                            {
                                 res.entry(rel_name).or_insert(vec![]).push(f.clone())
                             }
                         }
@@ -1183,14 +1206,16 @@ impl Class {
                             }
                         }
                         (CompOperator::LessEqual, val) => {
-                            if val < curr_func.get_value().unwrap() ||
-                               !val.approx_eq_ulps(&curr_func.get_value().unwrap(), FLOAT_EQ_ULPS) {
+                            if val < curr_func.get_value().unwrap() || !val
+                                .approx_eq_ulps(&curr_func.get_value().unwrap(), FLOAT_EQ_ULPS)
+                            {
                                 process = false;
                             }
                         }
                         (CompOperator::MoreEqual, val) => {
-                            if val > curr_func.get_value().unwrap() ||
-                               !val.approx_eq_ulps(&curr_func.get_value().unwrap(), FLOAT_EQ_ULPS) {
+                            if val > curr_func.get_value().unwrap() || !val
+                                .approx_eq_ulps(&curr_func.get_value().unwrap(), FLOAT_EQ_ULPS)
+                            {
                                 process = false;
                             }
                         }
@@ -1207,18 +1232,20 @@ impl Class {
     /// Add a relationship this class has with other classes/entities.
     /// Returns 'true' in case the relationship didn't exist,
     /// 'false' otherwise. If it already existed it's value is updated.
-    fn add_relationship<T: ProofResContext>(&self,
-                                            agent: &Representation,
-                                            func: Arc<GroundedFunc>,
-                                            context: Option<&T>)
-                                            -> bool {
+    fn add_relationship<T: ProofResContext>(
+        &self,
+        agent: &Representation,
+        func: Arc<GroundedFunc>,
+        context: Option<&T>,
+    ) -> bool {
         let name = func.get_name();
         if let Some(context) = context {
-            if !context.is_substituting() &&
-               lookahead_rules(agent, name, GroundedRef::Function(&*func)) {
+            if !context.is_substituting()
+                && lookahead_rules(agent, name, &GroundedRef::Function(&*func))
+            {
                 return false;
             }
-        } else if lookahead_rules(agent, name, GroundedRef::Function(&*func)) {
+        } else if lookahead_rules(agent, name, &GroundedRef::Function(&*func)) {
             return false;
         }
         let stmt_exists = {
@@ -1234,9 +1261,10 @@ impl Class {
                     if f.comparable(&*func) {
                         if let Some(context) = context {
                             f.update(agent, &*func, Some(context.get_id()));
-                            f.bms
-                                .update_producers(Grounded::Function(Arc::downgrade(&f.clone())),
-                                                  context);
+                            f.bms.update_producers(
+                                &Grounded::Function(Arc::downgrade(&f.clone())),
+                                context,
+                            );
                         } else {
                             f.update(agent, &*func, None);
                         }
@@ -1249,9 +1277,10 @@ impl Class {
                 let mut lock = self.relations.write().unwrap();
                 if let Some(context) = context {
                     func.bms.last_was_produced(Some(context.get_id()));
-                    func.bms
-                        .update_producers(Grounded::Function(Arc::downgrade(&func.clone())),
-                                          context);
+                    func.bms.update_producers(
+                        &Grounded::Function(Arc::downgrade(&func.clone())),
+                        context,
+                    );
                 }
                 let funcs_type = lock.get_mut(name).unwrap();
                 funcs_type.push(func.clone());
@@ -1264,7 +1293,7 @@ impl Class {
             if let Some(context) = context {
                 func.bms.last_was_produced(Some(context.get_id()));
                 func.bms
-                    .update_producers(Grounded::Function(Arc::downgrade(&func.clone())), context);
+                    .update_producers(&Grounded::Function(Arc::downgrade(&func.clone())), context);
             }
             lock.insert(name.to_string(), vec![func.clone()]);
             true
@@ -1296,7 +1325,7 @@ impl Class {
 }
 
 #[inline]
-fn lookahead_rules(agent: &Representation, name: &str, grounded: GroundedRef) -> bool {
+fn lookahead_rules(agent: &Representation, name: &str, grounded: &GroundedRef) -> bool {
     use super::rule_inf::rules_inference_lookahead;
     let rules: Vec<Arc<LogSentence>> = {
         let classes = agent.classes.read().unwrap();
@@ -1308,8 +1337,7 @@ fn lookahead_rules(agent: &Representation, name: &str, grounded: GroundedRef) ->
 }
 
 #[inline]
-fn rollback_from_rule(agent: &Representation, rule: Arc<LogSentence>) {
+fn rollback_from_rule(agent: &Representation, rule: &Arc<LogSentence>) {
     use super::rule_inf::rules_inference_rollback;
     rules_inference_rollback(agent, rule);
 }
-

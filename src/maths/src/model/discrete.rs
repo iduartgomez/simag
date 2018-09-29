@@ -1,16 +1,16 @@
-use std::collections::{VecDeque, HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::iter::{FromIterator, Iterator};
-use std::sync::{Arc, Weak, RwLock};
 use std::marker::PhantomData;
+use std::sync::{Arc, RwLock, Weak};
 
 use uuid::Uuid;
 
-use RGSLRng;
-use super::{Node, Variable, Observation};
 use super::{DType, Discrete};
-use dists::{Categorical, Bernoulli};
+use super::{Node, Observation, Variable};
+use dists::{Bernoulli, Categorical};
 use err::ErrMsg;
+use RGSLRng;
 
 // public traits for models:
 
@@ -74,16 +74,20 @@ pub type DefDiscreteModel<'a> = DiscreteModel<'a, DefDiscreteNode<'a, DefDiscret
 
 #[derive(Debug)]
 pub struct DiscreteModel<'a, N>
-    where N: DiscreteNode<'a>
+where
+    N: DiscreteNode<'a>,
 {
     vars: DiscreteDAG<'a, N>,
 }
 
 impl<'a, N> DiscreteModel<'a, N>
-    where N: DiscreteNode<'a>
+where
+    N: DiscreteNode<'a>,
 {
     pub fn new() -> DiscreteModel<'a, N> {
-        DiscreteModel { vars: DiscreteDAG::new() }
+        DiscreteModel {
+            vars: DiscreteDAG::new(),
+        }
     }
 
     /// Add a new variable to the model.
@@ -116,23 +120,26 @@ impl<'a, N> DiscreteModel<'a, N>
     /// values taken by parents at a given time). Each row has to sum up to 1.
     ///
     /// More information on how to build in the [CPT]() type page.
-    pub fn add_parent(&mut self,
-                      node: &'a <N as DiscreteNode<'a>>::Var,
-                      parent: &'a <N as DiscreteNode<'a>>::Var,
-                      prob: CPT)
-                      -> Result<(), ()> {
+    pub fn add_parent(
+        &mut self,
+        node: &'a <N as DiscreteNode<'a>>::Var,
+        parent: &'a <N as DiscreteNode<'a>>::Var,
+        prob: CPT,
+    ) -> Result<(), ()> {
         // checks to perform:
         //  - both exist in the model
         //  - the theoretical child cannot be a parent of the theoretical parent
         //    as the network is a DAG
         // find node and parents in the net
-        let node: Arc<N> = self.vars
+        let node: Arc<N> = self
+            .vars
             .nodes
             .iter()
             .find(|n| (&**n).get_dist() == node)
             .cloned()
             .ok_or(())?;
-        let parent: Arc<N> = self.vars
+        let parent: Arc<N> = self
+            .vars
             .nodes
             .iter()
             .find(|n| (&**n).get_dist() == parent)
@@ -152,14 +159,17 @@ impl<'a, N> DiscreteModel<'a, N>
 
     /// Remove a variable from the model, the childs will be disjoint if they don't
     /// have an other parent.
-    pub fn remove_var(&mut self,
-                      var: &'a <N as DiscreteNode<'a>>::Var,
-                      mut probs: HashMap<&'a <N as DiscreteNode<'a>>::Var, CPT>)
-                      -> Result<(), String> {
-        if let Some(pos) = self.vars
-               .nodes
-               .iter()
-               .position(|n| (&**n).get_dist() == var) {
+    pub fn remove_var(
+        &mut self,
+        var: &'a <N as DiscreteNode<'a>>::Var,
+        mut probs: HashMap<&'a <N as DiscreteNode<'a>>::Var, CPT>,
+    ) -> Result<(), String> {
+        if let Some(pos) = self
+            .vars
+            .nodes
+            .iter()
+            .position(|n| (&**n).get_dist() == var)
+        {
             if pos < self.vars.nodes.len() - 1 {
                 let parent = &self.vars.nodes[pos];
                 for node in &self.vars.nodes[pos + 1..] {
@@ -195,7 +205,8 @@ impl<'a, N> DiscreteModel<'a, N>
 
 #[derive(Debug)]
 struct DiscreteDAG<'a, N>
-    where N: DiscreteNode<'a>
+where
+    N: DiscreteNode<'a>,
 {
     _nlt: PhantomData<&'a ()>,
     nodes: Vec<Arc<N>>,
@@ -258,9 +269,9 @@ impl CPT {
         }
 
         Ok(CPT {
-               data: elements,
-               indexes: indexes,
-           })
+            data: elements,
+            indexes,
+        })
     }
 }
 
@@ -269,48 +280,51 @@ impl CPT {
 /// This type shouldn't be instantiated directly, instead add the random variable
 /// distribution to the network.
 pub struct DefDiscreteNode<'a, V: 'a>
-    where V: DiscreteVar
+where
+    V: DiscreteVar,
 {
     pub dist: &'a V,
     childs: RwLock<Vec<Weak<DefDiscreteNode<'a, V>>>>,
     cpt: RwLock<HashMap<Choices, DType>>,
     parents: RwLock<Vec<Arc<DefDiscreteNode<'a, V>>>>, // (categ, parent_ptr)
-    pos: RwLock<usize>, // position in the bayes net vec of self
+    pos: RwLock<usize>,                                // position in the bayes net vec of self
 }
 
 impl<'a, V: 'a + DiscreteVar> ::std::fmt::Debug for DefDiscreteNode<'a, V> {
     fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
-        write!(f,
-               "DefDiscreteNode {{ dist: {d:?}, childs: {c}, parents: {p}, pos: {pos} }}",
-               c = self.childs.read().unwrap().len(),
-               p = self.parents.read().unwrap().len(),
-               pos = *self.pos.read().unwrap(),
-               d = self.dist)
+        write!(
+            f,
+            "DefDiscreteNode {{ dist: {d:?}, childs: {c}, parents: {p}, pos: {pos} }}",
+            c = self.childs.read().unwrap().len(),
+            p = self.parents.read().unwrap().len(),
+            pos = *self.pos.read().unwrap(),
+            d = self.dist
+        )
     }
 }
 
 node_impl!(DefDiscreteNode, DiscreteVar);
 
 impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
-    where V: DiscreteVar
+where
+    V: DiscreteVar,
 {
     type Var = V;
 
     fn new(dist: &'a V, pos: usize) -> Result<Self, ()> {
         match *dist.dist_type() {
-            DType::Categorical(_) |
-            DType::Bernoulli(_) => {}
+            DType::Categorical(_) | DType::Bernoulli(_) => {}
             _ => return Err(()),
         }
 
         // get the probabilities from the dist and insert as default cpt
         Ok(DefDiscreteNode {
-               dist: dist,
-               childs: RwLock::new(vec![]),
-               parents: RwLock::new(vec![]),
-               pos: RwLock::new(pos),
-               cpt: RwLock::new(HashMap::new()),
-           })
+            dist,
+            childs: RwLock::new(vec![]),
+            parents: RwLock::new(vec![]),
+            pos: RwLock::new(pos),
+            cpt: RwLock::new(HashMap::new()),
+        })
     }
 
     fn get_dist(&self) -> &'a V {
@@ -353,8 +367,9 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
         let parents = &mut *self.parents.write().unwrap();
         // check for duplicates:
         if let None = parents
-               .iter()
-               .position(|ref x| &*x.get_dist() == parent.get_dist()) {
+            .iter()
+            .position(|ref x| &*x.get_dist() == parent.get_dist())
+        {
             parents.push(parent);
         };
     }
@@ -381,8 +396,9 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
     fn remove_child(&self, child: &V) {
         let childs = &mut *self.childs.write().unwrap();
         if let Some(pos) = childs
-               .iter()
-               .position(|ref x| &*x.upgrade().unwrap().get_dist() == child) {
+            .iter()
+            .position(|ref x| &*x.upgrade().unwrap().get_dist() == child)
+        {
             childs.remove(pos);
         }
     }
@@ -392,14 +408,10 @@ impl<'a, V: 'a> DiscreteNode<'a> for DefDiscreteNode<'a, V>
 
         let parents = &*self.parents.read().unwrap();
         let rows1 = probs.dim_num()[0];
-        let rows0 = parents
-            .iter()
-            .fold(1, |t, p| {
-                let i = {
-                    p.dist.k_num()
-                };
-                t * (i as usize)
-            }) * parent_k;
+        let rows0 = parents.iter().fold(1, |t, p| {
+            let i = { p.dist.k_num() };
+            t * (i as usize)
+        }) * parent_k;
         if ((rows0 > parent_k) && (rows1 != rows0)) && (parent_k != rows1) {
             return Err("insufficient number of probability rows in the CPT".to_string());
         }
@@ -436,9 +448,7 @@ pub struct DefDiscreteVar {
 
 fn validate_dist(dist: &DType) -> Result<(), ()> {
     match *dist {
-        DType::Bernoulli(_) |
-        DType::Categorical(_) |
-        DType::Poisson => Ok(()),
+        DType::Bernoulli(_) | DType::Categorical(_) | DType::Poisson => Ok(()),
         _ => Err(()),
     }
 }
@@ -476,4 +486,3 @@ impl DiscreteVar for DefDiscreteVar {
 use dists::AsContinuous;
 
 impl AsContinuous for DefDiscreteVar {}
-

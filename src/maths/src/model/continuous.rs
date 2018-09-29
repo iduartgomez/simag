@@ -1,23 +1,22 @@
-use std::collections::{VecDeque, HashSet};
+use std::collections::{HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::iter::{FromIterator, Iterator};
-use std::sync::{Arc, Weak, RwLock};
 use std::marker::PhantomData;
+use std::sync::{Arc, RwLock, Weak};
 
 use uuid::Uuid;
 
-use RGSLRng;
-use super::{Node, Variable, Observation};
-use super::{DType, Continuous};
-use dists::{Sample, Normalization};
+use super::{Continuous, DType};
+use super::{Node, Observation, Variable};
+use dists::{Normalization, Sample};
 use err::ErrMsg;
+use RGSLRng;
 
 // public traits for models:
 
 /// Node trait for a continuous model. This node is reference counted and inmutably shared
 /// throught Arc, add interior mutability if necessary.
-pub trait ContNode<'a>: Node + Sized
-{
+pub trait ContNode<'a>: Node + Sized {
     type Var: 'a + ContVar + Normalization;
 
     /// Constructor method for the continuous node in the Bayesian net.
@@ -48,7 +47,7 @@ pub trait ContNode<'a>: Node + Sized
     /// Remove a child from this node. Does not remove self as parent implicitly!
     fn remove_child(&self, child: &Self::Var);
 
-    /// Returns the position of the parent for each edge in the network and 
+    /// Returns the position of the parent for each edge in the network and
     /// the values of the edges, if any,
     fn get_edges(&self) -> Vec<(Option<f64>, usize)>;
 }
@@ -78,17 +77,19 @@ pub type DefContModel<'a> = ContModel<'a, DefContNode<'a, DefContVar>>;
 
 #[derive(Debug)]
 pub struct ContModel<'a, N>
-    where N: ContNode<'a>
+where
+    N: ContNode<'a>,
 {
-    vars: ContDAG<'a, N>
+    vars: ContDAG<'a, N>,
 }
 
 impl<'a, N> ContModel<'a, N>
-    where N: ContNode<'a>
+where
+    N: ContNode<'a>,
 {
     pub fn new() -> ContModel<'a, N> {
         ContModel {
-            vars: ContDAG::new()
+            vars: ContDAG::new(),
         }
     }
 
@@ -106,23 +107,26 @@ impl<'a, N> ContModel<'a, N>
     /// Takes the distribution of a variable, and the parent variable distribution
     /// as arguments and returns a result indicating if the parent was added properly.
     /// Both variables have to be added previously to the model.
-    pub fn add_parent(&mut self,
-                      node: &'a <N as ContNode<'a>>::Var,
-                      parent: &'a <N as ContNode<'a>>::Var,
-                      weight: Option<f64>)
-                      -> Result<(), ()> {
+    pub fn add_parent(
+        &mut self,
+        node: &'a <N as ContNode<'a>>::Var,
+        parent: &'a <N as ContNode<'a>>::Var,
+        weight: Option<f64>,
+    ) -> Result<(), ()> {
         // checks to perform:
         //  - both exist in the model
         //  - the theoretical child cannot be a parent of the theoretical parent
         //    as the network is a DAG
         // find node and parents in the net
-        let node: Arc<N> = self.vars
+        let node: Arc<N> = self
+            .vars
             .nodes
             .iter()
             .find(|n| (&**n).get_dist() == node)
             .cloned()
             .ok_or(())?;
-        let parent: Arc<N> = self.vars
+        let parent: Arc<N> = self
+            .vars
             .nodes
             .iter()
             .find(|n| (&**n).get_dist() == parent)
@@ -137,10 +141,12 @@ impl<'a, N> ContModel<'a, N>
     /// Remove a variable from the model, the childs will be disjoint if they don't
     /// have an other parent.
     pub fn remove_var(&mut self, var: &'a <N as ContNode<'a>>::Var) {
-        if let Some(pos) = self.vars
-               .nodes
-               .iter()
-               .position(|n| (&**n).get_dist() == var) {
+        if let Some(pos) = self
+            .vars
+            .nodes
+            .iter()
+            .position(|n| (&**n).get_dist() == var)
+        {
             if pos < self.vars.nodes.len() - 1 {
                 let parent = &self.vars.nodes[pos];
                 for node in &self.vars.nodes[pos + 1..] {
@@ -171,7 +177,8 @@ impl<'a, N> ContModel<'a, N>
 
 #[derive(Debug)]
 struct ContDAG<'a, N>
-    where N: ContNode<'a>
+where
+    N: ContNode<'a>,
 {
     _nlt: PhantomData<&'a ()>,
     nodes: Vec<Arc<N>>,
@@ -184,7 +191,8 @@ dag_impl!(ContDAG, ContNode; [ContVar + Normalization]);
 /// This type shouldn't be instantiated directly, instead add the random variable
 /// distribution to the network.
 pub struct DefContNode<'a, V: 'a>
-    where V: ContVar
+where
+    V: ContVar,
 {
     pub dist: &'a V,
     childs: RwLock<Vec<Weak<DefContNode<'a, V>>>>,
@@ -195,42 +203,45 @@ pub struct DefContNode<'a, V: 'a>
 
 impl<'a, V: 'a + ContVar> ::std::fmt::Debug for DefContNode<'a, V> {
     fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
-        write!(f,
-               "DefContNode {{ dist: {d:?}, childs: {c}, parents: {p}, pos: {pos}, edges: {e:?} }}",
-               c = self.childs.read().unwrap().len(),
-               p = self.parents.read().unwrap().len(),
-               pos = *self.pos.read().unwrap(),
-               d = self.dist,
-               e = self.edges.read().unwrap())
+        write!(
+            f,
+            "DefContNode {{ dist: {d:?}, childs: {c}, parents: {p}, pos: {pos}, edges: {e:?} }}",
+            c = self.childs.read().unwrap().len(),
+            p = self.parents.read().unwrap().len(),
+            pos = *self.pos.read().unwrap(),
+            d = self.dist,
+            e = self.edges.read().unwrap()
+        )
     }
 }
 
 node_impl!(DefContNode, ContVar);
 
 impl<'a, V: 'a> ContNode<'a> for DefContNode<'a, V>
-    where V: ContVar + Normalization
+where
+    V: ContVar + Normalization,
 {
     type Var = V;
 
     fn new(dist: &'a V, pos: usize) -> Result<Self, ()> {
         match *dist.dist_type() {
-            DType::Normal(_) |
-            DType::Beta(_) |
-            DType::Exponential(_) |
-            DType::Gamma(_) |
-            DType::ChiSquared(_) |
-            DType::TDist(_) |
-            DType::FDist(_) |
-            DType::Cauchy(_) |
-            DType::LogNormal(_) |
-            DType::Logistic(_) |
-            DType::Pareto(_) => {}
+            DType::Normal(_)
+            | DType::Beta(_)
+            | DType::Exponential(_)
+            | DType::Gamma(_)
+            | DType::ChiSquared(_)
+            | DType::TDist(_)
+            | DType::FDist(_)
+            | DType::Cauchy(_)
+            | DType::LogNormal(_)
+            | DType::Logistic(_)
+            | DType::Pareto(_) => {}
             _ => return Err(()),
         }
 
         // get the probabilities from the dist and insert as default cpt
         Ok(DefContNode {
-            dist: dist,
+            dist,
             childs: RwLock::new(vec![]),
             parents: RwLock::new(vec![]),
             edges: RwLock::new(vec![]),
@@ -269,8 +280,9 @@ impl<'a, V: 'a> ContNode<'a> for DefContNode<'a, V>
         let edges = &mut *self.edges.write().unwrap();
         // check for duplicates:
         if let Some(pos) = parents
-                .iter()
-                .position(|ref x| &*x.get_dist() == parent.get_dist()) {
+            .iter()
+            .position(|ref x| &*x.get_dist() == parent.get_dist())
+        {
             edges[pos] = weight;
         } else {
             parents.push(parent);
@@ -302,8 +314,9 @@ impl<'a, V: 'a> ContNode<'a> for DefContNode<'a, V>
     fn remove_child(&self, child: &V) {
         let childs = &mut *self.childs.write().unwrap();
         if let Some(pos) = childs
-               .iter()
-               .position(|ref x| &*x.upgrade().unwrap().get_dist() == child) {
+            .iter()
+            .position(|ref x| &*x.upgrade().unwrap().get_dist() == child)
+        {
             childs.remove(pos);
         }
     }
@@ -328,17 +341,17 @@ pub struct DefContVar {
 
 fn validate_dist(dist: &DType) -> Result<(), ()> {
     match *dist {
-        DType::Normal(_) |
-        DType::Beta(_) |
-        DType::Exponential(_) |
-        DType::Gamma(_) |
-        DType::ChiSquared(_) |
-        DType::TDist(_) |
-        DType::FDist(_) |
-        DType::Cauchy(_) |
-        DType::LogNormal(_) |
-        DType::Logistic(_) |
-        DType::Pareto(_) => Ok(()), 
+        DType::Normal(_)
+        | DType::Beta(_)
+        | DType::Exponential(_)
+        | DType::Gamma(_)
+        | DType::ChiSquared(_)
+        | DType::TDist(_)
+        | DType::FDist(_)
+        | DType::Cauchy(_)
+        | DType::LogNormal(_)
+        | DType::Logistic(_)
+        | DType::Pareto(_) => Ok(()),
         _ => Err(()),
     }
 }

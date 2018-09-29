@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use chrono::UTC;
 
-use super::{Time, ParseErrF};
+use super::{ParseErrF, Time};
 use agent;
 use agent::BmsWrapper;
 use lang::common::*;
@@ -72,17 +72,20 @@ impl<'a> LogSentence {
             let mut lhs: Vec<Rc<Particle>> = vec![];
             correct_iexpr(&sent, &mut lhs)?;
             let lhs: HashSet<_> = lhs.iter().map(|x| &**x as *const Particle).collect();
-            let rhs: HashSet<_> = sent.particles
+            let rhs: HashSet<_> = sent
+                .particles
                 .iter()
                 .filter(|x| x.is_atom())
                 .map(|x| &**x as *const Particle)
                 .collect();
-            let rhs_v: Vec<_> = rhs.difference(&lhs)
+            let rhs_v: Vec<_> = rhs
+                .difference(&lhs)
                 .map(|p| unsafe { &**p })
                 .filter(|p| p.is_atom())
                 .map(|p| p.clone_pred())
                 .collect();
-            let lhs_v: Vec<_> = lhs.iter()
+            let lhs_v: Vec<_> = lhs
+                .iter()
                 .map(|p| unsafe { &**p })
                 .filter(|p| p.is_atom())
                 .map(|p| p.clone_pred())
@@ -113,7 +116,8 @@ impl<'a> LogSentence {
                 sent.sent_kind = SentKind::Rule;
             }
         } else {
-            let preds: Vec<_> = sent.particles
+            let preds: Vec<_> = sent
+                .particles
                 .iter()
                 .filter(|p| p.is_atom())
                 .map(|p| p.clone_pred())
@@ -134,9 +138,7 @@ impl<'a> LogSentence {
                     if let Some(ref opargs) = func.op_args {
                         for arg in opargs {
                             match *arg {
-                                OpArg::TimeDecl(_) |
-                                OpArg::TimeVar |
-                                OpArg::TimeVarAssign(_) => {
+                                OpArg::TimeDecl(_) | OpArg::TimeVar | OpArg::TimeVarAssign(_) => {
                                     return Err(LogSentErr::InvalidOpArg);
                                 }
                                 _ => {}
@@ -148,9 +150,7 @@ impl<'a> LogSentence {
                     if let Some(ref opargs) = cls.op_args {
                         for arg in opargs {
                             match *arg {
-                                OpArg::TimeDecl(_) |
-                                OpArg::TimeVar |
-                                OpArg::TimeVarAssign(_) => {
+                                OpArg::TimeDecl(_) | OpArg::TimeVar | OpArg::TimeVarAssign(_) => {
                                     return Err(LogSentErr::InvalidOpArg);
                                 }
                                 _ => {}
@@ -167,9 +167,7 @@ impl<'a> LogSentence {
                     if let Some(ref opargs) = func.op_args {
                         for arg in opargs {
                             match *arg {
-                                OpArg::TimeDecl(_) |
-                                OpArg::TimeVar |
-                                OpArg::TimeVarFrom(_) => {
+                                OpArg::TimeDecl(_) | OpArg::TimeVar | OpArg::TimeVarFrom(_) => {
                                     return Err(LogSentErr::InvalidOpArg);
                                 }
                                 _ => {}
@@ -181,9 +179,7 @@ impl<'a> LogSentence {
                     if let Some(ref opargs) = cls.op_args {
                         for arg in opargs {
                             match *arg {
-                                OpArg::TimeDecl(_) |
-                                OpArg::TimeVar |
-                                OpArg::TimeVarFrom(_) => {
+                                OpArg::TimeDecl(_) | OpArg::TimeVar | OpArg::TimeVarFrom(_) => {
                                     return Err(LogSentErr::InvalidOpArg);
                                 }
                                 _ => {}
@@ -196,14 +192,16 @@ impl<'a> LogSentence {
         Ok(())
     }
 
-    pub fn solve<T: ProofResContext>(&self,
-                                     agent: &agent::Representation,
-                                     assignments: Option<HashMap<&Var, &agent::VarAssignment>>,
-                                     context: &mut T) {
+    pub fn solve<T: ProofResContext>(
+        &self,
+        agent: &agent::Representation,
+        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        context: &mut T,
+    ) {
         let root = &self.root;
         let time_assign = {
             if self.vars.is_some() {
-                self.get_time_assignments(agent, &assignments)
+                self.get_time_assignments(agent, assignments)
             } else {
                 HashMap::new()
             }
@@ -213,56 +211,75 @@ impl<'a> LogSentence {
             return;
         }
         if self.sent_kind.is_iexpr() {
-            if let Some(res) = root.as_ref()
-                .unwrap()
-                .solve(agent, &assignments, &time_assign, context) {
+            if let Some(res) =
+                root.as_ref()
+                    .unwrap()
+                    .solve(agent, assignments, &time_assign, context)
+            {
                 if res {
-                    root.as_ref()
-                        .unwrap()
-                        .substitute(agent, &assignments, &time_assign, context, &false);
+                    root.as_ref().unwrap().substitute(
+                        agent,
+                        assignments,
+                        &time_assign,
+                        context,
+                        false,
+                    );
                     context.set_result(Some(true));
                 } else {
-                    root.as_ref()
-                        .unwrap()
-                        .substitute(agent, &assignments, &time_assign, context, &true);
+                    root.as_ref().unwrap().substitute(
+                        agent,
+                        assignments,
+                        &time_assign,
+                        context,
+                        true,
+                    );
                     context.set_result(Some(false));
                 }
             } else {
                 context.set_result(None);
             }
-        } else {
-            if let Some(res) = root.as_ref()
+        } else if let Some(res) =
+            root.as_ref()
                 .unwrap()
-                .solve(agent, &assignments, &time_assign, context) {
-                if res {
-                    if root.as_ref().unwrap().is_icond() {
-                        context.substituting();
-                        root.as_ref()
-                            .unwrap()
-                            .substitute(agent, &assignments, &time_assign, context, &false)
-                    }
-                    context.set_result(Some(true));
-                } else {
-                    if root.as_ref().unwrap().is_icond() {
-                        context.substituting();
-                        root.as_ref()
-                            .unwrap()
-                            .substitute(agent, &assignments, &time_assign, context, &true)
-                    }
-                    context.set_result(Some(false));
+                .solve(agent, assignments, &time_assign, context)
+        {
+            if res {
+                if root.as_ref().unwrap().is_icond() {
+                    context.substituting();
+                    root.as_ref().unwrap().substitute(
+                        agent,
+                        assignments,
+                        &time_assign,
+                        context,
+                        false,
+                    )
                 }
-            } else if !context.is_inconsistent() {
-                context.set_result(None);
+                context.set_result(Some(true));
             } else {
+                if root.as_ref().unwrap().is_icond() {
+                    context.substituting();
+                    root.as_ref().unwrap().substitute(
+                        agent,
+                        assignments,
+                        &time_assign,
+                        context,
+                        true,
+                    )
+                }
                 context.set_result(Some(false));
             }
+        } else if !context.is_inconsistent() {
+            context.set_result(None);
+        } else {
+            context.set_result(Some(false));
         }
     }
 
-    fn get_time_assignments(&self,
-                            agent: &agent::Representation,
-                            var_assign: &Option<HashMap<&Var, &agent::VarAssignment>>)
-                            -> HashMap<&Var, Arc<BmsWrapper>> {
+    fn get_time_assignments(
+        &self,
+        agent: &agent::Representation,
+        var_assign: Option<&HashMap<&Var, &agent::VarAssignment>>,
+    ) -> HashMap<&Var, Arc<BmsWrapper>> {
         let mut time_assign = HashMap::new();
         'outer: for var in self.vars.as_ref().unwrap() {
             match var.kind {
@@ -289,7 +306,9 @@ impl<'a> LogSentence {
     }
 
     pub fn extract_all_predicates(self) -> (Vec<Arc<Var>>, Vec<Rc<Assert>>) {
-        let LogSentence { vars, particles, .. } = self;
+        let LogSentence {
+            vars, particles, ..
+        } = self;
         let vars = if let Some(vars) = vars { vars } else { vec![] };
         let mut preds = vec![];
         let mut checked: HashSet<*const Particle> = HashSet::new();
@@ -331,7 +350,7 @@ impl<'a> LogSentence {
         LhsPreds::new(&*self.root.as_ref().unwrap().get_next(0).unwrap(), self)
     }
 
-    fn add_var(&mut self, var: Arc<Var>) {
+    fn add_var(&mut self, var: &Arc<Var>) {
         if self.vars.is_none() {
             self.vars = Some(Vec::new());
         }
@@ -342,7 +361,7 @@ impl<'a> LogSentence {
         *self.id.as_ref().unwrap()
     }
 
-    fn add_skolem(&mut self, skolem: Arc<Skolem>) {
+    fn add_skolem(&mut self, skolem: &Arc<Skolem>) {
         if self.skolem.is_none() {
             self.vars = Some(Vec::new());
         }
@@ -354,8 +373,8 @@ impl<'a> LogSentence {
     }
 
     fn generate_uid(&mut self) {
-        use std::hash::{Hash, Hasher};
         use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
         let mut id = vec![];
         for a in &self.particles {
             match **a {
@@ -398,7 +417,7 @@ impl<'a> LhsPreds<'a> {
             preds: f,
             index: idx,
             curr: 0,
-            sent: sent,
+            sent,
             done: HashSet::new(),
         }
     }
@@ -495,9 +514,7 @@ impl<'a> ::std::iter::Iterator for SentVarReq<'a> {
     fn next(&mut self) -> Option<HashMap<&'a Var, Vec<&'a Assert>>> {
         if let Some(picks) = self.iter.next() {
             let mut requeriments = HashMap::new();
-            if self.iter.sent.vars.is_none() {
-                return None;
-            }
+            self.iter.sent.vars.as_ref()?;
             for var in self.iter.sent.vars.as_ref().unwrap() {
                 let mut var_req = Vec::new();
                 for a in &picks {
@@ -582,8 +599,8 @@ pub(crate) enum SentKind {
 }
 
 impl SentKind {
-    fn is_iexpr(&self) -> bool {
-        match *self {
+    fn is_iexpr(self) -> bool {
+        match self {
             SentKind::IExpr => true,
             _ => false,
         }
@@ -605,28 +622,39 @@ impl LogicIndCond {
     }
 
     #[inline]
-    fn solve<T: ProofResContext>(&self,
-                                 agent: &agent::Representation,
-                                 assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                                 time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
-                                 context: &mut T)
-                                 -> Option<bool> {
-        if let Some(res) = self.next_lhs.solve(agent, assignments, time_assign, context) {
-            if res { Some(true) } else { Some(false) }
+    fn solve<T: ProofResContext>(
+        &self,
+        agent: &agent::Representation,
+        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        context: &mut T,
+    ) -> Option<bool> {
+        if let Some(res) = self
+            .next_lhs
+            .solve(agent, assignments, time_assign, context)
+        {
+            if res {
+                Some(true)
+            } else {
+                Some(false)
+            }
         } else {
             None
         }
     }
 
     #[inline]
-    fn substitute<T: ProofResContext>(&self,
-                                      agent: &agent::Representation,
-                                      assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                                      time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
-                                      context: &mut T,
-                                      rhs: &bool) {
+    fn substitute<T: ProofResContext>(
+        &self,
+        agent: &agent::Representation,
+        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        context: &mut T,
+        rhs: bool,
+    ) {
         if self.next_rhs.is_disjunction() || !rhs {
-            self.next_rhs.substitute(agent, assignments, time_assign, context, rhs);
+            self.next_rhs
+                .substitute(agent, assignments, time_assign, context, rhs);
         }
     }
 
@@ -641,8 +669,8 @@ impl LogicIndCond {
 
 impl fmt::Display for LogicIndCond {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let n0 = String::from(format!("{}", self.next_lhs));
-        let n1 = String::from(format!("{}", self.next_rhs));
+        let n0 = format!("{}", self.next_lhs);
+        let n1 = format!("{}", self.next_rhs);
         write!(f, "Conditional(n0: {}, n1: {})", n0, n1)
     }
 }
@@ -662,17 +690,22 @@ impl LogicEquivalence {
     }
 
     #[inline]
-    fn solve<T: ProofResContext>(&self,
-                                 agent: &agent::Representation,
-                                 assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                                 time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
-                                 context: &mut T)
-                                 -> Option<bool> {
+    fn solve<T: ProofResContext>(
+        &self,
+        agent: &agent::Representation,
+        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        context: &mut T,
+    ) -> Option<bool> {
         context.set_inconsistent(false);
-        let n0_res = self.next_lhs.solve(agent, assignments, time_assign, context);
+        let n0_res = self
+            .next_lhs
+            .solve(agent, assignments, time_assign, context);
         let first = context.is_inconsistent();
         context.set_inconsistent(false);
-        let n1_res = self.next_rhs.solve(agent, assignments, time_assign, context);
+        let n1_res = self
+            .next_rhs
+            .solve(agent, assignments, time_assign, context);
         let second = context.is_inconsistent();
         if let Some(val0) = n0_res {
             if let Some(val1) = n1_res {
@@ -708,8 +741,8 @@ impl LogicEquivalence {
 
 impl fmt::Display for LogicEquivalence {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let n0 = String::from(format!("{}", self.next_lhs));
-        let n1 = String::from(format!("{}", self.next_rhs));
+        let n0 = format!("{}", self.next_lhs);
+        let n1 = format!("{}", self.next_rhs);
         write!(f, "Equivalence(n0: {}, n1: {})", n0, n1)
     }
 }
@@ -729,15 +762,20 @@ impl LogicImplication {
     }
 
     #[inline]
-    fn solve<T: ProofResContext>(&self,
-                                 agent: &agent::Representation,
-                                 assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                                 time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
-                                 context: &mut T)
-                                 -> Option<bool> {
-        let n0_res = self.next_lhs.solve(agent, assignments, time_assign, context);
+    fn solve<T: ProofResContext>(
+        &self,
+        agent: &agent::Representation,
+        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        context: &mut T,
+    ) -> Option<bool> {
+        let n0_res = self
+            .next_lhs
+            .solve(agent, assignments, time_assign, context);
         context.set_inconsistent(false);
-        let n1_res = self.next_rhs.solve(agent, assignments, time_assign, context);
+        let n1_res = self
+            .next_rhs
+            .solve(agent, assignments, time_assign, context);
         if let Some(true) = n0_res {
             if let Some(false) = n1_res {
                 Some(false)
@@ -763,8 +801,8 @@ impl LogicImplication {
 
 impl fmt::Display for LogicImplication {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let n0 = String::from(format!("{}", self.next_lhs));
-        let n1 = String::from(format!("{}", self.next_rhs));
+        let n0 = format!("{}", self.next_lhs);
+        let n1 = format!("{}", self.next_rhs);
         write!(f, "Implication(n0: {}, n1: {})", n0, n1)
     }
 }
@@ -784,14 +822,19 @@ impl LogicConjunction {
     }
 
     #[inline]
-    fn solve<T: ProofResContext>(&self,
-                                 agent: &agent::Representation,
-                                 assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                                 time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
-                                 context: &mut T)
-                                 -> Option<bool> {
-        let n0_res = self.next_lhs.solve(agent, assignments, time_assign, context);
-        let n1_res = self.next_rhs.solve(agent, assignments, time_assign, context);
+    fn solve<T: ProofResContext>(
+        &self,
+        agent: &agent::Representation,
+        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        context: &mut T,
+    ) -> Option<bool> {
+        let n0_res = self
+            .next_lhs
+            .solve(agent, assignments, time_assign, context);
+        let n1_res = self
+            .next_rhs
+            .solve(agent, assignments, time_assign, context);
         if n0_res.is_none() | n1_res.is_none() {
             return None;
         }
@@ -804,14 +847,18 @@ impl LogicConjunction {
     }
 
     #[inline]
-    fn substitute<T: ProofResContext>(&self,
-                                      agent: &agent::Representation,
-                                      assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                                      time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
-                                      context: &mut T,
-                                      rhs: &bool) {
-        self.next_rhs.substitute(agent, assignments, time_assign, context, rhs);
-        self.next_lhs.substitute(agent, assignments, time_assign, context, rhs);
+    fn substitute<T: ProofResContext>(
+        &self,
+        agent: &agent::Representation,
+        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        context: &mut T,
+        rhs: bool,
+    ) {
+        self.next_rhs
+            .substitute(agent, assignments, time_assign, context, rhs);
+        self.next_lhs
+            .substitute(agent, assignments, time_assign, context, rhs);
     }
 
     fn get_next(&self, pos: usize) -> &Particle {
@@ -825,8 +872,8 @@ impl LogicConjunction {
 
 impl fmt::Display for LogicConjunction {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let n0 = String::from(format!("{}", self.next_lhs));
-        let n1 = String::from(format!("{}", self.next_rhs));
+        let n0 = format!("{}", self.next_lhs);
+        let n1 = format!("{}", self.next_rhs);
         write!(f, "Conjunction(n0: {}, n1: {})", n0, n1)
     }
 }
@@ -846,14 +893,19 @@ impl LogicDisjunction {
     }
 
     #[inline]
-    fn solve<T: ProofResContext>(&self,
-                                 agent: &agent::Representation,
-                                 assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                                 time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
-                                 context: &mut T)
-                                 -> Option<bool> {
-        let n0_res = self.next_lhs.solve(agent, assignments, time_assign, context);
-        let n1_res = self.next_rhs.solve(agent, assignments, time_assign, context);
+    fn solve<T: ProofResContext>(
+        &self,
+        agent: &agent::Representation,
+        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        context: &mut T,
+    ) -> Option<bool> {
+        let n0_res = self
+            .next_lhs
+            .solve(agent, assignments, time_assign, context);
+        let n1_res = self
+            .next_rhs
+            .solve(agent, assignments, time_assign, context);
         if n0_res != n1_res {
             if n0_res.is_some() && n1_res.is_some() {
                 context.set_inconsistent(false);
@@ -872,16 +924,20 @@ impl LogicDisjunction {
     }
 
     #[inline]
-    fn substitute<T: ProofResContext>(&self,
-                                      agent: &agent::Representation,
-                                      assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                                      time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
-                                      context: &mut T,
-                                      rhs: &bool) {
-        if *rhs {
-            self.next_rhs.substitute(agent, assignments, time_assign, context, rhs)
+    fn substitute<T: ProofResContext>(
+        &self,
+        agent: &agent::Representation,
+        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        context: &mut T,
+        rhs: bool,
+    ) {
+        if rhs {
+            self.next_rhs
+                .substitute(agent, assignments, time_assign, context, rhs)
         } else {
-            self.next_lhs.substitute(agent, assignments, time_assign, context, rhs)
+            self.next_lhs
+                .substitute(agent, assignments, time_assign, context, rhs)
         }
     }
 
@@ -896,8 +952,8 @@ impl LogicDisjunction {
 
 impl fmt::Display for LogicDisjunction {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let n0 = String::from(format!("{}", self.next_lhs));
-        let n1 = String::from(format!("{}", self.next_rhs));
+        let n0 = format!("{}", self.next_lhs);
+        let n1 = format!("{}", self.next_rhs);
         write!(f, "Disjunction(n0: {}, n1: {})", n0, n1)
     }
 }
@@ -909,30 +965,43 @@ struct LogicAtom {
 
 impl LogicAtom {
     fn new(term: Assert) -> LogicAtom {
-        LogicAtom { pred: Rc::new(term) }
+        LogicAtom {
+            pred: Rc::new(term),
+        }
     }
 
     #[inline]
-    fn solve<T: ProofResContext>(&self,
-                                 agent: &agent::Representation,
-                                 assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                                 time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
-                                 context: &mut T)
-                                 -> Option<bool> {
-        if let Some(res) = self.pred.grounded_eq(agent, assignments, time_assign, context) {
-            if res { Some(true) } else { Some(false) }
+    fn solve<T: ProofResContext>(
+        &self,
+        agent: &agent::Representation,
+        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        context: &mut T,
+    ) -> Option<bool> {
+        if let Some(res) = self
+            .pred
+            .grounded_eq(agent, assignments, time_assign, context)
+        {
+            if res {
+                Some(true)
+            } else {
+                Some(false)
+            }
         } else {
             None
         }
     }
 
     #[inline]
-    fn substitute<T: ProofResContext>(&self,
-                                      agent: &agent::Representation,
-                                      assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                                      time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
-                                      context: &mut T) {
-        self.pred.substitute(agent, assignments, time_assign, context)
+    fn substitute<T: ProofResContext>(
+        &self,
+        agent: &agent::Representation,
+        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        context: &mut T,
+    ) {
+        self.pred
+            .substitute(agent, assignments, time_assign, context)
     }
 
     fn get_name(&self) -> &str {
@@ -963,12 +1032,13 @@ enum Particle {
 
 impl Particle {
     #[inline]
-    fn solve<T: ProofResContext>(&self,
-                                 agent: &agent::Representation,
-                                 assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                                 time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
-                                 context: &mut T)
-                                 -> Option<bool> {
+    fn solve<T: ProofResContext>(
+        &self,
+        agent: &agent::Representation,
+        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        context: &mut T,
+    ) -> Option<bool> {
         match *self {
             Particle::Conjunction(ref p) => p.solve(agent, assignments, time_assign, context),
             Particle::Disjunction(ref p) => p.solve(agent, assignments, time_assign, context),
@@ -980,12 +1050,14 @@ impl Particle {
     }
 
     #[inline]
-    fn substitute<T: ProofResContext>(&self,
-                                      agent: &agent::Representation,
-                                      assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                                      time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
-                                      context: &mut T,
-                                      rhs: &bool) {
+    fn substitute<T: ProofResContext>(
+        &self,
+        agent: &agent::Representation,
+        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        context: &mut T,
+        rhs: bool,
+    ) {
         match *self {
             Particle::IndConditional(ref p) => {
                 p.substitute(agent, assignments, time_assign, context, rhs)
@@ -1021,7 +1093,7 @@ impl Particle {
                 } else {
                     Some(p.next_rhs.clone())
                 }
-            } 
+            }
             Particle::Disjunction(ref p) => {
                 if pos == 0 {
                     Some(p.next_lhs.clone())
@@ -1058,11 +1130,11 @@ impl Particle {
     fn pred_ref(&self) -> &Assert {
         match *self {
             Particle::Atom(ref p) => &*p.pred,
-            Particle::Conjunction(_) | 
-            Particle::Disjunction(_) | 
-            Particle::Equivalence(_) | 
-            Particle::Implication(_) | 
-            Particle::IndConditional(_) => panic!(),
+            Particle::Conjunction(_)
+            | Particle::Disjunction(_)
+            | Particle::Equivalence(_)
+            | Particle::Implication(_)
+            | Particle::IndConditional(_) => panic!(),
         }
     }
 
@@ -1070,11 +1142,11 @@ impl Particle {
     fn clone_pred(&self) -> Rc<Assert> {
         match *self {
             Particle::Atom(ref p) => p.pred.clone(),
-            Particle::Conjunction(_) | 
-            Particle::Disjunction(_) | 
-            Particle::Equivalence(_) | 
-            Particle::Implication(_) | 
-            Particle::IndConditional(_) => panic!(),
+            Particle::Conjunction(_)
+            | Particle::Disjunction(_)
+            | Particle::Equivalence(_)
+            | Particle::Implication(_)
+            | Particle::IndConditional(_) => panic!(),
         }
     }
 
@@ -1125,7 +1197,7 @@ pub(crate) trait ProofResContext {
 
     fn push_grounded_cls(&mut self, grounded: GroundedMemb, time: Time);
 
-    fn newest_grfact(&self) -> &Time;
+    fn newest_grfact(&self) -> Time;
 
     fn set_newest_grfact(&mut self, time: Time);
 
@@ -1155,18 +1227,21 @@ pub(crate) trait ProofResContext {
 }
 
 pub(crate) trait LogSentResolution<T: ProofResContext> {
-    fn grounded_eq(&self,
-                   agent: &agent::Representation,
-                   assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                   time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
-                   context: &mut T)
-                   -> Option<bool>;
+    fn grounded_eq(
+        &self,
+        agent: &agent::Representation,
+        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        context: &mut T,
+    ) -> Option<bool>;
 
-    fn substitute(&self,
-                  agent: &agent::Representation,
-                  assignments: &Option<HashMap<&Var, &agent::VarAssignment>>,
-                  time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
-                  context: &mut T);
+    fn substitute(
+        &self,
+        agent: &agent::Representation,
+        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        context: &mut T,
+    );
 }
 
 // infrastructure to construct compiled logsentences:
@@ -1224,7 +1299,7 @@ impl PIntermediate {
             cond: op,
             lhs: None,
             rhs: None,
-            pred: pred,
+            pred,
         }
     }
 
@@ -1263,18 +1338,19 @@ impl PIntermediate {
     }
 }
 
-fn walk_ast(ast: &ASTNode,
-            sent: &mut LogSentence,
-            context: &mut ParseContext,
-            mut parent: PIntermediate)
-            -> Result<PIntermediate, LogSentErr> {
-
-    fn decl_scope_vars<'a>(context: &mut ParseContext,
-                           sent: &mut LogSentence,
-                           vars: &[VarDeclBorrowed<'a>],
-                           v_cnt: &mut usize,
-                           s_cnt: &mut usize)
-                           -> Result<(), LogSentErr> {
+fn walk_ast(
+    ast: &ASTNode,
+    sent: &mut LogSentence,
+    context: &mut ParseContext,
+    mut parent: PIntermediate,
+) -> Result<PIntermediate, LogSentErr> {
+    fn decl_scope_vars<'a>(
+        context: &mut ParseContext,
+        sent: &mut LogSentence,
+        vars: &[VarDeclBorrowed<'a>],
+        v_cnt: &mut usize,
+        s_cnt: &mut usize,
+    ) -> Result<(), LogSentErr> {
         let mut swap_vars: Vec<(usize, Arc<Var>, Arc<Var>)> = Vec::new();
         let mut swap_skolem: Vec<(usize, Arc<Skolem>, Arc<Skolem>)> = Vec::new();
         for v in vars {
@@ -1290,9 +1366,9 @@ fn walk_ast(ast: &ASTNode,
                             swap_vars.push((i, v.clone(), var.clone()));
                         }
                     }
-                    context.vars.push(var.clone());
                     *v_cnt += 1;
-                    sent.add_var(var);
+                    sent.add_var(&var);
+                    context.vars.push(var);
                 }
                 VarDeclBorrowed::Skolem(ref s) => {
                     let skolem = match Skolem::from(s, context) {
@@ -1304,27 +1380,33 @@ fn walk_ast(ast: &ASTNode,
                             swap_skolem.push((i, v.clone(), skolem.clone()));
                         }
                     }
-                    context.skols.push(skolem.clone());
                     *s_cnt += 1;
-                    sent.add_skolem(skolem.clone());
+                    sent.add_skolem(&skolem);
+                    context.skols.push(skolem);
                 }
             }
         }
         for &(i, ref shadowed, ref var) in &swap_vars {
             context.vars.remove(i);
-            context.shadowing_vars.insert(var.clone(), (i, shadowed.clone()));
+            context
+                .shadowing_vars
+                .insert(var.clone(), (i, shadowed.clone()));
         }
         for &(i, ref shadowed, ref var) in &swap_skolem {
             context.skols.remove(i);
-            context.shadowing_skols.insert(var.clone(), (i, shadowed.clone()));
+            context
+                .shadowing_skols
+                .insert(var.clone(), (i, shadowed.clone()));
         }
         Ok(())
     }
 
-    fn add_particle(particle: PIntermediate,
-                    parent: &mut PIntermediate,
-                    context: &mut ParseContext,
-                    sent: &mut LogSentence) {
+    fn add_particle(
+        particle: PIntermediate,
+        parent: &mut PIntermediate,
+        context: &mut ParseContext,
+        sent: &mut LogSentence,
+    ) {
         if context.in_rhs {
             let p = Rc::new(particle.into_final(context));
             parent.add_rhs(p.clone());
@@ -1405,7 +1487,11 @@ fn walk_ast(ast: &ASTNode,
             let in_side = context.in_rhs;
             if nodes.len() == 2 {
                 if let ASTNode::Scope(ref node) = nodes[0] {
-                    let Scope { logic_op: ref op, ref next, .. } = **node;
+                    let Scope {
+                        logic_op: ref op,
+                        ref next,
+                        ..
+                    } = **node;
                     if op.is_some() && next.would_assert() {
                         context.in_rhs = false;
                         let new_op = PIntermediate::new(*op, None);
@@ -1418,7 +1504,11 @@ fn walk_ast(ast: &ASTNode,
                     }
                 }
                 if let ASTNode::Scope(ref node) = nodes[1] {
-                    let Scope { logic_op: ref op, ref next, .. } = **node;
+                    let Scope {
+                        logic_op: ref op,
+                        ref next,
+                        ..
+                    } = **node;
                     if op.is_some() && next.would_assert() {
                         context.in_rhs = true;
                         let new_op = PIntermediate::new(*op, None);
@@ -1483,7 +1573,6 @@ fn walk_ast(ast: &ASTNode,
 }
 
 fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), LogSentErr> {
-
     fn has_icond_child(p: &Particle) -> Result<(), LogSentErr> {
         if let Some(n1_0) = p.get_next(0) {
             if let Particle::IndConditional(_) = *n1_0 {
@@ -1512,10 +1601,10 @@ fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), 
         let mut is_wrong = Ok(());
         if let Some(n1_1) = p.get_next(1) {
             match *n1_1 {
-                Particle::IndConditional(_) |
-                Particle::Disjunction(_) |
-                Particle::Conjunction(_) |
-                Particle::Atom(_) => {}
+                Particle::IndConditional(_)
+                | Particle::Disjunction(_)
+                | Particle::Conjunction(_)
+                | Particle::Atom(_) => {}
                 _ => return Err(LogSentErr::IExprWrongOp),
             }
             is_wrong = wrong_operator(&*n1_1);
@@ -1592,7 +1681,8 @@ mod test {
 
     #[test]
     fn parser_icond_exprs() {
-        let source = String::from("
+        let source = String::from(
+            "
             # Err:
             ((let x y z)
              ( ( cde[x,u=1] := fn::fgh[y,u>0.5;x;z] ) := hij[y,u=1] )
@@ -1612,7 +1702,8 @@ mod test {
             # Ok:
             (( let x y z )
              (( cde[x,u=1] && hij[y,u=1] && fn::fgh[y,u>0.5;x;z] ) := abc[x,u=1]))
-        ");
+        ",
+        );
         let tree = Parser::parse(source.as_str(), true, 0);
         assert!(tree.is_ok());
         let mut tree = tree.unwrap();
@@ -1627,27 +1718,27 @@ mod test {
         };
         let root = &**(sent.root.as_ref().unwrap());
         match root {
-            &Particle::IndConditional(ref p) => {
+            Particle::IndConditional(ref p) => {
                 match &*p.next_lhs {
-                    &Particle::Conjunction(ref op) => {
+                    Particle::Conjunction(ref op) => {
                         match *op.next_lhs {
                             Particle::Atom(ref atm) => {
                                 assert_eq!(atm.get_name(), "cde");
                             }
-                            Particle::Conjunction(_) | 
-                            Particle::Disjunction(_) | 
-                            Particle::Equivalence(_) | 
-                            Particle::Implication(_) | 
-                            Particle::IndConditional(_) => panic!(),
+                            Particle::Conjunction(_)
+                            | Particle::Disjunction(_)
+                            | Particle::Equivalence(_)
+                            | Particle::Implication(_)
+                            | Particle::IndConditional(_) => panic!(),
                         };
                         match &*op.next_rhs {
-                            &Particle::Conjunction(ref op) => {
+                            Particle::Conjunction(ref op) => {
                                 match &*op.next_lhs {
-                                    &Particle::Atom(ref atm) => assert_eq!(atm.get_name(), "hij"),
+                                    Particle::Atom(ref atm) => assert_eq!(atm.get_name(), "hij"),
                                     _ => panic!(),
                                 };
                                 match &*op.next_rhs {
-                                    &Particle::Atom(ref atm) => {
+                                    Particle::Atom(ref atm) => {
                                         assert_eq!(atm.get_name(), "fgh");
                                     }
                                     _ => panic!(),
@@ -1659,7 +1750,7 @@ mod test {
                     _ => panic!(),
                 }
                 match &*p.next_rhs {
-                    &Particle::Atom(ref atm) => assert_eq!(atm.get_name(), "abc"),
+                    Particle::Atom(ref atm) => assert_eq!(atm.get_name(), "abc"),
                     _ => panic!(),
                 }
             }

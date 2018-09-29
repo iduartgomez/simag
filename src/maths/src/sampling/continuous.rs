@@ -1,17 +1,16 @@
 use std::f64::consts::PI;
 //use std::collections::HashMap;
 
-use rgsl::{MatrixF64, VectorF64};
 use rgsl;
+use rgsl::{MatrixF64, VectorF64};
 
-use model::{Variable, ContModel, ContNode, ContVar, DefContVar, DType};
 use dists::{Normal, Normalization, CDF};
 use err::ErrMsg;
+use model::{ContModel, ContNode, ContVar, DType, DefContVar, Variable};
 use RGSLRng;
 
 const ITER_TIMES: usize = 2000;
 const _BURN_IN: usize = 500;
-
 
 /// An efficient exact sampler intended for Bayesian nets (encoded causality through
 /// direct acyclic graphs) formed by discreted and/or continuous variables. Requires
@@ -57,7 +56,7 @@ impl<'a> ExactNormalized<'a> {
         };
 
         ExactNormalized {
-            steeps: steeps,
+            steeps,
             normalized: vec![],
             samples: Vec::with_capacity(ITER_TIMES),
             rng: RGSLRng::new(),
@@ -66,7 +65,8 @@ impl<'a> ExactNormalized<'a> {
     }
 
     fn initialize<N>(&mut self, net: &ContModel<'a, N>) -> Result<(), ()>
-        where N: ContNode<'a>
+    where
+        N: ContNode<'a>,
     {
         //use super::partial_correlation;
 
@@ -105,7 +105,8 @@ impl<'a> ExactNormalized<'a> {
     }
 
     pub fn get_samples<N>(mut self, net: &ContModel<'a, N>) -> Result<Vec<Vec<f64>>, ()>
-        where N: ContNode<'a>
+    where
+        N: ContNode<'a>,
     {
         use rgsl::blas::level2::dtrmv;
 
@@ -121,11 +122,13 @@ impl<'a> ExactNormalized<'a> {
                 let sample = normal.var.get_obs_unchecked(t);
                 steep_sample.set(i, sample);
             }
-            dtrmv(rgsl::cblas::Uplo::Lower,
-                  rgsl::cblas::Transpose::NoTrans,
-                  rgsl::cblas::Diag::NonUnit,
-                  &self.cr_matrix,
-                  &mut steep_sample);
+            dtrmv(
+                rgsl::cblas::Uplo::Lower,
+                rgsl::cblas::Transpose::NoTrans,
+                rgsl::cblas::Diag::NonUnit,
+                &self.cr_matrix,
+                &mut steep_sample,
+            );
             let mut f = Vec::with_capacity(d);
             for i in 0..d {
                 let sample = std.cdf(steep_sample.get(i));
@@ -168,14 +171,14 @@ impl<'a> Default for ExactNormalized<'a> {
 mod test {
     use super::*;
 
-    use RGSLRng;
     use rgsl;
+    use RGSLRng;
 
     use std::collections::HashMap;
 
     fn _pt_cr() {
-        use rgsl::linear_algebra::symmtd_decomp;
         use rgsl::blas::level2::dtrmv;
+        use rgsl::linear_algebra::symmtd_decomp;
         use rgsl::randist::gaussian::gaussian;
 
         let mut rng = RGSLRng::new();
@@ -187,8 +190,8 @@ mod test {
                 if i == j {
                     mtx.set(i, j, 1.0);
                 } else if map.get(&(j, i)).is_some() {
-                    let val = map.get(&(j, i)).unwrap();
-                    mtx.set(i, j, *val);
+                    let val: f64 = map[&(j, i)];
+                    mtx.set(i, j, val);
                 } else {
                     let x = rng.uniform_pos() * sign;
                     map.insert((i, j), x);
@@ -208,12 +211,13 @@ mod test {
             samples.set(i, s);
         }
         println!("SYNTHETIC SAMPLES: {:?}", samples);
-        dtrmv(rgsl::cblas::Uplo::Lower,
-              rgsl::cblas::Transpose::NoTrans,
-              rgsl::cblas::Diag::NonUnit,
-              &mtx,
-              &mut samples);
+        dtrmv(
+            rgsl::cblas::Uplo::Lower,
+            rgsl::cblas::Transpose::NoTrans,
+            rgsl::cblas::Diag::NonUnit,
+            &mtx,
+            &mut samples,
+        );
         println!("s x A = {:?}\n", samples);
     }
 }
-

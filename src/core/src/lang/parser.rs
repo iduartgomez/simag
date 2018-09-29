@@ -30,34 +30,38 @@
 //! string = regex: ".*?"|'.*?' ;
 //! ```
 
-use std::str;
-use std::str::FromStr;
 use std::collections::VecDeque;
 use std::fmt;
+use std::str;
+use std::str::FromStr;
 
-use nom::{ErrorKind, IResult};
-use nom::{is_alphanumeric, is_digit};
 use nom;
+use nom::{is_alphanumeric, is_digit};
+use nom::{ErrorKind, IResult};
 
 use rayon;
 use rayon::prelude::*;
 
-use lang::logsent::*;
 use lang::common::*;
 use lang::errors::ParseErrF;
+use lang::logsent::*;
 
-const ICOND_OP: &'static [u8] = b":=";
-const AND_OP: &'static [u8] = b"&&";
-const OR_OP: &'static [u8] = b"||";
-const IFF_OP: &'static [u8] = b"<=>";
-const IMPL_OP: &'static [u8] = b"=>";
+const ICOND_OP: &[u8] = b":=";
+const AND_OP: &[u8] = b"&&";
+const OR_OP: &[u8] = b"||";
+const IFF_OP: &[u8] = b"<=>";
+const IMPL_OP: &[u8] = b"=>";
 
-const EMPTY: &'static [u8] = b" ";
+const EMPTY: &[u8] = b" ";
 
 pub(crate) struct Parser;
 impl Parser {
     /// Lexerless (mostly) recursive descent parser. Takes a string and outputs a correct ParseTree.
-    pub fn parse(input: &str, tell: bool, thread_num: usize) -> Result<VecDeque<ParseTree>, ParseErrF> {
+    pub fn parse(
+        input: &str,
+        tell: bool,
+        num_threads: usize,
+    ) -> Result<VecDeque<ParseTree>, ParseErrF> {
         // store is a vec where the sequence of characters after cleaning up comments
         // will be stored, both have to be extended to 'static lifetime so they can be
         //use rayon::iter::IntoParallelIterator;
@@ -67,12 +71,13 @@ impl Parser {
             Err(err) => return Err(ParseErrF::from(err)),
         };
         // walk the AST output and, if correct, output a final parse tree
-        let tpool = rayon::ThreadPool::new(rayon::Configuration::new().num_threads(thread_num)).unwrap();
+        let tpool = rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build()
+            .unwrap();
         let parse_trees: Vec<Result<ParseTree, ParseErrF>> = tpool.install(|| {
             scopes
-                .map(|ast| { 
-                    ParseTree::process_ast(ast, tell)
-                })
+                .map(|ast| ParseTree::process_ast(&ast, tell))
                 .collect()
         });
 
@@ -87,7 +92,10 @@ impl Parser {
     }
 
     /// Tokenize and output an AST
-    fn p1<'b: 'a, 'a>(input: &'a [u8], p2: &'b mut Vec<u8>) -> Result<Vec<ASTNode<'b>>, ParseErrB<'a>> {
+    fn p1<'b: 'a, 'a>(
+        input: &'a [u8],
+        p2: &'b mut Vec<u8>,
+    ) -> Result<Vec<ASTNode<'b>>, ParseErrB<'a>> {
         // clean up every comment to facilitate further parsing
         // TODO: clea up or ignore comments without having to collect over the initial slice
         let p1 = match remove_comments(input) {
@@ -103,16 +111,14 @@ impl Parser {
         let scopes = get_blocks(&p2[..]);
         if scopes.is_err() {
             match scopes.unwrap_err() {
-                nom::Err::Position(t, p) => {
-                    match (t, p) {
-                        (ErrorKind::Custom(0), p) => Err(ParseErrB::NonTerminal(p)),
-                        (ErrorKind::Custom(1), p) => Err(ParseErrB::NonNumber(p)),
-                        (ErrorKind::Custom(11), p) => Err(ParseErrB::NotScope(p)),
-                        (ErrorKind::Custom(12), p) => Err(ParseErrB::ImbalDelim(p)),
-                        (ErrorKind::Custom(13), p) => Err(ParseErrB::IllegalChain(p)),
-                        (_, p) => Err(ParseErrB::SyntaxErrorPos(p)),
-                    }
-                }
+                nom::Err::Position(t, p) => match (t, p) {
+                    (ErrorKind::Custom(0), p) => Err(ParseErrB::NonTerminal(p)),
+                    (ErrorKind::Custom(1), p) => Err(ParseErrB::NonNumber(p)),
+                    (ErrorKind::Custom(11), p) => Err(ParseErrB::NotScope(p)),
+                    (ErrorKind::Custom(12), p) => Err(ParseErrB::ImbalDelim(p)),
+                    (ErrorKind::Custom(13), p) => Err(ParseErrB::IllegalChain(p)),
+                    (_, p) => Err(ParseErrB::SyntaxErrorPos(p)),
+                },
                 _ => Err(ParseErrB::SyntaxErrorU),
             }
         } else {
@@ -138,44 +144,39 @@ pub(crate) enum ParseErrB<'a> {
 impl<'a> fmt::Display for ParseErrB<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use std::str;
-        let msg = unsafe { 
+        let msg = unsafe {
             match *self {
-                ParseErrB::SyntaxErrorU => {
-                    format!("syntax error")
-                }
+                ParseErrB::SyntaxErrorU => "syntax error".to_string(),
                 //ParseErrB::SyntaxError(Box<ParseErrB<'a>>) => {}
                 ParseErrB::SyntaxErrorPos(arr) => {
-                    format!("syntax error at:\n{}", 
-                             str::from_utf8_unchecked(arr))
+                    format!("syntax error at:\n{}", str::from_utf8_unchecked(arr))
                 }
-                ParseErrB::NotScope(arr) => {
-                    format!("syntax error,
-                             scope is invalid or not found:\n{}", 
-                             str::from_utf8_unchecked(arr))
-                }
-                ParseErrB::ImbalDelim(arr) => {
-                    format!("syntax error, 
-                             open delimiters:\n{}", 
-                             str::from_utf8_unchecked(arr))
-                }
-                ParseErrB::IllegalChain(arr) => {
-                    format!("syntax error,
-                             incomplete operator chain:\n{}", 
-                             str::from_utf8_unchecked(arr))
-                }
-                ParseErrB::NonTerminal(arr) => {
-                    format!("syntax error,
-                             illegal character in terminal position:\n{}", 
-                             str::from_utf8_unchecked(arr))
-                }
-                ParseErrB::NonNumber(arr) => {
-                    format!("syntax error,
-                             illegal character found when parsing a number:v{}", 
-                             str::from_utf8_unchecked(arr))
-                }
-                ParseErrB::UnclosedComment => {
-                    format!("syntax error, open comment delimiter")
-                }
+                ParseErrB::NotScope(arr) => format!(
+                    "syntax error,
+                             scope is invalid or not found:\n{}",
+                    str::from_utf8_unchecked(arr)
+                ),
+                ParseErrB::ImbalDelim(arr) => format!(
+                    "syntax error, 
+                             open delimiters:\n{}",
+                    str::from_utf8_unchecked(arr)
+                ),
+                ParseErrB::IllegalChain(arr) => format!(
+                    "syntax error,
+                             incomplete operator chain:\n{}",
+                    str::from_utf8_unchecked(arr)
+                ),
+                ParseErrB::NonTerminal(arr) => format!(
+                    "syntax error,
+                             illegal character in terminal position:\n{}",
+                    str::from_utf8_unchecked(arr)
+                ),
+                ParseErrB::NonNumber(arr) => format!(
+                    "syntax error,
+                             illegal character found when parsing a number:v{}",
+                    str::from_utf8_unchecked(arr)
+                ),
+                ParseErrB::UnclosedComment => "syntax error, open comment delimiter".to_string(),
             }
         };
         write!(f, "{}", msg)
@@ -191,7 +192,7 @@ pub(crate) enum ParseTree {
 }
 
 impl ParseTree {
-    fn process_ast(input: ASTNode, tell: bool) -> Result<ParseTree, ParseErrF> {
+    fn process_ast(input: &ASTNode, tell: bool) -> Result<ParseTree, ParseErrF> {
         let mut context = ParseContext::new();
         context.in_assertion = true;
         context.is_tell = tell;
@@ -202,15 +203,13 @@ impl ParseTree {
         let mut context = ParseContext::new();
         context.is_tell = tell;
         match LogSentence::new(&input, &mut context) {
-            Ok(sent) => {
-                match context.stype {
-                    SentKind::IExpr => Ok(ParseTree::IExpr(sent)),
-                    SentKind::Expr if context.is_tell => {
-                        Err(ParseErrF::ExprWithVars(format!("{}", sent)))
-                    }
-                    SentKind::Rule | SentKind::Expr => Ok(ParseTree::Expr(sent)),
+            Ok(sent) => match context.stype {
+                SentKind::IExpr => Ok(ParseTree::IExpr(sent)),
+                SentKind::Expr if context.is_tell => {
+                    Err(ParseErrF::ExprWithVars(format!("{}", sent)))
                 }
-            }
+                SentKind::Rule | SentKind::Expr => Ok(ParseTree::Expr(sent)),
+            },
             Err(err) => Err(ParseErrF::LogSentErr(err)),
         }
     }
@@ -254,18 +253,16 @@ impl<'a> ASTNode<'a> {
 
     fn is_assertion(&self, context: &mut ParseContext) -> Result<Option<ParseTree>, ParseErrF> {
         match *self {
-            ASTNode::Assert(ref decl) => {
-                match *decl {
-                    AssertBorrowed::ClassDecl(ref decl) => {
-                        let cls = ClassDecl::from(decl, context)?;
-                        Ok(Some(ParseTree::Assertion(vec![Assert::ClassDecl(cls)])))
-                    }
-                    AssertBorrowed::FuncDecl(ref decl) => {
-                        let func = FuncDecl::from(decl, context)?;
-                        Ok(Some(ParseTree::Assertion(vec![Assert::FuncDecl(func)])))
-                    }
+            ASTNode::Assert(ref decl) => match *decl {
+                AssertBorrowed::ClassDecl(ref decl) => {
+                    let cls = ClassDecl::from(decl, context)?;
+                    Ok(Some(ParseTree::Assertion(vec![Assert::ClassDecl(cls)])))
                 }
-            }
+                AssertBorrowed::FuncDecl(ref decl) => {
+                    let func = FuncDecl::from(decl, context)?;
+                    Ok(Some(ParseTree::Assertion(vec![Assert::FuncDecl(func)])))
+                }
+            },
             ASTNode::Chain(ref multi_decl) => {
                 let mut v0: Vec<Assert> = Vec::with_capacity(multi_decl.len());
                 // chek that indeed all elements are indeed assertions
@@ -331,8 +328,7 @@ pub(crate) enum VarDeclBorrowed<'a> {
     Skolem(SkolemBorrowed<'a>),
 }
 
-fn get_blocks(input: &[u8]) -> IResult<&[u8], Vec<ASTNode>> 
-{
+fn get_blocks(input: &[u8]) -> IResult<&[u8], Vec<ASTNode>> {
     let input = match remove_multispace(input) {
         Some(view) => view,
         None => return IResult::Done(EMPTY, vec![]),
@@ -370,15 +366,11 @@ fn get_blocks(input: &[u8]) -> IResult<&[u8], Vec<ASTNode>>
     for _ in 0..mcd.len() {
         let (lp, rp) = mcd.pop_front().unwrap();
         match scope0(&input[lp..rp]) {
-            IResult::Done(_, done) => {
-                match done {
-                    IResult::Done(_, done) => results.push(done),
-                    IResult::Error(err) => return IResult::Error(err),
-                    IResult::Incomplete(_) => {
-                        return IResult::Error(nom::Err::Code(ErrorKind::Count))
-                    } 
-                }
-            }
+            IResult::Done(_, done) => match done {
+                IResult::Done(_, done) => results.push(done),
+                IResult::Error(err) => return IResult::Error(err),
+                IResult::Incomplete(_) => return IResult::Error(nom::Err::Code(ErrorKind::Count)),
+            },
             IResult::Error(err) => return IResult::Error(err),
             IResult::Incomplete(_) => return IResult::Error(nom::Err::Code(ErrorKind::Count)),
         }
@@ -443,16 +435,18 @@ named!(scope0(&[u8]) -> IResult<&[u8], ASTNode>, ws!(
     ) 
 ));
 
-type ScopeOutA<'a> = (Option<DeclVars<'a>>,
-                      AssertBorrowed<'a>,
-                      Option<LogicOperator>,
-                      IResult<&'a [u8], ASTNode<'a>>,
-                      bool);
+type ScopeOutA<'a> = (
+    Option<DeclVars<'a>>,
+    AssertBorrowed<'a>,
+    Option<LogicOperator>,
+    IResult<&'a [u8], ASTNode<'a>>,
+    bool,
+);
 
 fn expr0(input: ScopeOutA) -> IResult<&[u8], ASTNode> {
     let (vars, decl, op, next, is_lhs) = input;
     let (rest, next) = match next {
-        IResult::Done(rest, next) => (rest, next), 
+        IResult::Done(rest, next) => (rest, next),
         IResult::Error(err) => return IResult::Error(err),
         IResult::Incomplete(_) => return IResult::Error(nom::Err::Code(ErrorKind::Custom(11))),
     };
@@ -471,20 +465,22 @@ fn expr0(input: ScopeOutA) -> IResult<&[u8], ASTNode> {
     IResult::Done(rest, curr)
 }
 
-type ScopeOutB<'a> = (Option<DeclVars<'a>>,
-                      IResult<&'a [u8], ASTNode<'a>>,
-                      LogicOperator,
-                      IResult<&'a [u8], ASTNode<'a>>);
+type ScopeOutB<'a> = (
+    Option<DeclVars<'a>>,
+    IResult<&'a [u8], ASTNode<'a>>,
+    LogicOperator,
+    IResult<&'a [u8], ASTNode<'a>>,
+);
 
 fn expr1(input: ScopeOutB) -> IResult<&[u8], ASTNode> {
     let (vars, lhs, op, rhs) = input;
     let lhs = match lhs {
-        IResult::Done(_, next) => next, 
+        IResult::Done(_, next) => next,
         IResult::Error(err) => return IResult::Error(err),
         IResult::Incomplete(_) => return IResult::Error(nom::Err::Code(ErrorKind::Custom(11))),
     };
     let rhs = match rhs {
-        IResult::Done(_, next) => next, 
+        IResult::Done(_, next) => next,
         IResult::Error(err) => return IResult::Error(err),
         IResult::Incomplete(_) => return IResult::Error(nom::Err::Code(ErrorKind::Custom(11))),
     };
@@ -496,35 +492,38 @@ fn expr1(input: ScopeOutB) -> IResult<&[u8], ASTNode> {
     IResult::Done(EMPTY, ASTNode::Scope(Box::new(next)))
 }
 
-fn empty_scope<'a>(input: (Option<DeclVars<'a>>, Option<IResult<&'a [u8], ASTNode<'a>>>))
-                   -> IResult<&'a [u8], ASTNode<'a>> {
+fn empty_scope<'a>(
+    input: (Option<DeclVars<'a>>, Option<IResult<&'a [u8], ASTNode<'a>>>),
+) -> IResult<&'a [u8], ASTNode<'a>> {
     let (vars, next) = input;
     if let Some(vars) = flat_vars(vars) {
         if let Some(next) = next {
             let (rest, next) = match next {
-                IResult::Done(rest, next) => (rest, next), 
+                IResult::Done(rest, next) => (rest, next),
                 IResult::Error(err) => return IResult::Error(err),
                 IResult::Incomplete(_) => {
                     return IResult::Error(nom::Err::Code(ErrorKind::Custom(11)))
                 }
             };
-            IResult::Done(rest,
-                          ASTNode::Scope(Box::new(Scope {
-                              vars: Some(vars),
-                              logic_op: None,
-                              next: next,
-                          })))
+            IResult::Done(
+                rest,
+                ASTNode::Scope(Box::new(Scope {
+                    vars: Some(vars),
+                    logic_op: None,
+                    next,
+                })),
+            )
         } else {
             IResult::Done(EMPTY, ASTNode::None)
         }
     } else if next.is_some() {
         match next {
-            Some(IResult::Done(rest, next)) => IResult::Done(rest, next), 
+            Some(IResult::Done(rest, next)) => IResult::Done(rest, next),
             Some(IResult::Error(err)) => return IResult::Error(err),
             Some(IResult::Incomplete(_)) => {
                 return IResult::Error(nom::Err::Code(ErrorKind::Custom(11)))
             }
-            None => IResult::Done(EMPTY, ASTNode::None), 
+            None => IResult::Done(EMPTY, ASTNode::None),
         }
     } else {
         IResult::Done(EMPTY, ASTNode::None)
@@ -557,15 +556,21 @@ type AssertOne<'a> = (LogicOperator, AssertBorrowed<'a>);
 #[inline]
 fn assert_one(input: AssertOne) -> IResult<&[u8], ASTNode> {
     let (op, assertion) = input;
-    IResult::Done(EMPTY,
-                  ASTNode::Scope(Box::new(Scope {
-                      next: ASTNode::Assert(assertion),
-                      vars: None,
-                      logic_op: Some(op),
-                  })))
+    IResult::Done(
+        EMPTY,
+        ASTNode::Scope(Box::new(Scope {
+            next: ASTNode::Assert(assertion),
+            vars: None,
+            logic_op: Some(op),
+        })),
+    )
 }
 
-type AssertMany<'a> = (Option<DeclVars<'a>>, Vec<IResult<&'a [u8], ASTNode<'a>>>, ASTNode<'a>);
+type AssertMany<'a> = (
+    Option<DeclVars<'a>>,
+    Vec<IResult<&'a [u8], ASTNode<'a>>>,
+    ASTNode<'a>,
+);
 
 #[inline]
 fn assert_many(input: AssertMany) -> IResult<&[u8], ASTNode> {
@@ -614,9 +619,11 @@ fn assert_many(input: AssertMany) -> IResult<&[u8], ASTNode> {
 
 #[inline]
 fn decl_alt(input: &[u8]) -> IResult<&[u8], AssertBorrowed> {
-    alt!(input,
-         map!(class_decl, ClassDeclBorrowed::convert_to_assert) |
-         map!(func_decl, FuncDeclBorrowed::convert_to_assert))
+    alt!(
+        input,
+        map!(class_decl, ClassDeclBorrowed::convert_to_assert)
+            | map!(func_decl, FuncDeclBorrowed::convert_to_assert)
+    )
 }
 
 type DeclVars<'a> = Vec<Vec<VarDeclBorrowed<'a>>>;
@@ -629,7 +636,11 @@ named!(scope_var_decl(&[u8]) -> DeclVars,
 #[inline]
 fn flat_vars(input: Option<DeclVars>) -> Option<Vec<VarDeclBorrowed>> {
     if let Some(vars) = input {
-        Some(vars.into_iter().flat_map(|x| x.into_iter()).collect::<Vec<_>>())
+        Some(
+            vars.into_iter()
+                .flat_map(|x| x.into_iter())
+                .collect::<Vec<_>>(),
+        )
     } else {
         None
     }
@@ -733,8 +744,8 @@ pub(crate) enum FuncVariants {
 }
 
 impl FuncVariants {
-    pub fn is_relational(&self) -> bool {
-        match *self {
+    pub fn is_relational(self) -> bool {
+        match self {
             FuncVariants::Relational => true,
             _ => false,
         }
@@ -749,7 +760,7 @@ named!(func_decl(&[u8]) -> FuncDeclBorrowed,
             op1: opt!(op_args) >>
             a1: args >>
             (FuncDeclBorrowed {
-                name: name,
+                name,
                 args: Some(a1),
                 op_args: op1,
                 variant: FuncVariants::Relational
@@ -760,7 +771,7 @@ named!(func_decl(&[u8]) -> FuncDeclBorrowed,
             name: map!(terminal, TerminalBorrowed::from_slice) >>
             op1: op_args >>
             (FuncDeclBorrowed {
-                name: name,
+                name,
                 args: None,
                 op_args: Some(op1),
                 variant: FuncVariants::NonRelational
@@ -787,7 +798,7 @@ named!(class_decl(&[u8]) -> ClassDeclBorrowed, ws!(do_parse!(
     name: map!(terminal, TerminalBorrowed::from_slice) >> 
     op1: opt!(op_args) >>
     a1: args >>
-    (ClassDeclBorrowed{name: name, op_args: op1, args: a1})
+    (ClassDeclBorrowed{name, op_args: op1, args: a1})
 )));
 
 // arg	= term [',' uval] ;
@@ -797,15 +808,18 @@ pub(crate) struct ArgBorrowed<'a> {
     pub uval: Option<UVal>,
 }
 
-named!(arg <ArgBorrowed>, ws!(do_parse!(
-    term: map!(terminal, TerminalBorrowed::from_slice) >>
-    u0: opt!(do_parse!(
-        char!(',') >> 
-        u1: uval >>
-        (u1)
-    )) >>
-    ({ ArgBorrowed{term: term, uval: u0} })
-)));
+named!(
+    arg<ArgBorrowed>,
+    ws!(do_parse!(
+        term: map!(terminal, TerminalBorrowed::from_slice)
+            >> u0: opt!(do_parse!(char!(',') >> u1: uval >> (u1))) >> ({
+            ArgBorrowed {
+                term,
+                uval: u0,
+            }
+        })
+    ))
+);
 
 // args	= '[' arg $(arg);* ']';
 named!(args(&[u8]) -> Vec<ArgBorrowed>, delimited!(
@@ -826,24 +840,28 @@ pub(crate) struct OpArgBorrowed<'a> {
     pub comp: Option<(CompOperator, OpArgTermBorrowed<'a>)>,
 }
 
-named!(op_arg <OpArgBorrowed>, ws!(do_parse!(
-    term: alt!(
-        map!(string, OpArgTermBorrowed::is_string) |
-        map!(terminal, OpArgTermBorrowed::is_terminal )
-    ) >>
-    c1: opt!(do_parse!(
-        c2: map!(
-            alt!(tag!(">=") | tag!("<=") | tag!("=") | tag!(">") | tag!("<")),
-                 CompOperator::from_chars
-        ) >>
+named!(
+    op_arg<OpArgBorrowed>,
+    ws!(do_parse!(
         term: alt!(
-            map!(string, OpArgTermBorrowed::is_string) |
-            map!(terminal, OpArgTermBorrowed::is_terminal )
-        ) >>
-        (c2, term) 
-    )) >>
-    (OpArgBorrowed{term: term, comp: c1})
-)));
+            map!(string, OpArgTermBorrowed::is_string)
+                | map!(terminal, OpArgTermBorrowed::is_terminal)
+        )
+            >> c1: opt!(do_parse!(
+                c2: map!(
+                    alt!(tag!(">=") | tag!("<=") | tag!("=") | tag!(">") | tag!("<")),
+                    CompOperator::from_chars
+                )
+                    >> term: alt!(
+                        map!(string, OpArgTermBorrowed::is_string)
+                            | map!(terminal, OpArgTermBorrowed::is_terminal)
+                    ) >> (c2, term)
+            )) >> (OpArgBorrowed {
+            term,
+            comp: c1,
+        })
+    ))
+);
 
 // op_args = $(op_arg),+ ;
 named!(op_args(&[u8]) -> Vec<OpArgBorrowed>, delimited!(
@@ -880,15 +898,16 @@ pub(crate) struct UVal {
     pub val: Number,
 }
 
-named!(uval <UVal>, ws!(do_parse!(
-    char!('u') >>
-    op: map!(
-        alt!(tag!(">=") | tag!("<=") | tag!("=") | tag!(">") | tag!("<")),
-             CompOperator::from_chars
-    ) >>
-    val: number >>
-    (UVal{op: op, val: val}) 
-)));
+named!(
+    uval<UVal>,
+    ws!(do_parse!(
+        char!('u')
+            >> op: map!(
+                alt!(tag!(">=") | tag!("<=") | tag!("=") | tag!(">") | tag!("<")),
+                CompOperator::from_chars
+            ) >> val: number >> (UVal { op, val })
+    ))
+);
 
 // number = -?[0-9\.]+
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -920,25 +939,33 @@ fn number(input: &[u8]) -> IResult<&[u8], Number> {
         }
     }
     if float && (input[0] == b'-') {
-        IResult::Done(&input[idx + 1..],
-                      Number::SignedFloat(<f32>::from_str(str::from_utf8(&input[0..idx + 1])
-                              .unwrap())
-                          .unwrap()))
+        IResult::Done(
+            &input[idx + 1..],
+            Number::SignedFloat(
+                <f32>::from_str(str::from_utf8(&input[0..idx + 1]).unwrap()).unwrap(),
+            ),
+        )
     } else if !float && (input[0] == b'-') {
-        IResult::Done(&input[idx + 1..],
-                      Number::SignedInteger(<i32>::from_str(str::from_utf8(&input[0..idx + 1])
-                              .unwrap())
-                          .unwrap()))
+        IResult::Done(
+            &input[idx + 1..],
+            Number::SignedInteger(
+                <i32>::from_str(str::from_utf8(&input[0..idx + 1]).unwrap()).unwrap(),
+            ),
+        )
     } else if float {
-        IResult::Done(&input[idx..],
-                      Number::UnsignedFloat(<f32>::from_str(str::from_utf8(&input[0..idx])
-                              .unwrap())
-                          .unwrap()))
+        IResult::Done(
+            &input[idx..],
+            Number::UnsignedFloat(
+                <f32>::from_str(str::from_utf8(&input[0..idx]).unwrap()).unwrap(),
+            ),
+        )
     } else {
-        IResult::Done(&input[idx..],
-                      Number::UnsignedInteger(<u32>::from_str(str::from_utf8(&input[0..idx])
-                              .unwrap())
-                          .unwrap()))
+        IResult::Done(
+            &input[idx..],
+            Number::UnsignedInteger(
+                <u32>::from_str(str::from_utf8(&input[0..idx]).unwrap()).unwrap(),
+            ),
+        )
     }
 }
 
@@ -1008,47 +1035,47 @@ impl CompOperator {
     }
 
     #[inline]
-    pub fn is_equal(&self) -> bool {
-        match *self {
+    pub fn is_equal(self) -> bool {
+        match self {
             CompOperator::Equal => true,
             _ => false,
         }
     }
 
     #[inline]
-    pub fn is_more(&self) -> bool {
-        match *self {
+    pub fn is_more(self) -> bool {
+        match self {
             CompOperator::More => true,
             _ => false,
         }
     }
 
     #[inline]
-    pub fn is_less(&self) -> bool {
-        match *self {
+    pub fn is_less(self) -> bool {
+        match self {
             CompOperator::Less => true,
             _ => false,
         }
     }
 
     #[inline]
-    pub fn is_more_eq(&self) -> bool {
-        match *self {
+    pub fn is_more_eq(self) -> bool {
+        match self {
             CompOperator::MoreEqual => true,
             _ => false,
         }
     }
 
     #[inline]
-    pub fn is_less_eq(&self) -> bool {
-        match *self {
+    pub fn is_less_eq(self) -> bool {
+        match self {
             CompOperator::LessEqual => true,
             _ => false,
         }
-    } 
+    }
 
-    pub fn generate_uid(&self, id: &mut Vec<u8>) {
-        match *self {
+    pub fn generate_uid(self, id: &mut Vec<u8>) {
+        match self {
             CompOperator::Equal => id.push(1),
             CompOperator::Less => id.push(2),
             CompOperator::More => id.push(3),
@@ -1084,23 +1111,26 @@ impl LogicOperator {
         }
     }
 
-    pub fn is_and(&self) -> bool {
-        match *self {
+    pub fn is_and(self) -> bool {
+        match self {
             LogicOperator::And => true,
             _ => false,
         }
     }
 
-    pub fn is_or(&self) -> bool {
-        match *self {
+    pub fn is_or(self) -> bool {
+        match self {
             LogicOperator::Or => true,
             _ => false,
         }
     }
 }
 
-named!(logic_operator, 
-    ws!(alt!(tag!(":=") | tag!("&&") | tag!("||") | tag!("=>") | tag!("<=>")))
+named!(
+    logic_operator,
+    ws!(alt!(
+        tag!(":=") | tag!("&&") | tag!("||") | tag!("=>") | tag!("<=>")
+    ))
 );
 
 // comment parsing tools:
@@ -1119,7 +1149,7 @@ named!(remove_comments(&[u8]) -> Vec<&[u8]>,
 
 #[inline]
 fn eof(input: &[u8]) -> IResult<&[u8], &[u8]> {
-    if input.len() > 0 {
+    if !input.is_empty() {
         IResult::Done(input, input)
     } else {
         IResult::Error(nom::Err::Position(ErrorKind::Eof, input))
@@ -1152,8 +1182,7 @@ fn comment_tag(input: &[u8]) -> IResult<&[u8], &[u8]> {
 }
 
 // white spaces and newlines parsing tools:
-fn remove_multispace(input: &[u8]) -> Option<&[u8]> 
-{
+fn remove_multispace(input: &[u8]) -> Option<&[u8]> {
     let trimmed = take_while!(input, is_multispace);
     match trimmed {
         IResult::Done(r, _) => Some(r),
@@ -1168,12 +1197,12 @@ fn is_multispace(chr: u8) -> bool {
 
 #[cfg(test)]
 mod test {
-    use super::{class_decl, func_decl};
     use super::*;
+    use super::{class_decl, func_decl};
     use std::str;
 
-    use nom::IResult;
     use nom;
+    use nom::IResult;
 
     #[test]
     fn parser_ast_output() {
@@ -1252,16 +1281,13 @@ mod test {
 
     macro_rules! assert_done_or_err {
         ($i:ident) => {{
-            match $i {
-                IResult::Error(nom::Err::Position(ref t, ref v)) => {
-                    println!(
-                        "\n@error Err::{:?}: {:?}", 
-                        t, unsafe { str::from_utf8_unchecked(v) } );
-                },
-                _ => {}
+            if let IResult::Error(nom::Err::Position(ref t, ref v)) = $i {
+                println!("\n@error Err::{:?}: {:?}", t, unsafe {
+                    str::from_utf8_unchecked(v)
+                });
             }
             assert!(!$i.is_err());
-        }}
+        }};
     }
 
     #[test]
@@ -1293,10 +1319,16 @@ mod test {
         assert!(s3_res.args[0].uval.is_some());
         assert_eq!(
             s3_res.op_args.as_ref().unwrap(),
-            &vec![OpArgBorrowed{term: OpArgTermBorrowed::Terminal(b"t1"),
-                        comp: Some((CompOperator::Equal, OpArgTermBorrowed::String(b"now")))},
-                  OpArgBorrowed{term: OpArgTermBorrowed::Terminal(b"t2"),
-                        comp: Some((CompOperator::Equal, OpArgTermBorrowed::Terminal(b"t1")))}]
+            &vec![
+                OpArgBorrowed {
+                    term: OpArgTermBorrowed::Terminal(b"t1"),
+                    comp: Some((CompOperator::Equal, OpArgTermBorrowed::String(b"now"))),
+                },
+                OpArgBorrowed {
+                    term: OpArgTermBorrowed::Terminal(b"t2"),
+                    comp: Some((CompOperator::Equal, OpArgTermBorrowed::Terminal(b"t1"))),
+                },
+            ]
         );
 
         let s4 = b"animal(t=\"2015.07.05.11.28\")[cow, u=1; brown, u=0.5]";
@@ -1305,13 +1337,19 @@ mod test {
         let s4_res = s4_res.unwrap().1;
         assert_eq!(s4_res.args[1].term, TerminalBorrowed(b"brown"));
         assert!(s4_res.op_args.is_some());
-        assert_eq!(s4_res.op_args.as_ref().unwrap(),
-            &vec![OpArgBorrowed{term: OpArgTermBorrowed::Terminal(b"t"),
-                        comp: Some((CompOperator::Equal,
-                                    OpArgTermBorrowed::String(b"2015.07.05.11.28")))}]);
+        assert_eq!(
+            s4_res.op_args.as_ref().unwrap(),
+            &vec![OpArgBorrowed {
+                term: OpArgTermBorrowed::Terminal(b"t"),
+                comp: Some((
+                    CompOperator::Equal,
+                    OpArgTermBorrowed::String(b"2015.07.05.11.28"),
+                )),
+            }]
+        );
 
-        let s5 = b"happy(time=t1, @t1->t2, overwrite)[x,u<=0.5]";
-        let s6 = b"happy(time=t1, @t1, overwrite)[x,u>=0.5]";
+        let _s5 = b"happy(time=t1, @t1->t2, overwrite)[x,u<=0.5]";
+        let _s6 = b"happy(time=t1, @t1, overwrite)[x,u>=0.5]";
     }
 
     #[test]

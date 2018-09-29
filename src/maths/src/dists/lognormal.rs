@@ -1,5 +1,5 @@
-use RGSLRng;
 use err::ErrMsg;
+use RGSLRng;
 
 #[derive(Debug, Clone)]
 pub struct LogNormal {
@@ -13,10 +13,7 @@ impl LogNormal {
             return Err(());
         }
 
-        Ok(LogNormal {
-            zeta: zeta,
-            sigma: sigma,
-        })
+        Ok(LogNormal { zeta, sigma })
     }
 
     #[inline]

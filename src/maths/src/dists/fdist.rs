@@ -1,5 +1,5 @@
-use RGSLRng;
 use err::ErrMsg;
+use RGSLRng;
 
 #[derive(Debug, Clone)]
 pub struct FDist {
@@ -13,7 +13,7 @@ impl FDist {
             return Err(());
         }
 
-        Ok(FDist { d1: d1, d2: d2 })
+        Ok(FDist { d1, d2 })
     }
 
     #[inline]

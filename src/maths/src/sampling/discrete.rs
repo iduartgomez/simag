@@ -1,7 +1,7 @@
 //! Sampling for pure discrete models.
 
-use RGSLRng;
 use model::{DiscreteModel, DiscreteNode};
+use RGSLRng;
 
 const ITER_TIMES: usize = 2000;
 const BURN_IN: usize = 500;
@@ -33,8 +33,8 @@ impl GibbsMarginal {
         };
 
         GibbsMarginal {
-            steeps: steeps,
-            burnin: burnin,
+            steeps,
+            burnin,
             samples: Vec::with_capacity(steeps),
             parents: vec![],
             rng: RGSLRng::new(),
@@ -42,7 +42,8 @@ impl GibbsMarginal {
     }
 
     fn var_val<'a, N>(&mut self, t: usize, var: &N, var_pos: usize) -> u8
-        where N: DiscreteNode<'a>
+    where
+        N: DiscreteNode<'a>,
     {
         let parents = &self.parents[var_pos];
         let mut mb_values = Vec::with_capacity(parents.len());
@@ -61,7 +62,8 @@ impl GibbsMarginal {
     }
 
     fn initialize<'a, N>(&mut self, net: &DiscreteModel<'a, N>)
-        where N: DiscreteNode<'a>
+    where
+        N: DiscreteNode<'a>,
     {
         // draw prior values from the distribution of each value
         let mut priors = Vec::with_capacity(net.var_num());
@@ -74,7 +76,8 @@ impl GibbsMarginal {
     }
 
     pub fn get_samples<'a, N>(mut self, net: &DiscreteModel<'a, N>) -> Result<Vec<Vec<u8>>, ()>
-        where N: DiscreteNode<'a>
+    where
+        N: DiscreteNode<'a>,
     {
         let k = net.var_num();
         self.initialize(net);

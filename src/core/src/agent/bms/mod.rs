@@ -5,16 +5,16 @@
 //! 2) Detecting inconsistences between new and old beliefs.
 //! 3) Fixing those inconsitences.
 
-use super::Representation;
 use super::kb::QueryInput;
-use lang::{Time, Grounded, GroundedRef, SentID, ProofResContext};
+use super::Representation;
+use lang::{Grounded, GroundedRef, ProofResContext, SentID, Time};
 
 use chrono::UTC;
 
 use std::cmp::Ordering as CmpOrdering;
 use std::mem;
-use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::RwLock;
 
 ///Acts as a wrapper for the Belief Maintenance System for a given agent.
 ///
@@ -34,19 +34,16 @@ impl BmsWrapper {
         }
     }
 
-    pub fn new_record(&self,
-                      time: Option<Time>,
-                      value: Option<f32>,
-                      was_produced: Option<SentID>) {
+    pub fn new_record(&self, time: Option<Time>, value: Option<f32>, was_produced: Option<SentID>) {
         let time = match time {
             Some(time) => time,
             None => UTC::now(),
         };
         let record = BmsRecord {
             produced: vec![],
-            time: time,
-            value: value,
-            was_produced: was_produced,
+            time,
+            value,
+            was_produced,
         };
         let mut records = self.records.write().unwrap();
         records.push(record);
@@ -55,11 +52,13 @@ impl BmsWrapper {
     /// Look for all the changes that were produced, before an update,
     /// due to this belief previous value and test if they still apply.
     /// If the facts no longer hold true rollback them.
-    pub fn update(&self,
-                  owner: GroundedRef,
-                  agent: &Representation,
-                  data: &BmsWrapper,
-                  was_produced: Option<SentID>) {
+    pub fn update(
+        &self,
+        owner: &GroundedRef,
+        agent: &Representation,
+        data: &BmsWrapper,
+        was_produced: Option<SentID>,
+    ) {
         let ask_processed = |entry: &(Grounded, Option<f32>), cmp_rec: &Time| {
             match *entry {
                 (Grounded::Function(ref func), ..) => {
@@ -76,12 +75,10 @@ impl BmsWrapper {
                         }
                     }
                     if ask {
-                        let answ =
-                            agent.ask_processed(QueryInput::AskRelationalFunc(func.clone()),
-                                               0,
-                                               true)
-                                .unwrap()
-                                .get_results_single();
+                        let answ = agent
+                            .ask_processed(QueryInput::AskRelationalFunc(func.clone()), 0, true)
+                            .unwrap()
+                            .get_results_single();
                         if answ.is_none() {
                             let bms = &func.bms;
                             let mut time: Option<Time> = None;
@@ -90,7 +87,7 @@ impl BmsWrapper {
                                 let lock = bms.records.read().unwrap();
                                 let recs = (*lock).iter();
                                 for rec in recs.rev() {
-                                    if !rec.was_produced.is_some() {
+                                    if rec.was_produced.is_none() {
                                         time = Some(rec.time);
                                         value = rec.value;
                                         break;
@@ -113,10 +110,10 @@ impl BmsWrapper {
                         }
                     }
                     if ask {
-                        let answ =
-                            agent.ask_processed(QueryInput::AskClassMember(cls.clone()), 0, true)
-                                .unwrap()
-                                .get_results_single();
+                        let answ = agent
+                            .ask_processed(QueryInput::AskClassMember(cls.clone()), 0, true)
+                            .unwrap()
+                            .get_results_single();
                         if answ.is_none() {
                             let bms = cls.bms.as_ref().unwrap();
                             let mut time: Option<Time> = None;
@@ -125,7 +122,7 @@ impl BmsWrapper {
                                 let lock = bms.records.read().unwrap();
                                 let recs = (*lock).iter();
                                 for rec in recs.rev() {
-                                    if !rec.was_produced.is_some() {
+                                    if rec.was_produced.is_none() {
                                         time = Some(rec.time);
                                         value = rec.value;
                                         break;
@@ -181,7 +178,7 @@ impl BmsWrapper {
 
         // check if there are any inconsistencies with the knowledge produced with
         // the previous value
-        if &up_rec_date < &last_rec_date {
+        if up_rec_date < last_rec_date {
             // new value is older, in face of new information all previously
             // produced knowledge must be checked to see if it still holds true
             let old_recs;
@@ -198,7 +195,7 @@ impl BmsWrapper {
                     ask_processed(entry, &last_rec_date);
                 }
             }
-        } else if &up_rec_date > &last_rec_date || &up_rec_value != &last_rec_value {
+        } else if up_rec_date > last_rec_date || up_rec_value != last_rec_value {
             // new value is more recent, check only the last produced values
             //
             // if both times are the same there is an incongruency
@@ -244,7 +241,7 @@ impl BmsWrapper {
         record.add_entry((produced, with_val));
     }
 
-    pub fn update_producers<T: ProofResContext>(&self, owner: Grounded, context: &T) {
+    pub fn update_producers<T: ProofResContext>(&self, owner: &Grounded, context: &T) {
         // add the produced knowledge to each producer in case it comes
         // from a logic sentence resolution
         for a in context.get_antecedents() {
@@ -252,10 +249,7 @@ impl BmsWrapper {
                 Grounded::Class(ref cls) => {
                     let cls = cls.upgrade().unwrap();
                     let value = cls.get_value();
-                    cls.bms
-                        .as_ref()
-                        .unwrap()
-                        .add_entry(owner.clone(), value);
+                    cls.bms.as_ref().unwrap().add_entry(owner.clone(), value);
                 }
                 Grounded::Function(ref func) => {
                     let func = func.upgrade().unwrap();
@@ -267,24 +261,25 @@ impl BmsWrapper {
     }
 
     pub fn overwrite_data(&self, other: &BmsWrapper) {
-        let mut lock = &mut *self.records.write().unwrap();
+        let lock = &mut *self.records.write().unwrap();
         // drop old records
         lock.truncate(0);
         // insert new records
         for rec in &*other.records.read().unwrap() {
             lock.push(rec.clone())
         }
-        self.overwrite.store(other.overwrite.load(Ordering::Acquire), Ordering::Release);
+        self.overwrite
+            .store(other.overwrite.load(Ordering::Acquire), Ordering::Release);
     }
 
     pub fn record_len(&self) -> usize {
         self.records.read().unwrap().len()
     }
 
-    pub fn newest_date(&self, other: &Time) -> Option<Time> {
+    pub fn newest_date(&self, other: Time) -> Option<Time> {
         let lock = &*self.records.read().unwrap();
         let rec = lock.last().unwrap();
-        if &rec.time > other {
+        if rec.time > other {
             Some(rec.time)
         } else {
             None
@@ -356,7 +351,8 @@ mod test {
     fn bms_rollback() {
         let mut rep = Representation::new();
 
-        let fol = String::from("
+        let fol = String::from(
+            "
             (ugly[$Pancho,u=0])
             (dog[$Pancho,u=1])
             (meat[$M1,u=1])
@@ -368,18 +364,21 @@ mod test {
             
             ((let x)
              ((fat[x,u=1] && dog[x,u=1]) := (ugly[x,u=1] && sad[x,u=1])))
-        ");
+        ",
+        );
         rep.tell(fol).unwrap();
         {
             let answ = rep.ask("(fat[$Pancho,u=1] && sad[$Pancho,u=1])".to_string());
             assert_eq!(answ.unwrap().get_results_single(), Some(true));
         }
 
-        let fol = String::from("
+        let fol = String::from(
+            "
             (run[$Pancho,u=1])
             ((let x) 
              ((run[x,u=1] && dog[x,u=1]) := fat[x,u=0]))
-        ");
+        ",
+        );
         rep.tell(fol).unwrap();
         let answ0 = rep.ask("(fat[$Pancho,u=0])".to_string());
         assert_eq!(answ0.unwrap().get_results_single(), Some(true));
@@ -393,30 +392,33 @@ mod test {
     fn bms_review_after_change() {
         let mut rep = Representation::new();
 
-        let fol = String::from("            
+        let fol = String::from(
+            "            
             ( meat[$M1,u=1] )
             ( dog[$Pancho,u=1] )
             ( fn::eat[$M1,u=1;$Pancho] )
             ( ( let x, y )
               ( ( dog[x,u=1] && meat[y,u=1] && fn::eat[y,u=1;x] ) 
                 := fat[x,u=1] ) )
-        ");
+        ",
+        );
         rep.tell(fol).unwrap();
         {
             let answ = rep.ask("(fat[$Pancho,u=1])".to_string());
             assert_eq!(answ.unwrap().get_results_single(), Some(true));
         }
 
-        let fol = String::from("
+        let fol = String::from(
+            "
             ( run[$Pancho,u=1] )
             (( let x ) (( dog[x,u=1] && run[x,u=1] ) := fat[x,u=0] ))
-        ");
+        ",
+        );
         rep.tell(fol).unwrap();
         {
             let answ = rep.ask("(fat[$Pancho,u=0])".to_string());
             assert_eq!(answ.unwrap().get_results_single(), Some(true));
         }
-        
 
         rep.tell("(fn::eat[$M1,u=1;$Pancho])".to_string()).unwrap();
         {

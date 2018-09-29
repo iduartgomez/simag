@@ -1,5 +1,5 @@
-use RGSLRng;
 use err::ErrMsg;
+use RGSLRng;
 
 #[derive(Debug, Clone)]
 pub struct Pareto {
@@ -13,10 +13,7 @@ impl Pareto {
             return Err(());
         }
 
-        Ok(Pareto {
-            alpha: alpha,
-            scale: scale,
-        })
+        Ok(Pareto { alpha, scale })
     }
 
     #[inline]

@@ -1,6 +1,6 @@
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::cmp::Ordering;
 
 use super::repr::*;
 use super::VarAssignment;
@@ -10,23 +10,27 @@ use lang::*;
 /// in the representation.
 ///
 /// If it's not the case, then false is retuned.
-pub(crate) fn rules_inference_lookahead(agent: &Representation,
-                                 rules: Vec<Arc<LogSentence>>,
-                                 grounded: GroundedRef)
-                                 -> bool {
+pub(crate) fn rules_inference_lookahead(
+    agent: &Representation,
+    rules: Vec<Arc<LogSentence>>,
+    grounded: &GroundedRef,
+) -> bool {
     // get all the rules that apply to the provided predicates
     for rule in rules {
         // construct a proper context for the sentence resolution
         let mut context = RuleResContext::new(&*rule, Some(grounded.clone()));
         // if the rule has any special var, get proper assignments
-        let assignments: Option<HashMap<&Var, &VarAssignment>> = {
-            if rule.has_time_vars > 0 { unimplemented!() } else { None }
+        let assignments: Option<&HashMap<&Var, &VarAssignment>> = {
+            if rule.has_time_vars > 0 {
+                unimplemented!()
+            } else {
+                None
+            }
         };
         // get the results from the rule and return value
         rule.solve(agent, assignments, &mut context);
-        match context.result {
-            Some(false) => return true,
-            _ => {}
+        if let Some(false) = context.result {
+            return true;
         }
         if context.inconsistent {
             return true;
@@ -40,15 +44,19 @@ pub(crate) fn rules_inference_lookahead(agent: &Representation,
 ///
 /// If it's not the case, then changes are rolled back (from newest to oldest) until
 /// they are consistent with the new rule.
-pub(crate) fn rules_inference_rollback(agent: &Representation, rule: Arc<LogSentence>) {
+pub(crate) fn rules_inference_rollback(agent: &Representation, rule: &Arc<LogSentence>) {
     // test the rule
     let mut context = RuleResContext::new(&*rule, None);
     // if the rule has any special var, get proper assignments
-    let assignments: Option<HashMap<&Var, &VarAssignment>> = {
-        if rule.has_time_vars > 0 { unimplemented!() } else { None }
+    let assignments: Option<&HashMap<&Var, &VarAssignment>> = {
+        if rule.has_time_vars > 0 {
+            unimplemented!()
+        } else {
+            None
+        }
     };
     // if the result of the rule is false, procede to rollback
-    rule.solve(agent, assignments.clone(), &mut context);
+    rule.solve(agent, assignments, &mut context);
     match context.result {
         None | Some(true) => return,
         _ => {}
@@ -76,10 +84,21 @@ pub(crate) fn rules_inference_rollback(agent: &Representation, rule: Arc<LogSent
     // sort grounded funcs and classes by age and rollback once then check again
     // if the rule still returns false, repeat until it returns None or True
     loop {
-        let mut funcs: Vec<_> = gr_funcs.iter().filter(|x| context.was_false_fn(x)).collect();
+        let mut funcs: Vec<_> = gr_funcs
+            .iter()
+            .filter(|x| context.was_false_fn(x))
+            .collect();
         funcs.sort_by(|a, b| a.bms.cmp_by_time(&*b.bms));
-        let mut classes: Vec<_> = gr_classes.iter().filter(|x| context.was_false_cls(x)).collect();
-        classes.sort_by(|a, b| a.bms.as_ref().unwrap().cmp_by_time(&*b.bms.as_ref().unwrap()));
+        let mut classes: Vec<_> = gr_classes
+            .iter()
+            .filter(|x| context.was_false_cls(x))
+            .collect();
+        classes.sort_by(|a, b| {
+            a.bms
+                .as_ref()
+                .unwrap()
+                .cmp_by_time(&*b.bms.as_ref().unwrap())
+        });
         let func = funcs.last().unwrap();
         let cls = classes.last().unwrap();
         let func_newer = match func.bms.cmp_by_time(cls.bms.as_ref().unwrap()) {
@@ -92,7 +111,7 @@ pub(crate) fn rules_inference_rollback(agent: &Representation, rule: Arc<LogSent
             cls.bms.as_ref().unwrap().rollback_once();
         }
         context = context.clone();
-        rule.solve(agent, assignments.clone(), &mut context);
+        rule.solve(agent, assignments, &mut context);
         match context.result {
             None | Some(true) => break,
             _ => {}
@@ -143,11 +162,15 @@ impl<'a> RuleResContext<'a> {
 
 impl<'a> ::std::clone::Clone for RuleResContext<'a> {
     fn clone(&self) -> RuleResContext<'a> {
-        let RuleResContext { sent_id, ref cmp_pred, .. } = *self;
+        let RuleResContext {
+            sent_id,
+            ref cmp_pred,
+            ..
+        } = *self;
         RuleResContext {
             result: None,
             newest_grfact: ::chrono::date::MIN.and_hms(0, 0, 0),
-            sent_id: sent_id,
+            sent_id,
             antecedents: vec![],
             grounded_fn: vec![],
             grounded_cls: vec![],
@@ -193,8 +216,8 @@ impl<'a> ProofResContext for RuleResContext<'a> {
         self.grounded_cls.push((grounded, time));
     }
 
-    fn newest_grfact(&self) -> &Time {
-        &self.newest_grfact
+    fn newest_grfact(&self) -> Time {
+        self.newest_grfact
     }
 
     fn set_newest_grfact(&mut self, time: Time) {
@@ -218,33 +241,29 @@ impl<'a> ProofResContext for RuleResContext<'a> {
     }
 
     fn compare_relation(&self, func: &GroundedFunc) -> bool {
-        match *&self.cmp_pred {
-            Some(GroundedRef::Class(_)) |
-            None => false,
+        match self.cmp_pred {
+            Some(GroundedRef::Class(_)) | None => false,
             Some(GroundedRef::Function(cmp)) => cmp.comparable(func),
         }
     }
 
     fn compare_cls(&self, cls: &GroundedMemb) -> bool {
-        match *&self.cmp_pred {
-            Some(GroundedRef::Function(_)) |
-            None => false,
+        match self.cmp_pred {
+            Some(GroundedRef::Function(_)) | None => false,
             Some(GroundedRef::Class(cmp)) => cmp.comparable(cls),
         }
     }
 
     fn has_relationship(&self, func: &GroundedFunc) -> Option<bool> {
-        match *&self.cmp_pred {
-            Some(GroundedRef::Class(_)) |
-            None => None,
+        match self.cmp_pred {
+            Some(GroundedRef::Class(_)) | None => None,
             Some(GroundedRef::Function(cmp)) => Some(cmp == func),
         }
     }
 
     fn has_cls_memb(&self, cls: &GroundedMemb) -> Option<bool> {
-        match *&self.cmp_pred {
-            Some(GroundedRef::Function(_)) |
-            None => None,
+        match self.cmp_pred {
+            Some(GroundedRef::Function(_)) | None => None,
             Some(GroundedRef::Class(cmp)) => Some(cmp == cls),
         }
     }

@@ -1,7 +1,8 @@
 use std::mem;
 
-use agent::{Representation, Answer, QueryErr};
+use agent::{Answer, QueryErr, Representation};
 
+#[derive(Default)]
 pub struct SimagInterpreter<'a> {
     state: Representation,
     result: Option<Answer<'a>>,
@@ -28,19 +29,18 @@ impl<'a> SimagInterpreter<'a> {
         mem::swap(&mut self.source, &mut input);
         if !self.ask {
             match self.state.tell(input) {
-                Err(errors) => Err(format!("{}", errors.get(0).unwrap())),
+                Err(errors) => Err(format!("{}", &errors[0])),
                 Ok(_) => Ok(Action::Continue),
             }
         } else {
             input.remove(0);
             if let Some(r) = match self.state.ask(input) {
-                   Err(QueryErr::ParseErr(_)) |
-                   Err(QueryErr::QueryErr) => None,
-                   Ok(result) => unsafe {
-                let answ = mem::transmute::<Answer, Answer<'a>>(result);
-                Some(answ)
-            },
-               } {
+                Err(QueryErr::ParseErr(_)) | Err(QueryErr::QueryErr) => None,
+                Ok(result) => unsafe {
+                    let answ = mem::transmute::<Answer, Answer<'a>>(result);
+                    Some(answ)
+                },
+            } {
                 self.result = Some(r);
                 Ok(Action::Continue)
             } else {
@@ -55,7 +55,7 @@ impl<'a> Interpreter for SimagInterpreter<'a> {
     fn read(&mut self, input: char) -> Action {
         match input {
             '\n' => {
-                if self.reading && !self.source.ends_with("\n") {
+                if self.reading && !self.source.ends_with('\n') {
                     self.source.push('\n');
                     Action::Read
                 } else if self.reading {
@@ -133,4 +133,3 @@ pub enum Action {
     Command(String),
     None,
 }
-

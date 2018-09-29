@@ -1,5 +1,5 @@
-use RGSLRng;
 use err::ErrMsg;
+use RGSLRng;
 
 #[derive(Debug, Clone)]
 pub struct Beta {
@@ -13,7 +13,7 @@ impl Beta {
             return Err(());
         }
 
-        Ok(Beta { a: a, b: b })
+        Ok(Beta { a, b })
     }
 
     #[inline]

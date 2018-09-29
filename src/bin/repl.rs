@@ -1,22 +1,22 @@
 //! A REPL (Read-Eval-Print-Loop) terminal interface for the language
 
-extern crate termion;
 extern crate simag_core;
+extern crate termion;
 
-use std::io::{Read, Write, Bytes, stdout};
+use std::io::{stdout, Bytes, Read, Write};
 use std::time;
 
-use simag_core::utils::{Interpreter, SimagInterpreter, Action};
-use termion::event::{Event, Key, parse_event};
+use simag_core::utils::{Action, Interpreter, SimagInterpreter};
+use termion::event::{parse_event, Event, Key};
 use termion::raw::IntoRawMode;
 
-const INFO: &'static str = "Simag Logic Lang 0.0.1 Interpreter";
-
+const INFO: &str = "Simag Logic Lang 0.0.1 Interpreter";
 
 struct TermInterface<I, O, E>
-    where I: Read,
-          O: Write,
-          E: Interpreter
+where
+    I: Read,
+    O: Write,
+    E: Interpreter,
 {
     cursor: Cursor,
     stdout: O,
@@ -26,16 +26,17 @@ struct TermInterface<I, O, E>
 }
 
 impl<I, O, E> TermInterface<I, O, E>
-    where I: Read,
-          O: Write,
-          E: Interpreter
+where
+    I: Read,
+    O: Write,
+    E: Interpreter,
 {
     fn new(stdin: I, stdout: O, interpreter: E) -> TermInterface<I, O, E> {
         TermInterface {
             cursor: Cursor::new(),
-            stdout: stdout,
+            stdout,
             stdin: stdin.bytes(),
-            interpreter: interpreter,
+            interpreter,
             reading: false,
         }
     }
@@ -55,39 +56,38 @@ impl<I, O, E> TermInterface<I, O, E>
                         }
                         Err(val) => {
                             if let Ok(event) = parse_event(val, &mut self.stdin) {
-                                if let Some(Action::Exit) = self.parse_event(event) {
+                                if let Some(Action::Exit) = self.parse_event(&event) {
                                     break;
                                 }
                             }
                         }
                     }
-                } else {
-                    if let Ok(event) = parse_event(c, &mut self.stdin) {
-                        if let Some(Action::Exit) = self.parse_event(event) {
-                            break;
-                        }
+                } else if let Ok(event) = parse_event(c, &mut self.stdin) {
+                    if let Some(Action::Exit) = self.parse_event(&event) {
+                        break;
                     }
                 }
             }
         }
-        write!(self.stdout,
-               "{}{}{}{}",
-               termion::style::Reset,
-               termion::clear::All,
-               termion::cursor::Goto(1, 1),
-               termion::cursor::Show)
-                .unwrap();
+        write!(
+            self.stdout,
+            "{}{}{}{}",
+            termion::style::Reset,
+            termion::clear::All,
+            termion::cursor::Goto(1, 1),
+            termion::cursor::Show
+        ).unwrap();
         self.flush();
     }
 
-    fn parse_event(&mut self, event: Event) -> Option<Action> {
+    fn parse_event(&mut self, event: &Event) -> Option<Action> {
         if let Event::Key(key) = event {
             let action = match key {
                 Key::Char(c) => {
-                    if c != '\n' {
-                        self.print_char(c);
+                    if c != &'\n' {
+                        self.print_char(*c);
                     }
-                    self.interpreter.read(c)
+                    self.interpreter.read(*c)
                 }
                 Key::Backspace => {
                     if self.cursor.column > 5 {
@@ -115,7 +115,7 @@ impl<I, O, E> TermInterface<I, O, E>
     }
 
     fn sequence(&mut self) -> Result<Action, u8> {
-        let mut combo = &mut Combo { buffered: vec![] };
+        let combo = &mut Combo { buffered: vec![] };
         let mut end = false;
         let mut num = false;
 
@@ -150,11 +150,10 @@ impl<I, O, E> TermInterface<I, O, E>
         }
 
         Ok(if let Ok(event) = parse_event(b'\x1B', combo) {
-               self.parse_event(event)
-                   .map_or_else(|| Action::None, |x| x)
-           } else {
-               Action::None
-           })
+            self.parse_event(&event).map_or_else(|| Action::None, |x| x)
+        } else {
+            Action::None
+        })
     }
 
     fn exec_action(&mut self, action: Action) -> Option<Action> {
@@ -200,8 +199,10 @@ impl<I, O, E> TermInterface<I, O, E>
 
     fn print_str(&mut self, output: &str) {
         write!(self.stdout, "{}", output).unwrap();
-        if let Action::Newline = self.cursor
-               .move_right(&mut self.stdout, output.len() as u16) {
+        if let Action::Newline = self
+            .cursor
+            .move_right(&mut self.stdout, output.len() as u16)
+        {
             self.cursor.move_down(&mut self.stdout, 1);
             self.print_str(output);
             return;
@@ -231,17 +232,19 @@ impl<I, O, E> TermInterface<I, O, E>
         self.cursor.move_down(&mut self.stdout, 1);
         self.cursor.column = 5;
         if self.reading {
-            write!(self.stdout,
-                   "{}... {}",
-                   termion::style::Bold,
-                   termion::style::Reset)
-                    .unwrap();
+            write!(
+                self.stdout,
+                "{}... {}",
+                termion::style::Bold,
+                termion::style::Reset
+            ).unwrap();
         } else {
-            write!(self.stdout,
-                   "{}>>> {}",
-                   termion::style::Bold,
-                   termion::style::Reset)
-                    .unwrap();
+            write!(
+                self.stdout,
+                "{}>>> {}",
+                termion::style::Bold,
+                termion::style::Reset
+            ).unwrap();
         }
         self.flush();
         self.cursor.effect_on = true;
@@ -249,11 +252,12 @@ impl<I, O, E> TermInterface<I, O, E>
 
     fn delete(&mut self) {
         self.cursor.column -= 1;
-        write!(self.stdout,
-               "{} {}",
-               termion::cursor::Goto(self.cursor.column, self.cursor.row),
-               termion::cursor::Goto(self.cursor.column, self.cursor.row))
-                .unwrap();
+        write!(
+            self.stdout,
+            "{} {}",
+            termion::cursor::Goto(self.cursor.column, self.cursor.row),
+            termion::cursor::Goto(self.cursor.column, self.cursor.row)
+        ).unwrap();
         self.flush();
     }
 
@@ -324,16 +328,13 @@ impl Cursor {
             return;
         }
         let nt = time::Instant::now();
-        if nt.duration_since(self.time.clone()) >= time::Duration::new(0, 500000000) {
-            match self.show {
-                true => {
-                    self.show = false;
-                    self.hide(stdout);
-                }
-                false => {
-                    self.show = true;
-                    self.show(stdout);
-                }
+        if nt.duration_since(self.time) >= time::Duration::new(0, 500_000_000) {
+            if self.show {
+                self.show = false;
+                self.hide(stdout);
+            } else {
+                self.show = true;
+                self.show(stdout);
             }
             self.time = nt;
         }
@@ -372,13 +373,13 @@ fn main() {
     let stdin = termion::async_stdin();
     let interpreter = SimagInterpreter::new();
     let mut term = TermInterface::new(stdin, stdout, interpreter);
-    write!(term.stdout,
-           "{}{}{}",
-           termion::clear::BeforeCursor,
-           termion::cursor::Goto(1, 1),
-           INFO)
-            .unwrap();
+    write!(
+        term.stdout,
+        "{}{}{}",
+        termion::clear::BeforeCursor,
+        termion::cursor::Goto(1, 1),
+        INFO
+    ).unwrap();
     term.newline();
     term.read();
 }
-

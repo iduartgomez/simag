@@ -15,19 +15,19 @@
 //!
 //! Each of the above follows a distinc strategy for sampling.
 
-mod discrete;
 mod continuous;
+mod discrete;
 mod hybrid;
 
-pub use self::discrete::GibbsMarginal as DiscreteMarginalGibbs;
 pub use self::continuous::ExactNormalized as ContinuousMarginalExact;
-pub use self::hybrid::ExactNormalized as HybridMarginalExact;
+pub use self::discrete::GibbsMarginal as DiscreteMarginalGibbs;
 pub use self::hybrid::CCMRFMarginal;
+pub use self::hybrid::ExactNormalized as HybridMarginalExact;
 
-use model::{HybridRes};
+use model::HybridRes;
 
-use std::collections::HashMap;
 use rgsl::MatrixF64;
+use std::collections::HashMap;
 
 /// Computes the partial correlation given conditioning set variables.
 /// Using this function recursivelly for all the random variables in a (gaussian) net
@@ -39,15 +39,19 @@ use rgsl::MatrixF64;
 ///     - cond: slice of positions (identifiers) of the conditioning variables of x
 ///     - cached: a dynamic cache of the partial correlations between the different variables
 ///     - mtx: the correlation matrix for the full joint distribution
-#[allow(dead_code)]
-fn partial_correlation(x: usize,
-                       cond: &[usize],
-                       cached: &mut HashMap<(usize, usize), f64>,
-                       mtx: &mut MatrixF64) {
+#[allow(dead_code, map_entry)]
+fn partial_correlation(
+    x: usize,
+    cond: &[usize],
+    cached: &mut HashMap<(usize, usize), f64>,
+    mtx: &mut MatrixF64,
+) {
     if cond.is_empty() {
         return;
     } else if cond.len() < 2 {
-        cached.entry((x, cond[0])).or_insert_with(|| mtx.get(x, cond[0]));
+        cached
+            .entry((x, cond[0]))
+            .or_insert_with(|| mtx.get(x, cond[0]));
         return;
     };
 
@@ -73,8 +77,8 @@ fn partial_correlation(x: usize,
             let rho_xy = mtx.get(x, y);
             let rho_xz = *cached.get(key_xz).unwrap();
             let rho_yz = *cached.get(key_yz).unwrap();
-            let rho_xyz = (rho_xy - (rho_xz * rho_yz)) /
-                          ((1.0 - rho_xz.powi(2)) * (1.0 - rho_yz.powi(2))).sqrt();
+            let rho_xyz = (rho_xy - (rho_xz * rho_yz))
+                / ((1.0 - rho_xz.powi(2)) * (1.0 - rho_yz.powi(2))).sqrt();
             cached.insert((x, y), rho_xyz);
             mtx.set(x, y, rho_xyz);
         }
@@ -83,9 +87,9 @@ fn partial_correlation(x: usize,
 
 #[cfg(test)]
 mod test {
-    use std::collections::HashMap;
-    use rgsl::MatrixF64;
     use super::*;
+    use rgsl::MatrixF64;
+    use std::collections::HashMap;
 
     //#[test]
     fn _pt_cr() {

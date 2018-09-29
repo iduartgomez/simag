@@ -1,12 +1,12 @@
 use std::f64::consts::PI;
 
-use rgsl::{MatrixF64, VectorF64};
 use rgsl;
+use rgsl::{MatrixF64, VectorF64};
 
 use super::HybridRes;
-use model::{Variable, HybridNode, ContVar, ContNode, DefContVar, DType, IterModel, HybridModel};
 use dists::{Normal, Normalization, CDF};
 use err::ErrMsg;
+use model::{ContNode, ContVar, DType, DefContVar, HybridModel, HybridNode, IterModel, Variable};
 use RGSLRng;
 
 const ITER_TIMES: usize = 2000;
@@ -62,7 +62,7 @@ impl<'a> ExactNormalized<'a> {
         };
 
         ExactNormalized {
-            steeps: steeps,
+            steeps,
             normalized: vec![],
             samples: Vec::with_capacity(ITER_TIMES),
             rng: RGSLRng::new(),
@@ -71,7 +71,8 @@ impl<'a> ExactNormalized<'a> {
     }
 
     fn initialize<N>(&mut self, net: &HybridModel<'a, N>) -> Result<(), ()>
-        where N: HybridNode<'a>
+    where
+        N: HybridNode<'a>,
     {
         use model::ContNode;
         //use super::partial_correlation;
@@ -111,7 +112,8 @@ impl<'a> ExactNormalized<'a> {
     }
 
     pub fn get_samples<N>(mut self, net: &HybridModel<'a, N>) -> Result<Vec<Vec<HybridRes>>, ()>
-        where N: HybridNode<'a>
+    where
+        N: HybridNode<'a>,
     {
         use rgsl::blas::level2::dtrmv;
 
@@ -127,11 +129,13 @@ impl<'a> ExactNormalized<'a> {
                 let sample = normal.var.get_obs_unchecked(t);
                 steep_sample.set(i, sample);
             }
-            dtrmv(rgsl::cblas::Uplo::Lower,
-                  rgsl::cblas::Transpose::NoTrans,
-                  rgsl::cblas::Diag::NonUnit,
-                  &self.cr_matrix,
-                  &mut steep_sample);
+            dtrmv(
+                rgsl::cblas::Uplo::Lower,
+                rgsl::cblas::Transpose::NoTrans,
+                rgsl::cblas::Diag::NonUnit,
+                &self.cr_matrix,
+                &mut steep_sample,
+            );
             let mut f = Vec::with_capacity(d);
             for i in 0..d {
                 let sample = std.cdf(steep_sample.get(i));
@@ -177,7 +181,6 @@ impl<'a> Clone for ExactNormalized<'a> {
     }
 }
 
-
 /// Marginal sampler for Constrained Continuous Markov Random Field.
 ///
 /// This algorithm draws a sample from a proposal marginal distribution of a random variable
@@ -209,7 +212,8 @@ impl<'a> CCMRFMarginal {
     /// Choose an initial state and a support set for each variable and construct the target
     /// proposal for each variable in the process.
     fn initialize<N>(&mut self, var: &N) -> VarInfo<'a, N>
-        where N: HybridNode<'a>
+    where
+        N: HybridNode<'a>,
     {
         /*
         let blanket = var.get_markov_blanket();
@@ -227,7 +231,8 @@ impl<'a> CCMRFMarginal {
     }
 
     fn var_val<N>(&mut self, var: &N, info: &VarInfo<'a, N>) -> HybridRes
-        where N: HybridNode<'a>
+    where
+        N: HybridNode<'a>,
     {
         if !info.blanket.is_empty() {
             /*
@@ -250,7 +255,8 @@ impl<'a> CCMRFMarginal {
     }
 
     pub fn get_samples<N>(mut self, var: &N) -> Result<Vec<HybridRes>, ()>
-        where N: HybridNode<'a>
+    where
+        N: HybridNode<'a>,
     {
         let var_info = self.initialize(var);
         for _ in 0..self.steeps {
@@ -273,4 +279,3 @@ impl Default for CCMRFMarginal {
         Self::new(None)
     }
 }
-

@@ -1,5 +1,5 @@
-use RGSLRng;
 use err::ErrMsg;
+use RGSLRng;
 
 #[derive(Debug, Clone)]
 pub struct TDist {
@@ -12,7 +12,7 @@ impl TDist {
             return Err(());
         }
 
-        Ok(TDist { nu: nu })
+        Ok(TDist { nu })
     }
 
     #[inline]

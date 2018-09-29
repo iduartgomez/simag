@@ -1,5 +1,5 @@
-use rgsl::types::rng::Rng as GSLRng;
 use rand::{OsRng, Rng};
+use rgsl::types::rng::Rng as GSLRng;
 
 use err::ErrMsg;
 
@@ -24,7 +24,7 @@ impl RGSLRng {
             generator.set(seed);
             RGSLRng {
                 inner: generator,
-                thread_rng: thread_rng,
+                thread_rng,
                 cnt: 0,
             }
         } else {
@@ -79,7 +79,7 @@ impl Clone for RGSLRng {
         let thread_rng = OsRng::new().unwrap();
         let mut rng = RGSLRng {
             inner: self.inner.clone(),
-            thread_rng: thread_rng,
+            thread_rng,
             cnt: 0,
         };
         rng.reseed();
