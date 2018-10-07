@@ -1047,10 +1047,8 @@ impl CompOperator {
             CompOperator::Equal
         } else if c == b"<=" {
             CompOperator::LessEqual
-        } else if c == b"->" {
-            CompOperator::MoreEqual
         } else {
-            CompOperator::Until
+            CompOperator::MoreEqual
         }
     }
 

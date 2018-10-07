@@ -1,4 +1,5 @@
 .vscode
+simag.code-workspace
 
 target
 Cargo.lock
