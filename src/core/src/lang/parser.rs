@@ -842,24 +842,35 @@ pub(crate) struct OpArgBorrowed<'a> {
 
 named!(
     op_arg<OpArgBorrowed>,
-    ws!(do_parse!(
-        term: alt!(
-            map!(string, OpArgTermBorrowed::is_string)
-                | map!(terminal, OpArgTermBorrowed::is_terminal)
-        )
-            >> c1: opt!(do_parse!(
+    ws!(alt!(
+        do_parse!(
+            term: alt!(
+                map!(string, OpArgTermBorrowed::is_string)
+                | map!(terminal, OpArgTermBorrowed::is_terminal)) >> 
+            c1: opt!(do_parse!(
                 c2: map!(
                     alt!(tag!(">=") | tag!("<=") | tag!("=") | tag!(">") | tag!("<")),
-                    CompOperator::from_chars
-                )
-                    >> term: alt!(
-                        map!(string, OpArgTermBorrowed::is_string)
-                            | map!(terminal, OpArgTermBorrowed::is_terminal)
-                    ) >> (c2, term)
-            )) >> (OpArgBorrowed {
-            term,
-            comp: c1,
-        })
+                    CompOperator::from_chars) >> 
+                term: alt!(
+                    map!(string, OpArgTermBorrowed::is_string)
+                    | map!(terminal, OpArgTermBorrowed::is_terminal)) >> 
+                (c2, term))) >>
+            (OpArgBorrowed {
+                term,
+                comp: c1,
+            })) |
+        do_parse!(
+            tag!("@") >>
+            from: map!(terminal, OpArgTermBorrowed::is_terminal) >>
+            to: opt!(do_parse!(
+                tag!("->") >>
+                term: map!(terminal, OpArgTermBorrowed::is_terminal) >>
+                (term))) >> 
+            (OpArgBorrowed {
+                term: from,
+                comp: CompOperator::from_time_op(to),
+            })   
+        )
     ))
 );
 
@@ -1007,16 +1018,23 @@ fn terminal(input: &[u8]) -> IResult<&[u8], &[u8]> {
             return IResult::Error(nom::Err::Position(ErrorKind::Custom(0), input));
         }
     }
+    if input[0] == b'$' && input[1..idx].is_empty() {
+        return IResult::Error(nom::Err::Position(ErrorKind::Custom(0), input));
+    }
     IResult::Done(&input[idx..], &input[0..idx])
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub(crate) enum CompOperator {
+    // equality operators:
     Equal,
     Less,
     More,
     MoreEqual,
     LessEqual,
+    // time operators:
+    Until,
+    At,
 }
 
 impl CompOperator {
@@ -1029,8 +1047,18 @@ impl CompOperator {
             CompOperator::Equal
         } else if c == b"<=" {
             CompOperator::LessEqual
-        } else {
+        } else if c == b"->" {
             CompOperator::MoreEqual
+        } else {
+            CompOperator::Until
+        }
+    }
+
+    fn from_time_op(t: Option<OpArgTermBorrowed>) -> Option<(CompOperator, OpArgTermBorrowed)> {
+        if let Some(term) = t {
+            Some((CompOperator::Until, term))
+        } else {
+            Some((CompOperator::At, OpArgTermBorrowed::String(b"")))
         }
     }
 
@@ -1081,6 +1109,8 @@ impl CompOperator {
             CompOperator::More => id.push(3),
             CompOperator::MoreEqual => id.push(4),
             CompOperator::LessEqual => id.push(5),
+            CompOperator::Until => id.push(6),
+            CompOperator::At => id.push(7)
         }
     }
 }
@@ -1348,8 +1378,44 @@ mod test {
             }]
         );
 
-        let _s5 = b"happy(time=t1, @t1->t2, overwrite)[x,u<=0.5]";
-        let _s6 = b"happy(time=t1, @t1, overwrite)[x,u>=0.5]";
+        let s5 = b"happy(time=t1, @t1, ow)[x,u>=0.5]";
+        let s5_res = class_decl(s5);
+        assert_done_or_err!(s5_res);
+        let s5_res = s5_res.unwrap().1;
+        assert!(s5_res.op_args.is_some());
+        assert_eq!(
+            &s5_res.op_args.as_ref().unwrap()[0],
+            &OpArgBorrowed {
+                term: OpArgTermBorrowed::Terminal(b"time"),
+                comp: Some((
+                    CompOperator::Equal,
+                    OpArgTermBorrowed::Terminal(b"t1"),
+                )),
+            }
+        );
+        assert_eq!(
+            &s5_res.op_args.as_ref().unwrap()[1],
+            &OpArgBorrowed {
+                term: OpArgTermBorrowed::Terminal(b"t1"),
+                comp: Some((CompOperator::At, OpArgTermBorrowed::String(b""))),
+            }
+        );
+        
+        let s6 = b"happy(time=t1, @t1->t2, ow)[x,u<=0.5]";
+        let s6_res = class_decl(s6);
+        assert_done_or_err!(s6_res);
+        let s6_res = s6_res.unwrap().1;
+        assert!(s6_res.op_args.is_some());
+        assert_eq!(
+            &s6_res.op_args.as_ref().unwrap()[1],
+            &OpArgBorrowed {
+                term: OpArgTermBorrowed::Terminal(b"t1"),
+                comp: Some((
+                    CompOperator::Until,
+                    OpArgTermBorrowed::Terminal(b"t2"),
+                )),
+            }
+        );
     }
 
     #[test]

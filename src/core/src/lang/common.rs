@@ -418,6 +418,7 @@ impl ::std::cmp::PartialEq for GroundedMemb {
             CompOperator::Less => val_lhs > val_rhs,
             CompOperator::MoreEqual => val_lhs <= val_rhs,
             CompOperator::LessEqual => val_lhs >= val_rhs,
+            CompOperator::Until | CompOperator::At => unreachable!(),
         }
     }
 }
@@ -698,6 +699,7 @@ impl FreeClsMemb {
                 | CompOperator::More
                 | CompOperator::MoreEqual
                 | CompOperator::LessEqual => panic!(),
+                _ => unreachable!(),
             }
         } else {
             true
@@ -762,6 +764,7 @@ impl FreeClsOwner {
                 CompOperator::LessEqual => {
                     val.approx_eq_ulps(&o_val, FLOAT_EQ_ULPS) || o_val < *val
                 }
+                CompOperator::Until | CompOperator::At => unreachable!(),
             }
         } else {
             true
@@ -1606,7 +1609,7 @@ impl<'a> OpArg {
                     let targ = OpArg::ignore_kw(other, "time", context)?;
                     return Ok(targ);
                 }
-                "overwrite" => return Ok(OpArg::OverWrite),
+                "overwrite" | "ow" => return Ok(OpArg::OverWrite),
                 _ => return Err(ParseErrF::ReservedKW(kw)),
             },
             Err(err) => return Err(err),
@@ -1731,6 +1734,7 @@ impl<'a> OpArg {
                 let upper_bound = arg0 + comp_diff;
                 !((arg1 < lower_bound) || (arg1 > upper_bound)) || arg0 < arg1
             }
+            CompOperator::Until | CompOperator::At => unreachable!(),
         }
     }
 }
@@ -2063,7 +2067,9 @@ impl<'a> Terminal {
 
 fn reserved(s: &str) -> bool {
     match s {
-        "let" | "time_calc" | "exists" | "fn" | "time" | "overwrite" | "self" | "none" => true,
+        "let" | "time_calc" | "exists" | "fn" | "time" | "overwrite" | "ow" | "self" | "none" => {
+            true
+        }
         _ => false,
     }
 }

@@ -874,6 +874,7 @@ impl Entity {
                                 res.entry(rel_name).or_insert(vec![]).push(f.clone())
                             }
                         }
+                        Some(CompOperator::Until) | Some(CompOperator::At) => unreachable!(),
                     }
                 }
             }
@@ -1170,6 +1171,7 @@ impl Class {
                                 res.entry(rel_name).or_insert(vec![]).push(f.clone())
                             }
                         }
+                        Some(CompOperator::Until) | Some(CompOperator::At) => unreachable!(),
                     }
                 }
             }
@@ -1219,6 +1221,7 @@ impl Class {
                                 process = false;
                             }
                         }
+                        (CompOperator::Until, _) | (CompOperator::At, _) => unreachable!(),
                     }
                 }
             }
