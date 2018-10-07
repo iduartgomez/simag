@@ -2,9 +2,10 @@
 name = "simag"
 version = "0.0.1"
 authors = ["Ignacio Duart Gómez <iduartgomez@gmail.com>"]
+autobins = false
 
 [[bin]]
-name = "runtime"
+name = "repl"
 path = "src/bin/repl.rs"
 
 [dependencies]
