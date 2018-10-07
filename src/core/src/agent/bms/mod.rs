@@ -16,7 +16,7 @@ use std::mem;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::RwLock;
 
-///Acts as a wrapper for the Belief Maintenance System for a given agent.
+/// Acts as a wrapper for the Belief Maintenance System for a given agent.
 ///
 /// Serves to keep the believes alive in memory, fix inconsistencies and
 /// serialize any information.

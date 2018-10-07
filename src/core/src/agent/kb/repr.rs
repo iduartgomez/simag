@@ -234,7 +234,7 @@ impl Representation {
                 if class_exists {
                     let lock = self.classes.read().unwrap();
                     let class = lock.get(subject).unwrap();
-                    is_new1 = class.add_relationship(self, assert.clone(), context);
+                    is_new1 = class.add_relationship(self, assert, context);
                 } else {
                     let class = Class::new(subject.to_string(), ClassKind::Membership);
                     self.classes
@@ -243,7 +243,7 @@ impl Representation {
                         .insert(class.name.clone(), class);
                     let lock = self.classes.read().unwrap();
                     let class = lock.get(subject).unwrap();
-                    is_new1 = class.add_relationship(self, assert.clone(), context);
+                    is_new1 = class.add_relationship(self, assert, context);
                 }
             }
             let new_check = is_new.clone();
@@ -685,7 +685,7 @@ impl<'a> Answer<'a> {
         Answer(results)
     }
 
-    pub fn get_results_single(self) -> Option<bool> {
+    pub fn get_results_single(&self) -> Option<bool> {
         self.0.get_results_single()
     }
 
@@ -1235,7 +1235,7 @@ impl Class {
     fn add_relationship<T: ProofResContext>(
         &self,
         agent: &Representation,
-        func: Arc<GroundedFunc>,
+        func: &Arc<GroundedFunc>,
         context: Option<&T>,
     ) -> bool {
         let name = func.get_name();

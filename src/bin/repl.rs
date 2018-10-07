@@ -6,11 +6,34 @@ extern crate termion;
 use std::io::{stdout, Bytes, Read, Write};
 use std::time;
 
-use simag_core::utils::{Action, Interpreter, SimagInterpreter};
+use simag_core::utils::{Action, Interpreter, ResultQuery, SimagInterpreter};
 use termion::event::{parse_event, Event, Key};
 use termion::raw::IntoRawMode;
 
-const INFO: &str = "Simag Logic Lang 0.0.1 Interpreter";
+static INFO: &str = "Simag Logic Lang 0.0.1 Interpreter\nType \"help\" for more information";
+static HELP_COMMAND: &str = "\
+Welcome to the interactive Simag 0.0.1 interpreter!
+
+You can start feeding information for the interpreter by writing syntactically valid expressions.
+For querying the interpreter just preceed your expression query with a ?. For more info on 
+the query expression operator write \"help queries\".
+
+To quit this utility just write \"quit\" or \"exit\". For a complete list of commands write 
+\"help commands\".
+";
+static HELP_COMMANDS: &str = "\
+List of valid commands:
+
+* help > the help command
+* help commands > this command, prints info about commands
+";
+static HELP_QUERYING: &str = "\
+For querying just preceed your query with ?. If the query is valid you can explore the results 
+using ??<expr>, substitue <expr> for a valid expression for the ?? operator:
+
+> ??single > return the global result for the query
+> ??multi <expr> > return the result for this part of the query
+";
 
 struct TermInterface<I, O, E>
 where
@@ -172,22 +195,35 @@ where
             }
             Action::Discard => {
                 self.cursor.move_down(&mut self.stdout, 1);
-                self.print_str("Command cancelled");
                 self.newline();
             }
             Action::Command(cmd) => {
                 self.cursor.move_down(&mut self.stdout, 1);
                 match Command::from(cmd.as_str()) {
                     Command::Err => self.print_str("Unknown command"),
-                    Command::Help => self.print_str("< HELP COMMAND >"),
+                    Command::Help => self.print_multiline(HELP_COMMAND),
+                    Command::HelpCommands => self.print_multiline(HELP_COMMANDS),
+                    Command::HelpQuerying => self.print_multiline(HELP_QUERYING),
+                    Command::Query(ResultQuery::Single) => {
+                        match self.interpreter.query_result(ResultQuery::Single) {
+                            Ok(Action::Write(result)) => {
+                                self.print_multiline(result.as_str());
+                            }
+                            Ok(action) => return self.exec_action(action),
+                            Err(msg) => {
+                                self.print_multiline(msg.as_str());
+                            }
+                        }
+                        self.newline();
+                        return Some(Action::Continue);
+                    }
+                    Command::Query(ResultQuery::Multiple) => unimplemented!(),
                     Command::Exit => return Some(Action::Exit),
                 }
                 self.newline();
             }
             Action::Write(msg) => {
-                self.cursor.move_down(&mut self.stdout, 1);
                 self.print_multiline(msg.as_str());
-                self.cursor.move_down(&mut self.stdout, 1);
                 self.reading = false;
                 self.newline();
             }
@@ -222,10 +258,13 @@ where
 
     /// take a multiline str and output it in the terminal properly
     fn print_multiline(&mut self, output: &str) {
-        for line in output.lines() {
-            self.cursor.move_down(&mut self.stdout, 1);
+        for (i, line) in output.lines().enumerate() {
+            if i != 0 {
+                self.cursor.move_down(&mut self.stdout, 1);
+            }
             write!(self.stdout, "{}", line).unwrap();
         }
+        self.flush()
     }
 
     fn newline(&mut self) {
@@ -304,7 +343,6 @@ impl Cursor {
 
     fn move_down<O: Write>(&mut self, stdout: &mut O, pos: u16) {
         if self.row + pos > self.space.1 {
-            //print!("(MOVED:{})", pos);
             write!(stdout, "{}", termion::scroll::Up(pos)).unwrap();
         }
         self.row += pos;
@@ -353,7 +391,10 @@ impl Cursor {
 
 enum Command {
     Help,
+    HelpCommands,
+    HelpQuerying,
     Exit,
+    Query(ResultQuery),
     Err,
 }
 
@@ -361,7 +402,11 @@ impl<'a> From<&'a str> for Command {
     fn from(command: &'a str) -> Command {
         match command {
             "help" => Command::Help,
-            "quit" => Command::Exit,
+            "help commands" => Command::HelpCommands,
+            "help queries" => Command::HelpQuerying,
+            "quit" | "exit" => Command::Exit,
+            "single" => Command::Query(ResultQuery::Single),
+            "multi" => Command::Query(ResultQuery::Multiple),
             _ => Command::Err,
         }
     }
@@ -375,11 +420,11 @@ fn main() {
     let mut term = TermInterface::new(stdin, stdout, interpreter);
     write!(
         term.stdout,
-        "{}{}{}",
+        "{}{}",
         termion::clear::BeforeCursor,
-        termion::cursor::Goto(1, 1),
-        INFO
+        termion::cursor::Goto(1, 1)
     ).unwrap();
+    term.print_multiline(INFO);
     term.newline();
     term.read();
 }

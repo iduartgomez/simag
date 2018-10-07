@@ -2,7 +2,7 @@
 
 // clippy lints config:
 #![allow(unknown_lints)]
-//#![deny(float_cmp)]
+#![deny(float_cmp)]
 #![allow(or_fun_call)]
 
 #[macro_use]

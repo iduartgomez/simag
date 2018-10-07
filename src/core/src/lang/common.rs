@@ -1416,6 +1416,8 @@ impl<'a> ClassDecl {
         &self.name
     }
 
+    /// If the class declaration has an overwrite flag then if there are any previous records
+    /// those will be dropped.
     pub fn get_own_time_data(
         &self,
         assignments: &HashMap<&Var, Arc<BmsWrapper>>,
