@@ -1,8 +1,8 @@
-mod kb;
 mod bms;
+mod kb;
 
-pub(crate) use self::kb::{VarAssignment, Representation};
-pub(crate) use self::bms::{BmsWrapper};
+pub(crate) use self::bms::BmsWrapper;
+pub(crate) use self::kb::{Representation, VarAssignment};
 
 pub use self::kb::{Answer, QueryErr};
 pub use lang::ParseErrF;
@@ -12,12 +12,17 @@ pub use lang::ParseErrF;
 /// Is the core construct of the simAG framework.
 #[derive(Debug)]
 pub struct Agent {
-    representation: kb::Representation
+    /// available threads for this agent
+    threads: usize,
+    representation: kb::Representation,
 }
 
 impl Agent {
-    pub fn new() -> Agent {
-        Agent { representation: kb::Representation::new() }
+    pub fn new(threads: usize) -> Agent {
+        Agent {
+            threads,
+            representation: kb::Representation::new(),
+        }
     }
 
     pub fn ask(&self, source: String) -> Result<kb::Answer, kb::QueryErr> {
@@ -31,6 +36,7 @@ impl Agent {
 
 impl Default for Agent {
     fn default() -> Agent {
-        Agent::new()
+        use num_cpus;
+        Agent::new(num_cpus::get())
     }
 }

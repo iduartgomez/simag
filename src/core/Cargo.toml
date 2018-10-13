@@ -8,3 +8,4 @@ float-cmp = "^0.2"
 nom = { version = "^2.1", features = ["verbose-errors"] }
 chrono = "^0.3"
 rayon = "^1.0"
+num_cpus = "^1.8"

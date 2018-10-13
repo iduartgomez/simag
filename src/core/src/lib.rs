@@ -9,6 +9,7 @@
 extern crate nom;
 extern crate chrono;
 extern crate float_cmp;
+extern crate num_cpus;
 extern crate rayon;
 
 pub(crate) mod agent;

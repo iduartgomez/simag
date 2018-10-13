@@ -27,6 +27,7 @@ use std::sync::{Arc, RwLock};
 pub(crate) struct Representation {
     pub entities: RwLock<HashMap<String, Entity>>,
     pub classes: RwLock<HashMap<String, Class>>,
+    threads: usize,
 }
 
 impl Representation {
@@ -34,6 +35,7 @@ impl Representation {
         Representation {
             entities: RwLock::new(HashMap::new()),
             classes: RwLock::new(HashMap::new()),
+            threads: 4,
         }
     }
 
@@ -104,11 +106,11 @@ impl Representation {
     /// Asks the KB if some fact is true and returns the answer to the query.
     #[allow(needless_pass_by_value)]
     pub fn ask(&self, source: String) -> Result<Answer, QueryErr> {
-        let num_threads = 0; // TODO: pass the number of threads available for inference
-        let pres = logic_parser(source.as_str(), false, num_threads);
+        let pres = logic_parser(source.as_str(), false, self.threads);
         if pres.is_ok() {
             let pres = QueryInput::ManyQueries(pres.unwrap());
-            let mut inf = match Inference::new(self, pres, usize::max_value(), false, num_threads) {
+            let mut inf = match Inference::new(self, pres, usize::max_value(), false, self.threads)
+            {
                 Ok(inf) => inf,
                 Err(()) => return Err(QueryErr::QueryErr),
             };
@@ -128,8 +130,7 @@ impl Representation {
         depth: usize,
         ignore_current: bool,
     ) -> Result<Answer, QueryErr> {
-        let num_threads = 0; // TODO: pass the number of threads available for inference
-        let mut inf = match Inference::new(self, source, depth, ignore_current, num_threads) {
+        let mut inf = match Inference::new(self, source, depth, ignore_current, self.threads) {
             Ok(inf) => inf,
             Err(()) => return Err(QueryErr::QueryErr),
         };
@@ -659,6 +660,15 @@ impl Representation {
             }
         }
         res
+    }
+
+    pub fn with_threads(mut self, threads: usize) -> Self {
+        self.threads = threads;
+        self
+    }
+
+    pub fn set_threads(&mut self, threads: usize) {
+        self.threads = threads;
     }
 }
 

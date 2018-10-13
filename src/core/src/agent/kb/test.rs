@@ -266,27 +266,36 @@ fn repr_inference_time_calc() {
     let q03_03 = "(fat[$Pancho,u=1])".to_string();
     assert_eq!(rep.ask(q03_03).unwrap().get_results_single(), Some(true));
 
-    let test_03_04 = String::from(
-        "
-        (fn::eat(time='2015-01-02T00:00:00Z', overwrite)[$M1,u=1;$Pancho])
-        (run(time='2015-02-01T00:00:00Z', overwrite)[$Pancho,u=1])
-    ",
-    );
+    let test_03_04 = "
+        (fn::eat(time='2015-01-02T00:00:00Z', ow)[$M1,u=1;$Pancho])
+        (run(time='2015-02-01T00:00:00Z', ow)[$Pancho,u=1])
+    ".to_string();
     rep.tell(test_03_04).unwrap();
     let q03_04 = "(fat[$Pancho,u=0])".to_string();
     assert_eq!(rep.ask(q03_04).unwrap().get_results_single(), Some(true));
+}
 
+#[test]
+fn repr_inference_time_calc_2() {
     // Test if a statement is true between time intervals
     let mut rep = Representation::new();
     let test_04_01 = "
-        (meat[$M1,u=1])
-        (dog[$Pancho,u=1])
-        (fn::eat(time='2018-01-00T00:00:00Z')[$M1,u=1;$Pancho])
-        (fn::eat(time='2018-02-00T00:00:00Z', overwrite)[$M1,u=0;$Pancho])
+        ((let t1:time='2018-03-01T00:00:00Z', t2:time='2018-06-01T00:00:00Z')
+                (fat(@t1->t2)[$Pancho,u=1]))
+        # (meat[$M1,u=1])
+        # (dog[$Pancho,u=1])
     ".to_string();
     rep.tell(test_04_01).unwrap();
-    let q04_01 = "".to_string();
+    let q04_01 = "(fat(time='2018-04-01T00:00:00Z')[$Pancho,u=1])".to_string();
     assert_eq!(rep.ask(q04_01).unwrap().get_results_single(), Some(true));
+    // let q04_02 = "(fat(time='2018-07-01T00:00:00Z'))".to_string();
+    // assert_eq!(rep.ask(q04_02).unwrap().get_results_single(), Some(false));
+    // let q04_03 = "(fat(time='2018-02-01T00:00:00Z'))".to_string();
+    // assert_eq!(rep.ask(q04_03).unwrap().get_results_single(), Some(false));
+
+    // "((let x, y, t1:time)
+    //         ((dog[x,u=1] && meat[y,u=1] && fn::eat(@t1)[y,u=1;x])
+    //         := fat(@t1)[x,u=1]))"
 }
 
 #[test]

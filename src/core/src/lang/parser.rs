@@ -64,7 +64,7 @@ impl Parser {
     ) -> Result<VecDeque<ParseTree>, ParseErrF> {
         // store is a vec where the sequence of characters after cleaning up comments
         // will be stored, both have to be extended to 'static lifetime so they can be
-        //use rayon::iter::IntoParallelIterator;
+        // TODO: use rayon::iter::IntoParallelIterator;
         let mut clean = vec![];
         let scopes = match Self::p1(input.as_bytes(), &mut clean) {
             Ok(scopes) => scopes.into_par_iter(),
@@ -97,7 +97,7 @@ impl Parser {
         p2: &'b mut Vec<u8>,
     ) -> Result<Vec<ASTNode<'b>>, ParseErrB<'a>> {
         // clean up every comment to facilitate further parsing
-        // TODO: clea up or ignore comments without having to collect over the initial slice
+        // TODO: clean up or ignore comments without having to collect over the initial slice
         let p1 = match remove_comments(input) {
             IResult::Done(_, done) => done,
             IResult::Error(nom::Err::Position(_, _)) => return Err(ParseErrB::UnclosedComment),
