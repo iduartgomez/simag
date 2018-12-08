@@ -10,7 +10,7 @@ use lang::errors::ParseErrF;
 use lang::logsent::*;
 use lang::parser::*;
 
-use chrono::{Duration, UTC};
+use chrono::{Duration, Utc, DateTime};
 use float_cmp::ApproxEqUlps;
 
 use std::collections::HashMap;
@@ -1027,7 +1027,7 @@ impl<'a> FuncDecl {
                         time_data.new_record(Some(*time), val, None);
                     }
                     OpArg::TimeDecl(TimeFn::Now) => {
-                        time_data.new_record(Some(UTC::now()), val, None);
+                        time_data.new_record(Some(Utc::now()), val, None);
                     }
                     OpArg::OverWrite => {
                         ow = true;
@@ -1753,9 +1753,9 @@ impl TimeFn {
             Ok(TimeFn::Now)
         } else {
             let s = unsafe { str::from_utf8_unchecked(slice) };
-            match s.parse::<Time>() {
-                Err(_) => Err(TimeFnErr::WrongFormat(s.to_owned()).into()),
-                Ok(time) => Ok(TimeFn::Time(time)),
+            match DateTime::parse_from_rfc3339(s) {
+                Err(_e) => Err(TimeFnErr::WrongFormat(s.to_owned()).into()),
+                Ok(time) => Ok(TimeFn::Time(time.with_timezone(&Utc))),
             }
         }
     }

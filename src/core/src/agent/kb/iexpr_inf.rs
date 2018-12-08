@@ -527,7 +527,7 @@ impl IExprResult {
             result: None,
             args,
             node: node as *const ProofNode as usize,
-            newest_grfact: ::chrono::date::MIN.and_hms(0, 0, 0),
+            newest_grfact: ::chrono::MIN_DATE.and_hms(0, 0, 0),
             sent_id: node.proof.get_id(),
             antecedents: vec![],
             grounded_func: vec![],

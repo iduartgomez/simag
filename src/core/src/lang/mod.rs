@@ -7,7 +7,7 @@ pub(crate) use self::parser::{CompOperator, ParseTree};
 pub(crate) use self::logsent::{LogSentence, SentID, ProofResContext};
 pub use self::errors::ParseErrF;
 
-use chrono::{DateTime, UTC};
+use chrono::{DateTime, Utc};
 
 use std::collections::VecDeque;
 
@@ -24,7 +24,7 @@ pub(crate) fn logic_parser(source: &str,
     parser::Parser::parse(source, tell, thread_num)
 }
 
-pub type Time = DateTime<UTC>;
+pub type Time = DateTime<Utc>;
 
 mod errors {
     use super::parser::ParseErrB;

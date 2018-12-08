@@ -139,7 +139,7 @@ impl<'a> RuleResContext<'a> {
         RuleResContext {
             sent_id: proof.get_id(),
             result: None,
-            newest_grfact: ::chrono::date::MIN.and_hms(0, 0, 0),
+            newest_grfact: ::chrono::MIN_DATE.and_hms(0, 0, 0),
             antecedents: vec![],
             grounded_fn: vec![],
             grounded_cls: vec![],
@@ -169,7 +169,7 @@ impl<'a> ::std::clone::Clone for RuleResContext<'a> {
         } = *self;
         RuleResContext {
             result: None,
-            newest_grfact: ::chrono::date::MIN.and_hms(0, 0, 0),
+            newest_grfact: ::chrono::MIN_DATE.and_hms(0, 0, 0),
             sent_id,
             antecedents: vec![],
             grounded_fn: vec![],
