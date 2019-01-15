@@ -15,10 +15,8 @@ use std::sync::Arc;
 use chrono::Utc;
 
 use super::{ParseErrF, Time};
-use agent;
-use agent::BmsWrapper;
-use lang::common::*;
-use lang::parser::*;
+use crate::lang::{common::*, parser::*};
+use crate::{agent, agent::BmsWrapper};
 
 pub use self::errors::LogSentErr;
 pub(crate) type SentID = usize;
@@ -1694,7 +1692,7 @@ mod errors {
 #[cfg(test)]
 mod test {
     use super::Particle;
-    use lang::parser::*;
+    use crate::lang::parser::*;
 
     #[test]
     fn parser_icond_exprs() {

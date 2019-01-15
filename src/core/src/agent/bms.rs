@@ -7,7 +7,7 @@
 
 use super::kb::QueryInput;
 use super::Representation;
-use lang::{Grounded, GroundedRef, ProofResContext, SentID, Time};
+use crate::lang::{Grounded, GroundedRef, ProofResContext, SentID, Time};
 
 use chrono::Utc;
 

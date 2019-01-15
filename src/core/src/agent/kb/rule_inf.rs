@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::repr::*;
 use super::VarAssignment;
-use lang::*;
+use crate::lang::*;
 
 /// Takes a grounded fact and checks out that is consistent with the existing rules
 /// in the representation.

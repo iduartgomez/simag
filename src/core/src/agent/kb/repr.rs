@@ -1,7 +1,7 @@
-use FLOAT_EQ_ULPS;
+use crate::FLOAT_EQ_ULPS;
 
 use super::*;
-use lang::*;
+use crate::lang::*;
 
 use float_cmp::ApproxEqUlps;
 
@@ -75,9 +75,7 @@ impl Representation {
                                     let t = time_data.clone();
                                     t.replace_last_val(a.get_value());
                                     a.overwrite_time_data(&t);
-                                    let x: Option<
-                                        &super::IExprResult,
-                                    > = None;
+                                    let x: Option<&super::IExprResult> = None;
                                     self.up_membership(&Arc::new(a), x)
                                 }
                             } else {
@@ -410,7 +408,8 @@ impl Representation {
                                 QueryInput::AskRelationalFunc(Arc::new(grfunc)),
                                 0,
                                 true,
-                            ).unwrap();
+                            )
+                            .unwrap();
                         }
                     }
                 }
@@ -866,19 +865,19 @@ impl Entity {
                             }
                         }
                         Some(CompOperator::LessEqual) => {
-                            if *val.as_ref().unwrap() > f.get_value().unwrap() || f
-                                .get_value()
-                                .unwrap()
-                                .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
+                            if *val.as_ref().unwrap() > f.get_value().unwrap()
+                                || f.get_value()
+                                    .unwrap()
+                                    .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
                             {
                                 res.entry(rel_name).or_insert(vec![]).push(f.clone())
                             }
                         }
                         Some(CompOperator::MoreEqual) => {
-                            if *val.as_ref().unwrap() < f.get_value().unwrap() || f
-                                .get_value()
-                                .unwrap()
-                                .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
+                            if *val.as_ref().unwrap() < f.get_value().unwrap()
+                                || f.get_value()
+                                    .unwrap()
+                                    .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
                             {
                                 res.entry(rel_name).or_insert(vec![]).push(f.clone())
                             }
@@ -1163,19 +1162,19 @@ impl Class {
                             }
                         }
                         Some(CompOperator::LessEqual) => {
-                            if *val.as_ref().unwrap() > f.get_value().unwrap() || f
-                                .get_value()
-                                .unwrap()
-                                .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
+                            if *val.as_ref().unwrap() > f.get_value().unwrap()
+                                || f.get_value()
+                                    .unwrap()
+                                    .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
                             {
                                 res.entry(rel_name).or_insert(vec![]).push(f.clone())
                             }
                         }
                         Some(CompOperator::MoreEqual) => {
-                            if *val.as_ref().unwrap() < f.get_value().unwrap() || f
-                                .get_value()
-                                .unwrap()
-                                .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
+                            if *val.as_ref().unwrap() < f.get_value().unwrap()
+                                || f.get_value()
+                                    .unwrap()
+                                    .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
                             {
                                 res.entry(rel_name).or_insert(vec![]).push(f.clone())
                             }
@@ -1217,15 +1216,17 @@ impl Class {
                             }
                         }
                         (CompOperator::LessEqual, val) => {
-                            if val < curr_func.get_value().unwrap() || !val
-                                .approx_eq_ulps(&curr_func.get_value().unwrap(), FLOAT_EQ_ULPS)
+                            if val < curr_func.get_value().unwrap()
+                                || !val
+                                    .approx_eq_ulps(&curr_func.get_value().unwrap(), FLOAT_EQ_ULPS)
                             {
                                 process = false;
                             }
                         }
                         (CompOperator::MoreEqual, val) => {
-                            if val > curr_func.get_value().unwrap() || !val
-                                .approx_eq_ulps(&curr_func.get_value().unwrap(), FLOAT_EQ_ULPS)
+                            if val > curr_func.get_value().unwrap()
+                                || !val
+                                    .approx_eq_ulps(&curr_func.get_value().unwrap(), FLOAT_EQ_ULPS)
                             {
                                 process = false;
                             }

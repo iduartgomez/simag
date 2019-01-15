@@ -15,7 +15,7 @@
 
 use super::repr::*;
 use super::VarAssignment;
-use lang::*;
+use crate::lang::*;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
@@ -108,10 +108,8 @@ impl<'b> InfResults<'b> {
         self,
     ) -> HashMap<QueryPred, HashMap<String, Option<(bool, Option<Time>)>>> {
         // WARNING: ObjName<'a> may (truly) outlive the content, own the &str first
-        let orig: &mut HashMap<
-            QueryPred,
-            HashMap<ObjName<'b>, Option<(bool, Option<Time>)>>,
-        > = &mut *self.grounded_queries.write().unwrap();
+        let orig: &mut HashMap<QueryPred, HashMap<ObjName<'b>, Option<(bool, Option<Time>)>>> =
+            &mut *self.grounded_queries.write().unwrap();
         let mut res = HashMap::new();
         for (qpred, r) in orig.drain() {
             let r = HashMap::from_iter(r.into_iter().map(|(k, v)| (k.to_string(), v)));

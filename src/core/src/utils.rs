@@ -1,6 +1,6 @@
 use std::mem;
 
-use agent::{Answer, QueryErr, Representation};
+use crate::agent::{Answer, QueryErr, Representation};
 
 #[derive(Default)]
 pub struct SimagInterpreter<'a> {

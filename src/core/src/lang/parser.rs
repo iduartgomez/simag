@@ -42,9 +42,7 @@ use nom::{ErrorKind, IResult};
 use rayon::prelude::*;
 use rayon;
 
-use lang::common::*;
-use lang::errors::ParseErrF;
-use lang::logsent::*;
+use crate::lang::{common::*, logsent::*, errors::ParseErrF};
 
 const ICOND_OP: &[u8] = b":=";
 const AND_OP: &[u8] = b"&&";

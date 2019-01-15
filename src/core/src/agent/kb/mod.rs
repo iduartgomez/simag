@@ -4,8 +4,8 @@
 //! between them.
 
 mod iexpr_inf;
-mod rule_inf;
 mod repr;
+mod rule_inf;
 #[cfg(test)]
 mod test;
 
@@ -17,7 +17,7 @@ pub use self::repr::{Answer, QueryErr};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use lang::{GroundedMemb, GroundedFunc};
+use crate::lang::{GroundedFunc, GroundedMemb};
 
 #[derive(Debug, Clone)]
 pub(crate) struct VarAssignment<'a> {

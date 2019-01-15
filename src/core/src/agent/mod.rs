@@ -5,7 +5,7 @@ pub(crate) use self::bms::BmsWrapper;
 pub(crate) use self::kb::{Representation, VarAssignment};
 
 pub use self::kb::{Answer, QueryErr};
-pub use lang::ParseErrF;
+pub use crate::lang::ParseErrF;
 
 /// Represent an alive object which can interact with environment.
 ///

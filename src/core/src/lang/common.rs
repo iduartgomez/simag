@@ -1,16 +1,14 @@
-use FLOAT_EQ_ULPS;
-use TIME_EQ_DIFF;
+use crate::FLOAT_EQ_ULPS;
+use crate::TIME_EQ_DIFF;
 
 pub use self::errors::TimeFnErr;
 
 use super::Time;
-use agent;
-use agent::{BmsWrapper, Representation};
-use lang::errors::ParseErrF;
-use lang::logsent::*;
-use lang::parser::*;
+use crate::agent;
+use crate::agent::{BmsWrapper, Representation};
+use crate::lang::{errors::ParseErrF, logsent::*, parser::*};
 
-use chrono::{Duration, Utc, DateTime};
+use chrono::{DateTime, Duration, Utc};
 use float_cmp::ApproxEqUlps;
 
 use std::collections::HashMap;

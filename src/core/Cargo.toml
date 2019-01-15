@@ -2,6 +2,7 @@
 name = "simag_core"
 version = "0.0.1"
 authors = ["IDG <iduartgomez@gmail.com>"]
+edition = "2018"
 
 [dependencies]
 float-cmp = "^0.2.0"
