@@ -11,7 +11,6 @@
 //! knowledge by the duration of it's own lifetime (data is never dropped, while
 //! the representation is alive), thereby is safe to point to the data being
 //! referenced from the representation or the query (for the duration of the query).
-#![allow(or_fun_call)]
 
 use super::repr::*;
 use super::VarAssignment;
@@ -58,9 +57,9 @@ impl<'b> InfResults<'b> {
     fn add_membership(&self, var: &'b Var, name: &'b str, membership: Arc<GroundedMemb>) {
         let mut lock = self.membership.write().unwrap();
         lock.entry(var)
-            .or_insert(HashMap::new())
+            .or_insert_with(HashMap::new)
             .entry(name)
-            .or_insert(vec![])
+            .or_insert_with(Vec::new)
             .push(membership);
     }
 
@@ -70,9 +69,9 @@ impl<'b> InfResults<'b> {
             for obj in func.get_args_names() {
                 let obj = unsafe { ::std::mem::transmute::<&str, &'b str>(obj) };
                 lock.entry(var)
-                    .or_insert(HashMap::new())
+                    .or_insert_with(HashMap::new)
                     .entry(obj)
-                    .or_insert(vec![])
+                    .or_insert_with(Vec::new)
                     .push(func.clone());
             }
         }
@@ -82,7 +81,7 @@ impl<'b> InfResults<'b> {
         let obj = unsafe { ::std::mem::transmute::<&str, &'b str>(obj) };
         let mut lock = self.grounded_queries.write().unwrap();
         lock.entry(pred.to_string())
-            .or_insert(HashMap::new())
+            .or_insert_with(HashMap::new)
             .insert(obj, res);
     }
 
@@ -103,7 +102,6 @@ impl<'b> InfResults<'b> {
         Some(true)
     }
 
-    #[allow(type_complexity)]
     pub fn get_results_multiple(
         self,
     ) -> HashMap<QueryPred, HashMap<String, Option<(bool, Option<Time>)>>> {
@@ -186,7 +184,7 @@ pub(crate) struct Inference<'a> {
 }
 
 impl<'a> Inference<'a> {
-    pub fn new(
+    pub fn try_new(
         agent: &'a Representation,
         query_input: QueryInput,
         depth: usize,
@@ -657,7 +655,7 @@ impl<'a> InfTrial<'a> {
                         let mut lock1 = inf.queue.write().unwrap();
                         lock1
                             .entry(node_raw)
-                            .or_insert(HashSet::new())
+                            .or_insert_with(HashSet::new)
                             .insert(args.hash_val);
                     }
                     inf.add_result(context);
@@ -771,7 +769,7 @@ impl<'a> InfTrial<'a> {
                 if query_cls.comparable(&gt) {
                     let val = query_cls == &gt;
                     let mut d = results.grounded_queries.write().unwrap();
-                    let mut gr_results_dict = {
+                    let gr_results_dict = {
                         if d.contains_key(query_pred) {
                             d.get_mut(query_pred).unwrap()
                         } else {
@@ -809,7 +807,7 @@ impl<'a> InfTrial<'a> {
                 if query_func.comparable(&gf) {
                     let val = query_func == &gf;
                     let mut d = results.grounded_queries.write().unwrap();
-                    let mut gr_results_dict = {
+                    let gr_results_dict = {
                         if d.contains_key(query_pred) {
                             d.get_mut(query_pred).unwrap()
                         } else {
@@ -870,7 +868,7 @@ impl<'a> InfTrial<'a> {
                         let pred = unsafe { &*(pred as *const Assert) as &'a Assert };
                         let name = pred.get_name();
                         let mut lock = nodes.write().unwrap();
-                        let mut ls = lock.entry(name).or_insert(vec![]);
+                        let ls = lock.entry(name).or_insert_with(Vec::new);
                         if ls
                             .iter()
                             .map(|x| x.proof.get_id())
@@ -1171,8 +1169,9 @@ impl<'b> QueryProcessed<'b> {
         }
     }
 
-    #[allow(needless_pass_by_value)]
     fn get_query(mut self, prequery: QueryInput) -> Result<QueryProcessed<'b>, ()> {
+        #![allow(clippy::needless_pass_by_value)]
+
         fn assert_memb(query: &mut QueryProcessed, cdecl: Rc<ClassDecl>) -> Result<(), ()> {
             let cdecl = unsafe { &*(&*cdecl as *const ClassDecl) as &ClassDecl };
             match *cdecl.get_parent() {
@@ -1291,7 +1290,7 @@ impl<'b> QueryProcessed<'b> {
     fn push_to_clsquery_grounded(&mut self, term: &'b str, cls: Arc<GroundedMemb>) {
         self.cls_queries_grounded
             .entry(term)
-            .or_insert(vec![])
+            .or_insert_with(Vec::new)
             .push(cls);
     }
 
@@ -1299,7 +1298,7 @@ impl<'b> QueryProcessed<'b> {
     fn push_to_clsquery_free(&mut self, term: &'b Var, cls: &'b FreeClsMemb) {
         self.cls_queries_free
             .entry(term)
-            .or_insert(vec![])
+            .or_insert_with(Vec::new)
             .push(cls);
     }
 
@@ -1312,7 +1311,7 @@ impl<'b> QueryProcessed<'b> {
     fn push_to_fnquery_free(&mut self, term: &'b Var, func: &'b FuncDecl) {
         self.func_queries_free
             .entry(term)
-            .or_insert(vec![])
+            .or_insert_with(Vec::new)
             .push(func);
     }
 
@@ -1320,7 +1319,7 @@ impl<'b> QueryProcessed<'b> {
     fn ask_class_memb(&mut self, term: &'b FreeClsOwner) {
         self.cls_memb_query
             .entry(term.get_var_ref())
-            .or_insert(vec![])
+            .or_insert_with(Vec::new)
             .push(term);
     }
 
@@ -1328,7 +1327,7 @@ impl<'b> QueryProcessed<'b> {
     fn ask_relationships(&mut self, term: &'b FuncDecl) {
         self.func_memb_query
             .entry(term.get_parent().get_var_ref())
-            .or_insert(vec![])
+            .or_insert_with(Vec::new)
             .push(term);
     }
 }

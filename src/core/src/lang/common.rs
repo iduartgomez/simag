@@ -36,11 +36,11 @@ impl<'a> Predicate {
         if name.is_grounded() {
             match Terminal::from(&arg.term, context) {
                 Ok(Terminal::FreeTerm(ft)) => {
-                    let t = FreeClsMemb::new(ft, arg.uval, name)?;
+                    let t = FreeClsMemb::try_new(ft, arg.uval, name)?;
                     Ok(Predicate::FreeClsMemb(t))
                 }
                 Ok(Terminal::GroundedTerm(gt)) => {
-                    let t = GroundedMemb::new(
+                    let t = GroundedMemb::try_new(
                         gt,
                         arg.uval,
                         name.get_name().to_string(),
@@ -59,11 +59,11 @@ impl<'a> Predicate {
             match Terminal::from(&arg.term, context) {
                 Ok(Terminal::FreeTerm(_)) if !is_func => Err(ParseErrF::BothAreVars),
                 Ok(Terminal::FreeTerm(ft)) => {
-                    let t = FreeClsMemb::new(ft, arg.uval, name)?;
+                    let t = FreeClsMemb::try_new(ft, arg.uval, name)?;
                     Ok(Predicate::FreeClsMemb(t))
                 }
                 Ok(Terminal::GroundedTerm(gt)) => {
-                    let t = FreeClsOwner::new(gt, arg.uval, name)?;
+                    let t = FreeClsOwner::try_new(gt, arg.uval, name)?;
                     Ok(Predicate::FreeClsOwner(t))
                 }
                 Ok(Terminal::Keyword(kw)) => Err(ParseErrF::ReservedKW(String::from(kw))),
@@ -186,7 +186,7 @@ impl GroundedMemb {
     //! Internally the mutable parts are wrapped in `RwLock` types, as they can be accessed
     //! from a multithreaded environment. This provides enough atomicity so most of
     //! the time it won't be blocking other reads.
-    fn new(
+    fn try_new(
         term: String,
         uval: Option<UVal>,
         parent: String,
@@ -365,7 +365,7 @@ impl GroundedMemb {
 }
 
 impl ::std::cmp::PartialEq for GroundedMemb {
-    #[allow(collapsible_if)]
+    #[allow(clippy::collapsible_if)]
     fn eq(&self, other: &GroundedMemb) -> bool {
         if self.term != other.term || self.parent != other.parent {
             return false;
@@ -623,7 +623,7 @@ pub(crate) struct FreeClsMemb {
 }
 
 impl FreeClsMemb {
-    fn new(
+    fn try_new(
         term: Arc<Var>,
         uval: Option<UVal>,
         parent: &Terminal,
@@ -715,7 +715,11 @@ pub(crate) struct FreeClsOwner {
 }
 
 impl FreeClsOwner {
-    fn new(term: String, uval: Option<UVal>, parent: &Terminal) -> Result<FreeClsOwner, ParseErrF> {
+    fn try_new(
+        term: String,
+        uval: Option<UVal>,
+        parent: &Terminal,
+    ) -> Result<FreeClsOwner, ParseErrF> {
         let (val, op) = match_uval(uval)?;
         let t_bms = BmsWrapper::new(false);
         t_bms.new_record(None, val, None);
@@ -1747,7 +1751,6 @@ pub(crate) enum TimeFn {
 }
 
 impl TimeFn {
-    #[allow(should_implement_trait)]
     fn from_str(slice: &[u8]) -> Result<TimeFn, ParseErrF> {
         if slice == b"Now" {
             Ok(TimeFn::Now)

@@ -43,7 +43,7 @@ unsafe impl ::std::marker::Sync for LogSentence {}
 unsafe impl ::std::marker::Send for LogSentence {}
 
 impl<'a> LogSentence {
-    pub fn new(ast: &ASTNode, context: &mut ParseContext) -> Result<LogSentence, LogSentErr> {
+    pub fn try_new(ast: &ASTNode, context: &mut ParseContext) -> Result<LogSentence, LogSentErr> {
         let mut sent = LogSentence {
             particles: Vec::new(),
             skolem: None,

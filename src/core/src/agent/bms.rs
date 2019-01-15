@@ -351,8 +351,7 @@ mod test {
     fn bms_rollback() {
         let mut rep = Representation::new();
 
-        let fol = String::from(
-            "
+        let fol = "
             (ugly[$Pancho,u=0])
             (dog[$Pancho,u=1])
             (meat[$M1,u=1])
@@ -364,27 +363,24 @@ mod test {
             
             ((let x)
              ((fat[x,u=1] && dog[x,u=1]) := (ugly[x,u=1] && sad[x,u=1])))
-        ",
-        );
+        ";
         rep.tell(fol).unwrap();
         {
-            let answ = rep.ask("(fat[$Pancho,u=1] && sad[$Pancho,u=1])".to_string());
+            let answ = rep.ask("(fat[$Pancho,u=1] && sad[$Pancho,u=1])");
             assert_eq!(answ.unwrap().get_results_single(), Some(true));
         }
 
-        let fol = String::from(
-            "
+        let fol = "
             (run[$Pancho,u=1])
             ((let x) 
              ((run[x,u=1] && dog[x,u=1]) := fat[x,u=0]))
-        ",
-        );
+        ";
         rep.tell(fol).unwrap();
-        let answ0 = rep.ask("(fat[$Pancho,u=0])".to_string());
+        let answ0 = rep.ask("(fat[$Pancho,u=0])");
         assert_eq!(answ0.unwrap().get_results_single(), Some(true));
-        let answ1 = rep.ask("(ugly[$Pancho,u=0])".to_string());
+        let answ1 = rep.ask("(ugly[$Pancho,u=0])");
         assert_eq!(answ1.unwrap().get_results_single(), Some(true));
-        let answ2 = rep.ask("(sad[$Pancho,u=0])".to_string());
+        let answ2 = rep.ask("(sad[$Pancho,u=0])");
         assert_eq!(answ2.unwrap().get_results_single(), None);
     }
 
@@ -392,37 +388,33 @@ mod test {
     fn bms_review_after_change() {
         let mut rep = Representation::new();
 
-        let fol = String::from(
-            "            
+        let fol = "            
             ( meat[$M1,u=1] )
             ( dog[$Pancho,u=1] )
             ( fn::eat[$M1,u=1;$Pancho] )
             ( ( let x, y )
               ( ( dog[x,u=1] && meat[y,u=1] && fn::eat[y,u=1;x] ) 
                 := fat[x,u=1] ) )
-        ",
-        );
+        ";
         rep.tell(fol).unwrap();
         {
-            let answ = rep.ask("(fat[$Pancho,u=1])".to_string());
+            let answ = rep.ask("(fat[$Pancho,u=1])");
             assert_eq!(answ.unwrap().get_results_single(), Some(true));
         }
 
-        let fol = String::from(
-            "
+        let fol = "
             ( run[$Pancho,u=1] )
             (( let x ) (( dog[x,u=1] && run[x,u=1] ) := fat[x,u=0] ))
-        ",
-        );
+        ";
         rep.tell(fol).unwrap();
         {
-            let answ = rep.ask("(fat[$Pancho,u=0])".to_string());
+            let answ = rep.ask("(fat[$Pancho,u=0])");
             assert_eq!(answ.unwrap().get_results_single(), Some(true));
         }
 
-        rep.tell("(fn::eat[$M1,u=1;$Pancho])".to_string()).unwrap();
+        rep.tell("(fn::eat[$M1,u=1;$Pancho])").unwrap();
         {
-            let answ = rep.ask("(fat[$Pancho,u=1])".to_string());
+            let answ = rep.ask("(fat[$Pancho,u=1])");
             assert_eq!(answ.unwrap().get_results_single(), Some(true));
         }
     }

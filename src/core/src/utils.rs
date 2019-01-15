@@ -28,13 +28,13 @@ impl<'a> SimagInterpreter<'a> {
         let mut input = String::new();
         mem::swap(&mut self.source, &mut input);
         if !self.ask {
-            match self.state.tell(input) {
+            match self.state.tell(&input) {
                 Err(errors) => Err(format!("{}", &errors[0])),
                 Ok(_) => Ok(Action::Continue),
             }
         } else {
             input.remove(0);
-            if let Some(r) = match self.state.ask(input) {
+            if let Some(r) = match self.state.ask(&input) {
                 Err(QueryErr::ParseErr(_)) | Err(QueryErr::QueryErr) => None,
                 Ok(result) => unsafe {
                     let answ = mem::transmute::<Answer, Answer<'a>>(result);

@@ -198,7 +198,7 @@ impl ParseTree {
         // it's an expression, make logic sentence from nested expressions
         let mut context = ParseContext::new();
         context.is_tell = tell;
-        match LogSentence::new(&input, &mut context) {
+        match LogSentence::try_new(&input, &mut context) {
             Ok(sent) => match context.stype {
                 SentKind::IExpr => Ok(ParseTree::IExpr(sent)),
                 SentKind::Expr if context.is_tell => {
@@ -315,7 +315,7 @@ impl<'a> Scope<'a> {
             // embedded defined variables in this assertion, extract values and perform substitution
             self.vars.as_ref().unwrap().iter().map(|x| context.push_var(x)).collect::<Result<Vec<_>, _>>()?;
             match self.next.is_assertion(context) {
-                Ok(Some(ParseTree::Assertion(asserts))) => {
+                Ok(Some(ParseTree::Assertion(_asserts))) => {
                     let mut assignments = HashMap::new(); 
                     for x in context.vars.iter().filter(|x| x.is_time_var()) {
                         assignments.insert(x.clone(), x.get_times());
@@ -1248,7 +1248,6 @@ fn is_multispace(chr: u8) -> bool {
 
 #[cfg(test)]
 mod test {
-    #![allow(cyclomatic_complexity)]
     
     use super::*;
     use super::{class_decl, func_decl};
@@ -1344,6 +1343,7 @@ mod test {
     }
 
     #[test]
+    #[allow(clippy::cyclomatic_complexity)]
     fn parser_predicate() {
         let s1 = b"professor[$Lucy,u=1]";
         let s1_res = class_decl(s1);

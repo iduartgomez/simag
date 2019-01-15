@@ -25,11 +25,11 @@ impl Agent {
         }
     }
 
-    pub fn ask(&self, source: String) -> Result<kb::Answer, kb::QueryErr> {
+    pub fn ask(&self, source: &str) -> Result<kb::Answer, kb::QueryErr> {
         self.representation.ask(source)
     }
 
-    pub fn tell(&mut self, source: String) -> Result<(), Vec<ParseErrF>> {
+    pub fn tell(&mut self, source: &str) -> Result<(), Vec<ParseErrF>> {
         self.representation.tell(source)
     }
 

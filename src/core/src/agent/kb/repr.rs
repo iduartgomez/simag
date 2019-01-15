@@ -57,9 +57,8 @@ impl Representation {
     /// class for future use.
     ///
     /// For more examples check the LogSentence type docs.
-    #[allow(needless_pass_by_value)]
-    pub fn tell(&mut self, source: String) -> Result<(), Vec<ParseErrF>> {
-        let pres = logic_parser(source.as_str(), true, self.threads);
+    pub fn tell(&mut self, source: &str) -> Result<(), Vec<ParseErrF>> {
+        let pres = logic_parser(source, true, self.threads);
         if pres.is_ok() {
             let mut pres: VecDeque<ParseTree> = pres.unwrap();
             let mut errors = Vec::new();
@@ -101,16 +100,15 @@ impl Representation {
     }
 
     /// Asks the KB if some fact is true and returns the answer to the query.
-    #[allow(needless_pass_by_value)]
-    pub fn ask(&self, source: String) -> Result<Answer, QueryErr> {
-        let pres = logic_parser(source.as_str(), false, self.threads);
+    pub fn ask(&self, source: &str) -> Result<Answer, QueryErr> {
+        let pres = logic_parser(source, false, self.threads);
         if pres.is_ok() {
             let pres = QueryInput::ManyQueries(pres.unwrap());
-            let mut inf = match Inference::new(self, pres, usize::max_value(), false, self.threads)
-            {
-                Ok(inf) => inf,
-                Err(()) => return Err(QueryErr::QueryErr),
-            };
+            let mut inf =
+                match Inference::try_new(self, pres, usize::max_value(), false, self.threads) {
+                    Ok(inf) => inf,
+                    Err(()) => return Err(QueryErr::QueryErr),
+                };
             {
                 let inf_r = unsafe { &mut *(&mut inf as *mut Inference) };
                 inf_r.infer_facts();
@@ -127,7 +125,7 @@ impl Representation {
         depth: usize,
         ignore_current: bool,
     ) -> Result<Answer, QueryErr> {
-        let mut inf = match Inference::new(self, source, depth, ignore_current, self.threads) {
+        let mut inf = match Inference::try_new(self, source, depth, ignore_current, self.threads) {
             Ok(inf) => inf,
             Err(()) => return Err(QueryErr::QueryErr),
         };
@@ -487,7 +485,6 @@ impl Representation {
     /// Takes a vector of relation declarations and returns a hash map with those relation
     /// names as keys and a hash map of the objects which have one relation of that kind
     /// as value (with a list of the grounded functions for each object).
-    #[allow(type_complexity)]
     pub fn by_relationship<'a, 'b>(
         &'a self,
         funcs: &'b [&'b FuncDecl],
@@ -505,7 +502,7 @@ impl Representation {
                     if f.get_value().is_some() {
                         for name in f.get_args_names() {
                             let name = unsafe { ::std::mem::transmute::<&str, &'a str>(name) };
-                            let e: &mut Vec<_> = m.entry(name).or_insert(Vec::new());
+                            let e: &mut Vec<_> = m.entry(name).or_insert_with(|| vec![]);
                             e.push(f.clone());
                         }
                     }
@@ -643,7 +640,7 @@ impl Representation {
                         for (_, mut funcs) in v.drain() {
                             let t = unsafe { &*(&*funcs[0] as *const GroundedFunc) };
                             let rel = t.get_name();
-                            res.entry(rel).or_insert(vec![]).append(&mut funcs);
+                            res.entry(rel).or_insert_with(|| vec![]).append(&mut funcs);
                         }
                     }
                 } else if let Some(class) = self.classes.read().unwrap().get(name) {
@@ -652,7 +649,7 @@ impl Representation {
                     for (_, mut funcs) in v.drain() {
                         let t = unsafe { &*(&*funcs[0] as *const GroundedFunc) };
                         let rel = t.get_name();
-                        res.entry(rel).or_insert(vec![]).append(&mut funcs);
+                        res.entry(rel).or_insert_with(|| vec![]).append(&mut funcs);
                     }
                 }
             }
@@ -697,7 +694,6 @@ impl<'a> Answer<'a> {
         self.0.get_results_single()
     }
 
-    #[allow(type_complexity)]
     pub fn get_results_multiple(
         self,
     ) -> HashMap<QueryPred, HashMap<String, Option<(bool, Option<Time>)>>> {
@@ -845,23 +841,32 @@ impl Entity {
                     let t = unsafe { &*(&**f as *const GroundedFunc) };
                     let rel_name = t.get_name();
                     match op {
-                        None => res.entry(rel_name).or_insert(vec![]).push(f.clone()),
+                        None => res
+                            .entry(rel_name)
+                            .or_insert_with(|| vec![])
+                            .push(f.clone()),
                         Some(CompOperator::Equal) => {
                             if f.get_value()
                                 .unwrap()
                                 .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
                             {
-                                res.entry(rel_name).or_insert(vec![]).push(f.clone())
+                                res.entry(rel_name)
+                                    .or_insert_with(|| vec![])
+                                    .push(f.clone())
                             }
                         }
                         Some(CompOperator::More) => {
                             if *val.as_ref().unwrap() < f.get_value().unwrap() {
-                                res.entry(rel_name).or_insert(vec![]).push(f.clone())
+                                res.entry(rel_name)
+                                    .or_insert_with(|| vec![])
+                                    .push(f.clone())
                             }
                         }
                         Some(CompOperator::Less) => {
                             if *val.as_ref().unwrap() > f.get_value().unwrap() {
-                                res.entry(rel_name).or_insert(vec![]).push(f.clone())
+                                res.entry(rel_name)
+                                    .or_insert_with(|| vec![])
+                                    .push(f.clone())
                             }
                         }
                         Some(CompOperator::LessEqual) => {
@@ -870,7 +875,9 @@ impl Entity {
                                     .unwrap()
                                     .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
                             {
-                                res.entry(rel_name).or_insert(vec![]).push(f.clone())
+                                res.entry(rel_name)
+                                    .or_insert_with(|| vec![])
+                                    .push(f.clone())
                             }
                         }
                         Some(CompOperator::MoreEqual) => {
@@ -879,7 +886,9 @@ impl Entity {
                                     .unwrap()
                                     .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
                             {
-                                res.entry(rel_name).or_insert(vec![]).push(f.clone())
+                                res.entry(rel_name)
+                                    .or_insert_with(|| vec![])
+                                    .push(f.clone())
                             }
                         }
                         Some(CompOperator::Until) | Some(CompOperator::At) => unreachable!(),
@@ -1142,23 +1151,32 @@ impl Class {
                     let t = unsafe { &*(&**f as *const GroundedFunc) };
                     let rel_name = t.get_name();
                     match op {
-                        None => res.entry(rel_name).or_insert(vec![]).push(f.clone()),
+                        None => res
+                            .entry(rel_name)
+                            .or_insert_with(|| vec![])
+                            .push(f.clone()),
                         Some(CompOperator::Equal) => {
                             if f.get_value()
                                 .unwrap()
                                 .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
                             {
-                                res.entry(rel_name).or_insert(vec![]).push(f.clone())
+                                res.entry(rel_name)
+                                    .or_insert_with(|| vec![])
+                                    .push(f.clone())
                             }
                         }
                         Some(CompOperator::More) => {
                             if *val.as_ref().unwrap() < f.get_value().unwrap() {
-                                res.entry(rel_name).or_insert(vec![]).push(f.clone())
+                                res.entry(rel_name)
+                                    .or_insert_with(|| vec![])
+                                    .push(f.clone())
                             }
                         }
                         Some(CompOperator::Less) => {
                             if *val.as_ref().unwrap() > f.get_value().unwrap() {
-                                res.entry(rel_name).or_insert(vec![]).push(f.clone())
+                                res.entry(rel_name)
+                                    .or_insert_with(|| vec![])
+                                    .push(f.clone())
                             }
                         }
                         Some(CompOperator::LessEqual) => {
@@ -1167,7 +1185,9 @@ impl Class {
                                     .unwrap()
                                     .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
                             {
-                                res.entry(rel_name).or_insert(vec![]).push(f.clone())
+                                res.entry(rel_name)
+                                    .or_insert_with(|| vec![])
+                                    .push(f.clone())
                             }
                         }
                         Some(CompOperator::MoreEqual) => {
@@ -1176,7 +1196,9 @@ impl Class {
                                     .unwrap()
                                     .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
                             {
-                                res.entry(rel_name).or_insert(vec![]).push(f.clone())
+                                res.entry(rel_name)
+                                    .or_insert_with(|| vec![])
+                                    .push(f.clone())
                             }
                         }
                         Some(CompOperator::Until) | Some(CompOperator::At) => unreachable!(),
