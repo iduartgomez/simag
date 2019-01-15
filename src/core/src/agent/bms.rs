@@ -317,7 +317,7 @@ impl BmsWrapper {
     }
 }
 
-impl ::std::clone::Clone for BmsWrapper {
+impl std::clone::Clone for BmsWrapper {
     fn clone(&self) -> BmsWrapper {
         let recs = &*self.records.read().unwrap();
         BmsWrapper {

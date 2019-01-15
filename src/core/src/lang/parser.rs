@@ -349,7 +349,7 @@ fn get_blocks(input: &[u8]) -> IResult<&[u8], Vec<ASTNode>> {
         None => return IResult::Done(EMPTY, vec![]),
     };
     // find the positions of the closing delimiters and try until it fails
-    let mut mcd = ::std::collections::VecDeque::new();
+    let mut mcd = std::collections::VecDeque::new();
     let mut lp = 0;
     let mut rp = 0;
     let mut slp = -1_i64;
@@ -1016,8 +1016,8 @@ impl<'a> TerminalBorrowed<'a> {
     }
 }
 
-impl<'a> ::std::fmt::Debug for TerminalBorrowed<'a> {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+impl<'a> std::fmt::Debug for TerminalBorrowed<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "Term({})", unsafe { str::from_utf8_unchecked(self.0) })
     }
 }

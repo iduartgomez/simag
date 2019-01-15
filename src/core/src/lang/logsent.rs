@@ -39,8 +39,8 @@ pub(crate) struct LogSentence {
     sent_kind: SentKind,
 }
 
-unsafe impl ::std::marker::Sync for LogSentence {}
-unsafe impl ::std::marker::Send for LogSentence {}
+unsafe impl std::marker::Sync for LogSentence {}
+unsafe impl std::marker::Send for LogSentence {}
 
 impl<'a> LogSentence {
     pub fn try_new(ast: &ASTNode, context: &mut ParseContext) -> Result<LogSentence, LogSentErr> {
@@ -451,7 +451,7 @@ impl<'a> LhsPreds<'a> {
     }
 }
 
-impl<'a> ::std::iter::Iterator for LhsPreds<'a> {
+impl<'a> std::iter::Iterator for LhsPreds<'a> {
     type Item = Vec<&'a Assert>;
     fn next(&mut self) -> Option<Vec<&'a Assert>> {
         loop {
@@ -505,7 +505,7 @@ pub(crate) struct SentVarReq<'a> {
     iter: LhsPreds<'a>,
 }
 
-impl<'a> ::std::iter::Iterator for SentVarReq<'a> {
+impl<'a> std::iter::Iterator for SentVarReq<'a> {
     type Item = HashMap<&'a Var, Vec<&'a Assert>>;
     /// Iterates the permutations of the sentence variable requeriments.
     /// This just takes into consideration the LHS variables.
@@ -529,16 +529,16 @@ impl<'a> ::std::iter::Iterator for SentVarReq<'a> {
     }
 }
 
-impl ::std::cmp::PartialEq for LogSentence {
+impl std::cmp::PartialEq for LogSentence {
     fn eq(&self, other: &LogSentence) -> bool {
         self.id == other.id
     }
 }
 
-impl ::std::cmp::Eq for LogSentence {}
+impl std::cmp::Eq for LogSentence {}
 
-impl ::std::hash::Hash for LogSentence {
-    fn hash<H: ::std::hash::Hasher>(&self, state: &mut H) {
+impl std::hash::Hash for LogSentence {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.id.hash(state);
     }
 }

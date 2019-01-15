@@ -67,7 +67,7 @@ impl<'b> InfResults<'b> {
         let mut lock = self.relationships.write().unwrap();
         for func in rel {
             for obj in func.get_args_names() {
-                let obj = unsafe { ::std::mem::transmute::<&str, &'b str>(obj) };
+                let obj = unsafe { std::mem::transmute::<&str, &'b str>(obj) };
                 lock.entry(var)
                     .or_insert_with(HashMap::new)
                     .entry(obj)
@@ -78,7 +78,7 @@ impl<'b> InfResults<'b> {
     }
 
     fn add_grounded(&self, obj: &str, pred: &str, res: Option<(bool, Option<Time>)>) {
-        let obj = unsafe { ::std::mem::transmute::<&str, &'b str>(obj) };
+        let obj = unsafe { std::mem::transmute::<&str, &'b str>(obj) };
         let mut lock = self.grounded_queries.write().unwrap();
         lock.entry(pred.to_string())
             .or_insert_with(HashMap::new)
@@ -480,7 +480,7 @@ impl ProofArgs {
     }
 }
 
-impl ::std::clone::Clone for ProofArgs {
+impl std::clone::Clone for ProofArgs {
     fn clone(&self) -> ProofArgs {
         unsafe {
             let data = self.ptr as *mut Vec<(&Var, Arc<VarAssignment>)>;
@@ -490,7 +490,7 @@ impl ::std::clone::Clone for ProofArgs {
     }
 }
 
-impl ::std::ops::Drop for ProofArgs {
+impl std::ops::Drop for ProofArgs {
     fn drop(&mut self) {
         unsafe {
             Box::from_raw(self.ptr as *mut Vec<(&Var, Arc<VarAssignment>)>);
@@ -523,7 +523,7 @@ impl IExprResult {
             result: None,
             args,
             node: node as *const ProofNode as usize,
-            newest_grfact: ::chrono::MIN_DATE.and_hms(0, 0, 0),
+            newest_grfact: chrono::MIN_DATE.and_hms(0, 0, 0),
             sent_id: node.proof.get_id(),
             antecedents: vec![],
             grounded_func: vec![],
@@ -737,7 +737,7 @@ impl<'a> InfTrial<'a> {
     ) {
         let query_obj = unsafe {
             let obj = self.actv.get_obj();
-            ::std::mem::transmute::<&str, &'a str>(obj)
+            std::mem::transmute::<&str, &'a str>(obj)
         };
         let mut lock = self.valid.lock().unwrap();
         if let Some(ref prev_answ) = *lock {
@@ -1028,7 +1028,7 @@ impl<'a> ArgsProduct<'a> {
     }
 }
 
-impl<'a> ::std::iter::Iterator for ArgsProduct<'a> {
+impl<'a> std::iter::Iterator for ArgsProduct<'a> {
     type Item = Vec<(&'a Var, Arc<VarAssignment<'a>>)>;
 
     fn next(&mut self) -> Option<Vec<(&'a Var, Arc<VarAssignment<'a>>)>> {
@@ -1119,13 +1119,13 @@ impl<'a> ProofNode<'a> {
     }
 }
 
-impl<'a> ::std::cmp::PartialEq for ProofNode<'a> {
+impl<'a> std::cmp::PartialEq for ProofNode<'a> {
     fn eq(&self, other: &ProofNode) -> bool {
         self.proof.get_id() == other.proof.get_id()
     }
 }
 
-impl<'a> ::std::cmp::Eq for ProofNode<'a> {}
+impl<'a> std::cmp::Eq for ProofNode<'a> {}
 
 impl<'a> Hash for ProofNode<'a> {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -1152,8 +1152,8 @@ struct QueryProcessed<'b> {
     func: Vec<Rc<FuncDecl>>,
 }
 
-unsafe impl<'b> ::std::marker::Sync for QueryProcessed<'b> {}
-unsafe impl<'b> ::std::marker::Send for QueryProcessed<'b> {}
+unsafe impl<'b> std::marker::Sync for QueryProcessed<'b> {}
+unsafe impl<'b> std::marker::Send for QueryProcessed<'b> {}
 
 impl<'b> QueryProcessed<'b> {
     fn new() -> QueryProcessed<'b> {

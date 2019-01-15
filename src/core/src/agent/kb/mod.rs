@@ -45,16 +45,16 @@ impl<'a> VarAssignment<'a> {
     }
 }
 
-impl<'a> ::std::cmp::PartialEq for VarAssignment<'a> {
+impl<'a> std::cmp::PartialEq for VarAssignment<'a> {
     fn eq(&self, other: &VarAssignment) -> bool {
         *self.name == *other.name
     }
 }
 
-impl<'a> ::std::cmp::Eq for VarAssignment<'a> {}
+impl<'a> std::cmp::Eq for VarAssignment<'a> {}
 
-impl<'a> ::std::hash::Hash for VarAssignment<'a> {
-    fn hash<H: ::std::hash::Hasher>(&self, state: &mut H) {
+impl<'a> std::hash::Hash for VarAssignment<'a> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         (*self.name).hash(state);
     }
 }

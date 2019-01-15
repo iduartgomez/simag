@@ -364,7 +364,7 @@ impl GroundedMemb {
     }
 }
 
-impl ::std::cmp::PartialEq for GroundedMemb {
+impl std::cmp::PartialEq for GroundedMemb {
     #[allow(clippy::collapsible_if)]
     fn eq(&self, other: &GroundedMemb) -> bool {
         if self.term != other.term || self.parent != other.parent {
@@ -421,7 +421,7 @@ impl ::std::cmp::PartialEq for GroundedMemb {
     }
 }
 
-impl ::std::clone::Clone for GroundedMemb {
+impl std::clone::Clone for GroundedMemb {
     fn clone(&self) -> GroundedMemb {
         GroundedMemb {
             term: self.term.clone(),
@@ -446,13 +446,13 @@ pub(crate) struct GroundedFunc {
     pub bms: Arc<BmsWrapper>,
 }
 
-impl ::std::cmp::PartialEq for GroundedFunc {
+impl std::cmp::PartialEq for GroundedFunc {
     fn eq(&self, other: &GroundedFunc) -> bool {
         !(self.name != other.name || self.args != other.args || self.third != other.third)
     }
 }
 
-impl ::std::cmp::Eq for GroundedFunc {}
+impl std::cmp::Eq for GroundedFunc {}
 
 impl GroundedFunc {
     pub fn from_free(
@@ -601,7 +601,7 @@ impl GroundedFunc {
     }
 }
 
-impl ::std::clone::Clone for GroundedFunc {
+impl std::clone::Clone for GroundedFunc {
     fn clone(&self) -> GroundedFunc {
         GroundedFunc {
             name: self.name.clone(),
@@ -1560,9 +1560,9 @@ impl<'a> ClassDecl {
     }
 }
 
-impl ::std::iter::IntoIterator for ClassDecl {
+impl std::iter::IntoIterator for ClassDecl {
     type Item = GroundedMemb;
-    type IntoIter = ::std::vec::IntoIter<GroundedMemb>;
+    type IntoIter = std::vec::IntoIter<GroundedMemb>;
     fn into_iter(mut self) -> Self::IntoIter {
         let mut v = Vec::new();
         for _ in 0..self.args.len() {
@@ -1580,7 +1580,7 @@ pub(crate) struct DeclArgsIter<'a> {
     count: usize,
 }
 
-impl<'a> ::std::iter::Iterator for DeclArgsIter<'a> {
+impl<'a> std::iter::Iterator for DeclArgsIter<'a> {
     type Item = &'a Predicate;
     fn next(&mut self) -> Option<&'a Predicate> {
         if self.count < self.data_ref.len() {
@@ -1933,7 +1933,7 @@ impl Var {
     }
 }
 
-impl ::std::cmp::PartialEq for Var {
+impl std::cmp::PartialEq for Var {
     fn eq(&self, other: &Var) -> bool {
         let s_address = &*self as *const Var;
         let o_address = &*other as *const Var;
@@ -1941,10 +1941,10 @@ impl ::std::cmp::PartialEq for Var {
     }
 }
 
-impl ::std::cmp::Eq for Var {}
+impl std::cmp::Eq for Var {}
 
-impl ::std::hash::Hash for Var {
-    fn hash<H: ::std::hash::Hasher>(&self, state: &mut H) {
+impl std::hash::Hash for Var {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         let address = &*self as *const Var as usize;
         address.hash(state);
     }

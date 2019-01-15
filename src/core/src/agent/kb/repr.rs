@@ -501,7 +501,7 @@ impl Representation {
                 if let ClassMember::Func(ref f) = *e {
                     if f.get_value().is_some() {
                         for name in f.get_args_names() {
-                            let name = unsafe { ::std::mem::transmute::<&str, &'a str>(name) };
+                            let name = unsafe { std::mem::transmute::<&str, &'a str>(name) };
                             let e: &mut Vec<_> = m.entry(name).or_insert_with(|| vec![]);
                             e.push(f.clone());
                         }
