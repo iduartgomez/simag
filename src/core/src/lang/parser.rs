@@ -30,7 +30,7 @@
 //! string = regex: ".*?"|'.*?' ;
 //! ```
 
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashMap};
 use std::fmt;
 use std::str;
 use std::str::FromStr;
@@ -39,8 +39,8 @@ use nom;
 use nom::{is_alphanumeric, is_digit};
 use nom::{ErrorKind, IResult};
 
-use rayon;
 use rayon::prelude::*;
+use rayon;
 
 use lang::common::*;
 use lang::errors::ParseErrF;
@@ -80,8 +80,7 @@ impl Parser {
                 .map(|ast| ParseTree::process_ast(&ast, tell))
                 .collect()
         });
-
-        let mut results: VecDeque<ParseTree> = VecDeque::new();
+        let mut results = VecDeque::new();
         for res in parse_trees {
             match res {
                 Ok(parsed) => results.push_back(parsed),
@@ -252,7 +251,8 @@ impl<'a> ASTNode<'a> {
     }
 
     fn is_assertion(&self, context: &mut ParseContext) -> Result<Option<ParseTree>, ParseErrF> {
-        match *self {
+        context.depth += 1;
+        let tree_node = match *self {
             ASTNode::Assert(ref decl) => match *decl {
                 AssertBorrowed::ClassDecl(ref decl) => {
                     let cls = ClassDecl::from(decl, context)?;
@@ -290,9 +290,11 @@ impl<'a> ASTNode<'a> {
                     }
                     _ => Ok(None),
                 }
-            }
+            },
             ASTNode::None => Ok(None),
-        }
+        };
+        context.depth -= 1;
+        tree_node
     }
 }
 
@@ -305,14 +307,30 @@ pub(crate) struct Scope<'a> {
 
 impl<'a> Scope<'a> {
     fn is_assertion(&self, context: &mut ParseContext) -> Result<Option<ParseTree>, ParseErrF> {
-        if self.vars.is_some() {
+        if self.vars.is_some() && context.depth != 1 && !context.is_tell {
             return Ok(None);
         }
         match self.logic_op {
             Some(LogicOperator::And) | None => {}
             _ => return Ok(None),
         }
-        self.next.is_assertion(context)
+        if context.depth == 1 && context.is_tell {
+            // embedded defined variables in this assertion, extract values and perform substitution
+            self.vars.as_ref().unwrap().iter().map(|x| context.push_var(x)).collect::<Result<Vec<_>, _>>()?;
+            match self.next.is_assertion(context) {
+                Ok(Some(ParseTree::Assertion(asserts))) => {
+                    let mut assignments = HashMap::new(); 
+                    for x in context.vars.iter().filter(|x| x.is_time_var()) {
+                        assignments.insert(x.clone(), x.get_times());
+                    }
+                    unimplemented!()
+                }
+                Err(err) => Err(err),
+                _ => Err(ParseErrF::WrongDef),
+            }
+        } else {
+            self.next.is_assertion(context)
+        }
     }
 }
 
@@ -1096,6 +1114,14 @@ impl CompOperator {
     pub fn is_less_eq(self) -> bool {
         match self {
             CompOperator::LessEqual => true,
+            _ => false,
+        }
+    }
+
+    #[inline]
+    pub fn is_time_assignment(self) -> bool {
+        match self {
+            CompOperator::Equal | CompOperator::Until | CompOperator::At => true,
             _ => false,
         }
     }

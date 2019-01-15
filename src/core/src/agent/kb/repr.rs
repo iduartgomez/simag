@@ -59,8 +59,7 @@ impl Representation {
     /// For more examples check the LogSentence type docs.
     #[allow(needless_pass_by_value)]
     pub fn tell(&mut self, source: String) -> Result<(), Vec<ParseErrF>> {
-        let num_threads = 0; // TODO: pass the number of threads available for inference
-        let pres = logic_parser(source.as_str(), true, num_threads);
+        let pres = logic_parser(source.as_str(), true, self.threads);
         if pres.is_ok() {
             let mut pres: VecDeque<ParseTree> = pres.unwrap();
             let mut errors = Vec::new();

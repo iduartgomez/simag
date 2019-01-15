@@ -123,7 +123,7 @@ impl<'a> Interpreter for SimagInterpreter<'a> {
         }
     }
 
-    fn query_result(&self, query: ResultQuery) -> Result<Action, String> {
+    fn query_result(&self, _query: ResultQuery) -> Result<Action, String> {
         if let Some(ref result) = self.result {
             if let Some(r) = result.get_results_single() {
                 Ok(Action::Write(r.to_string()))

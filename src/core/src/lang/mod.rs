@@ -1,11 +1,11 @@
 mod common;
-mod parser;
 mod logsent;
+mod parser;
 
 pub(crate) use self::common::*;
-pub(crate) use self::parser::{CompOperator, ParseTree};
-pub(crate) use self::logsent::{LogSentence, SentID, ProofResContext};
 pub use self::errors::ParseErrF;
+pub(crate) use self::logsent::{LogSentence, ProofResContext, SentID};
+pub(crate) use self::parser::{CompOperator, ParseTree};
 
 use chrono::{DateTime, UTC};
 
@@ -17,19 +17,20 @@ use std::collections::VecDeque;
 ///
 /// It includes a a scanner and parser for the synthatical analysis which translate
 /// to the **program** in form of a `ParseResult` to be feed to an Agent.
-pub(crate) fn logic_parser(source: &str,
-                           tell: bool,
-                           thread_num: usize)
-                           -> Result<VecDeque<ParseTree>, ParseErrF> {
+pub(crate) fn logic_parser(
+    source: &str,
+    tell: bool,
+    thread_num: usize,
+) -> Result<VecDeque<ParseTree>, ParseErrF> {
     parser::Parser::parse(source, tell, thread_num)
 }
 
 pub type Time = DateTime<UTC>;
 
 mod errors {
-    use super::parser::ParseErrB;
     use super::common::TimeFnErr;
     use super::logsent::LogSentErr;
+    use super::parser::ParseErrB;
 
     use std::fmt;
 
@@ -37,8 +38,8 @@ mod errors {
     pub enum ParseErrF {
         ReservedKW(String),
         IUVal(f32), // illegal value in a truth value assignment/comparison
-        IUValNone, // no truth value found, but was required
-        IUValComp, // a comparison operator was used, but it should have been an assignment
+        IUValNone,  // no truth value found, but was required
+        IUValComp,  // a comparison operator was used, but it should have been an assignment
         ExprWithVars(String),
         BothAreVars,
         ClassIsVar,
@@ -71,4 +72,3 @@ mod errors {
         }
     }
 }
-

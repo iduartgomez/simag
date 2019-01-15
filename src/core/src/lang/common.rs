@@ -1605,10 +1605,7 @@ impl<'a> OpArg {
     pub fn from(other: &OpArgBorrowed<'a>, context: &mut ParseContext) -> Result<OpArg, ParseErrF> {
         let t0 = match OpArgTerm::from(&other.term, context) {
             Err(ParseErrF::ReservedKW(kw)) => match &*kw {
-                "time" => {
-                    let targ = OpArg::ignore_kw(other, "time", context)?;
-                    return Ok(targ);
-                }
+                "time" => return OpArg::ignore_kw(other, "time", context),
                 "overwrite" | "ow" => return Ok(OpArg::OverWrite),
                 _ => return Err(ParseErrF::ReservedKW(kw)),
             },
@@ -1633,7 +1630,12 @@ impl<'a> OpArg {
             },
             None => None,
         };
-        Ok(OpArg::Generic(t0, comp))
+        match comp {
+            Some((CompOperator::Until, _)) | Some((CompOperator::At, _)) => {
+                OpArg::ignore_kw(other, "time", context)
+            }
+            _ => Ok(OpArg::Generic(t0, comp)),
+        }
     }
 
     fn ignore_kw(
@@ -1815,7 +1817,7 @@ impl<'a> OpArgTerm {
         match other {
             None => Ok((CompOperator::Equal, OpArgTerm::TimePayload(TimeFn::IsVar))),
             Some(&(ref op, ref term)) => {
-                if !op.is_equal() {
+                if !op.is_time_assignment() {
                     return Err(TimeFnErr::NotAssignment.into());
                 }
                 match *term {
@@ -1922,7 +1924,7 @@ impl Var {
         (&*v1 as *const Var) == (self as *const Var)
     }
 
-    fn is_time_var(&self) -> bool {
+    pub fn is_time_var(&self) -> bool {
         match self.kind {
             VarKind::Time | VarKind::TimeDecl => true,
             _ => false,

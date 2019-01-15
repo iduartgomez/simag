@@ -288,10 +288,10 @@ fn repr_inference_time_calc_2() {
     rep.tell(test_04_01).unwrap();
     let q04_01 = "(fat(time='2018-04-01T00:00:00Z')[$Pancho,u=1])".to_string();
     assert_eq!(rep.ask(q04_01).unwrap().get_results_single(), Some(true));
-    // let q04_02 = "(fat(time='2018-07-01T00:00:00Z'))".to_string();
-    // assert_eq!(rep.ask(q04_02).unwrap().get_results_single(), Some(false));
-    // let q04_03 = "(fat(time='2018-02-01T00:00:00Z'))".to_string();
-    // assert_eq!(rep.ask(q04_03).unwrap().get_results_single(), Some(false));
+    // let q04_02 = "(fat(time='2018-07-01T00:00:00Z')[$Pancho,u=1])".to_string();
+    // assert_eq!(rep.ask(q04_02).unwrap().get_results_single(), None);
+    // let q04_03 = "(fat(time='2018-02-01T00:00:00Z')[$Pancho,u=1])".to_string();
+    // assert_eq!(rep.ask(q04_03).unwrap().get_results_single(), None);
 
     // "((let x, y, t1:time)
     //         ((dog[x,u=1] && meat[y,u=1] && fn::eat(@t1)[y,u=1;x])

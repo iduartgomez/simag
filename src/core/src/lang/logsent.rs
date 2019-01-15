@@ -1255,6 +1255,7 @@ pub(crate) struct ParseContext {
     in_rhs: bool,
     pub in_assertion: bool,
     pub is_tell: bool,
+    pub depth: usize,
 }
 
 impl Default for ParseContext {
@@ -1274,6 +1275,22 @@ impl ParseContext {
             shadowing_skols: HashMap::new(),
             in_assertion: false,
             is_tell: false,
+            depth: 0,
+        }
+    }
+
+    pub fn push_var(&mut self, decl: &VarDeclBorrowed) -> Result<(), ParseErrF> {
+        match decl {
+            VarDeclBorrowed::Var(ref var) => {
+                let var = Arc::new(Var::from(var, self)?);
+                self.vars.push(var);
+                Ok(())
+            }
+            VarDeclBorrowed::Skolem(ref var) => {
+                let var = Arc::new(Skolem::from(var, self)?);
+                self.skols.push(var);
+                Ok(())
+            }
         }
     }
 

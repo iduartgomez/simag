@@ -13,15 +13,15 @@ pub use lang::ParseErrF;
 #[derive(Debug)]
 pub struct Agent {
     /// available threads for this agent
-    threads: usize,
+    thread_manager: ThreadManager,
     representation: kb::Representation,
 }
 
 impl Agent {
     pub fn new(threads: usize) -> Agent {
         Agent {
-            threads,
-            representation: kb::Representation::new(),
+            thread_manager: ThreadManager { threads },
+            representation: kb::Representation::new().with_threads(threads),
         }
     }
 
@@ -32,6 +32,11 @@ impl Agent {
     pub fn tell(&mut self, source: String) -> Result<(), Vec<ParseErrF>> {
         self.representation.tell(source)
     }
+
+    pub fn set_thread_pool(&mut self, threads: usize) {
+        self.thread_manager.threads = threads;
+        self.representation.set_threads(threads);
+    }
 }
 
 impl Default for Agent {
@@ -39,4 +44,9 @@ impl Default for Agent {
         use num_cpus;
         Agent::new(num_cpus::get())
     }
+}
+
+#[derive(Debug)]
+struct ThreadManager {
+    threads: usize,
 }
