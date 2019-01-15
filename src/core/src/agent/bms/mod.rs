@@ -9,7 +9,7 @@ use super::kb::QueryInput;
 use super::Representation;
 use lang::{Grounded, GroundedRef, ProofResContext, SentID, Time};
 
-use chrono::UTC;
+use chrono::Utc;
 
 use std::cmp::Ordering as CmpOrdering;
 use std::mem;
@@ -37,7 +37,7 @@ impl BmsWrapper {
     pub fn new_record(&self, time: Option<Time>, value: Option<f32>, was_produced: Option<SentID>) {
         let time = match time {
             Some(time) => time,
-            None => UTC::now(),
+            None => Utc::now(),
         };
         let record = BmsRecord {
             produced: vec![],

@@ -12,7 +12,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use chrono::UTC;
+use chrono::Utc;
 
 use super::{ParseErrF, Time};
 use agent;
@@ -53,7 +53,7 @@ impl<'a> LogSentence {
             root: None,
             predicates: (vec![], vec![]),
             has_time_vars: 0,
-            created: UTC::now(),
+            created: Utc::now(),
             id: None,
             sent_kind: context.stype,
         };

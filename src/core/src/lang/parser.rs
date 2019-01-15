@@ -151,8 +151,7 @@ impl<'a> fmt::Display for ParseErrB<'a> {
                     format!("syntax error at:\n{}", str::from_utf8_unchecked(arr))
                 }
                 ParseErrB::NotScope(arr) => format!(
-                    "syntax error,
-                             scope is invalid or not found:\n{}",
+                    "syntax error, scope is invalid or not found:\n{}",
                     str::from_utf8_unchecked(arr)
                 ),
                 ParseErrB::ImbalDelim(arr) => format!(
@@ -971,14 +970,14 @@ fn number(input: &[u8]) -> IResult<&[u8], Number> {
         IResult::Done(
             &input[idx + 1..],
             Number::SignedFloat(
-                <f32>::from_str(str::from_utf8(&input[0..idx + 1]).unwrap()).unwrap(),
+                <f32>::from_str(str::from_utf8(&input[0..=idx]).unwrap()).unwrap(),
             ),
         )
     } else if !float && (input[0] == b'-') {
         IResult::Done(
             &input[idx + 1..],
             Number::SignedInteger(
-                <i32>::from_str(str::from_utf8(&input[0..idx + 1]).unwrap()).unwrap(),
+                <i32>::from_str(str::from_utf8(&input[0..=idx]).unwrap()).unwrap(),
             ),
         )
     } else if float {
@@ -1251,6 +1250,8 @@ fn is_multispace(chr: u8) -> bool {
 
 #[cfg(test)]
 mod test {
+    #![allow(cyclomatic_complexity)]
+    
     use super::*;
     use super::{class_decl, func_decl};
     use std::str;
