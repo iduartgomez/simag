@@ -252,8 +252,6 @@ fn repr_inference_time_calc_2() {
     let test_04_01 = "
         ((let t1:time='2018-03-01T00:00:00Z', t2:time='2018-06-01T00:00:00Z')
                 (fat(@t1->t2)[$Pancho,u=1]))
-        # (meat[$M1,u=1])
-        # (dog[$Pancho,u=1])
     ";
     rep.tell(test_04_01).unwrap();
     let q04_01 = "(fat(time='2018-04-01T00:00:00Z')[$Pancho,u=1])";

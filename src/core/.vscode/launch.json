@@ -24,7 +24,7 @@
             "name": "Run unittest",
             "program": "/home/nacho/workspace/projects/simag/target/debug/deps/simag_core-44a4ed7ce9884c80",
             "args": [
-                "repr_inference_ask_pred"
+                "repr_inference_time_calc_2"
             ],
             "sourceLanguages": [
                 "rust"

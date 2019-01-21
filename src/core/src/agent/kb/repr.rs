@@ -891,7 +891,9 @@ impl Entity {
                                     .push(f.clone())
                             }
                         }
-                        Some(CompOperator::Until) | Some(CompOperator::At) => unreachable!(),
+                        Some(CompOperator::Until)
+                        | Some(CompOperator::At)
+                        | Some(CompOperator::FromUntil) => unreachable!(),
                     }
                 }
             }
@@ -1201,7 +1203,9 @@ impl Class {
                                     .push(f.clone())
                             }
                         }
-                        Some(CompOperator::Until) | Some(CompOperator::At) => unreachable!(),
+                        Some(CompOperator::Until)
+                        | Some(CompOperator::At)
+                        | Some(CompOperator::FromUntil) => unreachable!(),
                     }
                 }
             }
@@ -1253,7 +1257,9 @@ impl Class {
                                 process = false;
                             }
                         }
-                        (CompOperator::Until, _) | (CompOperator::At, _) => unreachable!(),
+                        (CompOperator::Until, _)
+                        | (CompOperator::At, _)
+                        | (CompOperator::FromUntil, _) => unreachable!(),
                     }
                 }
             }

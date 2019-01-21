@@ -416,7 +416,7 @@ impl std::cmp::PartialEq for GroundedMemb {
             CompOperator::Less => val_lhs > val_rhs,
             CompOperator::MoreEqual => val_lhs <= val_rhs,
             CompOperator::LessEqual => val_lhs >= val_rhs,
-            CompOperator::Until | CompOperator::At => unreachable!(),
+            CompOperator::Until | CompOperator::At | CompOperator::FromUntil => unreachable!(),
         }
     }
 }
@@ -766,7 +766,7 @@ impl FreeClsOwner {
                 CompOperator::LessEqual => {
                     val.approx_eq_ulps(&o_val, FLOAT_EQ_ULPS) || o_val < *val
                 }
-                CompOperator::Until | CompOperator::At => unreachable!(),
+                CompOperator::Until | CompOperator::At | CompOperator::FromUntil => unreachable!(),
             }
         } else {
             true
@@ -1138,7 +1138,7 @@ impl<'a> FuncDecl {
         }
         for arg in self.op_args.as_ref().unwrap() {
             if let OpArg::TimeVarFrom(ref var1) = *arg {
-                return var1.var_equality(var0);
+                return var1.as_ref() == var0;
             }
         }
         false
@@ -1463,7 +1463,7 @@ impl<'a> ClassDecl {
         }
         for arg in self.op_args.as_ref().unwrap() {
             if let OpArg::TimeVarFrom(ref var1) = *arg {
-                return var1.var_equality(var0);
+                return var1.as_ref() == var0;
             }
         }
         false
@@ -1596,15 +1596,17 @@ impl<'a> std::iter::Iterator for DeclArgsIter<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum OpArg {
     Generic(OpArgTerm, Option<(CompOperator, OpArgTerm)>),
-    OverWrite,
-    TimeDecl(TimeFn),
     TimeVar,
+    TimeDecl(TimeFn),
     TimeVarAssign(Arc<Var>),
     TimeVarFrom(Arc<Var>),
+    // TimeVarUntil(Arc<Var>),
+    TimeVarFromUntil(Arc<Var>, Arc<Var>),
+    OverWrite,
 }
 
 impl<'a> OpArg {
-    pub fn from(other: &OpArgBorrowed<'a>, context: &mut ParseContext) -> Result<OpArg, ParseErrF> {
+    pub fn from(other: &OpArgBorrowed<'a>, context: &ParseContext) -> Result<OpArg, ParseErrF> {
         let t0 = match OpArgTerm::from(&other.term, context) {
             Err(ParseErrF::ReservedKW(kw)) => match &*kw {
                 "time" => return OpArg::ignore_kw(other, "time", context),
@@ -1633,8 +1635,22 @@ impl<'a> OpArg {
             None => None,
         };
         match comp {
-            Some((CompOperator::Until, _)) | Some((CompOperator::At, _)) => {
+            Some((CompOperator::At, _)) | Some((CompOperator::Until, _)) => {
                 OpArg::ignore_kw(other, "time", context)
+            }
+            Some((CompOperator::FromUntil, _)) => {
+                let load0 = if t0.is_var() {
+                    t0.get_var()
+                } else {
+                    return Err(ParseErrF::TimeFnErr(TimeFnErr::IsNotVar));
+                };
+                let load1 = OpArgTerm::time_payload(other.comp.as_ref(), context)?;
+                let load1 = if load1.1.is_var() {
+                    load1.1.get_var()
+                } else {
+                    return Err(ParseErrF::TimeFnErr(TimeFnErr::IsNotVar));
+                };
+                Ok(OpArg::TimeVarFromUntil(load0, load1))
             }
             _ => Ok(OpArg::Generic(t0, comp)),
         }
@@ -1643,7 +1659,7 @@ impl<'a> OpArg {
     fn ignore_kw(
         other: &OpArgBorrowed<'a>,
         kw: &str,
-        context: &mut ParseContext,
+        context: &ParseContext,
     ) -> Result<OpArg, ParseErrF> {
         match kw {
             "time" => {
@@ -1664,15 +1680,16 @@ impl<'a> OpArg {
 
     #[inline]
     fn contains_var(&self, var1: &Var) -> bool {
-        match *self {
-            OpArg::TimeVarAssign(ref var0) | OpArg::TimeVarFrom(ref var0) => &**var0 == var1,
+        match self {
+            OpArg::TimeVarAssign(var0) | OpArg::TimeVarFrom(var0) => var0.as_ref() == var1,
+            OpArg::TimeVarFromUntil(v0_0, v0_1) => v0_0.as_ref() == var1 || v0_1.as_ref() == var1,
             _ => false,
         }
     }
 
     fn generate_uid(&self) -> Vec<u8> {
-        match *self {
-            OpArg::Generic(ref a0, ref a1) => {
+        match self {
+            OpArg::Generic(a0, a1) => {
                 let mut id = vec![];
                 id.append(&mut a0.generate_uid());
                 if let Some((ref cmp, ref a1)) = *a1 {
@@ -1681,10 +1698,16 @@ impl<'a> OpArg {
                 }
                 id
             }
-            OpArg::TimeDecl(ref decl) => decl.generate_uid(),
+            OpArg::TimeDecl(decl) => decl.generate_uid(),
+            OpArg::TimeVarAssign(var) | OpArg::TimeVarFrom(var) => {
+                format!("{:?}", var.as_ref() as *const Var).into_bytes()
+            }
+            OpArg::TimeVarFromUntil(v0, v1) => {
+                let mut id = format!("{:?}", v0.as_ref() as *const Var).into_bytes();
+                id.append(&mut format!("{:?}", v1.as_ref() as *const Var).into_bytes());
+                id
+            }
             OpArg::TimeVar => vec![2],
-            OpArg::TimeVarAssign(ref var) => format!("{:?}", &**var as *const Var).into_bytes(),
-            OpArg::TimeVarFrom(ref var) => format!("{:?}", &**var as *const Var).into_bytes(),
             OpArg::OverWrite => vec![5],
         }
     }
@@ -1738,7 +1761,7 @@ impl<'a> OpArg {
                 let upper_bound = arg0 + comp_diff;
                 !((arg1 < lower_bound) || (arg1 > upper_bound)) || arg0 < arg1
             }
-            CompOperator::Until | CompOperator::At => unreachable!(),
+            CompOperator::Until | CompOperator::At | CompOperator::FromUntil => unreachable!(),
         }
     }
 }
@@ -1796,10 +1819,7 @@ pub(crate) enum OpArgTerm {
 }
 
 impl<'a> OpArgTerm {
-    fn from(
-        other: &OpArgTermBorrowed<'a>,
-        context: &mut ParseContext,
-    ) -> Result<OpArgTerm, ParseErrF> {
+    fn from(other: &OpArgTermBorrowed<'a>, context: &ParseContext) -> Result<OpArgTerm, ParseErrF> {
         match *other {
             OpArgTermBorrowed::Terminal(slice) => {
                 let t = Terminal::from_slice(slice, context)?;
@@ -1813,7 +1833,7 @@ impl<'a> OpArgTerm {
 
     fn time_payload(
         other: Option<&(CompOperator, OpArgTermBorrowed<'a>)>,
-        context: &mut ParseContext,
+        context: &ParseContext,
     ) -> Result<(CompOperator, OpArgTerm), ParseErrF> {
         match other {
             None => Ok((CompOperator::Equal, OpArgTerm::TimePayload(TimeFn::IsVar))),
@@ -1872,6 +1892,8 @@ impl<'a> OpArgTerm {
     }
 }
 
+/// Variable equality is bassed on physical address, to compare term equality use the
+/// `name_eq` method.
 #[derive(Debug, Clone)]
 pub(crate) struct Var {
     pub name: String,
@@ -1887,7 +1909,7 @@ pub(crate) enum VarKind {
 }
 
 impl Var {
-    pub fn from<'a>(input: &VarBorrowed<'a>, context: &mut ParseContext) -> Result<Var, ParseErrF> {
+    pub fn from<'a>(input: &VarBorrowed<'a>, context: &ParseContext) -> Result<Var, ParseErrF> {
         let &VarBorrowed {
             name: TerminalBorrowed(name),
             ref op_arg,
@@ -1921,23 +1943,21 @@ impl Var {
         self.op_arg.as_ref().unwrap().get_time_payload(&h, None)
     }
 
-    fn var_equality(&self, v1: &Var) -> bool {
-        (&*v1 as *const Var) == (self as *const Var)
-    }
-
     pub fn is_time_var(&self) -> bool {
         match self.kind {
             VarKind::Time | VarKind::TimeDecl => true,
             _ => false,
         }
     }
+
+    pub fn name_eq(&self, other: &Var) -> bool {
+        self.name == other.name
+    }
 }
 
 impl std::cmp::PartialEq for Var {
     fn eq(&self, other: &Var) -> bool {
-        let s_address = &*self as *const Var;
-        let o_address = &*other as *const Var;
-        s_address == o_address
+        (self as *const Var) == (other as *const Var)
     }
 }
 
@@ -1959,7 +1979,7 @@ pub(crate) struct Skolem {
 impl Skolem {
     pub fn from<'a>(
         input: &SkolemBorrowed<'a>,
-        context: &mut ParseContext,
+        context: &ParseContext,
     ) -> Result<Skolem, ParseErrF> {
         let &SkolemBorrowed {
             name: TerminalBorrowed(name),
@@ -1977,6 +1997,10 @@ impl Skolem {
             return Err(ParseErrF::ReservedKW(name));
         }
         Ok(Skolem { name, op_arg })
+    }
+
+    pub fn name_eq(&self, other: &Skolem) -> bool {
+        self.name == other.name
     }
 }
 
@@ -2005,7 +2029,7 @@ impl<'a> Terminal {
         Ok(Terminal::GroundedTerm(name))
     }
 
-    fn from_slice(slice: &[u8], context: &mut ParseContext) -> Result<Terminal, ParseErrF> {
+    fn from_slice(slice: &[u8], context: &ParseContext) -> Result<Terminal, ParseErrF> {
         let name = unsafe { String::from(str::from_utf8_unchecked(slice)) };
         if reserved(&name) {
             return Err(ParseErrF::ReservedKW(name));

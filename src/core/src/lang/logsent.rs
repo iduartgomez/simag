@@ -1292,6 +1292,19 @@ impl ParseContext {
         }
     }
 
+    pub fn var_in_context(&self, decl: &VarDeclBorrowed) -> Result<bool, ParseErrF> {
+        match decl {
+            VarDeclBorrowed::Var(ref var) => {
+                let var = &Var::from(var, self)?;
+                Ok(self.vars.iter().any(|x| var.name_eq(x.as_ref())))
+            }
+            VarDeclBorrowed::Skolem(ref var) => {
+                let var = &Skolem::from(var, self)?;
+                Ok(self.skols.iter().any(|x| var.name_eq(x.as_ref())))
+            }
+        }
+    }
+
     fn iexpr(&self) -> bool {
         match self.stype {
             SentKind::IExpr => true,

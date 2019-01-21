@@ -62,7 +62,6 @@ impl Parser {
     ) -> Result<VecDeque<ParseTree>, ParseErrF> {
         // store is a vec where the sequence of characters after cleaning up comments
         // will be stored, both have to be extended to 'static lifetime so they can be
-        // TODO: use rayon::iter::IntoParallelIterator;
         let mut clean = vec![];
         let scopes = match Self::p1(input.as_bytes(), &mut clean) {
             Ok(scopes) => scopes.into_par_iter(),
@@ -308,24 +307,17 @@ impl<'a> Scope<'a> {
             Some(LogicOperator::And) | None => {}
             _ => return Ok(None),
         }
-        if context.depth == 1 && context.is_tell {
-            // embedded defined variables in this assertion, extract values and perform substitution
-            self.vars.as_ref().unwrap().iter().map(|x| context.push_var(x)).collect::<Result<Vec<_>, _>>()?;
-            match self.next.is_assertion(context) {
-                Ok(Some(ParseTree::Assertion(_asserts))) => {
-                    let mut assignments = HashMap::new(); 
-                    for x in context.vars.iter().filter(|x| x.is_time_var()) {
-                        assignments.insert(x.clone(), x.get_times());
-                    }
-                    unimplemented!()
-                }
-                Err(err) => Err(err),
-                _ => Err(ParseErrF::WrongDef),
-            }
-        } else if context.depth == 1 {
-            if let Some(vars) = &self.vars {
-                vars.iter().map(|x| context.push_var(x)).collect::<Result<Vec<_>, _>>()?;
-            }
+        if context.depth == 1 && self.vars.is_some() {
+            // let mut filtered = Vec::new();
+            // for var in self.vars.as_ref().unwrap() {
+            //     if context.var_in_context(var)? {
+            //         filtered.push(var);
+            //     }
+            // }
+            // filtered.iter()
+            self.vars.as_ref().unwrap().iter()
+                .map(|x| context.push_var(x))
+                .collect::<Result<Vec<_>, _>>()?;
             self.next.is_assertion(context)
         } else {
             self.next.is_assertion(context)
@@ -894,19 +886,26 @@ named!(
 // op_args = $(op_arg),+ ;
 named!(op_args(&[u8]) -> Vec<OpArgBorrowed>, delimited!(
         char!('('),
-        alt!(separated_list!(char!(','), op_arg) | map!(op_arg, to_op_arg_vec)),
+        separated_list!(char!(','), op_arg),
         char!(')')
     )
 );
 
-fn to_op_arg_vec(a: OpArgBorrowed) -> Vec<OpArgBorrowed> {
-    vec![a]
-}
-
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 pub(crate) enum OpArgTermBorrowed<'a> {
     Terminal(&'a [u8]),
     String(&'a [u8]),
+}
+
+impl<'a> std::fmt::Debug for OpArgTermBorrowed<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        unsafe {
+            match self {
+                OpArgTermBorrowed::Terminal(r) => write!(f, "OpArg::Term({})",str::from_utf8_unchecked(r)),
+                OpArgTermBorrowed::String(r) => write!(f, "OpArg::Str({})",str::from_utf8_unchecked(r)),
+            }
+        }
+    }
 }
 
 impl<'a> OpArgTermBorrowed<'a> {
@@ -1051,6 +1050,7 @@ pub(crate) enum CompOperator {
     LessEqual,
     // time operators:
     Until,
+    FromUntil,
     At,
 }
 
@@ -1071,7 +1071,7 @@ impl CompOperator {
 
     fn from_time_op(t: Option<OpArgTermBorrowed>) -> Option<(CompOperator, OpArgTermBorrowed)> {
         if let Some(term) = t {
-            Some((CompOperator::Until, term))
+            Some((CompOperator::FromUntil, term))
         } else {
             Some((CompOperator::At, OpArgTermBorrowed::String(b"")))
         }
@@ -1120,7 +1120,8 @@ impl CompOperator {
     #[inline]
     pub fn is_time_assignment(self) -> bool {
         match self {
-            CompOperator::Equal | CompOperator::Until | CompOperator::At => true,
+            CompOperator::Equal | CompOperator::Until | CompOperator::At 
+            | CompOperator::FromUntil => true,
             _ => false,
         }
     }
@@ -1133,7 +1134,8 @@ impl CompOperator {
             CompOperator::MoreEqual => id.push(4),
             CompOperator::LessEqual => id.push(5),
             CompOperator::Until => id.push(6),
-            CompOperator::At => id.push(7)
+            CompOperator::At => id.push(7),
+            CompOperator::FromUntil => id.push(8),
         }
     }
 }
@@ -1436,7 +1438,7 @@ mod test {
             &OpArgBorrowed {
                 term: OpArgTermBorrowed::Terminal(b"t1"),
                 comp: Some((
-                    CompOperator::Until,
+                    CompOperator::FromUntil,
                     OpArgTermBorrowed::Terminal(b"t2"),
                 )),
             }
