@@ -304,9 +304,6 @@ pub(crate) struct Scope<'a> {
 
 impl<'a> Scope<'a> {
     fn is_assertion(&self, context: &mut ParseContext) -> Result<Option<ParseTree>, ParseErrF> {
-        if self.vars.is_some() && context.depth != 1 && !context.is_tell {
-            return Ok(None);
-        }
         match self.logic_op {
             Some(LogicOperator::And) | None => {}
             _ => return Ok(None),
@@ -325,6 +322,11 @@ impl<'a> Scope<'a> {
                 Err(err) => Err(err),
                 _ => Err(ParseErrF::WrongDef),
             }
+        } else if context.depth == 1 {
+            if let Some(vars) = &self.vars {
+                vars.iter().map(|x| context.push_var(x)).collect::<Result<Vec<_>, _>>()?;
+            }
+            self.next.is_assertion(context)
         } else {
             self.next.is_assertion(context)
         }

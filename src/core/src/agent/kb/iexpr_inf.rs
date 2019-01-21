@@ -259,6 +259,8 @@ impl<'a> Inference<'a> {
     }
 
     #[inline]
+    /// Find if a grounded class membership is true, false or unknown.
+    /// ie. (person[$John,u=1])
     fn query_cls_gr(&self) {
         self.query
             .cls_queries_grounded
@@ -286,6 +288,8 @@ impl<'a> Inference<'a> {
     }
 
     #[inline]
+    /// Find if a grounded function is true, false or unknown.
+    /// ie. (fn::friend[$Lucy,u=0;$John])
     fn query_func_gr(&self) {
         self.query
             .func_queries_grounded
@@ -311,6 +315,8 @@ impl<'a> Inference<'a> {
     }
 
     #[inline]
+    /// Find all members (subclasses or entities) of a given class.
+    /// ie. ((let x) (professor[x,u=1]))
     fn query_cls_free(&self) {
         self.query
             .cls_queries_free
@@ -331,6 +337,8 @@ impl<'a> Inference<'a> {
     }
 
     #[inline]
+    /// Find all relationships of a given function type.
+    /// ie. ((let x) (fn::produce[milk,u>0;x]))
     fn query_func_free(&self) {
         self.query
             .func_queries_free
@@ -348,6 +356,8 @@ impl<'a> Inference<'a> {
     }
 
     #[inline]
+    /// Find class membership of a grounded entity or class.
+    /// ie. ((let x) (x[$Lucy,u>0.5]))
     fn query_cls_memb(&self) {
         self.query
             .cls_memb_query
@@ -363,6 +373,8 @@ impl<'a> Inference<'a> {
     }
 
     #[inline]
+    /// Find relationships of a grounded entity or class.
+    /// ie. ((let x, y) (fn::x[$Vicky,u=0;y]))
     fn query_func_memb(&self) {
         self.query
             .func_memb_query
