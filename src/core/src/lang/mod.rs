@@ -31,6 +31,7 @@ mod errors {
     use super::common::TimeFnErr;
     use super::logsent::LogSentErr;
     use super::parser::ParseErrB;
+    use crate::agent::BmsError;
 
     use std::fmt;
 
@@ -69,6 +70,12 @@ mod errors {
     impl<'a> From<ParseErrB<'a>> for ParseErrF {
         fn from(err: ParseErrB<'a>) -> ParseErrF {
             ParseErrF::SyntaxErr(format!("{}", err))
+        }
+    }
+
+    impl From<BmsError> for ParseErrF {
+        fn from(_err: BmsError) -> ParseErrF {
+            ParseErrF::TimeFnErr(TimeFnErr::IllegalSubstitution)
         }
     }
 }

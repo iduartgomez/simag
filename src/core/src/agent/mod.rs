@@ -1,7 +1,7 @@
 mod bms;
 mod kb;
 
-pub(crate) use self::bms::BmsWrapper;
+pub(crate) use self::bms::{BmsWrapper, BmsError};
 pub(crate) use self::kb::{Representation, VarAssignment};
 
 pub use self::kb::{Answer, QueryErr};

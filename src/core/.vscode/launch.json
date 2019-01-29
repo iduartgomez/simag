@@ -22,7 +22,7 @@
             "type": "lldb",
             "request": "launch",
             "name": "Run unittest",
-            "program": "/home/nacho/workspace/projects/simag/target/debug/deps/simag_core-44a4ed7ce9884c80",
+            "program": "/home/nachod/pers_projects/simag/target/debug/simag_core-cd1ecfc35b22b9d3",
             "args": [
                 "repr_inference_time_calc_2"
             ],

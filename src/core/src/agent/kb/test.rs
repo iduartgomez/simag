@@ -3,6 +3,27 @@ use super::*;
 use std::collections::HashSet;
 
 #[test]
+fn repr_inference_time_calc_2() {
+    // Test if a statement is true between time intervals
+    let mut rep = Representation::new();
+    let test_04_01 = "
+        ((let t1:time='2018-03-01T00:00:00Z', t2:time='2018-06-01T00:00:00Z')
+                (fat(@t1->t2)[$Pancho,u=1]))
+    ";
+    rep.tell(test_04_01).unwrap();
+    let q04_01 = "(fat(time='2018-04-01T00:00:00Z')[$Pancho,u=1])";
+    assert_eq!(rep.ask(q04_01).unwrap().get_results_single(), Some(true));
+    // let q04_02 = "(fat(time='2018-07-01T00:00:00Z')[$Pancho,u=1])";
+    // assert_eq!(rep.ask(q04_02).unwrap().get_results_single(), None);
+    // let q04_03 = "(fat(time='2018-02-01T00:00:00Z')[$Pancho,u=1])";
+    // assert_eq!(rep.ask(q04_03).unwrap().get_results_single(), None);
+
+    // "((let x, y, t1:time)
+    //         ((dog[x,u=1] && meat[y,u=1] && fn::eat(@t1)[y,u=1;x])
+    //         := fat(@t1)[x,u=1]))"
+}
+
+#[test]
 fn repr_inference_ask_pred() {
     let test_01 = "
         ( professor[$Lucy,u=1] )
@@ -243,27 +264,6 @@ fn repr_inference_time_calc() {
     rep.tell(test_03_04).unwrap();
     let q03_04 = "(fat[$Pancho,u=0])";
     assert_eq!(rep.ask(q03_04).unwrap().get_results_single(), Some(true));
-}
-
-#[test]
-fn repr_inference_time_calc_2() {
-    // Test if a statement is true between time intervals
-    let mut rep = Representation::new();
-    let test_04_01 = "
-        ((let t1:time='2018-03-01T00:00:00Z', t2:time='2018-06-01T00:00:00Z')
-                (fat(@t1->t2)[$Pancho,u=1]))
-    ";
-    rep.tell(test_04_01).unwrap();
-    let q04_01 = "(fat(time='2018-04-01T00:00:00Z')[$Pancho,u=1])";
-    assert_eq!(rep.ask(q04_01).unwrap().get_results_single(), Some(true));
-    // let q04_02 = "(fat(time='2018-07-01T00:00:00Z')[$Pancho,u=1])";
-    // assert_eq!(rep.ask(q04_02).unwrap().get_results_single(), None);
-    // let q04_03 = "(fat(time='2018-02-01T00:00:00Z')[$Pancho,u=1])";
-    // assert_eq!(rep.ask(q04_03).unwrap().get_results_single(), None);
-
-    // "((let x, y, t1:time)
-    //         ((dog[x,u=1] && meat[y,u=1] && fn::eat(@t1)[y,u=1;x])
-    //         := fat(@t1)[x,u=1]))"
 }
 
 #[test]

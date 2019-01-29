@@ -8,6 +8,7 @@
 use super::kb::QueryInput;
 use super::Representation;
 use crate::lang::{Grounded, GroundedRef, ProofResContext, SentID, Time};
+pub(crate) use self::errors::BmsError;
 
 use chrono::Utc;
 
@@ -315,6 +316,35 @@ impl BmsWrapper {
         let other_last_time = &lock1.last().unwrap().time;
         own_last_time.cmp(other_last_time)
     }
+
+    /// Merge an other bmswrapper with this one, the belief then will be true
+    /// between the time interval [start, end) of both records, after which it will be set 
+    /// as `unknown`.
+    /// 
+    /// This operation is meant to be used when asserting new facts.
+    pub fn merge_from_until(&mut self, until: &BmsWrapper) -> Result<(), errors::BmsError> {
+        let mut self_records = self.records.write().unwrap();
+        let other_records = until.records.read().unwrap();
+
+        if self_records.is_empty() || other_records.is_empty() {
+            return Err(errors::BmsError::EmptyRecordList);
+        } else if self_records.len() > 1 || other_records.len() > 1 {
+            return Err(errors::BmsError::IllegalMerge("More than one record found".to_string()));
+        }
+
+        let until = other_records.get(0).unwrap();
+        let from = self_records.get_mut(0).unwrap();
+        if until.value != from.value {
+            return Err(errors::BmsError::IllegalMerge("Different values while merging".to_string()));
+        }
+        let mut until = until.clone();
+        if until.time < from.time {
+            std::mem::swap(&mut until, from);
+        }
+        until.value = None;
+        self_records.push(until);
+        Ok(())
+    }
 }
 
 impl std::clone::Clone for BmsWrapper {
@@ -340,6 +370,14 @@ struct BmsRecord {
 impl BmsRecord {
     fn add_entry(&mut self, entry: (Grounded, Option<f32>)) {
         self.produced.push(entry);
+    }
+}
+
+mod errors {
+    #[derive(Debug, PartialEq)]
+    pub enum BmsError {
+        IllegalMerge(String),
+        EmptyRecordList
     }
 }
 

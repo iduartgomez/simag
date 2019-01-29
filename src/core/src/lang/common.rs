@@ -1558,6 +1558,25 @@ impl<'a> ClassDecl {
             _ => false,
         }
     }
+
+    /// While constructing an assertion in a tell context performs variable
+    /// substitution whenever is possible.
+    pub fn change_assertion_opargs(&mut self, assignments: &[Arc<Var>]) -> Result<(), ParseErrF> {
+        if let Some(op_args) = &mut self.op_args {
+            for op_arg in op_args {
+                match op_arg {
+                    OpArg::TimeVarFromUntil(var0, var1) => {
+                        let mut var0_time = var0.get_times();
+                        let var1_time = var1.get_times();
+                        var0_time.merge_from_until(&var1_time)?;
+                    }
+                    OpArg::TimeVarFrom(_) => {}
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl std::iter::IntoIterator for ClassDecl {
@@ -2292,6 +2311,7 @@ mod errors {
         WrongFormat(String),
         IsNotVar,
         InsufArgs,
+        IllegalSubstitution,
     }
 
     impl Into<ParseErrF> for TimeFnErr {
