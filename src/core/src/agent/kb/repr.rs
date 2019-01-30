@@ -716,15 +716,20 @@ impl<'a> Answer<'a> {
     }
 
     pub fn get_memberships(&self) -> HashMap<ObjName<'a>, Vec<Membership<'a>>> {
-        self.0.get_memberships().iter()
+        self.0.get_memberships()
+            .iter()
             .map(|(name, memberships)| {
-                (*name, memberships.iter().map(|gr| {
-                    Membership {
-                        value: gr.get_value(),
-                        name: gr.get_name(),
-                    }
-                }).collect::<Vec<_>>())
-        }).collect::<HashMap<_, _>>()
+                (*name, memberships
+                    .iter()
+                    .map(|gr| {
+                        Membership {
+                            value: gr.get_value(),
+                            name: gr.get_parent(),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                )})
+            .collect::<HashMap<_, _>>()
     }
 
     pub(crate) fn get_relationships(&self) -> HashMap<ObjName<'a>, Vec<&'a GroundedFunc>> {

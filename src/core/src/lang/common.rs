@@ -1743,14 +1743,18 @@ impl<'a> OpArg {
         value: Option<f32>,
     ) -> BmsWrapper {
         let bms = BmsWrapper::new(false);
-        match *self {
-            OpArg::TimeDecl(TimeFn::Time(ref payload)) => {
+        match self {
+            OpArg::TimeDecl(TimeFn::Time(payload)) => {
                 bms.new_record(Some(*payload), value, None);
             }
             OpArg::TimeDecl(TimeFn::Now) => {
                 bms.new_record(None, value, None);
             }
-            OpArg::TimeVarAssign(ref var) => return (&**(assignments.get(&**var).unwrap())).clone(),
+            OpArg::TimeDecl(TimeFn::Interval(time0, time1)) => {
+                bms.new_record(Some(*time0), value, None);
+                bms.new_record(Some(*time1), None, None);
+            }
+            OpArg::TimeVarAssign(var) => return (&**(assignments.get(&**var).unwrap())).clone(),
             _ => panic!(),
         }
         bms
@@ -1795,6 +1799,7 @@ impl<'a> OpArg {
 pub(crate) enum TimeFn {
     Now,
     Time(Time),
+    /// Time interval for value decl, in the form of [t0,t1)
     Interval(Time, Time),
     IsVar,
 }
