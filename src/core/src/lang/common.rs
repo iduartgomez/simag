@@ -1560,8 +1560,8 @@ impl<'a> ClassDecl {
     }
 
     /// While constructing an assertion in a tell context performs variable
-    /// substitution whenever is possible.
-    pub fn change_assertion_opargs(&mut self, assignments: &[Arc<Var>]) -> Result<(), ParseErrF> {
+    /// substitution whenever is possible, variables must be declared.
+    pub fn var_substitution(&mut self, _assignments: &[Arc<Var>]) -> Result<(), ParseErrF> {
         if let Some(op_args) = &mut self.op_args {
             for op_arg in op_args {
                 match op_arg {
@@ -1569,8 +1569,14 @@ impl<'a> ClassDecl {
                         let mut var0_time = var0.get_times();
                         let var1_time = var1.get_times();
                         var0_time.merge_from_until(&var1_time)?;
+                        let mut assignment = OpArg::TimeDecl(TimeFn::from_bms(var0_time)?);
+                        std::mem::swap(&mut assignment, op_arg);
                     }
-                    OpArg::TimeVarFrom(_) => {}
+                    OpArg::TimeVarFrom(var0) => {
+                        let var0_time = var0.get_times();
+                        let mut assignment = OpArg::TimeDecl(TimeFn::from_bms(var0_time)?);
+                        std::mem::swap(&mut assignment, op_arg);
+                    }
                     _ => {}
                 }
             }
@@ -1789,6 +1795,7 @@ impl<'a> OpArg {
 pub(crate) enum TimeFn {
     Now,
     Time(Time),
+    Interval(Time, Time),
     IsVar,
 }
 
@@ -1803,6 +1810,16 @@ impl TimeFn {
                 Ok(time) => Ok(TimeFn::Time(time.with_timezone(&Utc))),
             }
         }
+    }
+
+    /// Get a time interval from a bmswrapper, ie. created with the 
+    /// merge_from_until method.
+    fn from_bms(rec: BmsWrapper) -> Result<TimeFn, ParseErrF> {
+        let values: Vec<_> = rec.iter_values().map(|(t, _)| t).collect();
+        if values.len() != 2 {
+            return Err(ParseErrF::TimeFnErr(TimeFnErr::IllegalSubstitution));
+        }
+        Ok(TimeFn::Interval(values[0], values[1]))
     }
 
     fn get_time_payload(&self, value: Option<f32>) -> BmsWrapper {
@@ -1821,8 +1838,12 @@ impl TimeFn {
 
     fn generate_uid(&self) -> Vec<u8> {
         let mut id = vec![];
-        match *self {
-            TimeFn::Time(ref time) => id.append(&mut format!("{}", time).into_bytes()),
+        match self {
+            TimeFn::Time(time) => id.append(&mut format!("{}", time).into_bytes()),
+            TimeFn::Interval(time0, time1) => {
+                id.append(&mut format!("{}", time0).into_bytes());
+                id.append(&mut format!("{}", time1).into_bytes());
+            }
             TimeFn::Now => id.push(2),
             TimeFn::IsVar => id.push(3),
         }

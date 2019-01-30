@@ -1292,6 +1292,7 @@ impl ParseContext {
         }
     }
 
+    #[allow(dead_code)]
     pub fn var_in_context(&self, decl: &VarDeclBorrowed) -> Result<bool, ParseErrF> {
         match decl {
             VarDeclBorrowed::Var(ref var) => {

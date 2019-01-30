@@ -345,6 +345,16 @@ impl BmsWrapper {
         self_records.push(until);
         Ok(())
     }
+
+    pub fn iter_values(&self) -> TimeValueIterator {
+        let values: Vec<_> = self.records.read().unwrap().iter().map(|r|
+            Some((r.time, r.value))
+        ).collect();
+        TimeValueIterator {
+            values,
+            num: 0,
+        }
+    }
 }
 
 impl std::clone::Clone for BmsWrapper {
@@ -354,6 +364,26 @@ impl std::clone::Clone for BmsWrapper {
             records: RwLock::new(recs.clone()),
             overwrite: AtomicBool::new(self.overwrite.load(Ordering::Acquire)),
         }
+    }
+}
+
+pub struct TimeValueIterator {
+    values: Vec<Option<(Time, Option<f32>)>>,
+    num: usize,
+}
+
+impl std::iter::Iterator for TimeValueIterator {
+    type Item = (Time, Option<f32>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.num >= self.values.len() {
+            return None;
+        }
+        let val = &mut self.values[self.num];
+        let repl = &mut None;
+        std::mem::swap(val, repl);
+        self.num += 1;
+        Some(repl.unwrap())
     }
 }
 

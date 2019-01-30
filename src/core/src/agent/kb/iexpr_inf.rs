@@ -29,7 +29,9 @@ use rayon::prelude::*;
 
 type ObjName<'a> = &'a str;
 type QueryPred = String;
-type GroundedRes<'a> = HashMap<ObjName<'a>, Option<(bool, Option<Time>)>>;
+/// Whether there is a result or not, if it's true or false, and from what point in time
+pub type GroundedResult = Option<(bool, Option<Time>)>;
+type GroundedResults<'a> = HashMap<ObjName<'a>, GroundedResult>;
 type QueryResMemb<'a> = HashMap<ObjName<'a>, Vec<Arc<GroundedMemb>>>;
 type QueryResRels<'a> = HashMap<ObjName<'a>, Vec<Arc<GroundedFunc>>>;
 
@@ -38,7 +40,7 @@ type QueryResRels<'a> = HashMap<ObjName<'a>, Vec<Arc<GroundedFunc>>>;
 /// whatever is requested by the consumer.
 #[derive(Debug)]
 pub(crate) struct InfResults<'b> {
-    grounded_queries: RwLock<HashMap<QueryPred, GroundedRes<'b>>>,
+    grounded_queries: RwLock<HashMap<QueryPred, GroundedResults<'b>>>,
     membership: RwLock<HashMap<&'b Var, QueryResMemb<'b>>>,
     relationships: RwLock<HashMap<&'b Var, QueryResRels<'b>>>,
     query: Arc<QueryProcessed<'b>>,
@@ -104,9 +106,9 @@ impl<'b> InfResults<'b> {
 
     pub fn get_results_multiple(
         self,
-    ) -> HashMap<QueryPred, HashMap<String, Option<(bool, Option<Time>)>>> {
+    ) -> HashMap<QueryPred, HashMap<String, GroundedResult>> {
         // WARNING: ObjName<'a> may (truly) outlive the content, own the &str first
-        let orig: &mut HashMap<QueryPred, HashMap<ObjName<'b>, Option<(bool, Option<Time>)>>> =
+        let orig: &mut HashMap<QueryPred, GroundedResults<'b>> =
             &mut *self.grounded_queries.write().unwrap();
         let mut res = HashMap::new();
         for (qpred, r) in orig.drain() {
@@ -743,7 +745,7 @@ impl<'a> InfTrial<'a> {
     fn add_as_last_valid(
         &self,
         context: &IExprResult,
-        r_dict: &mut GroundedRes<'a>,
+        r_dict: &mut GroundedResults<'a>,
         time: Time,
         value: bool,
     ) {

@@ -30,7 +30,7 @@
 //! string = regex: ".*?"|'.*?' ;
 //! ```
 
-use std::collections::{VecDeque, HashMap};
+use std::collections::VecDeque;
 use std::fmt;
 use std::str;
 use std::str::FromStr;
@@ -254,7 +254,7 @@ impl<'a> ASTNode<'a> {
                     let mut cls = ClassDecl::from(decl, context)?;
                     if context.in_assertion && context.is_tell {
                         // perform potential variable substitution
-                        cls.change_assertion_opargs(&context.vars)?;
+                        cls.var_substitution(&context.vars)?;
                     }
                     Ok(Some(ParseTree::Assertion(vec![Assert::ClassDecl(cls)])))
                 }
@@ -1048,6 +1048,7 @@ fn terminal(input: &[u8]) -> IResult<&[u8], &[u8]> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[allow(dead_code)]
 pub(crate) enum CompOperator {
     // equality operators:
     Equal,

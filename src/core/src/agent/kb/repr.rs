@@ -1,7 +1,7 @@
 use crate::FLOAT_EQ_ULPS;
-
-use super::*;
+use crate::agent::kb::iexpr_inf::GroundedResult;
 use crate::lang::*;
+use super::*;
 
 use float_cmp::ApproxEqUlps;
 
@@ -685,6 +685,21 @@ pub struct Answer<'a>(InfResults<'a>);
 type ObjName<'a> = &'a str;
 type QueryPred = String;
 
+pub struct Membership<'a> {
+    name: &'a str,
+    value: Option<f32>,
+}
+
+impl<'a> Membership<'a> {
+    pub fn get_parent(&self) -> &str {
+        self.name
+    }
+
+    pub fn get_value(&self) -> Option<f32> {
+        self.value
+    }
+}
+
 impl<'a> Answer<'a> {
     pub(crate) fn new(results: InfResults<'a>) -> Answer<'a> {
         Answer(results)
@@ -696,11 +711,20 @@ impl<'a> Answer<'a> {
 
     pub fn get_results_multiple(
         self,
-    ) -> HashMap<QueryPred, HashMap<String, Option<(bool, Option<Time>)>>> {
+    ) -> HashMap<QueryPred, HashMap<String, GroundedResult>> {
         self.0.get_results_multiple()
     }
-    pub(crate) fn get_memberships(&self) -> HashMap<ObjName<'a>, Vec<&'a GroundedMemb>> {
-        self.0.get_memberships()
+
+    pub fn get_memberships(&self) -> HashMap<ObjName<'a>, Vec<Membership<'a>>> {
+        self.0.get_memberships().iter()
+            .map(|(name, memberships)| {
+                (*name, memberships.iter().map(|gr| {
+                    Membership {
+                        value: gr.get_value(),
+                        name: gr.get_name(),
+                    }
+                }).collect::<Vec<_>>())
+        }).collect::<HashMap<_, _>>()
     }
 
     pub(crate) fn get_relationships(&self) -> HashMap<ObjName<'a>, Vec<&'a GroundedFunc>> {
