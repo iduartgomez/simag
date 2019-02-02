@@ -2,25 +2,20 @@
 //! types that transform and store the data for the individual agents and
 //! serve as representations of the different objects and the relationships
 //! between them.
-
 mod iexpr_inf;
-mod repr;
+pub(super) mod repr;
 mod rule_inf;
 #[cfg(test)]
 mod test;
 
-pub(crate) use self::iexpr_inf::*;
-pub(crate) use self::repr::*;
-
-pub use self::repr::{Answer, QueryErr};
-
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::lang::{GroundedFunc, GroundedMemb};
+pub(in crate::agent) use self::iexpr_inf::QueryInput;
+use super::lang::{GroundedFunc, GroundedMemb};
 
 #[derive(Debug, Clone)]
-pub(crate) struct VarAssignment<'a> {
+pub(in crate::agent) struct VarAssignment<'a> {
     pub name: &'a str,
     classes: HashMap<&'a str, Arc<GroundedMemb>>,
     funcs: HashMap<&'a str, Vec<Arc<GroundedFunc>>>,

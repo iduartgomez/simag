@@ -14,12 +14,18 @@ use std::sync::Arc;
 
 use chrono::Utc;
 
-use super::{ParseErrF, Time};
-use crate::lang::{common::*, parser::*};
-use crate::{agent, agent::BmsWrapper};
+use super::{
+    common::{
+        Assert, ClassDecl, FuncDecl, Grounded, GroundedFunc, GroundedMemb, OpArg, Skolem, Var,
+        VarKind,
+    },
+    parser::{ASTNode, AssertBorrowed, LogicOperator, Scope, VarDeclBorrowed},
+    ParseErrF, Time,
+};
+use crate::agent::{bms::BmsWrapper, kb::repr::Representation, kb::VarAssignment};
 
 pub use self::errors::LogSentErr;
-pub(crate) type SentID = usize;
+pub(in crate::agent) type SentID = usize;
 
 /// Type to store a first-order logic complex sentence.
 ///
@@ -27,7 +33,7 @@ pub(crate) type SentID = usize;
 /// it in an usable form for the agent to classify and reason about
 /// objects and relations, cannot be instantiated directly.
 #[derive(Debug)]
-pub(crate) struct LogSentence {
+pub(in crate::agent) struct LogSentence {
     particles: Vec<Rc<Particle>>,
     vars: Option<Vec<Arc<Var>>>,
     skolem: Option<Vec<Arc<Skolem>>>,
@@ -192,8 +198,8 @@ impl<'a> LogSentence {
 
     pub fn solve<T: ProofResContext>(
         &self,
-        agent: &agent::Representation,
-        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        agent: &Representation,
+        assignments: Option<&HashMap<&Var, &VarAssignment>>,
         context: &mut T,
     ) {
         let root = &self.root;
@@ -275,8 +281,8 @@ impl<'a> LogSentence {
 
     fn get_time_assignments(
         &self,
-        agent: &agent::Representation,
-        var_assign: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        agent: &Representation,
+        var_assign: Option<&HashMap<&Var, &VarAssignment>>,
     ) -> HashMap<&Var, Arc<BmsWrapper>> {
         let mut time_assign = HashMap::new();
         'outer: for var in self.vars.as_ref().unwrap() {
@@ -393,7 +399,7 @@ impl<'a> LogSentence {
     }
 }
 
-pub(crate) struct LhsPreds<'a> {
+pub(in crate::agent) struct LhsPreds<'a> {
     preds: Vec<Vec<&'a Assert>>,
     index: Vec<(usize, bool)>,
     curr: usize,
@@ -501,7 +507,7 @@ impl<'a> std::iter::Iterator for LhsPreds<'a> {
     }
 }
 
-pub(crate) struct SentVarReq<'a> {
+pub(in crate::agent) struct SentVarReq<'a> {
     iter: LhsPreds<'a>,
 }
 
@@ -590,7 +596,7 @@ impl fmt::Display for LogSentence {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum SentKind {
+pub(in crate::agent) enum SentKind {
     IExpr,
     Expr,
     Rule,
@@ -622,8 +628,8 @@ impl LogicIndCond {
     #[inline]
     fn solve<T: ProofResContext>(
         &self,
-        agent: &agent::Representation,
-        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        agent: &Representation,
+        assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
         context: &mut T,
     ) -> Option<bool> {
@@ -644,8 +650,8 @@ impl LogicIndCond {
     #[inline]
     fn substitute<T: ProofResContext>(
         &self,
-        agent: &agent::Representation,
-        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        agent: &Representation,
+        assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
         context: &mut T,
         rhs: bool,
@@ -690,8 +696,8 @@ impl LogicEquivalence {
     #[inline]
     fn solve<T: ProofResContext>(
         &self,
-        agent: &agent::Representation,
-        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        agent: &Representation,
+        assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
         context: &mut T,
     ) -> Option<bool> {
@@ -762,8 +768,8 @@ impl LogicImplication {
     #[inline]
     fn solve<T: ProofResContext>(
         &self,
-        agent: &agent::Representation,
-        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        agent: &Representation,
+        assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
         context: &mut T,
     ) -> Option<bool> {
@@ -822,8 +828,8 @@ impl LogicConjunction {
     #[inline]
     fn solve<T: ProofResContext>(
         &self,
-        agent: &agent::Representation,
-        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        agent: &Representation,
+        assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
         context: &mut T,
     ) -> Option<bool> {
@@ -847,8 +853,8 @@ impl LogicConjunction {
     #[inline]
     fn substitute<T: ProofResContext>(
         &self,
-        agent: &agent::Representation,
-        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        agent: &Representation,
+        assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
         context: &mut T,
         rhs: bool,
@@ -893,8 +899,8 @@ impl LogicDisjunction {
     #[inline]
     fn solve<T: ProofResContext>(
         &self,
-        agent: &agent::Representation,
-        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        agent: &Representation,
+        assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
         context: &mut T,
     ) -> Option<bool> {
@@ -924,8 +930,8 @@ impl LogicDisjunction {
     #[inline]
     fn substitute<T: ProofResContext>(
         &self,
-        agent: &agent::Representation,
-        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        agent: &Representation,
+        assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
         context: &mut T,
         rhs: bool,
@@ -971,8 +977,8 @@ impl LogicAtom {
     #[inline]
     fn solve<T: ProofResContext>(
         &self,
-        agent: &agent::Representation,
-        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        agent: &Representation,
+        assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
         context: &mut T,
     ) -> Option<bool> {
@@ -993,8 +999,8 @@ impl LogicAtom {
     #[inline]
     fn substitute<T: ProofResContext>(
         &self,
-        agent: &agent::Representation,
-        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        agent: &Representation,
+        assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
         context: &mut T,
     ) {
@@ -1032,8 +1038,8 @@ impl Particle {
     #[inline]
     fn solve<T: ProofResContext>(
         &self,
-        agent: &agent::Representation,
-        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        agent: &Representation,
+        assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
         context: &mut T,
     ) -> Option<bool> {
@@ -1050,8 +1056,8 @@ impl Particle {
     #[inline]
     fn substitute<T: ProofResContext>(
         &self,
-        agent: &agent::Representation,
-        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        agent: &Representation,
+        assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
         context: &mut T,
         rhs: bool,
@@ -1186,7 +1192,7 @@ impl fmt::Display for Particle {
     }
 }
 
-pub(crate) trait ProofResContext {
+pub(in crate::agent) trait ProofResContext {
     fn set_result(&mut self, res: Option<bool>);
 
     fn get_id(&self) -> SentID;
@@ -1224,19 +1230,19 @@ pub(crate) trait ProofResContext {
     fn is_inconsistent(&self) -> bool;
 }
 
-pub(crate) trait LogSentResolution<T: ProofResContext> {
+pub(in crate::agent) trait LogSentResolution<T: ProofResContext> {
     fn grounded_eq(
         &self,
-        agent: &agent::Representation,
-        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        agent: &Representation,
+        assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
         context: &mut T,
     ) -> Option<bool>;
 
     fn substitute(
         &self,
-        agent: &agent::Representation,
-        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        agent: &Representation,
+        assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
         context: &mut T,
     );
@@ -1244,7 +1250,7 @@ pub(crate) trait LogSentResolution<T: ProofResContext> {
 
 // infrastructure to construct compiled logsentences:
 
-pub(crate) struct ParseContext {
+pub(in crate::agent) struct ParseContext {
     pub stype: SentKind,
     pub vars: Vec<Arc<Var>>,
     pub skols: Vec<Arc<Skolem>>,
@@ -1706,7 +1712,7 @@ mod errors {
 #[cfg(test)]
 mod test {
     use super::Particle;
-    use crate::lang::parser::*;
+    use crate::agent::lang::parser::*;
 
     #[test]
     fn parser_icond_exprs() {

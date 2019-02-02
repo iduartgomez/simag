@@ -5,10 +5,9 @@
 //! 2) Detecting inconsistences between new and old beliefs.
 //! 3) Fixing those inconsitences.
 
-use super::kb::QueryInput;
-use super::Representation;
-use crate::lang::{Grounded, GroundedRef, ProofResContext, SentID, Time};
-pub(crate) use self::errors::BmsError;
+pub(in crate::agent) use self::errors::BmsError;
+use super::kb::{repr::Representation, QueryInput};
+use super::lang::{Grounded, GroundedRef, ProofResContext, SentID, Time};
 
 use chrono::Utc;
 
@@ -22,7 +21,7 @@ use std::sync::RwLock;
 /// Serves to keep the believes alive in memory, fix inconsistencies and
 /// serialize any information.
 #[derive(Debug)]
-pub(crate) struct BmsWrapper {
+pub(in crate::agent) struct BmsWrapper {
     records: RwLock<Vec<BmsRecord>>,
     pub overwrite: AtomicBool,
 }
@@ -293,10 +292,19 @@ impl BmsWrapper {
         rec.time
     }
 
-    pub fn replace_last_val(&self, val: Option<f32>) {
+    pub fn replace_value(&self, val: Option<f32>, mode: ReplaceMode) {
         let records = &mut *self.records.write().unwrap();
-        let last = records.last_mut().unwrap();
-        last.value = val;
+        match mode {
+            ReplaceMode::Substitute => {
+                let last = records.last_mut().unwrap();
+                last.value = val;
+            }
+            ReplaceMode::Tell => {
+                // can be an interval, so we replace the first value
+                let first = records.first_mut().unwrap();
+                first.value = val;
+            }
+        }
     }
 
     pub fn last_was_produced(&self, produced: Option<SentID>) {
@@ -318,9 +326,9 @@ impl BmsWrapper {
     }
 
     /// Merge an other bmswrapper with this one, the belief then will be true
-    /// between the time interval [start, end) of both records, after which it will be set 
+    /// between the time interval [start, end) of both records, after which it will be set
     /// as `unknown`.
-    /// 
+    ///
     /// This operation is meant to be used when asserting new facts.
     pub fn merge_from_until(&mut self, until: &BmsWrapper) -> Result<(), errors::BmsError> {
         let mut self_records = self.records.write().unwrap();
@@ -329,17 +337,23 @@ impl BmsWrapper {
         if self_records.is_empty() || other_records.is_empty() {
             return Err(errors::BmsError::EmptyRecordList);
         } else if self_records.len() > 1 || other_records.len() > 1 {
-            return Err(errors::BmsError::IllegalMerge("More than one record found".to_string()));
+            return Err(errors::BmsError::IllegalMerge(
+                "More than one record found".to_string(),
+            ));
         }
 
         let until = other_records.get(0).unwrap();
         let from = self_records.get_mut(0).unwrap();
         if until.value != from.value {
-            return Err(errors::BmsError::IllegalMerge("Different values while merging".to_string()));
+            return Err(errors::BmsError::IllegalMerge(
+                "Different values while merging".to_string(),
+            ));
         }
         let mut until = until.clone();
         if until.time < from.time {
-            std::mem::swap(&mut until, from);
+            return Err(errors::BmsError::IllegalMerge(
+                "First time variable assignment can't be older than second".to_string(),
+            ));
         }
         until.value = None;
         self_records.push(until);
@@ -347,13 +361,14 @@ impl BmsWrapper {
     }
 
     pub fn iter_values(&self) -> TimeValueIterator {
-        let values: Vec<_> = self.records.read().unwrap().iter().map(|r|
-            Some((r.time, r.value))
-        ).collect();
-        TimeValueIterator {
-            values,
-            num: 0,
-        }
+        let values: Vec<_> = self
+            .records
+            .read()
+            .unwrap()
+            .iter()
+            .map(|r| Some((r.time, r.value)))
+            .collect();
+        TimeValueIterator { values, num: 0 }
     }
 }
 
@@ -403,11 +418,17 @@ impl BmsRecord {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(in crate::agent) enum ReplaceMode {
+    Tell,
+    Substitute,
+}
+
 mod errors {
     #[derive(Debug, PartialEq)]
     pub enum BmsError {
         IllegalMerge(String),
-        EmptyRecordList
+        EmptyRecordList,
     }
 }
 

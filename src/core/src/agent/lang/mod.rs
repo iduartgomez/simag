@@ -2,14 +2,16 @@ mod common;
 mod logsent;
 mod parser;
 
-pub(crate) use self::common::*;
-pub use self::errors::ParseErrF;
-pub(crate) use self::logsent::{LogSentence, ProofResContext, SentID};
-pub(crate) use self::parser::{CompOperator, ParseTree};
-
 use chrono::{DateTime, Utc};
-
 use std::collections::VecDeque;
+
+pub(super) use self::common::{
+    Assert, ClassDecl, FreeClsMemb, FreeClsOwner, FuncDecl, Grounded, GroundedFunc, GroundedMemb,
+    GroundedRef, Predicate, Terminal, Var, VarKind,
+};
+pub(super) use self::errors::ParseErrF;
+pub(super) use self::logsent::{LogSentence, ProofResContext, SentID};
+pub(super) use self::parser::{CompOperator, ParseTree};
 
 /// Takes an owned String and returns the corresponding structured representing
 /// object program for the logic function. It can parse several statements
@@ -21,7 +23,7 @@ pub(crate) fn logic_parser(
     source: &str,
     tell: bool,
     thread_num: usize,
-) -> Result<VecDeque<ParseTree>, ParseErrF> {
+) -> Result<VecDeque<parser::ParseTree>, ParseErrF> {
     parser::Parser::parse(source, tell, thread_num)
 }
 
@@ -31,7 +33,7 @@ mod errors {
     use super::common::TimeFnErr;
     use super::logsent::LogSentErr;
     use super::parser::ParseErrB;
-    use crate::agent::BmsError;
+    use crate::agent::bms::BmsError;
 
     use std::fmt;
 

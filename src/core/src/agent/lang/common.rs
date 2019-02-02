@@ -1,26 +1,33 @@
-use crate::FLOAT_EQ_ULPS;
-use crate::TIME_EQ_DIFF;
-
-pub use self::errors::TimeFnErr;
-
-use super::Time;
-use crate::agent;
-use crate::agent::{BmsWrapper, Representation};
-use crate::lang::{errors::ParseErrF, logsent::*, parser::*};
-
 use chrono::{DateTime, Duration, Utc};
 use float_cmp::ApproxEqUlps;
-
 use std::collections::HashMap;
 use std::iter::FromIterator;
 use std::str;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock, Weak};
 
+use super::{
+    errors::ParseErrF,
+    logsent::{LogSentResolution, ParseContext, ProofResContext, SentID},
+    parser::{
+        ArgBorrowed, ClassDeclBorrowed, CompOperator, FuncDeclBorrowed, FuncVariants, Number,
+        OpArgBorrowed, OpArgTermBorrowed, SkolemBorrowed, TerminalBorrowed, UVal, VarBorrowed,
+    },
+    Time,
+};
+use crate::agent::{
+    bms::BmsWrapper,
+    kb::{repr::Representation, VarAssignment},
+};
+use crate::FLOAT_EQ_ULPS;
+use crate::TIME_EQ_DIFF;
+
+pub use self::errors::TimeFnErr;
+
 // Predicate types:
 
 #[derive(Debug, Clone)]
-pub(crate) enum Predicate {
+pub(in crate::agent) enum Predicate {
     FreeClsMemb(FreeClsMemb),
     GroundedMemb(GroundedMemb),
     FreeClsOwner(FreeClsOwner),
@@ -143,13 +150,13 @@ impl<'a> Predicate {
 // Grounded types:
 
 #[derive(Debug, Clone)]
-pub(crate) enum Grounded {
+pub(in crate::agent) enum Grounded {
     Function(Weak<GroundedFunc>),
     Class(Weak<GroundedMemb>),
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum GroundedRef<'a> {
+pub(in crate::agent) enum GroundedRef<'a> {
     Function(&'a GroundedFunc),
     Class(&'a GroundedMemb),
 }
@@ -174,7 +181,7 @@ impl<'a> GroundedRef<'a> {
 /// Not meant to be instantiated directly, but asserted from logic
 /// sentences or processed from `ClassDecl` on `tell` mode.
 #[derive(Debug)]
-pub(crate) struct GroundedMemb {
+pub(in crate::agent) struct GroundedMemb {
     term: String,
     value: RwLock<Option<f32>>,
     operator: Option<CompOperator>,
@@ -439,7 +446,7 @@ impl std::clone::Clone for GroundedMemb {
 /// Are not meant to be instantiated directly, but asserted from logic
 /// sentences or processed from `FuncDecl` on `tell` mode.
 #[derive(Debug)]
-pub(crate) struct GroundedFunc {
+pub(in crate::agent) struct GroundedFunc {
     name: String,
     args: [GroundedMemb; 2],
     third: Option<GroundedMemb>,
@@ -457,7 +464,7 @@ impl std::cmp::Eq for GroundedFunc {}
 impl GroundedFunc {
     pub fn from_free(
         free: &FuncDecl,
-        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
     ) -> Result<GroundedFunc, ()> {
         if !free.variant.is_relational() || free.args.as_ref().unwrap().len() < 2 {
@@ -615,7 +622,7 @@ impl std::clone::Clone for GroundedFunc {
 // Free types:
 
 #[derive(Debug, Clone)]
-pub(crate) struct FreeClsMemb {
+pub(in crate::agent) struct FreeClsMemb {
     term: Arc<Var>,
     value: Option<f32>,
     operator: Option<CompOperator>,
@@ -706,7 +713,7 @@ impl FreeClsMemb {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct FreeClsOwner {
+pub(in crate::agent) struct FreeClsOwner {
     term: String,
     value: Option<f32>,
     operator: Option<CompOperator>,
@@ -819,7 +826,7 @@ fn match_uval(uval: Option<UVal>) -> Result<UValDestruct, ParseErrF> {
 // Assert types:
 
 #[derive(Debug, Clone)]
-pub(crate) enum Assert {
+pub(in crate::agent) enum Assert {
     FuncDecl(FuncDecl),
     ClassDecl(ClassDecl),
 }
@@ -844,8 +851,8 @@ impl Assert {
     #[inline]
     pub fn get_times(
         &self,
-        agent: &agent::Representation,
-        var_assign: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        agent: &Representation,
+        var_assign: Option<&HashMap<&Var, &VarAssignment>>,
     ) -> Option<Arc<BmsWrapper>> {
         match *self {
             Assert::FuncDecl(ref f) => f.get_times(agent, var_assign),
@@ -920,8 +927,8 @@ impl Assert {
     #[inline]
     pub fn grounded_eq<T: ProofResContext>(
         &self,
-        agent: &agent::Representation,
-        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        agent: &Representation,
+        assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
         context: &mut T,
     ) -> Option<bool> {
@@ -934,8 +941,8 @@ impl Assert {
     #[inline]
     pub fn substitute<T: ProofResContext>(
         &self,
-        agent: &agent::Representation,
-        assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        agent: &Representation,
+        assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
         context: &mut T,
     ) {
@@ -955,7 +962,7 @@ impl Assert {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct FuncDecl {
+pub(in crate::agent) struct FuncDecl {
     name: Terminal,
     args: Option<Vec<Predicate>>,
     pub op_args: Option<Vec<OpArg>>,
@@ -1146,8 +1153,8 @@ impl<'a> FuncDecl {
 
     fn get_times(
         &self,
-        agent: &agent::Representation,
-        var_assign: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        agent: &Representation,
+        var_assign: Option<&HashMap<&Var, &VarAssignment>>,
     ) -> Option<Arc<BmsWrapper>> {
         if self.is_grounded() {
             let sbj = self.args.as_ref().unwrap();
@@ -1359,7 +1366,7 @@ impl<'a> FuncDecl {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ClassDecl {
+pub(in crate::agent) struct ClassDecl {
     name: Terminal,
     args: Vec<Predicate>,
     pub op_args: Option<Vec<OpArg>>,
@@ -1471,8 +1478,8 @@ impl<'a> ClassDecl {
 
     fn get_times(
         &self,
-        agent: &agent::Representation,
-        var_assign: Option<&HashMap<&Var, &agent::VarAssignment>>,
+        agent: &Representation,
+        var_assign: Option<&HashMap<&Var, &VarAssignment>>,
     ) -> Option<Arc<BmsWrapper>> {
         let arg = &self.args[0];
         match *arg {
@@ -1600,7 +1607,7 @@ impl std::iter::IntoIterator for ClassDecl {
     }
 }
 
-pub(crate) struct DeclArgsIter<'a> {
+pub(in crate::agent) struct DeclArgsIter<'a> {
     data_ref: &'a Vec<Predicate>,
     count: usize,
 }
@@ -1619,7 +1626,7 @@ impl<'a> std::iter::Iterator for DeclArgsIter<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum OpArg {
+pub(in crate::agent) enum OpArg {
     Generic(OpArgTerm, Option<(CompOperator, OpArgTerm)>),
     TimeVar,
     TimeDecl(TimeFn),
@@ -1796,7 +1803,7 @@ impl<'a> OpArg {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum TimeFn {
+pub(in crate::agent) enum TimeFn {
     Now,
     Time(Time),
     /// Time interval for value decl, in the form of [t0,t1)
@@ -1817,7 +1824,7 @@ impl TimeFn {
         }
     }
 
-    /// Get a time interval from a bmswrapper, ie. created with the 
+    /// Get a time interval from a bmswrapper, ie. created with the
     /// merge_from_until method.
     fn from_bms(rec: BmsWrapper) -> Result<TimeFn, ParseErrF> {
         let values: Vec<_> = rec.iter_values().map(|(t, _)| t).collect();
@@ -1857,7 +1864,7 @@ impl TimeFn {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum OpArgTerm {
+pub(in crate::agent) enum OpArgTerm {
     Terminal(Terminal),
     String(String),
     TimePayload(TimeFn),
@@ -1940,14 +1947,14 @@ impl<'a> OpArgTerm {
 /// Variable equality is bassed on physical address, to compare term equality use the
 /// `name_eq` method.
 #[derive(Debug, Clone)]
-pub(crate) struct Var {
+pub(in crate::agent) struct Var {
     pub name: String,
     op_arg: Option<OpArg>,
     pub kind: VarKind,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum VarKind {
+pub(in crate::agent) enum VarKind {
     Normal,
     Time,
     TimeDecl,
@@ -2016,7 +2023,7 @@ impl std::hash::Hash for Var {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
-pub(crate) struct Skolem {
+pub(in crate::agent) struct Skolem {
     pub name: String,
     op_arg: Option<OpArg>,
 }
@@ -2050,7 +2057,7 @@ impl Skolem {
 }
 
 #[derive(Debug, PartialEq, Clone, Eq, Hash)]
-pub(crate) enum Terminal {
+pub(in crate::agent) enum Terminal {
     FreeTerm(Arc<Var>),
     GroundedTerm(String),
     Keyword(&'static str),
@@ -2154,8 +2161,8 @@ mod logsent {
         /// assignments must be provided or will return None or panic in worst case.
         fn grounded_eq(
             &self,
-            agent: &agent::Representation,
-            assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+            agent: &Representation,
+            assignments: Option<&HashMap<&Var, &VarAssignment>>,
             time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
             context: &mut T,
         ) -> Option<bool> {
@@ -2209,8 +2216,8 @@ mod logsent {
         }
         fn substitute(
             &self,
-            agent: &agent::Representation,
-            assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+            agent: &Representation,
+            assignments: Option<&HashMap<&Var, &VarAssignment>>,
             time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
             context: &mut T,
         ) {
@@ -2226,8 +2233,8 @@ mod logsent {
         /// the result of such comparison (or none in case they are not comparable).
         fn grounded_eq(
             &self,
-            agent: &agent::Representation,
-            assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+            agent: &Representation,
+            assignments: Option<&HashMap<&Var, &VarAssignment>>,
             _: &HashMap<&Var, Arc<BmsWrapper>>,
             context: &mut T,
         ) -> Option<bool> {
@@ -2296,11 +2303,13 @@ mod logsent {
 
         fn substitute(
             &self,
-            agent: &agent::Representation,
-            assignments: Option<&HashMap<&Var, &agent::VarAssignment>>,
+            agent: &Representation,
+            assignments: Option<&HashMap<&Var, &VarAssignment>>,
             time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
             context: &mut T,
         ) {
+            use crate::agent::bms::ReplaceMode;
+
             let time_data = self.get_own_time_data(time_assign, None);
             for a in &self.args {
                 let grfact = match *a {
@@ -2315,7 +2324,7 @@ mod logsent {
                     _ => return, // this path won't be taken in any program
                 };
                 let t = time_data.clone();
-                t.replace_last_val(grfact.get_value());
+                t.replace_value(grfact.get_value(), ReplaceMode::Substitute);
                 grfact.overwrite_time_data(&t);
                 context.push_grounded_cls(
                     grfact.clone(),

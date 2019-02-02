@@ -10,8 +10,7 @@ extern crate float_cmp;
 extern crate num_cpus;
 extern crate rayon;
 
-pub(crate) mod agent;
-pub(crate) mod lang;
+mod agent;
 pub mod utils;
 
 pub use self::agent::{Agent, Answer, QueryErr};

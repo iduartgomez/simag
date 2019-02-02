@@ -1,4 +1,4 @@
-use super::*;
+use super::repr::Representation;
 
 use std::collections::HashSet;
 

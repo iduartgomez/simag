@@ -1,14 +1,22 @@
-use crate::FLOAT_EQ_ULPS;
-use crate::agent::kb::iexpr_inf::GroundedResult;
-use crate::lang::*;
-use super::*;
-
 use float_cmp::ApproxEqUlps;
-
 use std::collections::{HashMap, VecDeque};
 use std::iter::FromIterator;
 use std::rc::Rc;
 use std::sync::{Arc, RwLock};
+
+use super::{
+    iexpr_inf::{
+        meet_sent_req, ArgsProduct, GroundedResult, IExprResult, InfResults, Inference, QueryInput,
+    },
+    VarAssignment,
+};
+use crate::agent::bms::ReplaceMode;
+use crate::agent::lang::{
+    logic_parser, Assert, ClassDecl, CompOperator, FreeClsMemb, FreeClsOwner, FuncDecl, Grounded,
+    GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ParseErrF, ParseTree, Predicate,
+    ProofResContext, Var,
+};
+use crate::FLOAT_EQ_ULPS;
 
 /// A container for internal agent's representations.
 ///
@@ -72,14 +80,14 @@ impl Representation {
                                 let time_data = cls_decl.get_own_time_data(&f, None);
                                 for a in cls_decl {
                                     let t = time_data.clone();
-                                    t.replace_last_val(a.get_value());
+                                    t.replace_value(a.get_value(), ReplaceMode::Tell);
                                     a.overwrite_time_data(&t);
-                                    let x: Option<&super::IExprResult> = None;
+                                    let x: Option<&IExprResult> = None;
                                     self.up_membership(&Arc::new(a), x)
                                 }
                             } else {
                                 let a = Arc::new(assertion.unwrap_fn().into_grounded());
-                                let x: Option<&super::IExprResult> = None;
+                                let x: Option<&IExprResult> = None;
                                 self.up_relation(&a, x)
                             }
                         }
@@ -709,26 +717,26 @@ impl<'a> Answer<'a> {
         self.0.get_results_single()
     }
 
-    pub fn get_results_multiple(
-        self,
-    ) -> HashMap<QueryPred, HashMap<String, GroundedResult>> {
+    pub fn get_results_multiple(self) -> HashMap<QueryPred, HashMap<String, GroundedResult>> {
         self.0.get_results_multiple()
     }
 
     pub fn get_memberships(&self) -> HashMap<ObjName<'a>, Vec<Membership<'a>>> {
-        self.0.get_memberships()
+        self.0
+            .get_memberships()
             .iter()
             .map(|(name, memberships)| {
-                (*name, memberships
-                    .iter()
-                    .map(|gr| {
-                        Membership {
+                (
+                    *name,
+                    memberships
+                        .iter()
+                        .map(|gr| Membership {
                             value: gr.get_value(),
                             name: gr.get_parent(),
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                )})
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            })
             .collect::<HashMap<_, _>>()
     }
 

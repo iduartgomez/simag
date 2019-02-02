@@ -34,15 +34,14 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::str;
 use std::str::FromStr;
-
 use nom;
 use nom::{is_alphanumeric, is_digit};
 use nom::{ErrorKind, IResult};
-
 use rayon::prelude::*;
 use rayon;
 
-use crate::lang::{common::*, logsent::*, errors::ParseErrF};
+use super::ParseErrF;
+use super::{logsent::{LogSentence, ParseContext, SentKind}, common::{Assert, ClassDecl, FuncDecl}};
 
 const ICOND_OP: &[u8] = b":=";
 const AND_OP: &[u8] = b"&&";
@@ -52,7 +51,7 @@ const IMPL_OP: &[u8] = b"=>";
 
 const EMPTY: &[u8] = b" ";
 
-pub(crate) struct Parser;
+pub(in crate::agent) struct Parser;
 impl Parser {
     /// Lexerless (mostly) recursive descent parser. Takes a string and outputs a correct ParseTree.
     pub fn parse(
@@ -125,7 +124,7 @@ impl Parser {
 }
 
 #[derive(Debug)]
-pub(crate) enum ParseErrB<'a> {
+pub(in crate::agent) enum ParseErrB<'a> {
     SyntaxErrorU,
     //SyntaxError(Box<ParseErrB<'a>>),
     SyntaxErrorPos(&'a [u8]),
@@ -179,7 +178,7 @@ impl<'a> fmt::Display for ParseErrB<'a> {
 }
 
 #[derive(Debug)]
-pub(crate) enum ParseTree {
+pub(in crate::agent) enum ParseTree {
     Assertion(Vec<Assert>),
     IExpr(LogSentence),
     Expr(LogSentence),
@@ -219,7 +218,7 @@ impl ParseTree {
 }
 
 #[derive(Debug)]
-pub(crate) enum ASTNode<'a> {
+pub(in crate::agent) enum ASTNode<'a> {
     Assert(AssertBorrowed<'a>),
     Scope(Box<Scope<'a>>),
     Chain(Vec<ASTNode<'a>>),
@@ -302,7 +301,7 @@ impl<'a> ASTNode<'a> {
 }
 
 #[derive(Debug)]
-pub(crate) struct Scope<'a> {
+pub(in crate::agent) struct Scope<'a> {
     pub vars: Option<Vec<VarDeclBorrowed<'a>>>,
     pub logic_op: Option<LogicOperator>,
     pub next: ASTNode<'a>,
@@ -333,13 +332,13 @@ impl<'a> Scope<'a> {
 }
 
 #[derive(Debug)]
-pub(crate) enum AssertBorrowed<'a> {
+pub(in crate::agent) enum AssertBorrowed<'a> {
     FuncDecl(FuncDeclBorrowed<'a>),
     ClassDecl(ClassDeclBorrowed<'a>),
 }
 
 #[derive(Debug)]
-pub(crate) enum VarDeclBorrowed<'a> {
+pub(in crate::agent) enum VarDeclBorrowed<'a> {
     Var(VarBorrowed<'a>),
     Skolem(SkolemBorrowed<'a>),
 }
@@ -664,7 +663,7 @@ fn flat_vars(input: Option<DeclVars>) -> Option<Vec<VarDeclBorrowed>> {
 
 // skol_decl = '(' 'exists' $(term[':'op_arg]),+ ')' ;
 #[derive(Debug)]
-pub(crate) struct SkolemBorrowed<'a> {
+pub(in crate::agent) struct SkolemBorrowed<'a> {
     pub name: TerminalBorrowed<'a>,
     pub op_arg: Option<OpArgBorrowed<'a>>,
 }
@@ -701,7 +700,7 @@ named!(skolem(&[u8]) -> Vec<VarDeclBorrowed>, do_parse!(
 
 // var_decl = '(' 'let' $(term[':'op_arg]),+ ')' ;
 #[derive(Debug, PartialEq)]
-pub(crate) struct VarBorrowed<'a> {
+pub(in crate::agent) struct VarBorrowed<'a> {
     pub name: TerminalBorrowed<'a>,
     pub op_arg: Option<OpArgBorrowed<'a>>,
 }
@@ -739,7 +738,7 @@ named!(variable(&[u8]) -> Vec<VarDeclBorrowed>, do_parse!(
 // func_decl = 'fn::' term ['(' op_args ')'] args
 // 			 | 'fn::' term '(' op_args ')' ;
 #[derive(Debug, PartialEq)]
-pub(crate) struct FuncDeclBorrowed<'a> {
+pub(in crate::agent) struct FuncDeclBorrowed<'a> {
     pub name: TerminalBorrowed<'a>,
     pub args: Option<Vec<ArgBorrowed<'a>>>,
     pub op_args: Option<Vec<OpArgBorrowed<'a>>>,
@@ -753,7 +752,7 @@ impl<'a> FuncDeclBorrowed<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub(crate) enum FuncVariants {
+pub(in crate::agent) enum FuncVariants {
     Relational,
     NonRelational,
     TimeCalc,
@@ -798,7 +797,7 @@ named!(func_decl(&[u8]) -> FuncDeclBorrowed,
 
 // class_decl = term ['(' op_args ')'] args ;
 #[derive(Debug, PartialEq)]
-pub(crate) struct ClassDeclBorrowed<'a> {
+pub(in crate::agent) struct ClassDeclBorrowed<'a> {
     pub name: TerminalBorrowed<'a>,
     pub args: Vec<ArgBorrowed<'a>>,
     pub op_args: Option<Vec<OpArgBorrowed<'a>>>,
@@ -819,7 +818,7 @@ named!(class_decl(&[u8]) -> ClassDeclBorrowed, ws!(do_parse!(
 
 // arg	= term [',' uval] ;
 #[derive(Debug, PartialEq)]
-pub(crate) struct ArgBorrowed<'a> {
+pub(in crate::agent) struct ArgBorrowed<'a> {
     pub term: TerminalBorrowed<'a>,
     pub uval: Option<UVal>,
 }
@@ -851,7 +850,7 @@ fn to_arg_vec(arg: ArgBorrowed) -> Vec<ArgBorrowed> {
 
 // op_arg =	(string|term) [comp_op (string|term)] ;
 #[derive(Debug, PartialEq)]
-pub(crate) struct OpArgBorrowed<'a> {
+pub(in crate::agent) struct OpArgBorrowed<'a> {
     pub term: OpArgTermBorrowed<'a>,
     pub comp: Option<(CompOperator, OpArgTermBorrowed<'a>)>,
 }
@@ -899,7 +898,7 @@ named!(op_args(&[u8]) -> Vec<OpArgBorrowed>, delimited!(
 );
 
 #[derive(PartialEq)]
-pub(crate) enum OpArgTermBorrowed<'a> {
+pub(in crate::agent) enum OpArgTermBorrowed<'a> {
     Terminal(&'a [u8]),
     String(&'a [u8]),
 }
@@ -927,7 +926,7 @@ impl<'a> OpArgTermBorrowed<'a> {
 
 // uval = 'u' comp_op number;
 #[derive(Debug, PartialEq, Clone, Copy)]
-pub(crate) struct UVal {
+pub(in crate::agent) struct UVal {
     pub op: CompOperator,
     pub val: Number,
 }
@@ -945,7 +944,7 @@ named!(
 
 // number = -?[0-9\.]+
 #[derive(Debug, PartialEq, Clone, Copy)]
-pub(crate) enum Number {
+pub(in crate::agent) enum Number {
     SignedFloat(f32),
     UnsignedFloat(f32),
     SignedInteger(i32),
@@ -1016,7 +1015,7 @@ fn string(input: &[u8]) -> IResult<&[u8], &[u8]> {
 
 // terminal = [a-zA-Z0-9_]+ ;
 #[derive(PartialEq)]
-pub(crate) struct TerminalBorrowed<'a>(pub &'a [u8]);
+pub(in crate::agent) struct TerminalBorrowed<'a>(pub &'a [u8]);
 
 impl<'a> TerminalBorrowed<'a> {
     pub fn from_slice(i: &'a [u8]) -> TerminalBorrowed<'a> {
@@ -1049,7 +1048,7 @@ fn terminal(input: &[u8]) -> IResult<&[u8], &[u8]> {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 #[allow(dead_code)]
-pub(crate) enum CompOperator {
+pub(in crate::agent) enum CompOperator {
     // equality operators:
     Equal,
     Less,
@@ -1149,7 +1148,7 @@ impl CompOperator {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub(crate) enum LogicOperator {
+pub(in crate::agent) enum LogicOperator {
     Entail,
     And,
     Or,

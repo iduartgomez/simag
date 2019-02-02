@@ -2,9 +2,12 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use super::repr::*;
+use super::repr::Representation;
 use super::VarAssignment;
-use crate::lang::*;
+use crate::agent::lang::{
+    Grounded, GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ProofResContext, SentID, Time,
+    Var,
+};
 
 /// Takes a grounded fact and checks out that is consistent with the existing rules
 /// in the representation.

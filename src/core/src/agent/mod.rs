@@ -1,11 +1,10 @@
 mod bms;
 mod kb;
+mod lang;
 
-pub(crate) use self::bms::{BmsWrapper, BmsError};
-pub(crate) use self::kb::{Representation, VarAssignment};
-
-pub use self::kb::{Answer, QueryErr};
-pub use crate::lang::ParseErrF;
+pub(crate) use self::kb::repr::Representation;
+pub use self::kb::repr::{Answer, QueryErr};
+pub(self) use self::lang::ParseErrF;
 
 /// Represent an alive object which can interact with environment.
 ///
@@ -14,18 +13,18 @@ pub use crate::lang::ParseErrF;
 pub struct Agent {
     /// available threads for this agent
     thread_manager: ThreadManager,
-    representation: kb::Representation,
+    representation: kb::repr::Representation,
 }
 
 impl Agent {
     pub fn new(threads: usize) -> Agent {
         Agent {
             thread_manager: ThreadManager { threads },
-            representation: kb::Representation::new().with_threads(threads),
+            representation: kb::repr::Representation::new().with_threads(threads),
         }
     }
 
-    pub fn ask(&self, source: &str) -> Result<kb::Answer, kb::QueryErr> {
+    pub fn ask(&self, source: &str) -> Result<kb::repr::Answer, kb::repr::QueryErr> {
         self.representation.ask(source)
     }
 

@@ -12,10 +12,6 @@
 //! the representation is alive), thereby is safe to point to the data being
 //! referenced from the representation or the query (for the duration of the query).
 
-use super::repr::*;
-use super::VarAssignment;
-use crate::lang::*;
-
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::iter::FromIterator;
@@ -26,6 +22,13 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use rayon;
 use rayon::prelude::*;
+
+use super::repr::{Answer, Representation};
+use super::VarAssignment;
+use crate::agent::lang::{
+    Assert, ClassDecl, FreeClsMemb, FreeClsOwner, FuncDecl, Grounded, GroundedFunc, GroundedMemb,
+    LogSentence, ParseTree, Predicate, ProofResContext, SentID, Terminal, Time, Var, VarKind,
+};
 
 type ObjName<'a> = &'a str;
 type QueryPred = String;
@@ -104,9 +107,7 @@ impl<'b> InfResults<'b> {
         Some(true)
     }
 
-    pub fn get_results_multiple(
-        self,
-    ) -> HashMap<QueryPred, HashMap<String, GroundedResult>> {
+    pub fn get_results_multiple(self) -> HashMap<QueryPred, HashMap<String, GroundedResult>> {
         // WARNING: ObjName<'a> may (truly) outlive the content, own the &str first
         let orig: &mut HashMap<QueryPred, GroundedResults<'b>> =
             &mut *self.grounded_queries.write().unwrap();
