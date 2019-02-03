@@ -19,7 +19,7 @@ pub(super) use self::parser::{CompOperator, ParseTree};
 ///
 /// It includes a a scanner and parser for the synthatical analysis which translate
 /// to the **program** in form of a `ParseResult` to be feed to an Agent.
-pub(crate) fn logic_parser(
+pub(in crate::agent) fn logic_parser(
     source: &str,
     tell: bool,
     thread_num: usize,

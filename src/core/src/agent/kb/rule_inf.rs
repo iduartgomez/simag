@@ -13,7 +13,7 @@ use crate::agent::lang::{
 /// in the representation.
 ///
 /// If it's not the case, then false is retuned.
-pub(crate) fn rules_inference_lookahead(
+pub(super) fn rules_inference_lookahead(
     agent: &Representation,
     rules: Vec<Arc<LogSentence>>,
     grounded: &GroundedRef,
@@ -47,7 +47,7 @@ pub(crate) fn rules_inference_lookahead(
 ///
 /// If it's not the case, then changes are rolled back (from newest to oldest) until
 /// they are consistent with the new rule.
-pub(crate) fn rules_inference_rollback(agent: &Representation, rule: &Arc<LogSentence>) {
+pub(super) fn rules_inference_rollback(agent: &Representation, rule: &Arc<LogSentence>) {
     // test the rule
     let mut context = RuleResContext::new(&*rule, None);
     // if the rule has any special var, get proper assignments

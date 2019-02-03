@@ -42,7 +42,7 @@ type QueryResRels<'a> = HashMap<ObjName<'a>, Vec<Arc<GroundedFunc>>>;
 /// The data can be manipulated and filtered throught various methods returning
 /// whatever is requested by the consumer.
 #[derive(Debug)]
-pub(crate) struct InfResults<'b> {
+pub(super) struct InfResults<'b> {
     grounded_queries: RwLock<HashMap<QueryPred, GroundedResults<'b>>>,
     membership: RwLock<HashMap<&'b Var, QueryResMemb<'b>>>,
     relationships: RwLock<HashMap<&'b Var, QueryResRels<'b>>>,
@@ -175,7 +175,7 @@ impl<'b> InfResults<'b> {
     }
 }
 
-pub(crate) struct Inference<'a> {
+pub(super) struct Inference<'a> {
     query: Arc<QueryProcessed<'a>>,
     kb: &'a Representation,
     depth: usize,
@@ -272,7 +272,8 @@ impl<'a> Inference<'a> {
                 for pred in preds {
                     let query = pred.get_parent();
                     let result = if !self.ignore_current {
-                        self.kb.class_membership(pred)
+                        // FIXME: only checks for the current value, not for intervals
+                        self.kb.class_membership_query(pred)
                     } else {
                         None
                     };
@@ -520,7 +521,7 @@ struct ValidAnswer {
 }
 
 #[derive(Debug)]
-pub(crate) struct IExprResult {
+pub(super) struct IExprResult {
     result: Option<bool>,
     newest_grfact: Time,
     antecedents: Vec<Grounded>,
@@ -900,7 +901,7 @@ impl<'a> InfTrial<'a> {
     }
 }
 
-pub(crate) fn meet_sent_req<'a>(
+pub(super) fn meet_sent_req<'a>(
     rep: &'a Representation,
     req: &'a HashMap<&Var, Vec<&'a Assert>>,
 ) -> Option<HashMap<&'a Var, Vec<Arc<VarAssignment<'a>>>>> {
@@ -1009,7 +1010,7 @@ pub(crate) fn meet_sent_req<'a>(
 }
 
 #[derive(Debug)]
-pub(crate) struct ArgsProduct<'a> {
+pub(super) struct ArgsProduct<'a> {
     indexes: HashMap<&'a Var, (usize, bool)>,
     input: HashMap<&'a Var, Vec<Arc<VarAssignment<'a>>>>,
     curr: &'a Var,
@@ -1149,7 +1150,7 @@ impl<'a> Hash for ProofNode<'a> {
 }
 
 #[derive(Debug)]
-pub(crate) enum QueryInput {
+pub(in crate::agent) enum QueryInput {
     AskRelationalFunc(Arc<GroundedFunc>),
     AskClassMember(Arc<GroundedMemb>),
     ManyQueries(VecDeque<ParseTree>),

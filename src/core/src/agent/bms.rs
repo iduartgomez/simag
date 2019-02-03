@@ -313,6 +313,15 @@ impl BmsWrapper {
         last.was_produced = produced;
     }
 
+    pub fn last_value(&self) -> Option<f32> {
+        let records = self.records.read().unwrap();
+        if let Some(rec) = records.last() {
+            rec.value
+        } else {
+            None
+        }
+    }
+
     pub fn rollback_once(&self) {
         unimplemented!()
     }

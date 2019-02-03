@@ -369,31 +369,27 @@ impl GroundedMemb {
     pub fn overwrite_time_data(&self, data: &BmsWrapper) {
         self.bms.as_ref().unwrap().overwrite_data(data);
     }
-}
 
-impl std::cmp::PartialEq for GroundedMemb {
+    /// An statement is a time interval if there are only
+    pub fn is_time_interval(&self) -> bool {
+        let bms = self.bms.as_ref().unwrap();
+        bms.record_len() == 2 && bms.last_value().is_none()
+    }
+
     #[allow(clippy::collapsible_if)]
-    fn eq(&self, other: &GroundedMemb) -> bool {
-        if self.term != other.term || self.parent != other.parent {
-            return false;
-        }
-        let op_lhs;
-        let op_rhs;
-        if let Some(op) = other.operator {
-            op_rhs = op;
-            op_lhs = self.operator.unwrap();
-        } else {
-            return true;
-        }
-        let val_lhs: &Option<f32> = &*self.value.read().unwrap();
-        let val_rhs: &Option<f32> = &*other.value.read().unwrap();
+    fn compare_two_grounded_eq(
+        val_lhs: Option<f32>,
+        val_rhs: Option<f32>,
+        op_lhs: CompOperator,
+        op_rhs: CompOperator,
+    ) -> bool {
         if (val_lhs.is_none() && val_rhs.is_some()) || (val_lhs.is_some() && val_rhs.is_none()) {
             return false;
         }
         match op_lhs {
             CompOperator::Equal => {
                 if op_rhs.is_equal() {
-                    if let Some(ref val_lhs) = *val_lhs {
+                    if let Some(val_lhs) = val_lhs {
                         let val_rhs = val_rhs.as_ref().unwrap();
                         val_lhs.approx_eq_ulps(val_rhs, FLOAT_EQ_ULPS)
                     } else {
@@ -404,16 +400,16 @@ impl std::cmp::PartialEq for GroundedMemb {
                 } else if op_rhs.is_less() {
                     val_lhs < val_rhs
                 } else if op_rhs.is_more_eq() {
-                    if let Some(ref val_lhs) = *val_lhs {
-                        let val_rhs = val_rhs.as_ref().unwrap();
-                        val_lhs.approx_eq_ulps(val_rhs, FLOAT_EQ_ULPS) || val_lhs > val_rhs
+                    if let Some(val_lhs) = val_lhs {
+                        let val_rhs = val_rhs.unwrap();
+                        val_lhs.approx_eq_ulps(&val_rhs, FLOAT_EQ_ULPS) || val_lhs > val_rhs
                     } else {
                         true
                     }
                 } else {
-                    if let Some(ref val_lhs) = *val_lhs {
-                        let val_rhs = val_rhs.as_ref().unwrap();
-                        val_lhs.approx_eq_ulps(val_rhs, FLOAT_EQ_ULPS) || val_lhs < val_rhs
+                    if let Some(val_lhs) = val_lhs {
+                        let val_rhs = val_rhs.unwrap();
+                        val_lhs.approx_eq_ulps(&val_rhs, FLOAT_EQ_ULPS) || val_lhs < val_rhs
                     } else {
                         true
                     }
@@ -425,6 +421,36 @@ impl std::cmp::PartialEq for GroundedMemb {
             CompOperator::LessEqual => val_lhs >= val_rhs,
             CompOperator::Until | CompOperator::At | CompOperator::FromUntil => unreachable!(),
         }
+    }
+
+    /// Compare if a grounded membership is true at the times stated by the pred
+    pub fn compare_at_time_intervals(&self, pred: &GroundedMemb) -> Option<bool> {
+        if pred.bms.is_none() {
+            return Some(self == pred);
+        }
+        let op_lhs = self.operator.unwrap();
+        let op_rhs = pred.operator.unwrap();
+        for (t, v) in pred.bms.as_ref().unwrap().iter_values() {}
+        unimplemented!()
+    }
+}
+
+impl std::cmp::PartialEq for GroundedMemb {
+    fn eq(&self, other: &GroundedMemb) -> bool {
+        if self.term != other.term || self.parent != other.parent {
+            return false;
+        }
+        let op_lhs;
+        let op_rhs;
+        if let Some(op) = other.operator {
+            op_lhs = self.operator.unwrap();
+            op_rhs = op;
+        } else {
+            return *self.value.read().unwrap() == *other.value.read().unwrap();
+        }
+        let val_lhs: Option<f32> = *self.value.read().unwrap();
+        let val_rhs: Option<f32> = *other.value.read().unwrap();
+        GroundedMemb::compare_two_grounded_eq(val_lhs, val_rhs, op_lhs, op_rhs)
     }
 }
 
@@ -1400,6 +1426,7 @@ impl<'a> ClassDecl {
             }
             v0
         };
+
         Ok(ClassDecl {
             name: class_name,
             args,
@@ -1576,12 +1603,12 @@ impl<'a> ClassDecl {
                         let mut var0_time = var0.get_times();
                         let var1_time = var1.get_times();
                         var0_time.merge_from_until(&var1_time)?;
-                        let mut assignment = OpArg::TimeDecl(TimeFn::from_bms(var0_time)?);
+                        let mut assignment = OpArg::TimeDecl(TimeFn::from_bms(&var0_time)?);
                         std::mem::swap(&mut assignment, op_arg);
                     }
                     OpArg::TimeVarFrom(var0) => {
                         let var0_time = var0.get_times();
-                        let mut assignment = OpArg::TimeDecl(TimeFn::from_bms(var0_time)?);
+                        let mut assignment = OpArg::TimeDecl(TimeFn::from_bms(&var0_time)?);
                         std::mem::swap(&mut assignment, op_arg);
                     }
                     _ => {}
@@ -1826,7 +1853,7 @@ impl TimeFn {
 
     /// Get a time interval from a bmswrapper, ie. created with the
     /// merge_from_until method.
-    fn from_bms(rec: BmsWrapper) -> Result<TimeFn, ParseErrF> {
+    fn from_bms(rec: &BmsWrapper) -> Result<TimeFn, ParseErrF> {
         let values: Vec<_> = rec.iter_values().map(|(t, _)| t).collect();
         if values.len() != 2 {
             return Err(ParseErrF::TimeFnErr(TimeFnErr::IllegalSubstitution));
@@ -1851,8 +1878,12 @@ impl TimeFn {
     fn generate_uid(&self) -> Vec<u8> {
         let mut id = vec![];
         match self {
-            TimeFn::Time(time) => id.append(&mut format!("{}", time).into_bytes()),
+            TimeFn::Time(time) => {
+                id.push(0);
+                id.append(&mut format!("{}", time).into_bytes());
+            }
             TimeFn::Interval(time0, time1) => {
+                id.push(1);
                 id.append(&mut format!("{}", time0).into_bytes());
                 id.append(&mut format!("{}", time1).into_bytes());
             }

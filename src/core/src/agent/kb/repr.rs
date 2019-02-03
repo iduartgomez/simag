@@ -32,9 +32,9 @@ use crate::FLOAT_EQ_ULPS;
 ///     classes -> Sets of objects (entities or subclasses) that share a common property.
 ///     | This includes 'classes of relationships' and other 'functions'.
 #[derive(Default, Debug)]
-pub(crate) struct Representation {
-    pub entities: RwLock<HashMap<String, Entity>>,
-    pub classes: RwLock<HashMap<String, Class>>,
+pub struct Representation {
+    pub(in crate::agent) entities: RwLock<HashMap<String, Entity>>,
+    pub(in crate::agent) classes: RwLock<HashMap<String, Class>>,
     threads: usize,
 }
 
@@ -82,6 +82,9 @@ impl Representation {
                                     let t = time_data.clone();
                                     t.replace_value(a.get_value(), ReplaceMode::Tell);
                                     a.overwrite_time_data(&t);
+                                    if a.is_time_interval() {
+                                        a.update_value(None);
+                                    }
                                     let x: Option<&IExprResult> = None;
                                     self.up_membership(&Arc::new(a), x)
                                 }
@@ -127,7 +130,7 @@ impl Representation {
         }
     }
 
-    pub fn ask_processed(
+    pub(in crate::agent) fn ask_processed(
         &self,
         source: QueryInput,
         depth: usize,
@@ -144,7 +147,7 @@ impl Representation {
         Ok(inf.get_results())
     }
 
-    pub fn up_membership<T: ProofResContext>(
+    pub(in crate::agent) fn up_membership<T: ProofResContext>(
         &self,
         assert: &Arc<GroundedMemb>,
         context: Option<&T>,
@@ -211,7 +214,11 @@ impl Representation {
         }
     }
 
-    pub fn up_relation<T: ProofResContext>(&self, assert: &Arc<GroundedFunc>, context: Option<&T>) {
+    pub(in crate::agent) fn up_relation<T: ProofResContext>(
+        &self,
+        assert: &Arc<GroundedFunc>,
+        context: Option<&T>,
+    ) {
         // it doesn't matter this is overwritten, as if it exists, it exists for all
         let is_new = Rc::new(::std::cell::RefCell::new(true));
         let process_arg = |a: &GroundedMemb| {
@@ -463,7 +470,7 @@ impl Representation {
 
     /// Takes a vector of class names and returns a hash map with those classes as keys
     /// and the memberships to those classes.
-    pub fn by_class<'a, 'b>(
+    pub(in crate::agent) fn by_class<'a, 'b>(
         &'a self,
         classes: &'b [&str],
     ) -> HashMap<&'b str, Vec<Arc<GroundedMemb>>> {
@@ -493,7 +500,7 @@ impl Representation {
     /// Takes a vector of relation declarations and returns a hash map with those relation
     /// names as keys and a hash map of the objects which have one relation of that kind
     /// as value (with a list of the grounded functions for each object).
-    pub fn by_relationship<'a, 'b>(
+    pub(in crate::agent) fn by_relationship<'a, 'b>(
         &'a self,
         funcs: &'b [&'b FuncDecl],
     ) -> HashMap<&'b str, HashMap<&'a str, Vec<Arc<GroundedFunc>>>> {
@@ -521,7 +528,11 @@ impl Representation {
         dict
     }
 
-    pub fn get_obj_from_class(&self, class: &str, subject: &str) -> Option<Arc<GroundedMemb>> {
+    pub(in crate::agent) fn get_obj_from_class(
+        &self,
+        class: &str,
+        subject: &str,
+    ) -> Option<Arc<GroundedMemb>> {
         if subject.starts_with('$') {
             let entity_exists = self.entities.read().unwrap().contains_key(subject);
             if entity_exists {
@@ -547,31 +558,28 @@ impl Representation {
         }
     }
 
-    pub fn class_membership(&self, pred: &GroundedMemb) -> Option<bool> {
+    /// Takes a grounded predicate from a query and returns the membership truth value.
+    /// It checks the truth value based on the time intervals of the predicate.
+    pub(in crate::agent) fn class_membership_query(&self, pred: &GroundedMemb) -> Option<bool> {
         let subject = pred.get_name();
         if subject.starts_with('$') {
             if let Some(entity) = self.entities.read().unwrap().get(subject) {
                 if let Some(current) = entity.belongs_to_class(pred.get_parent()) {
-                    if *current == *pred {
-                        return Some(true);
-                    } else {
-                        return Some(false);
-                    }
+                    return current.compare_at_time_intervals(pred);
                 }
             }
         } else if let Some(class) = self.classes.read().unwrap().get(subject) {
             if let Some(current) = class.belongs_to_class(pred.get_parent()) {
-                if *current == *pred {
-                    return Some(true);
-                } else {
-                    return Some(false);
-                }
+                return current.compare_at_time_intervals(pred);
             }
         }
         None
     }
 
-    pub fn get_class_membership(&self, subject: &FreeClsOwner) -> Vec<Arc<GroundedMemb>> {
+    pub(in crate::agent) fn get_class_membership(
+        &self,
+        subject: &FreeClsOwner,
+    ) -> Vec<Arc<GroundedMemb>> {
         let name = subject.get_name();
         if name.starts_with('$') {
             if let Some(entity) = self.entities.read().unwrap().get(name) {
@@ -586,7 +594,11 @@ impl Representation {
         }
     }
 
-    pub fn has_relationship(&self, pred: &GroundedFunc, subject: &str) -> Option<bool> {
+    pub(in crate::agent) fn has_relationship(
+        &self,
+        pred: &GroundedFunc,
+        subject: &str,
+    ) -> Option<bool> {
         if subject.starts_with('$') {
             if let Some(entity) = self.entities.read().unwrap().get(subject) {
                 if let Some(current) = entity.has_relationship(pred) {
@@ -609,7 +621,7 @@ impl Representation {
         None
     }
 
-    pub fn get_relationship(
+    pub(in crate::agent) fn get_relationship(
         &self,
         pred: &GroundedFunc,
         subject: &str,
@@ -636,7 +648,10 @@ impl Representation {
         None
     }
 
-    pub fn get_relationships(&self, func: &FuncDecl) -> HashMap<&str, Vec<Arc<GroundedFunc>>> {
+    pub(in crate::agent) fn get_relationships(
+        &self,
+        func: &FuncDecl,
+    ) -> HashMap<&str, Vec<Arc<GroundedFunc>>> {
         let mut res = HashMap::new();
         for (pos, arg) in func.get_args().enumerate() {
             if !arg.is_var() {
@@ -709,7 +724,7 @@ impl<'a> Membership<'a> {
 }
 
 impl<'a> Answer<'a> {
-    pub(crate) fn new(results: InfResults<'a>) -> Answer<'a> {
+    pub(super) fn new(results: InfResults<'a>) -> Answer<'a> {
         Answer(results)
     }
 
@@ -740,7 +755,7 @@ impl<'a> Answer<'a> {
             .collect::<HashMap<_, _>>()
     }
 
-    pub(crate) fn get_relationships(&self) -> HashMap<ObjName<'a>, Vec<&'a GroundedFunc>> {
+    pub(super) fn get_relationships(&self) -> HashMap<ObjName<'a>, Vec<&'a GroundedFunc>> {
         self.0.get_relationships()
     }
 }
@@ -1065,7 +1080,7 @@ impl ClassMember {
 /// All the attributes of a class are inherited by their members
 /// (to a fuzzy degree).
 #[derive(Debug)]
-pub(crate) struct Class {
+pub(in crate::agent) struct Class {
     pub name: String,
     classes: RwLock<HashMap<String, Arc<GroundedMemb>>>,
     relations: RwLock<HashMap<String, Vec<Arc<GroundedFunc>>>>,
