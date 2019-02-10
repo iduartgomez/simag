@@ -23,6 +23,8 @@ use std::sync::RwLock;
 #[derive(Debug)]
 pub(in crate::agent) struct BmsWrapper {
     records: RwLock<Vec<BmsRecord>>,
+    /// set if it's a predicate with the time of query execution
+    pred: Option<Time>,
     pub overwrite: AtomicBool,
 }
 
@@ -30,10 +32,12 @@ impl BmsWrapper {
     pub fn new(overwrite: bool) -> BmsWrapper {
         BmsWrapper {
             records: RwLock::new(vec![]),
+            pred: None,
             overwrite: AtomicBool::new(overwrite),
         }
     }
 
+    /// Add a new record to this BMS.
     pub fn new_record(&self, time: Option<Time>, value: Option<f32>, was_produced: Option<SentID>) {
         let time = match time {
             Some(time) => time,
@@ -241,7 +245,7 @@ impl BmsWrapper {
         record.add_entry((produced, with_val));
     }
 
-    pub fn update_producers<T: ProofResContext>(&self, owner: &Grounded, context: &T) {
+    pub fn update_producers<T: ProofResContext>(owner: &Grounded, context: &T) {
         // add the produced knowledge to each producer in case it comes
         // from a logic sentence resolution
         for a in context.get_antecedents() {
@@ -260,6 +264,7 @@ impl BmsWrapper {
         }
     }
 
+    /// Drops all the records and writes the records from the incoming BMS.
     pub fn overwrite_data(&self, other: &BmsWrapper) {
         let lock = &mut *self.records.write().unwrap();
         // drop old records
@@ -276,7 +281,9 @@ impl BmsWrapper {
         self.records.read().unwrap().len()
     }
 
-    pub fn newest_date(&self, other: Time) -> Option<Time> {
+    /// Compare the last record on this bms to a given time and returns
+    /// the newest of both.
+    pub fn get_newest_date(&self, other: Time) -> Option<Time> {
         let lock = &*self.records.read().unwrap();
         let rec = lock.last().unwrap();
         if rec.time > other {
@@ -286,12 +293,23 @@ impl BmsWrapper {
         }
     }
 
+    /// Get the last record date.
     pub fn get_last_date(&self) -> Time {
-        let lock = &*self.records.read().unwrap();
+        let lock = self.records.read().unwrap();
         let rec = lock.last().unwrap();
         rec.time
     }
 
+    pub fn get_last_value(&self) -> Option<f32> {
+        let records = self.records.read().unwrap();
+        if let Some(rec) = records.last() {
+            rec.value
+        } else {
+            None
+        }
+    }
+
+    /// Replaces a record when creating one of two records.
     pub fn replace_value(&self, val: Option<f32>, mode: ReplaceMode) {
         let records = &mut *self.records.write().unwrap();
         match mode {
@@ -307,25 +325,19 @@ impl BmsWrapper {
         }
     }
 
-    pub fn last_was_produced(&self, produced: Option<SentID>) {
+    /// Set a producer for the last truth value
+    pub fn set_last_rec_producer(&self, produced: Option<SentID>) {
         let records = &mut *self.records.write().unwrap();
         let last = records.last_mut().unwrap();
         last.was_produced = produced;
-    }
-
-    pub fn last_value(&self) -> Option<f32> {
-        let records = self.records.read().unwrap();
-        if let Some(rec) = records.last() {
-            rec.value
-        } else {
-            None
-        }
     }
 
     pub fn rollback_once(&self) {
         unimplemented!()
     }
 
+    /// Compare the time of the last record of two BMS and return
+    /// the ordering of self vs. other.
     pub fn cmp_by_time(&self, other: &BmsWrapper) -> CmpOrdering {
         let lock0 = &*self.records.read().unwrap();
         let own_last_time = &lock0.last().unwrap().time;
@@ -369,15 +381,40 @@ impl BmsWrapper {
         Ok(())
     }
 
+    /// Return the value valid at the given time, if any.
+    #[allow(clippy::op_ref)]
+    pub fn get_record_at_time(&self, cmp_time: Time) -> Option<f32> {
+        let mut lastest = None;
+        for rec in self
+            .records
+            .read()
+            .unwrap()
+            .iter()
+            .take_while(|rec| &rec.time <= &cmp_time)
+        {
+            lastest = rec.value;
+        }
+        lastest
+    }
+
     pub fn iter_values(&self) -> TimeValueIterator {
         let values: Vec<_> = self
             .records
             .read()
             .unwrap()
             .iter()
-            .map(|r| Some((r.time, r.value)))
+            .map(|r| (r.time, r.value))
+            .rev()
             .collect();
-        TimeValueIterator { values, num: 0 }
+        TimeValueIterator { values }
+    }
+
+    pub fn of_predicate(&mut self) {
+        self.pred = Some(Utc::now());
+    }
+
+    pub fn is_predicate(&self) -> Option<&Time> {
+        self.pred.as_ref()
     }
 }
 
@@ -386,28 +423,21 @@ impl std::clone::Clone for BmsWrapper {
         let recs = &*self.records.read().unwrap();
         BmsWrapper {
             records: RwLock::new(recs.clone()),
+            pred: self.pred,
             overwrite: AtomicBool::new(self.overwrite.load(Ordering::Acquire)),
         }
     }
 }
 
 pub struct TimeValueIterator {
-    values: Vec<Option<(Time, Option<f32>)>>,
-    num: usize,
+    values: Vec<(Time, Option<f32>)>,
 }
 
 impl std::iter::Iterator for TimeValueIterator {
     type Item = (Time, Option<f32>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.num >= self.values.len() {
-            return None;
-        }
-        let val = &mut self.values[self.num];
-        let repl = &mut None;
-        std::mem::swap(val, repl);
-        self.num += 1;
-        Some(repl.unwrap())
+        self.values.pop()
     }
 }
 
@@ -478,6 +508,7 @@ mod test {
         assert_eq!(answ0.unwrap().get_results_single(), Some(true));
         let answ1 = rep.ask("(ugly[$Pancho,u=0])");
         assert_eq!(answ1.unwrap().get_results_single(), Some(true));
+        // fails because repr:567, interval:true
         let answ2 = rep.ask("(sad[$Pancho,u=0])");
         assert_eq!(answ2.unwrap().get_results_single(), None);
     }

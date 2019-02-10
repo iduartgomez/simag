@@ -1188,16 +1188,23 @@ impl<'b> QueryProcessed<'b> {
     fn get_query(mut self, prequery: QueryInput) -> Result<QueryProcessed<'b>, ()> {
         #![allow(clippy::needless_pass_by_value)]
 
-        fn assert_memb(query: &mut QueryProcessed, cdecl: Rc<ClassDecl>) -> Result<(), ()> {
-            let cdecl = unsafe { &*(&*cdecl as *const ClassDecl) as &ClassDecl };
-            match *cdecl.get_parent() {
+        fn assert_memb(query: &mut QueryProcessed, cdecl: &mut ClassDecl) -> Result<(), ()> {
+            let cdecl = unsafe { &mut *(cdecl as *mut ClassDecl) as &mut ClassDecl };
+            for a in cdecl.get_args_mut() {
+                if let Predicate::GroundedMemb(t) = a {
+                    if let Some(bms) = t.bms.as_mut() {
+                        Arc::get_mut(bms).unwrap().of_predicate();
+                    }
+                }
+            }
+            match cdecl.get_parent() {
                 Terminal::GroundedTerm(_) => {
                     for a in cdecl.get_args() {
-                        match *a {
-                            Predicate::FreeClsMemb(ref t) => {
+                        match a {
+                            Predicate::FreeClsMemb(t) => {
                                 query.push_to_clsquery_free(&*t.get_var_ref(), t);
                             }
-                            Predicate::GroundedMemb(ref t) => {
+                            Predicate::GroundedMemb(t) => {
                                 if let Some(times) = cdecl.get_time_payload(t.get_value()) {
                                     t.overwrite_time_data(&times);
                                 }
@@ -1209,8 +1216,8 @@ impl<'b> QueryProcessed<'b> {
                 }
                 Terminal::FreeTerm(_) => {
                     for a in cdecl.get_args() {
-                        match *a {
-                            Predicate::FreeClsOwner(ref t) => {
+                        match a {
+                            Predicate::FreeClsOwner(t) => {
                                 if let Some(times) = cdecl.get_time_payload(None) {
                                     t.overwrite_time_data(&times);
                                 }
@@ -1261,9 +1268,10 @@ impl<'b> QueryProcessed<'b> {
                             for a in assertions {
                                 if let Err(()) = match a {
                                     Assert::ClassDecl(cdecl) => {
-                                        self.cls.push(Rc::new(cdecl));
-                                        let cdecl = self.cls.last().unwrap().clone();
-                                        assert_memb(&mut self, cdecl)
+                                        let mut cdecl = Rc::new(cdecl);
+                                        assert_memb(&mut self, Rc::get_mut(&mut cdecl).unwrap())?;
+                                        self.cls.push(cdecl);
+                                        Ok(())
                                     }
                                     Assert::FuncDecl(fdecl) => {
                                         self.func.push(Rc::new(fdecl));
@@ -1278,13 +1286,14 @@ impl<'b> QueryProcessed<'b> {
                         ParseTree::Expr(expr) => {
                             let (_, preds) = expr.extract_all_predicates();
                             for a in preds {
-                                if let Err(()) = match *a {
-                                    Assert::ClassDecl(ref cdecl) => {
-                                        self.cls.push(Rc::new(cdecl.clone()));
-                                        let cdecl = self.cls.last().unwrap().clone();
-                                        assert_memb(&mut self, cdecl)
+                                if let Err(()) = match Rc::try_unwrap(a).unwrap() {
+                                    Assert::ClassDecl(cdecl) => {
+                                        let mut cdecl = Rc::new(cdecl);
+                                        assert_memb(&mut self, Rc::get_mut(&mut cdecl).unwrap())?;
+                                        self.cls.push(cdecl);
+                                        Ok(())
                                     }
-                                    Assert::FuncDecl(ref fdecl) => {
+                                    Assert::FuncDecl(fdecl) => {
                                         self.func.push(Rc::new(fdecl.clone()));
                                         let fdecl = self.func.last().unwrap().clone();
                                         assert_rel(&mut self, fdecl)

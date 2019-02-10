@@ -373,7 +373,7 @@ impl GroundedMemb {
     /// An statement is a time interval if there are only
     pub fn is_time_interval(&self) -> bool {
         let bms = self.bms.as_ref().unwrap();
-        bms.record_len() == 2 && bms.last_value().is_none()
+        bms.record_len() == 2 && bms.get_last_value().is_none()
     }
 
     #[allow(clippy::collapsible_if)]
@@ -428,10 +428,26 @@ impl GroundedMemb {
         if pred.bms.is_none() {
             return Some(self == pred);
         }
-        let op_lhs = self.operator.unwrap();
-        let op_rhs = pred.operator.unwrap();
-        for (t, v) in pred.bms.as_ref().unwrap().iter_values() {}
-        unimplemented!()
+        let self_bms = &**self.bms.as_ref().unwrap();
+        let pred_bms = &**pred.bms.as_ref().unwrap();
+
+        if let Some(time) = pred_bms.is_predicate() {
+            let op_rhs = self.operator.unwrap();
+            let op_lhs = pred.operator.unwrap();
+            let time_pred = pred_bms.get_last_date();
+            let val_lhs = pred_bms.get_last_value();
+            let val_rhs = if time_pred < *time {
+                self_bms.get_record_at_time(time_pred)
+            } else {
+                self_bms.get_last_value()
+            };
+            val_rhs?;
+            Some(Self::compare_two_grounded_eq(
+                val_lhs, val_rhs, op_lhs, op_rhs,
+            ))
+        } else {
+            Some(self == pred)
+        }
     }
 }
 
@@ -450,7 +466,7 @@ impl std::cmp::PartialEq for GroundedMemb {
         }
         let val_lhs: Option<f32> = *self.value.read().unwrap();
         let val_rhs: Option<f32> = *other.value.read().unwrap();
-        GroundedMemb::compare_two_grounded_eq(val_lhs, val_rhs, op_lhs, op_rhs)
+        Self::compare_two_grounded_eq(val_lhs, val_rhs, op_lhs, op_rhs)
     }
 }
 
@@ -1124,11 +1140,8 @@ impl<'a> FuncDecl {
         &self.name
     }
 
-    pub fn get_args(&self) -> DeclArgsIter {
-        DeclArgsIter {
-            count: 0,
-            data_ref: self.args.as_ref().unwrap(),
-        }
+    pub fn get_args(&self) -> &[Predicate] {
+        self.args.as_ref().unwrap()
     }
 
     pub fn get_own_time_data(
@@ -1434,11 +1447,12 @@ impl<'a> ClassDecl {
         })
     }
 
-    pub fn get_args(&self) -> DeclArgsIter {
-        DeclArgsIter {
-            count: 0,
-            data_ref: &self.args,
-        }
+    pub fn get_args(&self) -> &[Predicate] {
+        &self.args
+    }
+
+    pub fn get_args_mut(&mut self) -> &mut [Predicate] {
+        &mut self.args
     }
 
     #[inline]
@@ -1631,24 +1645,6 @@ impl std::iter::IntoIterator for ClassDecl {
             }
         }
         v.into_iter()
-    }
-}
-
-pub(in crate::agent) struct DeclArgsIter<'a> {
-    data_ref: &'a Vec<Predicate>,
-    count: usize,
-}
-
-impl<'a> std::iter::Iterator for DeclArgsIter<'a> {
-    type Item = &'a Predicate;
-    fn next(&mut self) -> Option<&'a Predicate> {
-        if self.count < self.data_ref.len() {
-            let c = self.count;
-            self.count += 1;
-            Some(&(self.data_ref[c]))
-        } else {
-            None
-        }
     }
 }
 
@@ -2228,7 +2224,7 @@ mod logsent {
                                     let a = Grounded::Function(Arc::downgrade(&current.clone()));
                                     context.push_antecedents(a);
                                     if let Some(time) =
-                                        current.bms.newest_date(context.newest_grfact())
+                                        current.bms.get_newest_date(context.newest_grfact())
                                     {
                                         context.set_newest_grfact(time);
                                     }
@@ -2282,7 +2278,7 @@ mod logsent {
                                     .bms
                                     .as_ref()
                                     .unwrap()
-                                    .newest_date(context.newest_grfact())
+                                    .get_newest_date(context.newest_grfact())
                                 {
                                     context.set_newest_grfact(time);
                                 }
@@ -2314,7 +2310,7 @@ mod logsent {
                                     .bms
                                     .as_ref()
                                     .unwrap()
-                                    .newest_date(context.newest_grfact())
+                                    .get_newest_date(context.newest_grfact())
                                 {
                                     context.set_newest_grfact(time);
                                 }

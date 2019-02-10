@@ -10,7 +10,7 @@ use super::{
     },
     VarAssignment,
 };
-use crate::agent::bms::ReplaceMode;
+use crate::agent::bms::{BmsWrapper, ReplaceMode};
 use crate::agent::lang::{
     logic_parser, Assert, ClassDecl, CompOperator, FreeClsMemb, FreeClsOwner, FuncDecl, Grounded,
     GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ParseErrF, ParseTree, Predicate,
@@ -537,7 +537,7 @@ impl Representation {
             let entity_exists = self.entities.read().unwrap().contains_key(subject);
             if entity_exists {
                 let lock = self.entities.read().unwrap();
-                match lock.get(subject).unwrap().belongs_to_class(class) {
+                match lock.get(subject).unwrap().belongs_to_class(class, false) {
                     Some(r) => Some(r.clone()),
                     None => None,
                 }
@@ -548,7 +548,7 @@ impl Representation {
             let class_exists = self.classes.read().unwrap().contains_key(subject);
             if class_exists {
                 let lock = self.classes.read().unwrap();
-                match lock.get(subject).unwrap().belongs_to_class(class) {
+                match lock.get(subject).unwrap().belongs_to_class(class, false) {
                     Some(r) => Some(r.clone()),
                     None => None,
                 }
@@ -564,12 +564,12 @@ impl Representation {
         let subject = pred.get_name();
         if subject.starts_with('$') {
             if let Some(entity) = self.entities.read().unwrap().get(subject) {
-                if let Some(current) = entity.belongs_to_class(pred.get_parent()) {
+                if let Some(current) = entity.belongs_to_class(pred.get_parent(), true) {
                     return current.compare_at_time_intervals(pred);
                 }
             }
         } else if let Some(class) = self.classes.read().unwrap().get(subject) {
-            if let Some(current) = class.belongs_to_class(pred.get_parent()) {
+            if let Some(current) = class.belongs_to_class(pred.get_parent(), true) {
                 return current.compare_at_time_intervals(pred);
             }
         }
@@ -653,7 +653,7 @@ impl Representation {
         func: &FuncDecl,
     ) -> HashMap<&str, Vec<Arc<GroundedFunc>>> {
         let mut res = HashMap::new();
-        for (pos, arg) in func.get_args().enumerate() {
+        for (pos, arg) in func.get_args().iter().enumerate() {
             if !arg.is_var() {
                 let name = arg.get_name();
                 if name.starts_with('$') {
@@ -805,10 +805,10 @@ impl Entity {
         }
     }
 
-    fn belongs_to_class(&self, class_name: &str) -> Option<Arc<GroundedMemb>> {
+    fn belongs_to_class(&self, class_name: &str, interval: bool) -> Option<Arc<GroundedMemb>> {
         let lock = self.classes.read().unwrap();
         match lock.get(class_name) {
-            Some(r) if r.get_value().is_some() => Some(r.clone()),
+            Some(r) if r.get_value().is_some() || interval => Some(r.clone()),
             Some(_) | None => None,
         }
     }
@@ -846,11 +846,10 @@ impl Entity {
             let current = lock.get(name).unwrap();
             if let Some(context) = context {
                 current.update(agent, &*grounded, Some(context.get_id()));
-                current
-                    .bms
-                    .as_ref()
-                    .unwrap()
-                    .update_producers(&Grounded::Class(Arc::downgrade(&current.clone())), context);
+                BmsWrapper::update_producers(
+                    &Grounded::Class(Arc::downgrade(&current.clone())),
+                    context,
+                );
             } else {
                 current.update(agent, &*grounded, None);
             }
@@ -859,8 +858,11 @@ impl Entity {
             let mut lock = self.classes.write().unwrap();
             if let Some(context) = context {
                 let bms = grounded.bms.as_ref().unwrap();
-                bms.last_was_produced(Some(context.get_id()));
-                bms.update_producers(&Grounded::Class(Arc::downgrade(&grounded.clone())), context);
+                bms.set_last_rec_producer(Some(context.get_id()));
+                BmsWrapper::update_producers(
+                    &Grounded::Class(Arc::downgrade(&grounded.clone())),
+                    context,
+                );
             }
             lock.insert(name.to_string(), grounded.clone());
             true
@@ -985,7 +987,7 @@ impl Entity {
                     if f.comparable(&*func) {
                         if let Some(context) = context {
                             f.update(agent, &*func, Some(context.get_id()));
-                            f.bms.update_producers(
+                            BmsWrapper::update_producers(
                                 &Grounded::Function(Arc::downgrade(&f.clone())),
                                 context,
                             );
@@ -1000,8 +1002,8 @@ impl Entity {
             if !found_rel {
                 let mut lock = self.relations.write().unwrap();
                 if let Some(context) = context {
-                    func.bms.last_was_produced(Some(context.get_id()));
-                    func.bms.update_producers(
+                    func.bms.set_last_rec_producer(Some(context.get_id()));
+                    BmsWrapper::update_producers(
                         &Grounded::Function(Arc::downgrade(&func.clone())),
                         context,
                     );
@@ -1015,9 +1017,11 @@ impl Entity {
         } else {
             let mut lock = self.relations.write().unwrap();
             if let Some(context) = context {
-                func.bms.last_was_produced(Some(context.get_id()));
-                func.bms
-                    .update_producers(&Grounded::Function(Arc::downgrade(&func.clone())), context);
+                func.bms.set_last_rec_producer(Some(context.get_id()));
+                BmsWrapper::update_producers(
+                    &Grounded::Function(Arc::downgrade(&func.clone())),
+                    context,
+                );
             }
             lock.insert(name.to_string(), vec![func.clone()]);
             true
@@ -1103,10 +1107,10 @@ impl Class {
         }
     }
 
-    fn belongs_to_class(&self, class_name: &str) -> Option<Arc<GroundedMemb>> {
+    fn belongs_to_class(&self, class_name: &str, interval: bool) -> Option<Arc<GroundedMemb>> {
         let lock = self.classes.read().unwrap();
         match lock.get(class_name) {
-            Some(r) if r.get_value().is_some() => Some(r.clone()),
+            Some(r) if r.get_value().is_some() || interval => Some(r.clone()),
             Some(_) | None => None,
         }
     }
@@ -1145,11 +1149,10 @@ impl Class {
             let current = lock.get(name).unwrap();
             if let Some(context) = context {
                 current.update(agent, &*grounded, Some(context.get_id()));
-                current
-                    .bms
-                    .as_ref()
-                    .unwrap()
-                    .update_producers(&Grounded::Class(Arc::downgrade(&current.clone())), context);
+                BmsWrapper::update_producers(
+                    &Grounded::Class(Arc::downgrade(&current.clone())),
+                    context,
+                );
             } else {
                 current.update(agent, &*grounded, None);
             }
@@ -1158,8 +1161,11 @@ impl Class {
             let mut lock = self.classes.write().unwrap();
             if let Some(context) = context {
                 let bms = grounded.bms.as_ref().unwrap();
-                bms.last_was_produced(Some(context.get_id()));
-                bms.update_producers(&Grounded::Class(Arc::downgrade(&grounded.clone())), context);
+                bms.set_last_rec_producer(Some(context.get_id()));
+                BmsWrapper::update_producers(
+                    &Grounded::Class(Arc::downgrade(&grounded.clone())),
+                    context,
+                );
             }
             lock.insert(name.to_string(), grounded.clone());
             true
@@ -1271,7 +1277,7 @@ impl Class {
         for curr_func in lock.iter() {
             let curr_func = curr_func.unwrap_fn();
             let mut process = true;
-            for (i, arg) in func.get_args().enumerate() {
+            for (i, arg) in func.get_args().iter().enumerate() {
                 if !arg.is_var() && (arg.get_name() != curr_func.get_args_names()[i]) {
                     process = false;
                     break;
@@ -1354,7 +1360,7 @@ impl Class {
                     if f.comparable(&*func) {
                         if let Some(context) = context {
                             f.update(agent, &*func, Some(context.get_id()));
-                            f.bms.update_producers(
+                            BmsWrapper::update_producers(
                                 &Grounded::Function(Arc::downgrade(&f.clone())),
                                 context,
                             );
@@ -1369,8 +1375,8 @@ impl Class {
             if !found_rel {
                 let mut lock = self.relations.write().unwrap();
                 if let Some(context) = context {
-                    func.bms.last_was_produced(Some(context.get_id()));
-                    func.bms.update_producers(
+                    func.bms.set_last_rec_producer(Some(context.get_id()));
+                    BmsWrapper::update_producers(
                         &Grounded::Function(Arc::downgrade(&func.clone())),
                         context,
                     );
@@ -1384,9 +1390,11 @@ impl Class {
         } else {
             let mut lock = self.relations.write().unwrap();
             if let Some(context) = context {
-                func.bms.last_was_produced(Some(context.get_id()));
-                func.bms
-                    .update_producers(&Grounded::Function(Arc::downgrade(&func.clone())), context);
+                func.bms.set_last_rec_producer(Some(context.get_id()));
+                BmsWrapper::update_producers(
+                    &Grounded::Function(Arc::downgrade(&func.clone())),
+                    context,
+                );
             }
             lock.insert(name.to_string(), vec![func.clone()]);
             true
