@@ -249,19 +249,19 @@ impl<'a> ASTNode<'a> {
         context.depth += 1;
         let tree_node = match *self {
             ASTNode::Assert(ref decl) => match *decl {
+                // perform potential variable substitution
                 AssertBorrowed::ClassDecl(ref decl) => {
                     let mut cls = ClassDecl::from(decl, context)?;
                     if context.in_assertion && context.is_tell {
-                        // perform potential variable substitution
-                        cls.var_substitution(&context.vars)?;
+                        cls.var_substitution()?;
                     }
                     Ok(Some(ParseTree::Assertion(vec![Assert::ClassDecl(cls)])))
                 }
                 AssertBorrowed::FuncDecl(ref decl) => {
-                    let func = FuncDecl::from(decl, context)?;
-                    // if context.in_assertion && context.is_tell {
-                    //     unimplemented!();
-                    // }
+                    let mut func = FuncDecl::from(decl, context)?;
+                    if context.in_assertion && context.is_tell {
+                        func.var_substitution()?;
+                    }
                     Ok(Some(ParseTree::Assertion(vec![Assert::FuncDecl(func)])))
                 }
             },

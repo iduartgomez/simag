@@ -193,6 +193,7 @@ impl GroundedMemb {
     //! Internally the mutable parts are wrapped in `RwLock` types, as they can be accessed
     //! from a multithreaded environment. This provides enough atomicity so most of
     //! the time it won't be blocking other reads.
+
     fn try_new(
         term: String,
         uval: Option<UVal>,
@@ -1074,8 +1075,12 @@ impl<'a> FuncDecl {
         if let Some(mut oargs) = op_args {
             for arg in oargs.drain(..) {
                 match arg {
-                    OpArg::TimeDecl(TimeFn::Time(ref time)) => {
-                        time_data.new_record(Some(*time), val, None);
+                    OpArg::TimeDecl(TimeFn::Time(time)) => {
+                        time_data.new_record(Some(time), val, None);
+                    }
+                    OpArg::TimeDecl(TimeFn::Interval(t0, t1)) => {
+                        time_data.new_record(Some(t0), val, None);
+                        time_data.new_record(Some(t1), None, None);
                     }
                     OpArg::TimeDecl(TimeFn::Now) => {
                         time_data.new_record(Some(Utc::now()), val, None);
@@ -1402,6 +1407,15 @@ impl<'a> FuncDecl {
         }
         Some(true)
     }
+
+    pub fn var_substitution(&mut self) -> Result<(), ParseErrF> {
+        if let Some(op_args) = &mut self.op_args {
+            for op_arg in op_args {
+                op_arg.var_substitution()?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1609,24 +1623,10 @@ impl<'a> ClassDecl {
 
     /// While constructing an assertion in a tell context performs variable
     /// substitution whenever is possible, variables must be declared.
-    pub fn var_substitution(&mut self, _assignments: &[Arc<Var>]) -> Result<(), ParseErrF> {
+    pub fn var_substitution(&mut self) -> Result<(), ParseErrF> {
         if let Some(op_args) = &mut self.op_args {
             for op_arg in op_args {
-                match op_arg {
-                    OpArg::TimeVarFromUntil(var0, var1) => {
-                        let mut var0_time = var0.get_times();
-                        let var1_time = var1.get_times();
-                        var0_time.merge_from_until(&var1_time)?;
-                        let mut assignment = OpArg::TimeDecl(TimeFn::from_bms(&var0_time)?);
-                        std::mem::swap(&mut assignment, op_arg);
-                    }
-                    OpArg::TimeVarFrom(var0) => {
-                        let var0_time = var0.get_times();
-                        let mut assignment = OpArg::TimeDecl(TimeFn::from_bms(&var0_time)?);
-                        std::mem::swap(&mut assignment, op_arg);
-                    }
-                    _ => {}
-                }
+                op_arg.var_substitution()?;
             }
         }
         Ok(())
@@ -1637,13 +1637,14 @@ impl std::iter::IntoIterator for ClassDecl {
     type Item = GroundedMemb;
     type IntoIter = std::vec::IntoIter<GroundedMemb>;
     fn into_iter(mut self) -> Self::IntoIter {
-        let mut v = Vec::new();
+        let mut v = Vec::with_capacity(self.args.len());
         for _ in 0..self.args.len() {
             match self.args.pop() {
                 Some(Predicate::GroundedMemb(grfact)) => v.push(grfact),
                 Some(_) | None => {}
             }
         }
+        v.shrink_to_fit();
         v.into_iter()
     }
 }
@@ -1822,6 +1823,27 @@ impl<'a> OpArg {
             }
             CompOperator::Until | CompOperator::At | CompOperator::FromUntil => unreachable!(),
         }
+    }
+
+    /// While constructing an assertion in a tell context performs variable
+    /// substitution whenever is possible, variables must be declared.
+    fn var_substitution(&mut self) -> Result<(), ParseErrF> {
+        match self {
+            OpArg::TimeVarFromUntil(var0, var1) => {
+                let mut var0_time = var0.get_times();
+                let var1_time = var1.get_times();
+                var0_time.merge_from_until(&var1_time)?;
+                let mut assignment = OpArg::TimeDecl(TimeFn::from_bms(&var0_time)?);
+                std::mem::swap(&mut assignment, self);
+            }
+            OpArg::TimeVarFrom(var0) => {
+                let var0_time = var0.get_times();
+                let mut assignment = OpArg::TimeDecl(TimeFn::from_bms(&var0_time)?);
+                std::mem::swap(&mut assignment, self);
+            }
+            _ => {}
+        }
+        Ok(())
     }
 }
 
