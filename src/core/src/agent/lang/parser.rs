@@ -41,7 +41,7 @@ use rayon::prelude::*;
 use rayon;
 
 use super::ParseErrF;
-use super::{logsent::{LogSentence, ParseContext, SentKind}, common::{Assert, ClassDecl, FuncDecl}};
+use super::{logsent::{LogSentence, ParseContext, SentKind}, common::{Assert, FuncDecl}, cls::ClassDecl};
 
 const ICOND_OP: &[u8] = b":=";
 const AND_OP: &[u8] = b"&&";
@@ -138,7 +138,6 @@ pub(in crate::agent) enum ParseErrB<'a> {
 
 impl<'a> fmt::Display for ParseErrB<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use std::str;
         let msg = unsafe {
             match *self {
                 ParseErrB::SyntaxErrorU => "syntax error".to_string(),
@@ -534,9 +533,9 @@ fn empty_scope<'a>(
     } else if next.is_some() {
         match next {
             Some(IResult::Done(rest, next)) => IResult::Done(rest, next),
-            Some(IResult::Error(err)) => return IResult::Error(err),
+            Some(IResult::Error(err)) => IResult::Error(err),
             Some(IResult::Incomplete(_)) => {
-                return IResult::Error(nom::Err::Code(ErrorKind::Custom(11)))
+                IResult::Error(nom::Err::Code(ErrorKind::Custom(11)))
             }
             None => IResult::Done(EMPTY, ASTNode::None),
         }
@@ -1354,7 +1353,7 @@ mod test {
     }
 
     #[test]
-    #[allow(clippy::cyclomatic_complexity)]
+    #[allow(clippy::cognitive_complexity)]
     fn parser_predicate() {
         let s1 = b"professor[$Lucy,u=1]";
         let s1_res = class_decl(s1);

@@ -40,7 +40,6 @@ impl Agent {
 
 impl Default for Agent {
     fn default() -> Agent {
-        use num_cpus;
         Agent::new(num_cpus::get())
     }
 }

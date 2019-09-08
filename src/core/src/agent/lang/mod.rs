@@ -1,14 +1,16 @@
 mod common;
 mod logsent;
 mod parser;
+mod cls;
 
 use chrono::{DateTime, Utc};
 use std::collections::VecDeque;
 
 pub(super) use self::common::{
-    Assert, ClassDecl, FreeClsMemb, FreeClsOwner, FuncDecl, Grounded, GroundedFunc, GroundedMemb,
+    Assert, FreeClsMemb, FreeClsOwner, FuncDecl, Grounded, GroundedFunc, GroundedMemb,
     GroundedRef, Predicate, Terminal, Var, VarKind,
 };
+pub(super) use self::cls::ClassDecl;
 pub(super) use self::errors::ParseErrF;
 pub(super) use self::logsent::{LogSentence, ProofResContext, SentID};
 pub(super) use self::parser::{CompOperator, ParseTree};

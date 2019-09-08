@@ -602,20 +602,12 @@ impl Representation {
         if subject.starts_with('$') {
             if let Some(entity) = self.entities.read().unwrap().get(subject) {
                 if let Some(current) = entity.has_relationship(pred) {
-                    if *current == *pred {
-                        return Some(true);
-                    } else {
-                        return Some(false);
-                    }
+                    return current.compare_at_time_intervals(pred);
                 }
             }
         } else if let Some(class) = self.classes.read().unwrap().get(subject) {
             if let Some(current) = class.has_relationship(pred) {
-                if *current == *pred {
-                    return Some(true);
-                } else {
-                    return Some(false);
-                }
+                return current.compare_at_time_intervals(pred);
             }
         }
         None
@@ -755,6 +747,7 @@ impl<'a> Answer<'a> {
             .collect::<HashMap<_, _>>()
     }
 
+    #[allow(dead_code)]
     pub(super) fn get_relationships(&self) -> HashMap<ObjName<'a>, Vec<&'a GroundedFunc>> {
         self.0.get_relationships()
     }
@@ -873,7 +866,7 @@ impl Entity {
         let lock = self.relations.read().unwrap();
         if let Some(relation_type) = lock.get(func.get_name()) {
             for rel in relation_type {
-                if rel.comparable(func) && rel.get_value().is_some() {
+                if rel.comparable(func) {
                     return Some(rel.clone());
                 }
             }
@@ -1189,7 +1182,7 @@ impl Class {
         let lock = self.relations.read().unwrap();
         if let Some(relation_type) = lock.get(func.get_name()) {
             for rel in relation_type {
-                if rel.comparable(func) && rel.get_value().is_some() {
+                if rel.comparable(func) {
                     return Some(rel.clone());
                 }
             }

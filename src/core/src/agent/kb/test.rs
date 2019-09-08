@@ -25,7 +25,7 @@ fn repr_inference_time_calc_2() {
         ((let t1:time='2018-03-01T00:00:00Z', t2:time='2018-06-01T00:00:00Z')
          (fn::criticize(@t1->t2)[$John,u=1;$Lucy]))
     ";
-    rep = Representation::new();
+    let mut rep = Representation::new();
     rep.tell(test_04_02).unwrap();
     let q04_2_01 = "(fn::criticize(time='2018-04-01T00:00:00Z')[$John,u=1;$Lucy])";
     assert_eq!(rep.ask(q04_2_01).unwrap().get_results_single(), Some(true));
@@ -147,9 +147,11 @@ fn repr_inference_ask_func() {
                 := fn::friend[x,u=0;y] ))
     ";
     let q03_01 = "(fn::friend[$Lucy,u=0;$John])";
+    let q03_02 = "(fn::friend[$Lucy,u<1;$John])";
     let mut rep = Representation::new();
     rep.tell(test_03).unwrap();
     assert_eq!(rep.ask(q03_01).unwrap().get_results_single(), Some(true));
+    assert_eq!(rep.ask(q03_02).unwrap().get_results_single(), Some(true));
 
     let test_04 = "
         # retrieve all objs which fit to a criteria
@@ -226,6 +228,7 @@ fn repr_inference_time_calc() {
         ( meat[$M1,u=1] )
         ( fat(time=\"2014-07-05T10:25:00Z\")[$Pancho,u=1] )
     ";
+    // FAILS SOMETIMES
     let q02_01 = "(fn::eat(time='Now')[$M1,u=1;$Pancho])";
     let mut rep = Representation::new();
     rep.tell(test_02).unwrap();

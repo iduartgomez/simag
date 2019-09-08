@@ -1237,7 +1237,9 @@ impl<'b> QueryProcessed<'b> {
             match *fdecl.get_parent() {
                 Terminal::GroundedTerm(_) => {
                     if fdecl.is_grounded() {
-                        query.push_to_fnquery_grounded(fdecl.clone().into_grounded());
+                        let mut fgr = fdecl.clone().into_grounded();
+                        Arc::get_mut(&mut fgr.bms).unwrap().of_predicate();
+                        query.push_to_fnquery_grounded(fgr);
                     } else {
                         for a in fdecl.get_args() {
                             if let Predicate::FreeClsMemb(ref t) = *a {
