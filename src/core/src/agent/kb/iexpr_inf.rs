@@ -120,36 +120,34 @@ impl<'b> InfResults<'b> {
     }
 
     pub fn get_memberships(&self) -> HashMap<ObjName<'b>, Vec<&'b GroundedMemb>> {
-        unsafe {
-            let lock = self.membership.read().unwrap();
-            let mut res: HashMap<ObjName<'b>, Vec<&GroundedMemb>> = HashMap::new();
-            for preds in lock.values() {
-                for members in preds.values() {
-                    for gr in members {
-                        let gr = &*(&**gr as *const GroundedMemb) as &'b GroundedMemb;
-                        if res.contains_key(gr.get_name()) {
-                            let prev = res.get_mut(gr.get_name()).unwrap();
-                            prev.push(gr);
-                        } else {
-                            let mut new = vec![];
-                            new.push(gr);
-                            res.insert(gr.get_name(), new);
-                        }
+        let lock = self.membership.read().unwrap();
+        let mut res: HashMap<ObjName<'b>, Vec<&GroundedMemb>> = HashMap::new();
+        for preds in lock.values() {
+            for members in preds.values() {
+                for gr in members {
+                    let gr = unsafe { &*(&**gr as *const GroundedMemb) as &'b GroundedMemb };
+                    if res.contains_key(gr.get_name()) {
+                        let prev = res.get_mut(gr.get_name()).unwrap();
+                        prev.push(gr);
+                    } else {
+                        let mut new = vec![];
+                        new.push(gr);
+                        res.insert(gr.get_name(), new);
                     }
                 }
             }
-            res
         }
+        res
     }
 
     pub fn get_relationships(&self) -> HashMap<ObjName<'b>, Vec<&'b GroundedFunc>> {
-        unsafe {
-            let lock = self.relationships.read().unwrap();
-            let mut res: HashMap<ObjName<'b>, HashSet<*const GroundedFunc>> = HashMap::new();
-            for relations in lock.values() {
-                for relation_ls in relations.values() {
-                    for grfunc in relation_ls {
-                        for name in grfunc.get_args_names() {
+        let lock = self.relationships.read().unwrap();
+        let mut res: HashMap<ObjName<'b>, HashSet<*const GroundedFunc>> = HashMap::new();
+        for relations in lock.values() {
+            for relation_ls in relations.values() {
+                for grfunc in relation_ls {
+                    for name in grfunc.get_args_names() {
+                        unsafe {
                             let name = mem::transmute::<&str, &'b str>(name);
                             if res.contains_key(name) {
                                 let prev = res.get_mut(name).unwrap();
@@ -163,15 +161,15 @@ impl<'b> InfResults<'b> {
                     }
                 }
             }
-            HashMap::from_iter(res.into_iter().map(|(k, l)| {
-                (
-                    k,
-                    l.into_iter()
-                        .map(|v| &*v as &'b GroundedFunc)
-                        .collect::<Vec<_>>(),
-                )
-            }))
         }
+        HashMap::from_iter(res.into_iter().map(|(k, l)| {
+            (
+                k,
+                l.into_iter()
+                    .map(|v| unsafe { &*v as &'b GroundedFunc })
+                    .collect::<Vec<_>>(),
+            )
+        }))
     }
 }
 

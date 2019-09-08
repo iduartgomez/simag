@@ -15,9 +15,10 @@ use std::sync::Arc;
 use chrono::Utc;
 
 use super::{
-    cls::ClassDecl,
+    cls_decl::ClassDecl,
+    fn_decl::FuncDecl,
     common::{
-        Assert, FuncDecl, Grounded, GroundedFunc, GroundedMemb, OpArg, Skolem, Var,
+        Assert, Grounded, GroundedFunc, GroundedMemb, OpArg, Skolem, Var,
         VarKind,
     },
     parser::{ASTNode, AssertBorrowed, LogicOperator, Scope, VarDeclBorrowed},

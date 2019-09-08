@@ -41,7 +41,7 @@ use rayon::prelude::*;
 use rayon;
 
 use super::ParseErrF;
-use super::{logsent::{LogSentence, ParseContext, SentKind}, common::{Assert, FuncDecl}, cls::ClassDecl};
+use super::{logsent::{LogSentence, ParseContext, SentKind}, common::Assert, cls_decl::ClassDecl, fn_decl::FuncDecl};
 
 const ICOND_OP: &[u8] = b":=";
 const AND_OP: &[u8] = b"&&";
