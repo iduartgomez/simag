@@ -253,9 +253,9 @@ impl<'a> Inference<'a> {
             let l = pass.valid.lock().unwrap();
             let valid = l.as_ref().unwrap();
             let node: &ProofNode = unsafe { &*(valid.node as *const ProofNode) };
-            let mut context = IExprResult::new(valid.args.clone(), node);
+            let context = IExprResult::new(valid.args.clone(), node);
             node.proof
-                .solve(self.kb, Some(&valid.args.as_proof_input()), &mut context);
+                .solve(self.kb, Some(&valid.args.as_proof_input()), context);
         }
     }
 
@@ -660,9 +660,9 @@ impl<'a> InfTrial<'a> {
             };
             if !args_done {
                 let n_args = &args.as_proof_input();
-                let mut context = IExprResult::new(args.clone(), node);
-                node.proof.solve(inf.kb, Some(n_args), &mut context);
-                if context.result.is_some() {
+                let context = IExprResult::new(args.clone(), node);
+                let solved_proof = node.proof.solve(inf.kb, Some(n_args), context);
+                if solved_proof.result.is_some() {
                     {
                         let mut lock0 = inf.updated.lock().unwrap();
                         lock0.push(true);
@@ -672,7 +672,7 @@ impl<'a> InfTrial<'a> {
                             .or_insert_with(HashSet::new)
                             .insert(args.hash_val);
                     }
-                    inf.add_result(context);
+                    inf.add_result(solved_proof);
                 }
             }
         };

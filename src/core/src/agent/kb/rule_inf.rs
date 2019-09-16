@@ -21,7 +21,7 @@ pub(super) fn rules_inference_lookahead(
     // get all the rules that apply to the provided predicates
     for rule in rules {
         // construct a proper context for the sentence resolution
-        let mut context = RuleResContext::new(&*rule, Some(grounded.clone()));
+        let context = RuleResContext::new(&*rule, Some(grounded.clone()));
         // if the rule has any special var, get proper assignments
         let assignments: Option<&HashMap<&Var, &VarAssignment>> = {
             if rule.has_time_vars > 0 {
@@ -31,11 +31,11 @@ pub(super) fn rules_inference_lookahead(
             }
         };
         // get the results from the rule and return value
-        rule.solve(agent, assignments, &mut context);
-        if let Some(false) = context.result {
+        let solved_proof = rule.solve(agent, assignments, context);
+        if let Some(false) = solved_proof.result {
             return true;
         }
-        if context.inconsistent {
+        if solved_proof.inconsistent {
             return true;
         }
     }
@@ -49,7 +49,7 @@ pub(super) fn rules_inference_lookahead(
 /// they are consistent with the new rule.
 pub(super) fn rules_inference_rollback(agent: &Representation, rule: &Arc<LogSentence>) {
     // test the rule
-    let mut context = RuleResContext::new(&*rule, None);
+    let context = RuleResContext::new(&*rule, None);
     // if the rule has any special var, get proper assignments
     let assignments: Option<&HashMap<&Var, &VarAssignment>> = {
         if rule.has_time_vars > 0 {
@@ -58,9 +58,9 @@ pub(super) fn rules_inference_rollback(agent: &Representation, rule: &Arc<LogSen
             None
         }
     };
-    // if the result of the rule is false, procede to rollback
-    rule.solve(agent, assignments, &mut context);
-    match context.result {
+    // if the result of the rule is false, proceed to rollback
+    let mut solved_proof = rule.solve(agent, assignments, context);
+    match solved_proof.result {
         None | Some(true) => return,
         _ => {}
     }
@@ -89,12 +89,12 @@ pub(super) fn rules_inference_rollback(agent: &Representation, rule: &Arc<LogSen
     loop {
         let mut funcs: Vec<_> = gr_funcs
             .iter()
-            .filter(|x| context.was_false_fn(x))
+            .filter(|x| solved_proof.was_false_fn(x))
             .collect();
         funcs.sort_by(|a, b| a.bms.cmp_by_time(&*b.bms));
         let mut classes: Vec<_> = gr_classes
             .iter()
-            .filter(|x| context.was_false_cls(x))
+            .filter(|x| solved_proof.was_false_cls(x))
             .collect();
         classes.sort_by(|a, b| {
             a.bms
@@ -113,9 +113,9 @@ pub(super) fn rules_inference_rollback(agent: &Representation, rule: &Arc<LogSen
         } else {
             cls.bms.as_ref().unwrap().rollback_once();
         }
-        context = context.clone();
-        rule.solve(agent, assignments, &mut context);
-        match context.result {
+        let unresolved_proof = solved_proof.clone();
+        solved_proof = rule.solve(agent, assignments, unresolved_proof);
+        match solved_proof.result {
             None | Some(true) => break,
             _ => {}
         }

@@ -202,8 +202,8 @@ impl<'a> LogSentence {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        context: &mut T,
-    ) {
+        mut context: T,
+    ) -> T {
         let root = &self.root;
         let time_assign = {
             if self.vars.is_some() {
@@ -214,20 +214,20 @@ impl<'a> LogSentence {
         };
         if self.has_time_vars != time_assign.len() {
             context.set_result(None);
-            return;
+            return context;
         }
         if self.sent_kind.is_iexpr() {
             if let Some(res) =
                 root.as_ref()
                     .unwrap()
-                    .solve(agent, assignments, &time_assign, context)
+                    .solve(agent, assignments, &time_assign, &mut context)
             {
                 if res {
                     root.as_ref().unwrap().substitute(
                         agent,
                         assignments,
                         &time_assign,
-                        context,
+                        &mut context,
                         false,
                     );
                     context.set_result(Some(true));
@@ -236,7 +236,7 @@ impl<'a> LogSentence {
                         agent,
                         assignments,
                         &time_assign,
-                        context,
+                        &mut context,
                         true,
                     );
                     context.set_result(Some(false));
@@ -247,7 +247,7 @@ impl<'a> LogSentence {
         } else if let Some(res) =
             root.as_ref()
                 .unwrap()
-                .solve(agent, assignments, &time_assign, context)
+                .solve(agent, assignments, &time_assign, &mut context)
         {
             if res {
                 if root.as_ref().unwrap().is_icond() {
@@ -256,7 +256,7 @@ impl<'a> LogSentence {
                         agent,
                         assignments,
                         &time_assign,
-                        context,
+                        &mut context,
                         false,
                     )
                 }
@@ -268,7 +268,7 @@ impl<'a> LogSentence {
                         agent,
                         assignments,
                         &time_assign,
-                        context,
+                        &mut context,
                         true,
                     )
                 }
@@ -279,6 +279,8 @@ impl<'a> LogSentence {
         } else {
             context.set_result(Some(false));
         }
+
+        context
     }
 
     fn get_time_assignments(

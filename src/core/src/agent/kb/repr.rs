@@ -68,10 +68,10 @@ impl Representation {
     pub fn tell(&mut self, source: &str) -> Result<(), Vec<ParseErrF>> {
         let pres = logic_parser(source, true, self.threads);
         if pres.is_ok() {
-            let mut pres: VecDeque<ParseTree> = pres.unwrap();
+            let mut sentences: VecDeque<ParseTree> = pres.unwrap();
             let mut errors = Vec::new();
-            for _ in 0..pres.len() {
-                match pres.pop_front().unwrap() {
+            for _ in 0..sentences.len() {
+                match sentences.pop_front().unwrap() {
                     ParseTree::Assertion(assertions) => {
                         for assertion in assertions {
                             if assertion.is_class() {
@@ -112,9 +112,9 @@ impl Representation {
 
     /// Asks the KB if some fact is true and returns the answer to the query.
     pub fn ask(&self, source: &str) -> Result<Answer, QueryErr> {
-        let pres = logic_parser(source, false, self.threads);
-        if pres.is_ok() {
-            let pres = QueryInput::ManyQueries(pres.unwrap());
+        let queries = logic_parser(source, false, self.threads);
+        if queries.is_ok() {
+            let pres = QueryInput::ManyQueries(queries.unwrap());
             let mut inf =
                 match Inference::try_new(self, pres, usize::max_value(), false, self.threads) {
                     Ok(inf) => inf,
@@ -126,7 +126,7 @@ impl Representation {
             }
             Ok(inf.get_results())
         } else {
-            Err(QueryErr::ParseErr(pres.unwrap_err()))
+            Err(QueryErr::ParseErr(queries.unwrap_err()))
         }
     }
 

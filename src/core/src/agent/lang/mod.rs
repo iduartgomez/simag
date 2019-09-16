@@ -1,6 +1,6 @@
 mod cls_decl;
-mod fn_decl;
 mod common;
+mod fn_decl;
 mod logsent;
 mod parser;
 
@@ -8,21 +8,21 @@ use chrono::{DateTime, Utc};
 use std::collections::VecDeque;
 
 pub(super) use self::cls_decl::ClassDecl;
-pub(super) use self::fn_decl::FuncDecl;
 pub(super) use self::common::{
     Assert, FreeClsMemb, FreeClsOwner, Grounded, GroundedFunc, GroundedMemb, GroundedRef,
     Predicate, Terminal, Var, VarKind,
 };
 pub(super) use self::errors::ParseErrF;
+pub(super) use self::fn_decl::FuncDecl;
 pub(super) use self::logsent::{LogSentence, ProofResContext, SentID};
 pub(super) use self::parser::{CompOperator, ParseTree};
 
-/// Takes an owned String and returns the corresponding structured representing
+/// Takes an owned String and returns the corresponding structure representing
 /// object program for the logic function. It can parse several statements
 /// at the same time, separated by newlines and/or curly braces.
 ///
 /// It includes a a scanner and parser for the synthatical analysis which translate
-/// to the **program** in form of a `ParseResult` to be feed to an Agent.
+/// to the **program** in form of parse trees to be feed to an Agent.
 pub(in crate::agent) fn logic_parser(
     source: &str,
     tell: bool,
