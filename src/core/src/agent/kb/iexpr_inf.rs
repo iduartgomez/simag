@@ -17,8 +17,7 @@ use std::hash::{Hash, Hasher};
 use std::iter::FromIterator;
 use std::mem;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
 use rayon;
 use rayon::prelude::*;
@@ -227,6 +226,7 @@ impl<'a> Inference<'a> {
         self.tpool.install(|| self.query_func_free());
         self.tpool.install(|| self.query_cls_memb());
         self.tpool.install(|| self.query_func_memb());
+        // AWAIT RESULTS
     }
 
     fn queue_query(&self, query: &str, actv_query: &ActiveQuery) {
@@ -236,22 +236,17 @@ impl<'a> Inference<'a> {
         // then loop again, else stop
         loop {
             pass.unify(query, VecDeque::new(), HashSet::new());
-            {
-                let lock0 = pass.updated.lock().unwrap();
-                let lock1 = pass.feedback.load(Ordering::SeqCst);
-                if !lock0.contains(&true) || !lock1 {
-                    break;
-                }
+            if !pass.updated.contains(&true) || !pass.feedback {
+                break;
             }
-            pass.updated = Mutex::new(vec![]);
+            pass.updated = vec![];
         }
         let obj = actv_query.get_obj();
         let pred = actv_query.get_pred();
-        if pass.valid.lock().unwrap().is_none() {
+        if pass.valid.is_none() {
             self.results.add_grounded(obj, pred, None);
         } else {
-            let l = pass.valid.lock().unwrap();
-            let valid = l.as_ref().unwrap();
+            let valid = pass.valid.as_ref().unwrap();
             let node: &ProofNode = unsafe { &*(valid.node as *const ProofNode) };
             let context = IExprResult::new(valid.args.clone(), node);
             node.proof
@@ -618,15 +613,14 @@ impl ProofResContext for IExprResult {
 struct InfTrial<'a> {
     kb: &'a Representation,
     actv: ActiveQuery,
-    updated: Mutex<Vec<bool>>,
-    feedback: AtomicBool,
-    valid: Mutex<Option<ValidAnswer>>,
+    updated: Vec<bool>,
+    feedback: bool,
+    valid: Option<ValidAnswer>,
     nodes: usize, // &'a RwLock<HashMap<&'a str, Vec<ProofNode<'a>>>>,
     queue: &'a RwLock<HashMap<usize, HashSet<PArgVal>>>, // K: *const ProofNode<'a>
     results: usize, // &'a InfResults<'a>,
     depth: usize,
     depth_cnt: RwLock<usize>,
-    tpool: &'a rayon::ThreadPool,
 }
 
 impl<'a> InfTrial<'a> {
@@ -636,20 +630,24 @@ impl<'a> InfTrial<'a> {
         InfTrial {
             kb: inf.kb,
             actv: actv_query.clone(),
-            updated: Mutex::new(vec![]),
-            feedback: AtomicBool::new(true),
-            valid: Mutex::new(None),
+            updated: vec![],
+            feedback: true,
+            valid: None,
             nodes,
             queue: &inf.queue,
             results,
             depth: inf.depth,
             depth_cnt: RwLock::new(0_usize),
-            tpool: &inf.tpool,
         }
     }
 
-    fn unify(&self, mut parent: &'a str, mut chk: VecDeque<&'a str>, mut done: HashSet<&'a str>) {
-        fn scoped_exec(inf: &InfTrial, node: &ProofNode, args: &ProofArgs) {
+    fn unify(
+        &mut self,
+        mut parent: &'a str,
+        mut chk: VecDeque<&'a str>,
+        mut done: HashSet<&'a str>,
+    ) {
+        fn unification_trial(inf: &mut InfTrial, node: &ProofNode, args: &ProofArgs) {
             let node_raw = node as *const ProofNode as usize;
             let args_done = {
                 if let Some(queued) = inf.queue.read().unwrap().get(&node_raw) {
@@ -664,8 +662,7 @@ impl<'a> InfTrial<'a> {
                 let solved_proof = node.proof.solve(inf.kb, Some(n_args), context);
                 if solved_proof.result.is_some() {
                     {
-                        let mut lock0 = inf.updated.lock().unwrap();
-                        lock0.push(true);
+                        inf.updated.push(true);
                         let mut lock1 = inf.queue.write().unwrap();
                         lock1
                             .entry(node_raw)
@@ -677,14 +674,12 @@ impl<'a> InfTrial<'a> {
             }
         };
 
+        let nodes = unsafe { &*(self.nodes as *const RwLock<HashMap<&str, Vec<ProofNode>>>) };
         loop {
-            {
-                *self.valid.lock().unwrap() = None;
-            }
+            self.valid = None;
             // for each node in the subtitution tree unifify variables
             // and try every possible substitution until (if) a solution is found
             // the proofs are tried in order of addition to the KB
-            let nodes = unsafe { &*(self.nodes as *const RwLock<HashMap<&str, Vec<ProofNode>>>) };
             if let Some(nodes) = nodes.read().unwrap().get(parent) {
                 // the node for each rule is stored in an efficient sorted list
                 // by rule creation datetime, from newest to oldest
@@ -707,16 +702,16 @@ impl<'a> InfTrial<'a> {
                         let mapped = ArgsProduct::product(assignments.unwrap());
                         if let Some(mapped) = mapped {
                             for args in mapped {
-                                if let Some(ref valid) = *self.valid.lock().unwrap() {
+                                if let Some(ref valid) = self.valid {
                                     if valid.node == &*node as *const ProofNode as usize {
                                         break;
                                     }
                                 }
                                 let args: ProofArgs = ProofArgs::new(args);
-                                self.tpool.install(|| scoped_exec(self, node, &args));
+                                unification_trial(self, node, &args);
                             }
                         }
-                        if self.feedback.load(Ordering::SeqCst) {
+                        if self.feedback {
                             for e in node.antecedents.clone() {
                                 if !done.contains(&e) && !chk.contains(&e) {
                                     chk.push_back(e);
@@ -726,7 +721,7 @@ impl<'a> InfTrial<'a> {
                     }
                 }
             }
-            if !self.feedback.load(Ordering::SeqCst) {
+            if !self.feedback {
                 return;
             }
             if !chk.is_empty() && (*self.depth_cnt.read().unwrap() < self.depth) {
@@ -743,7 +738,7 @@ impl<'a> InfTrial<'a> {
     }
 
     fn add_as_last_valid(
-        &self,
+        &mut self,
         context: &IExprResult,
         r_dict: &mut GroundedResults<'a>,
         time: Time,
@@ -753,8 +748,7 @@ impl<'a> InfTrial<'a> {
             let obj = self.actv.get_obj();
             std::mem::transmute::<&str, &'a str>(obj)
         };
-        let mut lock = self.valid.lock().unwrap();
-        if let Some(ref prev_answ) = *lock {
+        if let Some(ref prev_answ) = self.valid {
             if prev_answ.newest_grfact >= context.newest_grfact {
                 return;
             }
@@ -765,14 +759,14 @@ impl<'a> InfTrial<'a> {
             args: context.args.clone(),
             newest_grfact: context.newest_grfact,
         };
-        *lock = Some(answ);
+        self.valid = Some(answ);
     }
 
-    fn add_result(&self, mut context: IExprResult) {
+    fn add_result(&mut self, mut context: IExprResult) {
         // add category/function to the object dictionary
         // and to results dict if is the result for the query
-        let query_obj = self.actv.get_obj();
-        let query_pred = self.actv.get_pred();
+        let query_obj = self.actv.get_obj().to_owned();
+        let query_pred = self.actv.get_pred().to_owned();
         let is_func = self.actv.is_func();
         let results = unsafe { &*(self.results as *const InfResults) };
 
@@ -784,17 +778,19 @@ impl<'a> InfTrial<'a> {
                     let val = query_cls == &gt;
                     let mut d = results.grounded_queries.write().unwrap();
                     let gr_results_dict = {
-                        if d.contains_key(query_pred) {
-                            d.get_mut(query_pred).unwrap()
+                        if d.contains_key(&query_pred) {
+                            d.get_mut(&query_pred).unwrap()
                         } else {
                             let new = HashMap::new();
                             d.insert(query_pred.to_string(), new);
-                            d.get_mut(query_pred).unwrap()
+                            d.get_mut(&query_pred).unwrap()
                         }
                     };
-                    if gr_results_dict.contains_key(query_obj) {
+                    if gr_results_dict.contains_key(query_obj.as_str()) {
                         let cond_ok;
-                        if let Some(&Some((_, Some(cdate)))) = gr_results_dict.get(query_obj) {
+                        if let Some(&Some((_, Some(cdate)))) =
+                            gr_results_dict.get(query_obj.as_str())
+                        {
                             if time >= cdate {
                                 cond_ok = true;
                             } else {
@@ -809,7 +805,7 @@ impl<'a> InfTrial<'a> {
                     } else {
                         self.add_as_last_valid(&context, gr_results_dict, time, val);
                     }
-                    self.feedback.store(false, Ordering::SeqCst);
+                    self.feedback = false;
                 }
             }
         }
@@ -822,17 +818,19 @@ impl<'a> InfTrial<'a> {
                     let val = query_func == &gf;
                     let mut d = results.grounded_queries.write().unwrap();
                     let gr_results_dict = {
-                        if d.contains_key(query_pred) {
-                            d.get_mut(query_pred).unwrap()
+                        if d.contains_key(query_pred.as_str()) {
+                            d.get_mut(query_pred.as_str()).unwrap()
                         } else {
                             let new = HashMap::new();
-                            d.insert(query_pred.to_string(), new);
-                            d.get_mut(query_pred).unwrap()
+                            d.insert(query_pred.clone(), new);
+                            d.get_mut(query_pred.as_str()).unwrap()
                         }
                     };
-                    if gr_results_dict.contains_key(query_obj) {
+                    if gr_results_dict.contains_key(query_obj.as_str()) {
                         let cond_ok;
-                        if let Some(&Some((_, Some(cdate)))) = gr_results_dict.get(query_obj) {
+                        if let Some(&Some((_, Some(cdate)))) =
+                            gr_results_dict.get(query_obj.as_str())
+                        {
                             if time >= cdate {
                                 cond_ok = true;
                             } else {
@@ -847,7 +845,7 @@ impl<'a> InfTrial<'a> {
                     } else {
                         self.add_as_last_valid(&context, gr_results_dict, time, val);
                     }
-                    self.feedback.store(false, Ordering::SeqCst);
+                    self.feedback = false;
                 }
             }
         }
