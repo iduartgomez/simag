@@ -226,35 +226,8 @@ impl<'a> Inference<'a> {
         self.tpool.install(|| self.query_func_free());
         self.tpool.install(|| self.query_cls_memb());
         self.tpool.install(|| self.query_func_memb());
-        // AWAIT RESULTS
     }
 
-    fn queue_query(&self, query: &str, actv_query: &ActiveQuery) {
-        let mut pass = InfTrial::new(self, actv_query);
-        pass.get_rules(vec![query]);
-        // run the query, if there is no result and there is an update,
-        // then loop again, else stop
-        loop {
-            pass.unify(query, VecDeque::new(), HashSet::new());
-            if !pass.updated.contains(&true) || !pass.feedback {
-                break;
-            }
-            pass.updated = vec![];
-        }
-        let obj = actv_query.get_obj();
-        let pred = actv_query.get_pred();
-        if pass.valid.is_none() {
-            self.results.add_grounded(obj, pred, None);
-        } else {
-            let valid = pass.valid.as_ref().unwrap();
-            let node: &ProofNode = unsafe { &*(valid.node as *const ProofNode) };
-            let context = IExprResult::new(valid.args.clone(), node);
-            node.proof
-                .solve(self.kb, Some(&valid.args.as_proof_input()), context);
-        }
-    }
-
-    #[inline]
     /// Find if a grounded class membership is true, false or unknown.
     /// ie. (person[$John,u=1])
     fn query_cls_gr(&self) {
@@ -284,7 +257,6 @@ impl<'a> Inference<'a> {
             });
     }
 
-    #[inline]
     /// Find if a grounded function is true, false or unknown.
     /// ie. (fn::friend[$Lucy,u=0;$John])
     fn query_func_gr(&self) {
@@ -311,7 +283,31 @@ impl<'a> Inference<'a> {
             });
     }
 
-    #[inline]
+    fn queue_query(&self, query: &str, actv_query: &ActiveQuery) {
+        let mut pass = InfTrial::new(self, actv_query);
+        pass.get_rules(vec![query]);
+        // run the query, if there is no result and there is an update,
+        // then loop again, else stop
+        loop {
+            pass.unify(query, VecDeque::new(), HashSet::new());
+            if !pass.updated.contains(&true) || !pass.feedback {
+                break;
+            }
+            pass.updated = vec![];
+        }
+        let obj = actv_query.get_obj();
+        let pred = actv_query.get_pred();
+        if pass.valid.is_none() {
+            self.results.add_grounded(obj, pred, None);
+        } else {
+            let valid = pass.valid.as_ref().unwrap();
+            let node: &ProofNode = unsafe { &*(valid.node as *const ProofNode) };
+            let context = IExprResult::new(valid.args.clone(), node);
+            node.proof
+                .solve(self.kb, Some(&valid.args.as_proof_input()), context);
+        }
+    }
+
     /// Find all members (subclasses or entities) of a given class.
     /// ie. ((let x) (professor[x,u=1]))
     fn query_cls_free(&self) {
@@ -333,7 +329,6 @@ impl<'a> Inference<'a> {
             });
     }
 
-    #[inline]
     /// Find all relationships of a given function type.
     /// ie. ((let x) (fn::produce[milk,u>0;x]))
     fn query_func_free(&self) {
@@ -352,7 +347,6 @@ impl<'a> Inference<'a> {
             });
     }
 
-    #[inline]
     /// Find class membership of a grounded entity or class.
     /// ie. ((let x) (x[$Lucy,u>0.5]))
     fn query_cls_memb(&self) {
@@ -369,7 +363,6 @@ impl<'a> Inference<'a> {
             });
     }
 
-    #[inline]
     /// Find relationships of a grounded entity or class.
     /// ie. ((let x, y) (fn::x[$Vicky,u=0;y]))
     fn query_func_memb(&self) {
@@ -647,33 +640,6 @@ impl<'a> InfTrial<'a> {
         mut chk: VecDeque<&'a str>,
         mut done: HashSet<&'a str>,
     ) {
-        fn unification_trial(inf: &mut InfTrial, node: &ProofNode, args: &ProofArgs) {
-            let node_raw = node as *const ProofNode as usize;
-            let args_done = {
-                if let Some(queued) = inf.queue.read().unwrap().get(&node_raw) {
-                    queued.contains(&args.hash_val)
-                } else {
-                    false
-                }
-            };
-            if !args_done {
-                let n_args = &args.as_proof_input();
-                let context = IExprResult::new(args.clone(), node);
-                let solved_proof = node.proof.solve(inf.kb, Some(n_args), context);
-                if solved_proof.result.is_some() {
-                    {
-                        inf.updated.push(true);
-                        let mut lock1 = inf.queue.write().unwrap();
-                        lock1
-                            .entry(node_raw)
-                            .or_insert_with(HashSet::new)
-                            .insert(args.hash_val);
-                    }
-                    inf.add_result(solved_proof);
-                }
-            }
-        };
-
         let nodes = unsafe { &*(self.nodes as *const RwLock<HashMap<&str, Vec<ProofNode>>>) };
         loop {
             self.valid = None;
@@ -708,7 +674,7 @@ impl<'a> InfTrial<'a> {
                                     }
                                 }
                                 let args: ProofArgs = ProofArgs::new(args);
-                                unification_trial(self, node, &args);
+                                self.unification_trial(node, &args);
                             }
                         }
                         if self.feedback {
@@ -733,6 +699,33 @@ impl<'a> InfTrial<'a> {
                 let mut c = self.depth_cnt.write().unwrap();
                 *c += 1;
                 return;
+            }
+        }
+    }
+
+    fn unification_trial(&mut self, node: &ProofNode, args: &ProofArgs) {
+        let node_raw = node as *const ProofNode as usize;
+        let args_done = {
+            if let Some(queued) = self.queue.read().unwrap().get(&node_raw) {
+                queued.contains(&args.hash_val)
+            } else {
+                false
+            }
+        };
+        if !args_done {
+            let n_args = &args.as_proof_input();
+            let context = IExprResult::new(args.clone(), node);
+            let solved_proof = node.proof.solve(self.kb, Some(n_args), context);
+            if solved_proof.result.is_some() {
+                {
+                    self.updated.push(true);
+                    let mut lock1 = self.queue.write().unwrap();
+                    lock1
+                        .entry(node_raw)
+                        .or_insert_with(HashSet::new)
+                        .insert(args.hash_val);
+                }
+                self.add_result(solved_proof);
             }
         }
     }
@@ -765,8 +758,6 @@ impl<'a> InfTrial<'a> {
     fn add_result(&mut self, mut context: IExprResult) {
         // add category/function to the object dictionary
         // and to results dict if is the result for the query
-        let query_obj = self.actv.get_obj().to_owned();
-        let query_pred = self.actv.get_pred().to_owned();
         let is_func = self.actv.is_func();
         let results = unsafe { &*(self.results as *const InfResults) };
 
@@ -778,18 +769,18 @@ impl<'a> InfTrial<'a> {
                     let val = query_cls == &gt;
                     let mut d = results.grounded_queries.write().unwrap();
                     let gr_results_dict = {
-                        if d.contains_key(&query_pred) {
-                            d.get_mut(&query_pred).unwrap()
+                        if d.contains_key(self.actv.get_pred()) {
+                            d.get_mut(self.actv.get_pred()).unwrap()
                         } else {
                             let new = HashMap::new();
-                            d.insert(query_pred.to_string(), new);
-                            d.get_mut(&query_pred).unwrap()
+                            d.insert(self.actv.get_pred().to_string(), new);
+                            d.get_mut(self.actv.get_pred()).unwrap()
                         }
                     };
-                    if gr_results_dict.contains_key(query_obj.as_str()) {
+                    if gr_results_dict.contains_key(self.actv.get_obj()) {
                         let cond_ok;
                         if let Some(&Some((_, Some(cdate)))) =
-                            gr_results_dict.get(query_obj.as_str())
+                            gr_results_dict.get(self.actv.get_obj())
                         {
                             if time >= cdate {
                                 cond_ok = true;
@@ -818,18 +809,18 @@ impl<'a> InfTrial<'a> {
                     let val = query_func == &gf;
                     let mut d = results.grounded_queries.write().unwrap();
                     let gr_results_dict = {
-                        if d.contains_key(query_pred.as_str()) {
-                            d.get_mut(query_pred.as_str()).unwrap()
+                        if d.contains_key(self.actv.get_pred()) {
+                            d.get_mut(self.actv.get_pred()).unwrap()
                         } else {
                             let new = HashMap::new();
-                            d.insert(query_pred.clone(), new);
-                            d.get_mut(query_pred.as_str()).unwrap()
+                            d.insert(self.actv.get_pred().to_string(), new);
+                            d.get_mut(self.actv.get_pred()).unwrap()
                         }
                     };
-                    if gr_results_dict.contains_key(query_obj.as_str()) {
+                    if gr_results_dict.contains_key(self.actv.get_obj()) {
                         let cond_ok;
                         if let Some(&Some((_, Some(cdate)))) =
-                            gr_results_dict.get(query_obj.as_str())
+                            gr_results_dict.get(self.actv.get_obj())
                         {
                             if time >= cdate {
                                 cond_ok = true;
