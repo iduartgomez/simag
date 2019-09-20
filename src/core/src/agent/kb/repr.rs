@@ -4,13 +4,13 @@ use std::iter::FromIterator;
 use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 
-use super::{
-    iexpr_inf::{
+use crate::agent::kb::{
+    bms::{BmsWrapper, ReplaceMode},
+    inference::{
         meet_sent_req, ArgsProduct, GroundedResult, IExprResult, InfResults, Inference, QueryInput,
     },
     VarAssignment,
 };
-use crate::agent::bms::{BmsWrapper, ReplaceMode};
 use crate::agent::lang::{
     logic_parser, Assert, ClassDecl, CompOperator, FreeClsMemb, FreeClsOwner, FuncDecl, Grounded,
     GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ParseErrF, ParseTree, Predicate,
@@ -1420,7 +1420,7 @@ impl Class {
 
 #[inline]
 fn lookahead_rules(agent: &Representation, name: &str, grounded: &GroundedRef) -> bool {
-    use super::rule_inf::rules_inference_lookahead;
+    use super::inference::rules_inference_lookahead;
     let rules: Vec<Arc<LogSentence>> = {
         let classes = agent.classes.read().unwrap();
         let class = classes.get(name).unwrap();
@@ -1432,6 +1432,6 @@ fn lookahead_rules(agent: &Representation, name: &str, grounded: &GroundedRef) -
 
 #[inline]
 fn rollback_from_rule(agent: &Representation, rule: &Arc<LogSentence>) {
-    use super::rule_inf::rules_inference_rollback;
+    use super::inference::rules_inference_rollback;
     rules_inference_rollback(agent, rule);
 }

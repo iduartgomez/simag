@@ -1,4 +1,3 @@
-mod bms;
 mod kb;
 mod lang;
 

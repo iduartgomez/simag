@@ -3,7 +3,7 @@ use std::sync::{Arc, atomic::AtomicBool};
 
 use super::*;
 use crate::agent::{
-    bms::BmsWrapper,
+    kb::bms::BmsWrapper,
     kb::{repr::Representation, VarAssignment},
 };
 use common::*;

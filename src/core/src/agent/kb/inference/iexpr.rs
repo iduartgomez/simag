@@ -2,15 +2,19 @@
 //! representation querying.
 //!
 //! ## Safety
-//! There is some unsafe code on this module, the unsafe code performs to taks:
-//!     * Assure the compiler that data being referenced will have the proper
-//!       lifetimes to satisfy the compiler.
-//!     * Cheat the compiler on ```Send + Sync``` impl in certain types.
+//! There is some unsafe code on this module, the unsafe code performs two tasks:
+//!     * Assure the compiler that data being referenced has the same lifetime
+//!       ass its owner (is self-referential).
+//!     * Cheat the compiler on ```Send + Sync``` impl in certain types because
+//!       we guarantee that those types are thread-safe to pass on.
 //!
 //! Both of those are safe because a Representation owns, uniquely, all its
 //! knowledge by the duration of it's own lifetime (data is never dropped, while
 //! the representation is alive), thereby is safe to point to the data being
 //! referenced from the representation or the query (for the duration of the query).
+//!
+//! Furthermore, is safe to to pass onto other threads because mutable data is never
+//! never leaked and it's shared state is controlled atomically.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
@@ -22,157 +26,17 @@ use std::sync::{Arc, RwLock};
 use rayon;
 use rayon::prelude::*;
 
-use super::repr::{Answer, Representation};
-use super::VarAssignment;
+use crate::agent::kb::{
+    inference::results::{GroundedResults, InfResults},
+    repr::{Answer, Representation},
+    VarAssignment,
+};
 use crate::agent::lang::{
     Assert, ClassDecl, FreeClsMemb, FreeClsOwner, FuncDecl, Grounded, GroundedFunc, GroundedMemb,
     LogSentence, ParseTree, Predicate, ProofResContext, SentID, Terminal, Time, Var, VarKind,
 };
 
-type ObjName<'a> = &'a str;
-type QueryPred = String;
-/// Whether there is a result or not, if it's true or false, and from what point in time
-pub type GroundedResult = Option<(bool, Option<Time>)>;
-type GroundedResults<'a> = HashMap<ObjName<'a>, GroundedResult>;
-type QueryResMemb<'a> = HashMap<ObjName<'a>, Vec<Arc<GroundedMemb>>>;
-type QueryResRels<'a> = HashMap<ObjName<'a>, Vec<Arc<GroundedFunc>>>;
-
-/// A succesful query will return an `InfResult` which contains all the answer data.
-/// The data can be manipulated and filtered throught various methods returning
-/// whatever is requested by the consumer.
-#[derive(Debug)]
-pub(super) struct InfResults<'b> {
-    grounded_queries: RwLock<HashMap<QueryPred, GroundedResults<'b>>>,
-    membership: RwLock<HashMap<&'b Var, QueryResMemb<'b>>>,
-    relationships: RwLock<HashMap<&'b Var, QueryResRels<'b>>>,
-    query: Arc<QueryProcessed<'b>>,
-}
-
-impl<'b> InfResults<'b> {
-    fn new(query: Arc<QueryProcessed<'b>>) -> InfResults<'b> {
-        InfResults {
-            grounded_queries: RwLock::new(HashMap::new()),
-            membership: RwLock::new(HashMap::new()),
-            relationships: RwLock::new(HashMap::new()),
-            query,
-        }
-    }
-
-    fn add_membership(&self, var: &'b Var, name: &'b str, membership: Arc<GroundedMemb>) {
-        let mut lock = self.membership.write().unwrap();
-        lock.entry(var)
-            .or_insert_with(HashMap::new)
-            .entry(name)
-            .or_insert_with(Vec::new)
-            .push(membership);
-    }
-
-    fn add_relationships(&self, var: &'b Var, rel: &[Arc<GroundedFunc>]) {
-        let mut lock = self.relationships.write().unwrap();
-        for func in rel {
-            for obj in func.get_args_names() {
-                let obj = unsafe { std::mem::transmute::<&str, &'b str>(obj) };
-                lock.entry(var)
-                    .or_insert_with(HashMap::new)
-                    .entry(obj)
-                    .or_insert_with(Vec::new)
-                    .push(func.clone());
-            }
-        }
-    }
-
-    fn add_grounded(&self, obj: &str, pred: &str, res: Option<(bool, Option<Time>)>) {
-        let obj = unsafe { std::mem::transmute::<&str, &'b str>(obj) };
-        let mut lock = self.grounded_queries.write().unwrap();
-        lock.entry(pred.to_string())
-            .or_insert_with(HashMap::new)
-            .insert(obj, res);
-    }
-
-    pub fn get_results_single(&self) -> Option<bool> {
-        let results = self.grounded_queries.read().unwrap();
-        if results.len() == 0 {
-            return None;
-        }
-        for r0 in results.values() {
-            for r1 in r0.values() {
-                if let Some((false, _)) = *r1 {
-                    return Some(false);
-                } else if r1.is_none() {
-                    return None;
-                }
-            }
-        }
-        Some(true)
-    }
-
-    pub fn get_results_multiple(self) -> HashMap<QueryPred, HashMap<String, GroundedResult>> {
-        // WARNING: ObjName<'a> may (truly) outlive the content, own the &str first
-        let orig: &mut HashMap<QueryPred, GroundedResults<'b>> =
-            &mut *self.grounded_queries.write().unwrap();
-        let mut res = HashMap::new();
-        for (qpred, r) in orig.drain() {
-            let r = HashMap::from_iter(r.into_iter().map(|(k, v)| (k.to_string(), v)));
-            res.insert(qpred, r);
-        }
-        res
-    }
-
-    pub fn get_memberships(&self) -> HashMap<ObjName<'b>, Vec<&'b GroundedMemb>> {
-        let lock = self.membership.read().unwrap();
-        let mut res: HashMap<ObjName<'b>, Vec<&GroundedMemb>> = HashMap::new();
-        for preds in lock.values() {
-            for members in preds.values() {
-                for gr in members {
-                    let gr = unsafe { &*(&**gr as *const GroundedMemb) as &'b GroundedMemb };
-                    if res.contains_key(gr.get_name()) {
-                        let prev = res.get_mut(gr.get_name()).unwrap();
-                        prev.push(gr);
-                    } else {
-                        let mut new = vec![];
-                        new.push(gr);
-                        res.insert(gr.get_name(), new);
-                    }
-                }
-            }
-        }
-        res
-    }
-
-    pub fn get_relationships(&self) -> HashMap<ObjName<'b>, Vec<&'b GroundedFunc>> {
-        let lock = self.relationships.read().unwrap();
-        let mut res: HashMap<ObjName<'b>, HashSet<*const GroundedFunc>> = HashMap::new();
-        for relations in lock.values() {
-            for relation_ls in relations.values() {
-                for grfunc in relation_ls {
-                    for name in grfunc.get_args_names() {
-                        unsafe {
-                            let name = mem::transmute::<&str, &'b str>(name);
-                            if res.contains_key(name) {
-                                let prev = res.get_mut(name).unwrap();
-                                prev.insert(&**grfunc as *const GroundedFunc);
-                            } else {
-                                let mut new = HashSet::new();
-                                new.insert(&**grfunc as *const GroundedFunc);
-                                res.insert(name, new);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        HashMap::from_iter(res.into_iter().map(|(k, l)| {
-            (
-                k,
-                l.into_iter()
-                    .map(|v| unsafe { &*v as &'b GroundedFunc })
-                    .collect::<Vec<_>>(),
-            )
-        }))
-    }
-}
-
-pub(super) struct Inference<'a> {
+pub(in crate::agent::kb) struct Inference<'a> {
     query: Arc<QueryProcessed<'a>>,
     kb: &'a Representation,
     depth: usize,
@@ -507,7 +371,7 @@ struct ValidAnswer {
 }
 
 #[derive(Debug)]
-pub(super) struct IExprResult {
+pub struct IExprResult {
     result: Option<bool>,
     newest_grfact: Time,
     antecedents: Vec<Grounded>,
@@ -888,7 +752,7 @@ impl<'a> InfTrial<'a> {
     }
 }
 
-pub(super) fn meet_sent_req<'a>(
+pub(in crate::agent::kb) fn meet_sent_req<'a>(
     rep: &'a Representation,
     req: &'a HashMap<&Var, Vec<&'a Assert>>,
 ) -> Option<HashMap<&'a Var, Vec<Arc<VarAssignment<'a>>>>> {
@@ -997,7 +861,7 @@ pub(super) fn meet_sent_req<'a>(
 }
 
 #[derive(Debug)]
-pub(super) struct ArgsProduct<'a> {
+pub(in crate::agent::kb) struct ArgsProduct<'a> {
     indexes: HashMap<&'a Var, (usize, bool)>,
     input: HashMap<&'a Var, Vec<Arc<VarAssignment<'a>>>>,
     curr: &'a Var,
@@ -1144,7 +1008,7 @@ pub(in crate::agent) enum QueryInput {
 }
 
 #[derive(Debug)]
-struct QueryProcessed<'b> {
+pub(in crate::agent::kb) struct QueryProcessed<'b> {
     cls_queries_free: HashMap<&'b Var, Vec<&'b FreeClsMemb>>,
     cls_queries_grounded: HashMap<&'b str, Vec<Arc<GroundedMemb>>>,
     cls_memb_query: HashMap<&'b Var, Vec<&'b FreeClsOwner>>,

@@ -6,8 +6,8 @@
 //! 3) Fixing those inconsitences.
 
 pub(in crate::agent) use self::errors::BmsError;
-use super::kb::{repr::Representation, QueryInput};
-use super::lang::{Grounded, GroundedRef, ProofResContext, SentID, Time};
+use super::{inference::QueryInput, repr::Representation};
+use crate::agent::lang::{Grounded, GroundedRef, ProofResContext, SentID, Time};
 
 use chrono::Utc;
 

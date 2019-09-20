@@ -24,7 +24,7 @@ use super::{
     parser::{ASTNode, AssertBorrowed, LogicOperator, Scope, VarDeclBorrowed},
     ParseErrF, Time,
 };
-use crate::agent::{bms::BmsWrapper, kb::repr::Representation, kb::VarAssignment};
+use crate::agent::{kb::bms::BmsWrapper, kb::repr::Representation, kb::VarAssignment};
 
 pub use self::errors::LogSentErr;
 pub(in crate::agent) type SentID = usize;

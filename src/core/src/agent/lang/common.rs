@@ -17,7 +17,7 @@ use super::{
     Time,
 };
 use crate::agent::{
-    bms::BmsWrapper,
+    kb::bms::BmsWrapper,
     kb::{repr::Representation, VarAssignment},
 };
 use crate::FLOAT_EQ_ULPS;

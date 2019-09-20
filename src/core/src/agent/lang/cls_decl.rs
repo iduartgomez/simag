@@ -1,13 +1,10 @@
 use std::collections::HashMap;
-use std::sync::{Arc, atomic::AtomicBool};
+use std::sync::{atomic::AtomicBool, Arc};
 
 use super::*;
-use crate::agent::{
-    bms::BmsWrapper,
-    kb::{repr::Representation, VarAssignment},
-};
+use crate::agent::kb::{bms::BmsWrapper, repr::Representation, VarAssignment};
 use common::*;
-use logsent::{ParseContext, LogSentResolution};
+use logsent::{LogSentResolution, ParseContext};
 use parser::ClassDeclBorrowed;
 
 #[derive(Debug, Clone)]
@@ -322,7 +319,7 @@ impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
         time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
         context: &mut T,
     ) {
-        use crate::agent::bms::ReplaceMode;
+        use crate::agent::kb::bms::ReplaceMode;
 
         let time_data = self.get_own_time_data(time_assign, None);
         for a in &self.args {
@@ -340,10 +337,7 @@ impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
             let t = time_data.clone();
             t.replace_value(grfact.get_value(), ReplaceMode::Substitute);
             grfact.overwrite_time_data(&t);
-            context.push_grounded_cls(
-                grfact.clone(),
-                grfact.bms.as_ref().unwrap().get_last_date(),
-            );
+            context.push_grounded_cls(grfact.clone(), grfact.bms.as_ref().unwrap().get_last_date());
             agent.up_membership(&Arc::new(grfact), Some(context))
         }
     }

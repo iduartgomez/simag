@@ -2,18 +2,20 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use super::repr::Representation;
-use super::VarAssignment;
-use crate::agent::lang::{
-    Grounded, GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ProofResContext, SentID, Time,
-    Var,
+use crate::agent::{
+    kb::VarAssignment,
+    lang::{
+        Grounded, GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ProofResContext, SentID,
+        Time, Var,
+    },
+    Representation,
 };
 
 /// Takes a grounded fact and checks out that is consistent with the existing rules
 /// in the representation.
 ///
 /// If it's not the case, then false is retuned.
-pub(super) fn rules_inference_lookahead(
+pub(in crate::agent::kb) fn rules_inference_lookahead(
     agent: &Representation,
     rules: Vec<Arc<LogSentence>>,
     grounded: &GroundedRef,
@@ -47,7 +49,10 @@ pub(super) fn rules_inference_lookahead(
 ///
 /// If it's not the case, then changes are rolled back (from newest to oldest) until
 /// they are consistent with the new rule.
-pub(super) fn rules_inference_rollback(agent: &Representation, rule: &Arc<LogSentence>) {
+pub(in crate::agent::kb) fn rules_inference_rollback(
+    agent: &Representation,
+    rule: &Arc<LogSentence>,
+) {
     // test the rule
     let context = RuleResContext::new(&*rule, None);
     // if the rule has any special var, get proper assignments

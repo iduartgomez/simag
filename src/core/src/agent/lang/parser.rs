@@ -138,40 +138,40 @@ pub(in crate::agent) enum ParseErrB<'a> {
 
 impl<'a> fmt::Display for ParseErrB<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let msg = unsafe {
+        let msg = 
             match *self {
                 ParseErrB::SyntaxErrorU => "syntax error".to_string(),
                 //ParseErrB::SyntaxError(Box<ParseErrB<'a>>) => {}
                 ParseErrB::SyntaxErrorPos(arr) => {
-                    format!("syntax error at:\n{}", str::from_utf8_unchecked(arr))
+                    format!("syntax error at:\n{}", str::from_utf8(arr).unwrap())
                 }
                 ParseErrB::NotScope(arr) => format!(
                     "syntax error, scope is invalid or not found:\n{}",
-                    str::from_utf8_unchecked(arr)
+                    str::from_utf8(arr).unwrap()
                 ),
                 ParseErrB::ImbalDelim(arr) => format!(
                     "syntax error, 
                              open delimiters:\n{}",
-                    str::from_utf8_unchecked(arr)
+                    str::from_utf8(arr).unwrap()
                 ),
                 ParseErrB::IllegalChain(arr) => format!(
                     "syntax error,
                              incomplete operator chain:\n{}",
-                    str::from_utf8_unchecked(arr)
+                    str::from_utf8(arr).unwrap()
                 ),
                 ParseErrB::NonTerminal(arr) => format!(
                     "syntax error,
                              illegal character in terminal position:\n{}",
-                    str::from_utf8_unchecked(arr)
+                    str::from_utf8(arr).unwrap()
                 ),
                 ParseErrB::NonNumber(arr) => format!(
                     "syntax error,
                              illegal character found when parsing a number:v{}",
-                    str::from_utf8_unchecked(arr)
+                    str::from_utf8(arr).unwrap()
                 ),
                 ParseErrB::UnclosedComment => "syntax error, open comment delimiter".to_string(),
             }
-        };
+        ;
         write!(f, "{}", msg)
     }
 }
@@ -904,11 +904,9 @@ pub(in crate::agent) enum OpArgTermBorrowed<'a> {
 
 impl<'a> std::fmt::Debug for OpArgTermBorrowed<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        unsafe {
-            match self {
-                OpArgTermBorrowed::Terminal(r) => write!(f, "OpArg::Term({})",str::from_utf8_unchecked(r)),
-                OpArgTermBorrowed::String(r) => write!(f, "OpArg::Str({})",str::from_utf8_unchecked(r)),
-            }
+        match self {
+            OpArgTermBorrowed::Terminal(r) => write!(f, "OpArg::Term({})",str::from_utf8(r).unwrap()),
+            OpArgTermBorrowed::String(r) => write!(f, "OpArg::Str({})",str::from_utf8(r).unwrap()),
         }
     }
 }
@@ -1024,7 +1022,7 @@ impl<'a> TerminalBorrowed<'a> {
 
 impl<'a> std::fmt::Debug for TerminalBorrowed<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "Term({})", unsafe { str::from_utf8_unchecked(self.0) })
+        write!(f, "Term({})", str::from_utf8(self.0).unwrap())
     }
 }
 
@@ -1344,9 +1342,7 @@ mod test {
     macro_rules! assert_done_or_err {
         ($i:ident) => {{
             if let IResult::Error(nom::Err::Position(ref t, ref v)) = $i {
-                println!("\n@error Err::{:?}: {:?}", t, unsafe {
-                    str::from_utf8_unchecked(v)
-                });
+                println!("\n@error Err::{:?}: {:?}", t, str::from_utf8(v).unwrap());
             }
             assert!(!$i.is_err());
         }};

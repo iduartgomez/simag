@@ -37,7 +37,7 @@ mod errors {
     use super::common::TimeFnErr;
     use super::logsent::LogSentErr;
     use super::parser::ParseErrB;
-    use crate::agent::bms::BmsError;
+    use crate::agent::kb::bms::BmsError;
 
     use std::fmt;
 
