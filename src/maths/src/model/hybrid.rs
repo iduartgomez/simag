@@ -16,7 +16,7 @@ pub trait HybridNode<'a>: ContNode<'a> + Sized {
     /// Makes an hybrid model node from a discrete variable.
     fn new_with_discrete(var: &'a Self::Discrete, pos: usize) -> Result<Self, ()>;
     fn was_discrete(&self) -> bool;
-    fn get_disc_dist(&self) -> Option<&'a Self::Discrete>;
+    fn get_disc_dist(&self) -> Option<&Self::Discrete>;
     fn inverse_cdf(&self, p: f64) -> u8;
     fn remove_disc_parent(&self, var: &Self::Discrete);
 }
@@ -104,13 +104,11 @@ where
             .iter()
             .position(|n| (&**n).get_dist() == var)
         {
-            if pos < self.vars.nodes.len() - 1 {
-                let parent = &self.vars.nodes[pos];
-                for node in &self.vars.nodes[pos + 1..] {
-                    node.set_position(node.position() - 1);
-                    node.remove_parent(var);
-                    parent.remove_child(node.get_dist());
-                }
+            let parent = &self.vars.nodes[pos];
+            for node in &self.vars.nodes[pos + 1..] {
+                node.set_position(node.position() - 1);
+                node.remove_parent(var);
+                parent.remove_child(node.get_dist());
             }
             self.vars.nodes.remove(pos);
         };
@@ -120,7 +118,7 @@ where
     /// have an other parent.
     pub fn remove_disc_var(&mut self, var: &'a <N as HybridNode<'a>>::Discrete) {
         if let Some(pos) = self.vars.nodes.iter().position(|n| {
-            if let Some(d) = n.get_disc_dist() {
+            if let Some(d) = (&**n).get_disc_dist() {
                 d == var
             } else {
                 false
@@ -288,7 +286,7 @@ where
         self.was_discrete
     }
 
-    fn get_disc_dist(&self) -> Option<&'a D> {
+    fn get_disc_dist(&self) -> Option<&D> {
         self.disc_dist
     }
 
@@ -546,7 +544,8 @@ where
                         self.underlying[*b].clone(),
                         None,
                     )
-                }).collect();
+                })
+                .collect();
             self.edges.append(&mut edges);
         }
     }
@@ -602,7 +601,8 @@ where
                 } else {
                     None
                 }
-            }).collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
     }
 }
 

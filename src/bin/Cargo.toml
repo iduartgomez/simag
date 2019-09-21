@@ -1,0 +1,15 @@
+[package]
+name = "simag_binaries"
+version = "0.0.1"
+authors = ["Ignacio Duart Gómez <iduartgomez@gmail.com>"]
+autobins = false
+edition = "2018"
+
+[[bin]]
+name = "simag_repl"
+path = "repl.rs"
+
+[dependencies]
+simag_core = { path = "../core" }
+simag_maths = { path = "../maths" }
+termion = "^1.5"

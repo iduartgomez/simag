@@ -6,13 +6,13 @@ autobins = false
 edition = "2018"
 
 [[bin]]
-name = "repl"
-path = "src/bin/repl.rs"
+name="simag"
+path = "src/main.rs"
 
 [dependencies]
 simag_core = { path = "src/core" }
 simag_maths = { path = "src/maths" }
-termion = "^1.5"
+simag_binaries = { path = "src/bin" }
 
 [workspace]
-members = ["src/core", "src/maths"]
+members = ["src/core", "src/maths", "src/bin"]

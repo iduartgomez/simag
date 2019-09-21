@@ -74,9 +74,6 @@ impl<'a> ExactNormalized<'a> {
     where
         N: HybridNode<'a>,
     {
-        use model::ContNode;
-        //use super::partial_correlation;
-
         const PI_DIV_SIX: f64 = PI / 6.0;
         // construct a std normal variables net and the joint partial correlation matrix
         // we do this by:

@@ -204,7 +204,7 @@ fn repr_inference_ask_func() {
 }
 
 #[test]
-fn repr_inference_time_calc() {
+fn repr_inference_time_calc_1() {
     // Test 01
     /*
     let test_01 = "
@@ -233,9 +233,9 @@ fn repr_inference_time_calc() {
         ( meat[$M1,u=1] )
         ( fat(time=\"2014-07-05T10:25:00Z\")[$Pancho,u=1] )
     ";
-    let q02_01 = "(fn::eat(time='Now')[$M1,u=1;$Pancho])";
     let mut rep = Representation::new();
     rep.tell(test_02).unwrap();
+    let q02_01 = "(fn::eat(time='Now')[$M1,u=1;$Pancho])";
     let result = rep.ask(q02_01).unwrap().get_results_single();
     assert_eq!(result, Some(true));
 

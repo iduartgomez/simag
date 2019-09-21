@@ -5,7 +5,7 @@ authors = ["IDG <iduartgomez@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-float-cmp = "^0.2.0"
+float-cmp = "0.5.2"
 nom = { version = "^2.1.0", features = ["verbose-errors"] }
 chrono = "^0.4.0"
 rayon = "^1.2.0"

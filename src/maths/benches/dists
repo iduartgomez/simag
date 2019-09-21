@@ -7,7 +7,7 @@ mod sample {
     #[bench]
     fn categorical(b: &mut Bencher) {
         let mut rng = RGSLRng::new();
-        let d = Categorical::new(vec![0.00392155_f64; 255]).unwrap();
+        let d = Categorical::new(vec![0.003_921_55_f64; 255]).unwrap();
         b.iter(|| d.sample(&mut rng));
     }
 

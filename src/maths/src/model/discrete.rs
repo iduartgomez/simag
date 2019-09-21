@@ -185,7 +185,7 @@ where
                     node.set_position(node.position() - 1);
                     let cpt = probs
                         .remove(node.get_dist())
-                        .ok_or(format!("CPT not provided for var: {:?}", node.get_dist()))?;
+                        .ok_or_else(|| format!("CPT not provided for var: {:?}", node.get_dist()))?;
                     node.remove_parent(var);
                     node.build_cpt(cpt, 1)?;
                     parent.remove_child(node.get_dist());
