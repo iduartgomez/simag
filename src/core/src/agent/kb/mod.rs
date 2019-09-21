@@ -9,9 +9,9 @@ pub(super) mod repr;
 #[cfg(test)]
 mod test;
 
+use super::lang::{GroundedFunc, GroundedMemb};
 use std::collections::HashMap;
 use std::sync::Arc;
-use super::lang::{GroundedFunc, GroundedMemb};
 
 #[derive(Debug, Clone)]
 pub(in crate::agent) struct VarAssignment<'a> {

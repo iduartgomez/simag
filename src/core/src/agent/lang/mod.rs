@@ -1,6 +1,8 @@
 mod cls_decl;
 mod common;
 mod fn_decl;
+mod gr_func;
+mod gr_memb;
 mod logsent;
 mod parser;
 
@@ -9,11 +11,13 @@ use std::collections::VecDeque;
 
 pub(super) use self::cls_decl::ClassDecl;
 pub(super) use self::common::{
-    Assert, FreeClsMemb, FreeClsOwner, Grounded, GroundedFunc, GroundedMemb, GroundedRef,
-    Predicate, Terminal, Var, VarKind,
+    Assert, FreeClassMembership, FreeClsMemb, Grounded, GroundedRef, Predicate, Terminal, Var,
+    VarKind,
 };
 pub(super) use self::errors::ParseErrF;
 pub(super) use self::fn_decl::FuncDecl;
+pub(super) use self::gr_func::GroundedFunc;
+pub(super) use self::gr_memb::GroundedMemb;
 pub(super) use self::logsent::{LogSentence, ProofResContext, SentID};
 pub(super) use self::parser::{CompOperator, ParseTree};
 

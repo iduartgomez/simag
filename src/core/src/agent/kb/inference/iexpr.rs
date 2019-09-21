@@ -32,8 +32,9 @@ use crate::agent::kb::{
     VarAssignment,
 };
 use crate::agent::lang::{
-    Assert, ClassDecl, FreeClsMemb, FreeClsOwner, FuncDecl, Grounded, GroundedFunc, GroundedMemb,
-    LogSentence, ParseTree, Predicate, ProofResContext, SentID, Terminal, Time, Var, VarKind,
+    Assert, ClassDecl, FreeClassMembership, FreeClsMemb, FuncDecl, Grounded, GroundedFunc,
+    GroundedMemb, LogSentence, ParseTree, Predicate, ProofResContext, SentID, Terminal, Time, Var,
+    VarKind,
 };
 
 pub(in crate::agent::kb) struct Inference<'a> {
@@ -1011,7 +1012,7 @@ pub(in crate::agent) enum QueryInput {
 pub(in crate::agent::kb) struct QueryProcessed<'b> {
     cls_queries_free: HashMap<&'b Var, Vec<&'b FreeClsMemb>>,
     cls_queries_grounded: HashMap<&'b str, Vec<Arc<GroundedMemb>>>,
-    cls_memb_query: HashMap<&'b Var, Vec<&'b FreeClsOwner>>,
+    cls_memb_query: HashMap<&'b Var, Vec<&'b FreeClassMembership>>,
     func_queries_free: HashMap<&'b Var, Vec<&'b FuncDecl>>,
     func_queries_grounded: Vec<Arc<GroundedFunc>>,
     func_memb_query: HashMap<&'b Var, Vec<&'b FuncDecl>>,
@@ -1068,7 +1069,7 @@ impl<'b> QueryProcessed<'b> {
                 Terminal::FreeTerm(_) => {
                     for a in cdecl.get_args() {
                         match a {
-                            Predicate::FreeClsOwner(t) => {
+                            Predicate::FreeClassMembership(t) => {
                                 if let Some(times) = cdecl.get_time_payload(None) {
                                     t.overwrite_time_data(&times);
                                 }
@@ -1194,7 +1195,7 @@ impl<'b> QueryProcessed<'b> {
     }
 
     #[inline]
-    fn ask_class_memb(&mut self, term: &'b FreeClsOwner) {
+    fn ask_class_memb(&mut self, term: &'b FreeClassMembership) {
         self.cls_memb_query
             .entry(term.get_var_ref())
             .or_insert_with(Vec::new)

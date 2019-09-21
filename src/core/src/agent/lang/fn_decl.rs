@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, atomic::AtomicBool};
+use std::sync::{atomic::AtomicBool, Arc};
 
 use super::*;
 use crate::agent::{
@@ -7,7 +7,7 @@ use crate::agent::{
     kb::{repr::Representation, VarAssignment},
 };
 use common::*;
-use logsent::{ParseContext, LogSentResolution};
+use logsent::{LogSentResolution, ParseContext};
 use parser::{FuncDeclBorrowed, FuncVariants};
 
 #[derive(Debug, Clone)]
@@ -65,7 +65,7 @@ impl<'a> FuncDecl {
         for (i, a) in args.drain(..).enumerate() {
             let mut n_a = match a {
                 Predicate::GroundedMemb(term) => term,
-                Predicate::FreeClsMemb(_) | Predicate::FreeClsOwner(_) => panic!(),
+                Predicate::FreeClsMemb(_) | Predicate::FreeClassMembership(_) => panic!(),
             };
             n_a.bms = None;
             if i == 0 {

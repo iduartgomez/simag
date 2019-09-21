@@ -12,9 +12,9 @@ use crate::agent::kb::{
     VarAssignment,
 };
 use crate::agent::lang::{
-    logic_parser, Assert, ClassDecl, CompOperator, FreeClsMemb, FreeClsOwner, FuncDecl, Grounded,
-    GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ParseErrF, ParseTree, Predicate,
-    ProofResContext, Var,
+    logic_parser, Assert, ClassDecl, CompOperator, FreeClassMembership, FreeClsMemb, FuncDecl,
+    Grounded, GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ParseErrF, ParseTree,
+    Predicate, ProofResContext, Var,
 };
 use crate::FLOAT_EQ_ULPS;
 
@@ -578,7 +578,7 @@ impl Representation {
 
     pub(in crate::agent) fn get_class_membership(
         &self,
-        subject: &FreeClsOwner,
+        subject: &FreeClassMembership,
     ) -> Vec<Arc<GroundedMemb>> {
         let name = subject.get_name();
         if name.starts_with('$') {
@@ -806,7 +806,7 @@ impl Entity {
         }
     }
 
-    fn get_class_membership(&self, compare: &FreeClsOwner) -> Vec<Arc<GroundedMemb>> {
+    fn get_class_membership(&self, compare: &FreeClassMembership) -> Vec<Arc<GroundedMemb>> {
         let lock = self.classes.read().unwrap();
         lock.values()
             .filter(|x| compare.filter_grounded(&**x))
@@ -1108,7 +1108,7 @@ impl Class {
         }
     }
 
-    fn get_class_membership(&self, compare: &FreeClsOwner) -> Vec<Arc<GroundedMemb>> {
+    fn get_class_membership(&self, compare: &FreeClassMembership) -> Vec<Arc<GroundedMemb>> {
         let lock = self.classes.read().unwrap();
         lock.values()
             .filter(|x| compare.filter_grounded(&**x))
