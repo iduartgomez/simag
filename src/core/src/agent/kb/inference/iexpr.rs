@@ -23,6 +23,7 @@ use std::mem;
 use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 
+use chrono::Utc;
 use rayon;
 use rayon::prelude::*;
 
@@ -379,6 +380,7 @@ pub struct IExprResult {
     grounded_func: Vec<(GroundedFunc, Time)>,
     grounded_cls: Vec<(GroundedMemb, Time)>,
     sent_id: SentID,
+    global_subtitution_time: Time,
     args: ProofArgs,
     node: usize, // *const ProofNode<'a>
     sub_mode: bool,
@@ -392,6 +394,7 @@ impl IExprResult {
             node: node as *const ProofNode as usize,
             newest_grfact: chrono::MIN_DATE.and_hms(0, 0, 0),
             sent_id: node.proof.get_id(),
+            global_subtitution_time: Utc::now(),
             antecedents: vec![],
             grounded_func: vec![],
             grounded_cls: vec![],
@@ -401,6 +404,10 @@ impl IExprResult {
 }
 
 impl ProofResContext for IExprResult {
+    fn get_production_time(&self) -> Time {
+        self.global_subtitution_time
+    }
+
     fn substituting(&mut self) {
         self.sub_mode = true;
     }
@@ -783,45 +790,50 @@ pub(in crate::agent::kb) fn meet_sent_req<'a>(
             let fl = mem::transmute::<&[&FuncDecl], &'a [&'a FuncDecl]>(&fl[..]);
             (cl, fl)
         };
+
         // meet_cls_req: HashMap<&str, Vec<Arc<GroundedMemb>>>
         let meet_cls_req = rep.by_class(class_list);
-        // meet_func_req: HashMap<&str, HashMap<&str, Vec<Arc<GroundedFunc>>>>
-        let mut meet_func_req = rep.by_relationship(funcs_list);
-        let mut i0: HashMap<&str, usize> = HashMap::new();
+        let mut meeting_class_req: HashMap<&str, usize> = HashMap::new();
         for v in meet_cls_req.values() {
             for name in v.iter().map(|x| unsafe {
                 let t = &*(&**x as *const GroundedMemb);
                 t.get_name()
             }) {
-                let cnt: &mut usize = i0.entry(name).or_insert(0);
+                let cnt: &mut usize = meeting_class_req.entry(name).or_insert(0);
                 *cnt += 1;
             }
         }
-        let mut i1: HashMap<&str, usize> = HashMap::new();
+
+        // meet_func_req: HashMap<&str, HashMap<&str, Vec<Arc<GroundedFunc>>>>
+        let mut meet_func_req = rep.by_relationship(funcs_list);
+        let mut meeting_func_req: HashMap<&str, usize> = HashMap::new();
         for v in meet_func_req.values() {
             for name in v.iter().map(|(name, _)| name) {
-                let cnt: &mut usize = i1.entry(name).or_insert(0);
+                let cnt: &mut usize = meeting_func_req.entry(name).or_insert(0);
                 *cnt += 1;
             }
         }
-        let i2: Vec<_>;
-        let cls_filter = i0
-            .iter()
-            .filter(|&(_, cnt)| *cnt == class_list.len())
-            .map(|(k, _)| *k);
-        let func_filter = i1
-            .iter()
-            .filter(|&(_, cnt)| *cnt == funcs_list.len())
-            .map(|(k, _)| *k);
-        if !meet_func_req.is_empty() && !meet_cls_req.is_empty() {
-            let c1: HashSet<&str> = cls_filter.collect();
-            i2 = func_filter.filter_map(|n0| c1.get(&n0)).cloned().collect();
-        } else if !meet_func_req.is_empty() {
-            i2 = func_filter.collect();
-        } else {
-            i2 = cls_filter.collect();
-        }
-        for name in i2 {
+
+        let filtered_entities: Vec<_> = {
+            let cls_filter = meeting_class_req
+                .iter()
+                .filter(|&(_, cnt)| *cnt == class_list.len())
+                .map(|(k, _)| *k);
+            let func_filter = meeting_func_req
+                .iter()
+                .filter(|&(_, cnt)| *cnt == funcs_list.len())
+                .map(|(k, _)| *k);
+            if !meet_func_req.is_empty() && !meet_cls_req.is_empty() {
+                let c1: HashSet<&str> = cls_filter.collect();
+                func_filter.filter_map(|n0| c1.get(&n0)).cloned().collect()
+            } else if !meet_func_req.is_empty() {
+                func_filter.collect()
+            } else {
+                cls_filter.collect()
+            }
+        };
+
+        for name in filtered_entities {
             let mut gr_memb: HashMap<&str, Arc<GroundedMemb>> = HashMap::new();
             let mut gr_relations: HashMap<&str, Vec<Arc<GroundedFunc>>> = HashMap::new();
             for ls in meet_cls_req.values() {

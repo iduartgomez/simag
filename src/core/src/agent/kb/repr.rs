@@ -115,16 +115,7 @@ impl Representation {
         let queries = logic_parser(source, false, self.threads);
         if queries.is_ok() {
             let pres = QueryInput::ManyQueries(queries.unwrap());
-            let mut inf =
-                match Inference::try_new(self, pres, usize::max_value(), false, self.threads) {
-                    Ok(inf) => inf,
-                    Err(()) => return Err(QueryErr::QueryErr),
-                };
-            {
-                let inf_r = unsafe { &mut *(&mut inf as *mut Inference) };
-                inf_r.infer_facts();
-            }
-            Ok(inf.get_results())
+            self.ask_processed(pres, usize::max_value(), false)
         } else {
             Err(QueryErr::ParseErr(queries.unwrap_err()))
         }
@@ -838,7 +829,11 @@ impl Entity {
             let lock = self.classes.read().unwrap();
             let current = lock.get(name).unwrap();
             if let Some(context) = context {
-                current.update(agent, &*grounded, Some(context.get_id()));
+                current.update(
+                    agent,
+                    &*grounded,
+                    Some((context.get_id(), context.get_production_time())),
+                );
                 BmsWrapper::update_producers(
                     &Grounded::Class(Arc::downgrade(&current.clone())),
                     context,
@@ -851,7 +846,7 @@ impl Entity {
             let mut lock = self.classes.write().unwrap();
             if let Some(context) = context {
                 let bms = grounded.bms.as_ref().unwrap();
-                bms.set_last_rec_producer(Some(context.get_id()));
+                bms.set_last_rec_producer(Some((context.get_id(), context.get_production_time())));
                 BmsWrapper::update_producers(
                     &Grounded::Class(Arc::downgrade(&grounded.clone())),
                     context,
@@ -979,7 +974,11 @@ impl Entity {
                 for f in funcs_type {
                     if f.comparable(&*func) {
                         if let Some(context) = context {
-                            f.update(agent, &*func, Some(context.get_id()));
+                            f.update(
+                                agent,
+                                &*func,
+                                Some((context.get_id(), context.get_production_time())),
+                            );
                             BmsWrapper::update_producers(
                                 &Grounded::Function(Arc::downgrade(&f.clone())),
                                 context,
@@ -995,7 +994,10 @@ impl Entity {
             if !found_rel {
                 let mut lock = self.relations.write().unwrap();
                 if let Some(context) = context {
-                    func.bms.set_last_rec_producer(Some(context.get_id()));
+                    func.bms.set_last_rec_producer(Some((
+                        context.get_id(),
+                        context.get_production_time(),
+                    )));
                     BmsWrapper::update_producers(
                         &Grounded::Function(Arc::downgrade(&func.clone())),
                         context,
@@ -1010,7 +1012,8 @@ impl Entity {
         } else {
             let mut lock = self.relations.write().unwrap();
             if let Some(context) = context {
-                func.bms.set_last_rec_producer(Some(context.get_id()));
+                func.bms
+                    .set_last_rec_producer(Some((context.get_id(), context.get_production_time())));
                 BmsWrapper::update_producers(
                     &Grounded::Function(Arc::downgrade(&func.clone())),
                     context,
@@ -1141,7 +1144,11 @@ impl Class {
             let lock = self.classes.read().unwrap();
             let current = lock.get(name).unwrap();
             if let Some(context) = context {
-                current.update(agent, &*grounded, Some(context.get_id()));
+                current.update(
+                    agent,
+                    &*grounded,
+                    Some((context.get_id(), context.get_production_time())),
+                );
                 BmsWrapper::update_producers(
                     &Grounded::Class(Arc::downgrade(&current.clone())),
                     context,
@@ -1154,7 +1161,7 @@ impl Class {
             let mut lock = self.classes.write().unwrap();
             if let Some(context) = context {
                 let bms = grounded.bms.as_ref().unwrap();
-                bms.set_last_rec_producer(Some(context.get_id()));
+                bms.set_last_rec_producer(Some((context.get_id(), context.get_production_time())));
                 BmsWrapper::update_producers(
                     &Grounded::Class(Arc::downgrade(&grounded.clone())),
                     context,
@@ -1352,7 +1359,11 @@ impl Class {
                 for f in funcs_type {
                     if f.comparable(&*func) {
                         if let Some(context) = context {
-                            f.update(agent, &*func, Some(context.get_id()));
+                            f.update(
+                                agent,
+                                &*func,
+                                Some((context.get_id(), context.get_production_time())),
+                            );
                             BmsWrapper::update_producers(
                                 &Grounded::Function(Arc::downgrade(&f.clone())),
                                 context,
@@ -1368,7 +1379,10 @@ impl Class {
             if !found_rel {
                 let mut lock = self.relations.write().unwrap();
                 if let Some(context) = context {
-                    func.bms.set_last_rec_producer(Some(context.get_id()));
+                    func.bms.set_last_rec_producer(Some((
+                        context.get_id(),
+                        context.get_production_time(),
+                    )));
                     BmsWrapper::update_producers(
                         &Grounded::Function(Arc::downgrade(&func.clone())),
                         context,
@@ -1383,7 +1397,8 @@ impl Class {
         } else {
             let mut lock = self.relations.write().unwrap();
             if let Some(context) = context {
-                func.bms.set_last_rec_producer(Some(context.get_id()));
+                func.bms
+                    .set_last_rec_producer(Some((context.get_id(), context.get_production_time())));
                 BmsWrapper::update_producers(
                     &Grounded::Function(Arc::downgrade(&func.clone())),
                     context,

@@ -659,7 +659,10 @@ impl<'a> OpArg {
                 bms.new_record(Some(*time0), value, None);
                 bms.new_record(Some(*time1), None, None);
             }
-            OpArg::TimeVarAssign(var) => return (&**(assignments.get(&**var).unwrap())).clone(),
+            OpArg::TimeVarAssign(var) => {
+                let assignment = &**(assignments.get(&**var).unwrap());
+                return assignment.clone();
+            }
             _ => panic!(),
         }
         bms
@@ -673,10 +676,12 @@ impl<'a> OpArg {
             OpArg::Generic(ref term, Some((ref op, ref comp))) => (term, op, comp),
             _ => return false,
         };
+
         let var0 = term.get_var_ref();
-        let arg0 = assignments.get(&*var0).unwrap().get_last_date();
         let var1 = comp.get_var_ref();
+        let arg0 = assignments.get(&*var0).unwrap().get_last_date();
         let arg1 = assignments.get(&*var1).unwrap().get_last_date();
+
         match *op {
             CompOperator::Equal => {
                 let comp_diff = Duration::seconds(TIME_EQ_DIFF);
@@ -879,7 +884,7 @@ pub(in crate::agent) struct Var {
     pub kind: VarKind,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(in crate::agent) enum VarKind {
     Normal,
     Time,

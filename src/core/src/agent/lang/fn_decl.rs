@@ -408,7 +408,8 @@ impl<'a> FuncDecl {
 
     fn time_resolution(&self, assignments: &HashMap<&Var, Arc<BmsWrapper>>) -> Option<bool> {
         for arg in self.op_args.as_ref().unwrap() {
-            if !arg.compare_time_args(assignments) {
+            let not_time_eq = !arg.compare_time_args(assignments);
+            if not_time_eq {
                 return Some(false);
             }
         }

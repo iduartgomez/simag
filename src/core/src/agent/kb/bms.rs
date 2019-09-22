@@ -38,11 +38,23 @@ impl BmsWrapper {
     }
 
     /// Add a new record to this BMS.
-    pub fn new_record(&self, time: Option<Time>, value: Option<f32>, was_produced: Option<SentID>) {
+    pub fn new_record(
+        &self,
+        time: Option<Time>,
+        value: Option<f32>,
+        was_produced: Option<(SentID, Time)>,
+    ) {
+        let production_time = match was_produced {
+            Some((_, production_time)) => Some(production_time),
+            None => None,
+        };
+        
         let time = match time {
+            Some(_) if production_time.is_some() => production_time.unwrap(),
             Some(time) => time,
             None => Utc::now(),
         };
+
         let record = BmsRecord {
             produced: vec![],
             time,
@@ -61,7 +73,7 @@ impl BmsWrapper {
         owner: &GroundedRef,
         agent: &Representation,
         data: &BmsWrapper,
-        was_produced: Option<SentID>,
+        was_produced: Option<(SentID, Time)>,
     ) {
         let ask_processed = |entry: &(Grounded, Option<f32>), cmp_rec: &Time| {
             match *entry {
@@ -326,14 +338,78 @@ impl BmsWrapper {
     }
 
     /// Set a producer for the last truth value
-    pub fn set_last_rec_producer(&self, produced: Option<SentID>) {
+    pub fn set_last_rec_producer(&self, produced: Option<(SentID, Time)>) {
         let records = &mut *self.records.write().unwrap();
         let last = records.last_mut().unwrap();
         last.was_produced = produced;
     }
 
-    pub fn rollback_once(&self) {
-        unimplemented!()
+    /// Given two different BMS, rollback one of them based on the time
+    /// ordering of both of their records.
+    ///
+    /// This means that if A has been updated at a later or same moment as B,
+    /// then A (along all the knowledge produced by this registry)
+    /// will be rolled back to previous record. All produced records will
+    /// be rolled back recursively.
+    pub(in crate::agent) fn rollback_one_once(&self, other: &BmsWrapper) {
+        // Write lock to guarantee atomicity of the operation
+        let lock_self = &mut *self.records.write().unwrap();
+        let lock_other = &mut *other.records.write().unwrap();
+        let own_is_newer = {
+            let own_last_time = lock_self.last_mut().unwrap();
+            let other_last_time = lock_other.last_mut().unwrap();
+
+            match own_last_time.time.cmp(&other_last_time.time) {
+                CmpOrdering::Greater | CmpOrdering::Equal => true,
+                _ => false,
+            }
+        };
+
+        if own_is_newer {
+            BmsWrapper::rollback_once(lock_self.pop().unwrap());
+        } else {
+            BmsWrapper::rollback_once(lock_other.pop().unwrap());
+        }
+    }
+
+    fn rollback_once(recordings: BmsRecord) {
+        let (sent_id, at_time) = if let Some((sent_id, at_time)) = recordings.was_produced {
+            (sent_id, at_time)
+        } else {
+            unreachable!("SIMAG - kb/bms.rs: can't rollback records which were not produced")
+        };
+
+        for (record, _) in &recordings.produced {
+            match record {
+                Grounded::Function(func) => {
+                    if let Some(f) = func.upgrade() {
+                        f.bms.rollback(sent_id, &at_time);
+                    }
+                }
+                Grounded::Class(class) => {
+                    if let Some(c) = class.upgrade() {
+                        if let Some(b) = &c.bms {
+                            b.rollback(sent_id, &at_time);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn rollback(&self, sent_id: SentID, at_time: &Time) {
+        let lock = &mut *self.records.write().unwrap();
+        let rollback_this = {
+            let last = lock.last().unwrap();
+            if let Some((other_id, ref production_time)) = last.was_produced {
+                other_id == sent_id && at_time == production_time
+            } else {
+                false
+            }
+        };
+        if rollback_this {
+            BmsWrapper::rollback_once(lock.pop().unwrap());
+        }
     }
 
     /// Compare the time of the last record of two BMS and return
@@ -448,7 +524,7 @@ struct BmsRecord {
     produced: Vec<(Grounded, Option<f32>)>,
     time: Time,
     value: Option<f32>,
-    was_produced: Option<SentID>,
+    was_produced: Option<(SentID, Time)>,
 }
 
 impl BmsRecord {
@@ -508,10 +584,12 @@ mod test {
         assert_eq!(answ0.unwrap().get_results_single(), Some(true));
         let answ1 = rep.ask("(ugly[$Pancho,u=0])");
         assert_eq!(answ1.unwrap().get_results_single(), Some(true));
-        // fails because repr:567, interval:true
         let answ2 = rep.ask("(sad[$Pancho,u=0])");
         assert_eq!(answ2.unwrap().get_results_single(), None);
     }
+
+    #[test]
+    fn bms_maybe_rollback() {}
 
     #[test]
     fn bms_review_after_change() {

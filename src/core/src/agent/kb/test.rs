@@ -224,14 +224,14 @@ fn repr_inference_time_calc_1() {
     // Test 02
     // FAILS SOMETIMES!!!
     let test_02 = "
-        (( let x, y, t1: time=\"2015-07-05T10:25:00Z\", t2: time )
-            ( ( dog[x,u=1] && meat[y,u=1] && fat(t2=time)[x,u=1] && fn::time_calc(t2<t1) )
+        (( let x, y, t1: time=\"2014-07-05T10:25:00Z\", t2: time)
+            ( ( dog[x,u=1] && meat[y,u=1] && fat(t2=time)[x,u=1] && fn::time_calc(t1<t2) )
             := fn::eat(time=t1)[y,u=1;x]
             )
         )
         ( dog[$Pancho,u=1] )
         ( meat[$M1,u=1] )
-        ( fat(time=\"2014-07-05T10:25:00Z\")[$Pancho,u=1] )
+        ( fat(time=\"2015-07-05T10:25:00Z\")[$Pancho,u=1] )
     ";
     let mut rep = Representation::new();
     rep.tell(test_02).unwrap();

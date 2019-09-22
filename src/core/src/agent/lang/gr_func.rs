@@ -9,6 +9,7 @@ use super::{
     logsent::SentID,
 };
 use crate::agent::{
+    lang::Time,
     kb::bms::BmsWrapper,
     kb::{repr::Representation, VarAssignment},
 };
@@ -191,7 +192,7 @@ impl GroundedFunc {
         &self,
         agent: &Representation,
         data: &GroundedFunc,
-        was_produced: Option<SentID>,
+        was_produced: Option<(SentID, Time)>,
     ) {
         {
             let mut value_lock = self.args[0].value.write().unwrap();

@@ -137,7 +137,7 @@ impl GroundedMemb {
         &self,
         agent: &Representation,
         data: &GroundedMemb,
-        was_produced: Option<SentID>,
+        was_produced: Option<(SentID, Time)>,
     ) {
         let new_val: Option<f32>;
         {

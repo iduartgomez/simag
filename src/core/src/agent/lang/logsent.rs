@@ -15,14 +15,11 @@ use std::sync::Arc;
 use chrono::Utc;
 
 use super::{
-    gr_memb::GroundedMemb,
-    gr_func::GroundedFunc,
     cls_decl::ClassDecl,
+    common::{Assert, Grounded, OpArg, Skolem, Var, VarKind},
     fn_decl::FuncDecl,
-    common::{
-        Assert, Grounded, OpArg, Skolem, Var,
-        VarKind,
-    },
+    gr_func::GroundedFunc,
+    gr_memb::GroundedMemb,
     parser::{ASTNode, AssertBorrowed, LogicOperator, Scope, VarDeclBorrowed},
     ParseErrF, Time,
 };
@@ -105,7 +102,7 @@ impl<'a> LogSentence {
                 let sent_r = &mut sent;
                 for var in sent_r.vars.as_ref().unwrap() {
                     match var.kind {
-                        VarKind::Time | VarKind::TimeDecl => {
+                        VarKind::TimeDecl | VarKind::Time => {
                             sent_r.has_time_vars += 1;
                             continue;
                         }
@@ -211,13 +208,15 @@ impl<'a> LogSentence {
             if self.vars.is_some() {
                 self.get_time_assignments(agent, assignments)
             } else {
-                HashMap::new()
+                HashMap::with_capacity(0)
             }
         };
+
         if self.has_time_vars != time_assign.len() {
             context.set_result(None);
             return context;
         }
+
         if self.sent_kind.is_iexpr() {
             if let Some(res) =
                 root.as_ref()
@@ -1202,6 +1201,9 @@ pub(in crate::agent) trait ProofResContext {
     fn set_result(&mut self, res: Option<bool>);
 
     fn get_id(&self) -> SentID;
+
+    /// Get the resolution time for this context
+    fn get_production_time(&self) -> Time;
 
     fn push_grounded_func(&mut self, grounded: GroundedFunc, time: Time);
 

@@ -1,6 +1,7 @@
-use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+
+use chrono::Utc;
 
 use crate::agent::{
     kb::VarAssignment,
@@ -10,6 +11,8 @@ use crate::agent::{
     },
     Representation,
 };
+
+const MAX_ITERATIONS: u8 = 100;
 
 /// Takes a grounded fact and checks out that is consistent with the existing rules
 /// in the representation.
@@ -89,8 +92,10 @@ pub(in crate::agent::kb) fn rules_inference_rollback(
             }
         }
     }
+
     // sort grounded funcs and classes by age and rollback once then check again
     // if the rule still returns false, repeat until it returns None or True
+    let mut num_iters = 0;
     loop {
         let mut funcs: Vec<_> = gr_funcs
             .iter()
@@ -107,22 +112,20 @@ pub(in crate::agent::kb) fn rules_inference_rollback(
                 .unwrap()
                 .cmp_by_time(&*b.bms.as_ref().unwrap())
         });
+
         let func = funcs.last().unwrap();
         let cls = classes.last().unwrap();
-        let func_newer = match func.bms.cmp_by_time(cls.bms.as_ref().unwrap()) {
-            Ordering::Greater | Ordering::Equal => true,
-            _ => false,
-        };
-        if func_newer {
-            func.bms.rollback_once();
-        } else {
-            cls.bms.as_ref().unwrap().rollback_once();
-        }
+        func.bms.rollback_one_once(cls.bms.as_ref().unwrap());
+
         let unresolved_proof = solved_proof.clone();
         solved_proof = rule.solve(agent, assignments, unresolved_proof);
         match solved_proof.result {
             None | Some(true) => break,
-            _ => {}
+            _ => num_iters += 1,
+        }
+        if num_iters >= MAX_ITERATIONS {
+            // Safety break guarantee; this should be unreachable
+            unreachable!("SIMAG - inference/rules.rs: Reached max number of iterations")
         }
     }
 }
@@ -130,6 +133,7 @@ pub(in crate::agent::kb) fn rules_inference_rollback(
 #[derive(Debug)]
 struct RuleResContext<'a> {
     sent_id: SentID,
+    global_substitution_time: Time,
     result: Option<bool>,
     newest_grfact: Time,
     antecedents: Vec<Grounded>,
@@ -146,6 +150,7 @@ impl<'a> RuleResContext<'a> {
     fn new(proof: &LogSentence, cmp: Option<GroundedRef<'a>>) -> RuleResContext<'a> {
         RuleResContext {
             sent_id: proof.get_id(),
+            global_substitution_time: Utc::now(),
             result: None,
             newest_grfact: chrono::MIN_DATE.and_hms(0, 0, 0),
             antecedents: vec![],
@@ -179,6 +184,7 @@ impl<'a> std::clone::Clone for RuleResContext<'a> {
             result: None,
             newest_grfact: chrono::MIN_DATE.and_hms(0, 0, 0),
             sent_id,
+            global_substitution_time: Utc::now(),
             antecedents: vec![],
             grounded_fn: vec![],
             grounded_cls: vec![],
@@ -214,6 +220,10 @@ impl<'a> ProofResContext for RuleResContext<'a> {
 
     fn get_id(&self) -> SentID {
         self.sent_id
+    }
+
+    fn get_production_time(&self) -> Time {
+        self.global_substitution_time
     }
 
     fn push_grounded_func(&mut self, grounded: GroundedFunc, time: Time) {
