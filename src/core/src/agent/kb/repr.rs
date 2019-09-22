@@ -40,6 +40,11 @@ pub struct Representation {
 
 impl Representation {
     pub fn new() -> Representation {
+        #[cfg(feature = "tracing")]
+        {
+            super::Logger::global();
+        }
+
         Representation {
             entities: RwLock::new(HashMap::new()),
             classes: RwLock::new(HashMap::new()),

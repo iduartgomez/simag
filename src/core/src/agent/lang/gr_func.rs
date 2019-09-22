@@ -9,9 +9,9 @@ use super::{
     logsent::SentID,
 };
 use crate::agent::{
-    lang::Time,
     kb::bms::BmsWrapper,
     kb::{repr::Representation, VarAssignment},
+    lang::Time,
 };
 
 /// Grounded relational functions describe relations between two objects,
@@ -217,5 +217,20 @@ impl std::clone::Clone for GroundedFunc {
             third: self.third.clone(),
             bms: Arc::new((&*self.bms).clone()),
         }
+    }
+}
+
+impl std::fmt::Display for GroundedFunc {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let args = self.get_args_names();
+        write!(
+            f,
+            "{}[{},u={:?};{};{:?}]",
+            self.name,
+            args[0],
+            self.get_value(),
+            args[1],
+            args.get(2)
+        )
     }
 }

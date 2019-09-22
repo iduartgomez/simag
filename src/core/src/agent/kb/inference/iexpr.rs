@@ -27,6 +27,9 @@ use chrono::Utc;
 use rayon;
 use rayon::prelude::*;
 
+#[cfg(feature = "tracing")]
+use crate::agent::kb::tracing_info;
+
 use crate::agent::kb::{
     inference::results::{GroundedResults, InfResults},
     repr::{Answer, Representation},
@@ -132,6 +135,7 @@ impl<'a> Inference<'a> {
             .for_each(|pred| {
                 let query: &str = pred.get_name();
                 let mut result = None;
+
                 for (i, arg) in pred.get_args().iter().enumerate() {
                     let obj = arg.get_name();
                     if !self.ignore_current {
@@ -143,6 +147,12 @@ impl<'a> Inference<'a> {
                     } else {
                         self.results.add_grounded(obj, query, None);
                         let actv_query = ActiveQuery::new_with_func(i, pred.clone());
+
+                        #[cfg(feature = "tracing")]
+                        {
+                            tracing_info(&**pred, log::Level::Trace, Some("Start querying for"));
+                        }
+
                         self.queue_query(query, &actv_query);
                     }
                 }

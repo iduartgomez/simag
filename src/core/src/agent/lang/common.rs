@@ -740,7 +740,7 @@ pub(in crate::agent) enum TimeFn {
 
 impl TimeFn {
     fn from_str(slice: &[u8]) -> Result<TimeFn, ParseErrF> {
-        if slice == b"Now" {
+        if slice == b"now" {
             Ok(TimeFn::Now)
         } else {
             let s = unsafe { str::from_utf8_unchecked(slice) };

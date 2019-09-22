@@ -52,3 +52,48 @@ impl<'a> std::hash::Hash for VarAssignment<'a> {
         (*self.name).hash(state);
     }
 }
+
+#[cfg(feature = "tracing")]
+#[derive(Clone, Copy)]
+struct Logger;
+
+#[cfg(feature = "tracing")]
+impl Logger {
+    fn global() -> Logger {
+        *LOGGER
+    }
+}
+
+#[cfg(feature = "tracing")]
+use once_cell::sync::Lazy;
+
+#[cfg(feature = "tracing")]
+static LOGGER: Lazy<Logger> = Lazy::new(|| {
+    use log::LevelFilter;
+
+    env_logger::builder()
+        .default_format_module_path(true)
+        .default_format_timestamp_nanos(true)
+        .target(env_logger::Target::Stderr)
+        .filter(None, LevelFilter::Trace)
+        .init();
+
+    Logger
+});
+
+#[cfg(feature = "tracing")]
+fn tracing_info<T: std::fmt::Display, I: std::fmt::Display>(
+    item_to_log: T,
+    log_level: log::Level,
+    extra_info: Option<I>,
+) {
+    use log::{log, log_enabled};
+
+    if log_enabled!(log_level) {
+        if let Some(info) = extra_info {
+            log!(log_level, "{}: {}", info, item_to_log);
+        } else {
+            log!(log_level, "{}", item_to_log);
+        }
+    }
+}
