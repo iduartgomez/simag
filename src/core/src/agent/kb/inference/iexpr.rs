@@ -313,13 +313,13 @@ impl ActiveQuery {
     }
 }
 
+type PArgVal = u64;
+
 #[derive(Debug)]
 struct ProofArgs {
     ptr: usize, // *mut Vec<(&'a Var, Arc<VarAssignment<'a>>)
-    hash_val: usize,
+    hash_val: PArgVal,
 }
-
-type PArgVal = usize;
 
 impl ProofArgs {
     fn new<'a>(input: Vec<(&Var, Arc<VarAssignment<'a>>)>) -> ProofArgs {
@@ -331,18 +331,14 @@ impl ProofArgs {
         }
     }
 
-    fn arg_hash_val(input: &[(&Var, Arc<VarAssignment>)]) -> usize {
+    fn arg_hash_val(input: &[(&Var, Arc<VarAssignment>)]) -> u64 {
         use std::collections::hash_map::DefaultHasher;
-        let mut v = vec![];
-        for &(var, ref assigned) in input {
-            let mut var = format!("{:?}", var as *const Var).into_bytes();
-            v.append(&mut var);
-            let mut s = Vec::from_iter(assigned.name.as_bytes().iter().cloned());
-            v.append(&mut s);
-        }
         let mut s = DefaultHasher::new();
-        v.hash(&mut s);
-        s.finish() as usize
+        for &(var, ref assigned) in input {
+            var.name.as_bytes().hash(&mut s);
+            assigned.name.as_bytes().hash(&mut s);
+        }
+        s.finish()
     }
 
     fn as_proof_input(&self) -> HashMap<&Var, &VarAssignment> {
@@ -533,6 +529,10 @@ impl<'a> InfTrial<'a> {
                 // by rule creation datetime, from newest to oldest
                 // as the newest rules take precedence
                 for node in nodes.iter() {
+                    #[cfg(feature = "tracing")]
+                    {
+                        tracing_info(&*node.proof, log::Level::Trace, Some("Querying sentence"));
+                    }
                     // recursively try unifying all possible argument with the
                     // operating logic sentence:
                     // get all the entities/classes from the kb that meet the proof requeriments
@@ -546,19 +546,7 @@ impl<'a> InfTrial<'a> {
                             }
                             continue;
                         }
-                        // lazily iterate over all possible combinations of the substitutions
-                        let mapped = ArgsProduct::product(assignments.unwrap());
-                        if let Some(mapped) = mapped {
-                            for args in mapped {
-                                if let Some(ref valid) = self.valid {
-                                    if valid.node == &*node as *const ProofNode as usize {
-                                        break;
-                                    }
-                                }
-                                let args: ProofArgs = ProofArgs::new(args);
-                                self.unification_trial(node, &args);
-                            }
-                        }
+                        self.iterate_argument_permutations(node, assignments.unwrap());
                         if self.feedback {
                             for e in node.antecedents.clone() {
                                 if !done.contains(&e) && !chk.contains(&e) {
@@ -581,6 +569,34 @@ impl<'a> InfTrial<'a> {
                 let mut c = self.depth_cnt.write().unwrap();
                 *c += 1;
                 return;
+            }
+        }
+    }
+
+    /// Lazily iterate over all possible combinations of the substitutions
+    fn iterate_argument_permutations(
+        &mut self,
+        node: &ProofNode,
+        assignments: HashMap<&Var, Vec<Arc<VarAssignment>>>,
+    ) {
+        if let Some(mapped) = ArgsProduct::product(assignments) {
+            for args in mapped {
+                if let Some(ref valid) = self.valid {
+                    if valid.node == &*node as *const ProofNode as usize {
+                        break;
+                    }
+                }
+                #[cfg(feature = "tracing")]
+                {
+                    let permutation: Vec<_> = args.iter().map(|(v, a)| (v, &*a)).collect();
+                    tracing_info(
+                        format!("{:?}", &*permutation),
+                        log::Level::Trace,
+                        Some(format!("Params (hash: {})", ProofArgs::arg_hash_val(&args))),
+                    );
+                }
+                let args: ProofArgs = ProofArgs::new(args);
+                self.unification_trial(node, &args);
             }
         }
     }
@@ -885,11 +901,20 @@ pub(in crate::agent::kb) fn meet_sent_req<'a>(
 
 #[derive(Debug)]
 pub(in crate::agent::kb) struct ArgsProduct<'a> {
-    indexes: HashMap<&'a Var, (usize, bool)>,
+    /// Var -> (position, done)
+    indexes: HashMap<&'a Var, ParamPermutated>,
     input: HashMap<&'a Var, Vec<Arc<VarAssignment<'a>>>>,
-    curr: &'a Var,
-    done: HashSet<Vec<(*const Var, &'a str)>>,
+    current_selected_var: &'a Var,
+    /// [(Var address, assigned name)]
+    done_permutation: HashSet<Vec<DoneArg<'a>>>,
 }
+
+#[derive(Debug)]
+struct ParamPermutated {
+    pos: usize,
+    done: bool,
+}
+type DoneArg<'a> = (*const Var, &'a str);
 
 impl<'a> ArgsProduct<'a> {
     pub fn product(
@@ -898,19 +923,25 @@ impl<'a> ArgsProduct<'a> {
         let mut indexes = HashMap::new();
         let mut curr = None;
         let mut first = true;
-        for k in input.keys() {
+        for var in input.keys() {
             if first {
-                curr = Some(*k);
+                curr = Some(*var);
                 first = false;
             }
-            indexes.insert(*k, (0_usize, false));
+            indexes.insert(
+                *var,
+                ParamPermutated {
+                    pos: 0_usize,
+                    done: false,
+                },
+            );
         }
-        if curr.is_some() {
+        if let Some(curr) = curr {
             Some(ArgsProduct {
                 indexes,
                 input,
-                curr: curr.unwrap(),
-                done: HashSet::new(),
+                current_selected_var: curr,
+                done_permutation: HashSet::new(),
             })
         } else {
             None
@@ -923,19 +954,23 @@ impl<'a> std::iter::Iterator for ArgsProduct<'a> {
 
     fn next(&mut self) -> Option<Vec<(&'a Var, Arc<VarAssignment<'a>>)>> {
         loop {
-            let mut row_0 = vec![];
-            let mut val = vec![];
-            for (k1, v1) in &self.input {
-                let idx_1 = self.indexes[k1];
-                let assign = v1[idx_1.0].clone();
-                val.push((*k1 as *const Var, assign.name));
-                row_0.push((*k1, assign));
+            let mut permutation = Vec::with_capacity(self.input.len());
+            let mut done_permutation = Vec::with_capacity(self.input.len());
+            for (var, assignments) in &self.input {
+                // get an assignment for the current variable, in each iteration of
+                // the external loop we get a different combination of all
+                // the universe of possibilities with all the variables
+                let ParamPermutated { pos, .. } = &self.indexes[var];
+                //let assign = unsafe { assignments.get_unchecked(*pos).clone() };
+                let assign = assignments[*pos].clone();
+                done_permutation.push((*var as *const Var, assign.name));
+                permutation.push((*var, assign));
             }
-            if self.completed_iter() {
+            if !self.done_permutation.contains(&done_permutation) {
+                self.done_permutation.insert(done_permutation);
+                return Some(permutation);
+            } else if self.completed_iter() {
                 return None;
-            } else if !self.done.contains(&val) {
-                self.done.insert(val);
-                return Some(row_0);
             }
         }
     }
@@ -945,52 +980,55 @@ impl<'a> ArgsProduct<'a> {
     fn completed_iter(&mut self) -> bool {
         let mut max = 0;
         for v in self.indexes.values() {
-            if v.1 {
+            if v.done {
                 max += 1;
             }
         }
         if max == self.indexes.len() {
-            true
-        } else {
-            let p;
-            {
-                let l = self.input[&self.curr].len();
-                let curr = self.indexes[&self.curr];
-                if curr.0 < l - 1 {
-                    p = true;
-                } else {
-                    p = false;
-                }
-            }
-            if p {
-                let mut i = 0;
-                for (j, (k, v)) in self.indexes.iter_mut().enumerate() {
-                    i = j;
-                    let l = self.input[k].len();
-                    if (*k != self.curr) && (v.0 < l - 1) {
-                        v.0 += 1;
-                        break;
-                    }
-                }
-                let lidx = self.indexes.len() - 1;
-                let curr = self.indexes.get_mut(&self.curr).unwrap();
-                let l = self.input[&self.curr].len();
-                if (i == lidx) && (curr.0 < l) {
-                    curr.0 += 1;
-                }
-            } else {
-                for (k, v) in &self.indexes {
-                    if *k != self.curr && !v.1 {
-                        self.curr = k;
-                        break;
-                    }
-                }
-                let curr = self.indexes.get_mut(&self.curr).unwrap();
-                curr.1 = true;
-                curr.0 = 0;
-            }
-            false
+            // all variables were permutated in all possible combinations, consider this done
+            return true;
         }
+
+        let curr = &mut self.current_selected_var;
+        let not_finished = {
+            let number_of_assignments = self.input[curr].len();
+            let ParamPermutated { pos, .. } = self.indexes[curr];
+            pos < number_of_assignments - 1
+        };
+
+        if not_finished {
+            let mut i = 0;
+            for (j, (var, ParamPermutated { pos, .. })) in self.indexes.iter_mut().enumerate() {
+                i = j;
+                let number_of_assignments = self.input[var].len();
+                if (var != curr) && (*pos < number_of_assignments - 1) {
+                    // assign next assignment to this var and continue
+                    *pos += 1;
+                    return false;
+                }
+            }
+            let max_assignment_idx = self.indexes.len() - 1;
+            let ParamPermutated { pos, .. } = self.indexes.get_mut(curr).unwrap();
+            let current_var_max_assignment_number = self.input[curr].len() - 1;
+            if (i == max_assignment_idx) && (*pos < current_var_max_assignment_number) {
+                // finished permutating the currently selected var with all possible combinations
+                *pos += 1;
+            }
+        } else {
+            // current selected var is done, reset pos counter to zero and move to next var
+            let ParamPermutated { pos, done } = self.indexes.get_mut(curr).unwrap();
+            *done = true;
+            *pos = 0;
+
+            for (var, ParamPermutated { done, .. }) in &self.indexes {
+                if var != curr && !done {
+                    *curr = var;
+                    break;
+                }
+            }
+        }
+
+        false
     }
 }
 
@@ -1231,4 +1269,45 @@ impl<'b> QueryProcessed<'b> {
             .or_insert_with(Vec::new)
             .push(term);
     }
+}
+
+#[test]
+fn args_iterator() {
+    let x = Var {
+        name: "x".to_owned(),
+        op_arg: None,
+        kind: VarKind::Normal,
+    };
+
+    let y = Var {
+        name: "y".to_owned(),
+        op_arg: None,
+        kind: VarKind::Normal,
+    };
+
+    let a = Arc::new(VarAssignment {
+        name: "A",
+        classes: HashMap::new(),
+        funcs: HashMap::new(),
+    });
+
+    let b = Arc::new(VarAssignment {
+        name: "B",
+        classes: HashMap::new(),
+        funcs: HashMap::new(),
+    });
+
+    let hash0 = ProofArgs::arg_hash_val(&[(&x, a.clone()), (&y, b.clone())]);
+    let expecting = vec![hash0];
+
+    let mut input = HashMap::with_capacity(2);
+    input.insert(&x, vec![a.clone()]);
+    input.insert(&y, vec![b.clone()]);
+
+    let actual = ArgsProduct::product(input)
+        .unwrap()
+        .map(|a| ProofArgs::arg_hash_val(&a))
+        .collect::<Vec<_>>();
+
+    assert_eq!(expecting, actual)
 }

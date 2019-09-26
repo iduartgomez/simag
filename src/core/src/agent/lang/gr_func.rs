@@ -38,6 +38,7 @@ impl std::cmp::Eq for GroundedFunc {}
 impl GroundedFunc {
     pub fn compare_at_time_intervals(&self, pred: &GroundedFunc) -> Option<bool> {
         if let Some(time) = pred.bms.is_predicate() {
+            // FIXME: Potentially buggy check times as it could be updated concurrently
             let time_pred = pred.bms.get_last_date();
             let val_lhs = pred.bms.get_last_value();
             let val_rhs = if time_pred < *time {
@@ -223,11 +224,17 @@ impl std::clone::Clone for GroundedFunc {
 impl std::fmt::Display for GroundedFunc {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let args = self.get_args_names();
+        let comp_op = if let Some(op) = self.args[0].operator {
+            format!("{}", op)
+        } else {
+            "".to_owned()
+        };
         write!(
             f,
-            "{}[{},u={:?};{};{:?}]",
+            "{}[{},u{}{:?};{};{:?}]",
             self.name,
             args[0],
+            comp_op,
             self.get_value(),
             args[1],
             args.get(2)

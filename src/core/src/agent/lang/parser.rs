@@ -1144,6 +1144,21 @@ impl CompOperator {
     }
 }
 
+impl std::fmt::Display for CompOperator {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            CompOperator::Equal => write!(f, "="),
+            CompOperator::Less => write!(f, "<"),
+            CompOperator::More => write!(f, ">"),
+            CompOperator::MoreEqual => write!(f, ">="),
+            CompOperator::LessEqual => write!(f, "<="),
+            CompOperator::Until => write!(f, "->"),
+            CompOperator::At => write!(f, "@"),
+            CompOperator::FromUntil => write!(f, "<->"),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub(in crate::agent) enum LogicOperator {
     Entail,

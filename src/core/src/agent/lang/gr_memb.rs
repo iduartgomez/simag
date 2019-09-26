@@ -318,3 +318,21 @@ impl std::clone::Clone for GroundedMemb {
         }
     }
 }
+
+impl std::fmt::Display for GroundedMemb {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let comp_op = if let Some(op) = self.operator {
+            format!("{}", op)
+        } else {
+            "".to_owned()
+        };
+        write!(
+            f,
+            "{}[{},u{}{:?}]",
+            self.parent,
+            self.term,
+            comp_op,
+            self.get_value()
+        )
+    }
+}

@@ -556,7 +556,11 @@ impl std::hash::Hash for LogSentence {
 
 impl fmt::Display for LogSentence {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let prelim: String = format!("Sentence({})", self.root.as_ref().unwrap());
+        let prelim: String = format!(
+            "Sentence(id: {}, {})",
+            self.id.unwrap(),
+            self.root.as_ref().unwrap()
+        );
         let mut breaks = Vec::new();
         let mut depth = 0_usize;
         use std::iter;
@@ -595,6 +599,10 @@ impl fmt::Display for LogSentence {
         let mut collected = String::new();
         for s in slices {
             collected.push_str(&s)
+        }
+        #[cfg(feature = "tracing")]
+        {
+            collected = collected.split_whitespace().collect::<String>();
         }
         write!(f, "{}", collected)
     }

@@ -877,18 +877,34 @@ impl<'a> OpArgTerm {
 
 /// Variable equality is bassed on physical address, to compare term equality use the
 /// `name_eq` method.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(in crate::agent) struct Var {
     pub name: String,
-    op_arg: Option<OpArg>,
+    pub op_arg: Option<OpArg>,
     pub kind: VarKind,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub(in crate::agent) enum VarKind {
     Normal,
     Time,
     TimeDecl,
+}
+
+impl std::fmt::Debug for VarKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
+impl std::fmt::Display for VarKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            VarKind::Normal => write!(f, "Normal"),
+            VarKind::Time => write!(f, "Time"),
+            VarKind::TimeDecl => write!(f, "TimeDecl"),
+        }
+    }
 }
 
 impl Var {
@@ -950,6 +966,23 @@ impl std::hash::Hash for Var {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         let address = &*self as *const Var as usize;
         address.hash(state);
+    }
+}
+
+impl std::fmt::Debug for Var {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
+impl std::fmt::Display for Var {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        if let Some(a) = &self.op_arg {
+            let a = format!("{:?}", a);
+            write!(f, "{}: {} = {}", self.name, self.kind, a)
+        } else {
+            write!(f, "{}: {}", self.name, self.kind)
+        }
     }
 }
 

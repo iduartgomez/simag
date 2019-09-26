@@ -13,7 +13,7 @@ use super::lang::{GroundedFunc, GroundedMemb};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(in crate::agent) struct VarAssignment<'a> {
     pub name: &'a str,
     classes: HashMap<&'a str, Arc<GroundedMemb>>,
@@ -53,6 +53,18 @@ impl<'a> std::hash::Hash for VarAssignment<'a> {
     }
 }
 
+impl<'a> std::fmt::Display for VarAssignment<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.name)
+    }
+}
+
+impl<'a> std::fmt::Debug for VarAssignment<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
 #[cfg(feature = "tracing")]
 #[derive(Clone, Copy)]
 struct Logger;
@@ -68,7 +80,7 @@ impl Logger {
 use once_cell::sync::Lazy;
 
 #[cfg(feature = "tracing")]
-static LOGGER: Lazy<Logger> = Lazy::new(|| {
+const LOGGER: Lazy<Logger> = Lazy::new(|| {
     use log::LevelFilter;
 
     env_logger::builder()
