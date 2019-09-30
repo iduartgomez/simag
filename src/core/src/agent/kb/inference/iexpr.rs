@@ -944,32 +944,39 @@ impl<'a> ArgsProduct<'a> {
     fn iter(&mut self) -> <Self as Iterator>::Item {
         let mut group = Vec::with_capacity(self.grouping);
         let mut advanced = false;
-        for currently_selected in 0..self.grouping {
-            let idx = self.counter[currently_selected];
-            let (var, assigned_to_var) = &self.var_assignments[currently_selected];
+        for selected in 0..self.grouping {
+            let idx = self.counter[selected];
+            let (var, assigned_to_var) = &self.var_assignments[selected];
             let assignment = assigned_to_var[idx].clone();
             group.push((*var, assignment));
 
             let max_idx = assigned_to_var.len() - 1;
-            let next = currently_selected + 1;
-            let next_should_advance =
-                next < self.grouping && self.counter[next] < self.var_assignments[next].1.len();
-            if next_should_advance {
+            let next = selected + 1;
+
+            if next < self.grouping && self.counter[next] < self.var_assignments[next].1.len() {
                 // peek forward
                 advanced = false;
             } else if idx < max_idx && !advanced {
                 // advance this
-                self.counter[currently_selected] = idx + 1;
+                self.counter[selected] = idx + 1;
                 advanced = true;
             } else if idx == max_idx {
-                self.counter[currently_selected] = 0;
+                self.counter[selected] = 0;
                 advanced = false;
-                if currently_selected > 0 {
+                if selected > 0 {
                     // peek backward
-                    let previous = currently_selected - 1;
+                    let previous = selected - 1;
                     if self.counter[previous] < (self.var_assignments[previous].1.len() - 1) {
                         self.counter[previous] += 1;
                         advanced = true;
+                    } else if next == self.grouping
+                        && self.counter[0] < (self.var_assignments[0].1.len() - 1)
+                    {
+                        self.counter[0] += 1;
+                        advanced = true;
+                        for i in 1..self.grouping {
+                            self.counter[i] = 0;
+                        }
                     }
                 }
             }
