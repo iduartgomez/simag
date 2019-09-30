@@ -901,134 +901,94 @@ pub(in crate::agent::kb) fn meet_sent_req<'a>(
 
 #[derive(Debug)]
 pub(in crate::agent::kb) struct ArgsProduct<'a> {
-    /// Var -> (position, done)
-    indexes: HashMap<&'a Var, ParamPermutated>,
-    input: HashMap<&'a Var, Vec<Arc<VarAssignment<'a>>>>,
-    current_selected_var: &'a Var,
-    /// [(Var address, assigned name)]
-    done_permutation: HashSet<Vec<DoneArg<'a>>>,
+    var_assignments: Vec<(&'a Var, Vec<Arc<VarAssignment<'a>>>)>,
+    grouping: usize,
+    counter: Vec<usize>,
+    total_combos: usize,
+    current: usize,
 }
-
-#[derive(Debug)]
-struct ParamPermutated {
-    pos: usize,
-    done: bool,
-}
-type DoneArg<'a> = (*const Var, &'a str);
 
 impl<'a> ArgsProduct<'a> {
+    /// Panics if any of the assignments is empty
     pub fn product(
         input: HashMap<&'a Var, Vec<Arc<VarAssignment<'a>>>>,
     ) -> Option<ArgsProduct<'a>> {
-        let mut indexes = HashMap::new();
-        let mut curr = None;
-        let mut first = true;
-        for var in input.keys() {
-            if first {
-                curr = Some(*var);
-                first = false;
-            }
-            indexes.insert(
-                *var,
-                ParamPermutated {
-                    pos: 0_usize,
-                    done: false,
-                },
-            );
+        let grouping = input.len();
+        let mut var_assignments = Vec::with_capacity(input.len());
+        let mut counter = Vec::with_capacity(input.len());
+        let mut total_combos = 1;
+
+        for (var, assignments) in input {
+            assert!(!assignments.is_empty());
+            total_combos *= assignments.len();
+            counter.push(0);
+            var_assignments.push((var, assignments));
         }
-        if let Some(curr) = curr {
+
+        // This ensures the lazy iterator algorithm later works correctly
+        var_assignments.sort_by_key(|k| (k.1.len(), &k.0.name));
+
+        if !var_assignments.is_empty() {
             Some(ArgsProduct {
-                indexes,
-                input,
-                current_selected_var: curr,
-                done_permutation: HashSet::new(),
+                grouping,
+                var_assignments,
+                counter,
+                total_combos,
+                current: 0,
             })
         } else {
             None
         }
+    }
+
+    fn iter(&mut self) -> <Self as Iterator>::Item {
+        let mut group = Vec::with_capacity(self.grouping);
+        let mut advanced = false;
+        for currently_selected in 0..self.grouping {
+            let idx = self.counter[currently_selected];
+            let (var, assigned_to_var) = &self.var_assignments[currently_selected];
+            let assignment = assigned_to_var[idx].clone();
+            group.push((*var, assignment));
+
+            let max_idx = assigned_to_var.len() - 1;
+            let next = currently_selected + 1;
+            let next_should_advance =
+                next < self.grouping && self.counter[next] < self.var_assignments[next].1.len();
+            if next_should_advance {
+                // peek forward
+                advanced = false;
+            } else if idx < max_idx && !advanced {
+                // advance this
+                self.counter[currently_selected] = idx + 1;
+                advanced = true;
+            } else if idx == max_idx {
+                self.counter[currently_selected] = 0;
+                advanced = false;
+                if currently_selected > 0 {
+                    // peek backward
+                    let previous = currently_selected - 1;
+                    if self.counter[previous] < (self.var_assignments[previous].1.len() - 1) {
+                        self.counter[previous] += 1;
+                        advanced = true;
+                    }
+                }
+            }
+        }
+
+        group
     }
 }
 
 impl<'a> std::iter::Iterator for ArgsProduct<'a> {
     type Item = Vec<(&'a Var, Arc<VarAssignment<'a>>)>;
 
-    fn next(&mut self) -> Option<Vec<(&'a Var, Arc<VarAssignment<'a>>)>> {
-        loop {
-            let mut permutation = Vec::with_capacity(self.input.len());
-            let mut done_permutation = Vec::with_capacity(self.input.len());
-            for (var, assignments) in &self.input {
-                // get an assignment for the current variable, in each iteration of
-                // the external loop we get a different combination of all
-                // the universe of possibilities with all the variables
-                let ParamPermutated { pos, .. } = &self.indexes[var];
-                //let assign = unsafe { assignments.get_unchecked(*pos).clone() };
-                let assign = assignments[*pos].clone();
-                done_permutation.push((*var as *const Var, assign.name));
-                permutation.push((*var, assign));
-            }
-            if !self.done_permutation.contains(&done_permutation) {
-                self.done_permutation.insert(done_permutation);
-                return Some(permutation);
-            } else if self.completed_iter() {
-                return None;
-            }
-        }
-    }
-}
-
-impl<'a> ArgsProduct<'a> {
-    fn completed_iter(&mut self) -> bool {
-        let mut max = 0;
-        for v in self.indexes.values() {
-            if v.done {
-                max += 1;
-            }
-        }
-        if max == self.indexes.len() {
-            // all variables were permutated in all possible combinations, consider this done
-            return true;
-        }
-
-        let curr = &mut self.current_selected_var;
-        let not_finished = {
-            let number_of_assignments = self.input[curr].len();
-            let ParamPermutated { pos, .. } = self.indexes[curr];
-            pos < number_of_assignments - 1
-        };
-
-        if not_finished {
-            let mut i = 0;
-            for (j, (var, ParamPermutated { pos, .. })) in self.indexes.iter_mut().enumerate() {
-                i = j;
-                let number_of_assignments = self.input[var].len();
-                if (var != curr) && (*pos < number_of_assignments - 1) {
-                    // assign next assignment to this var and continue
-                    *pos += 1;
-                    return false;
-                }
-            }
-            let max_assignment_idx = self.indexes.len() - 1;
-            let ParamPermutated { pos, .. } = self.indexes.get_mut(curr).unwrap();
-            let current_var_max_assignment_number = self.input[curr].len() - 1;
-            if (i == max_assignment_idx) && (*pos < current_var_max_assignment_number) {
-                // finished permutating the currently selected var with all possible combinations
-                *pos += 1;
-            }
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current < self.total_combos {
+            self.current += 1;
+            Some(self.iter())
         } else {
-            // current selected var is done, reset pos counter to zero and move to next var
-            let ParamPermutated { pos, done } = self.indexes.get_mut(curr).unwrap();
-            *done = true;
-            *pos = 0;
-
-            for (var, ParamPermutated { done, .. }) in &self.indexes {
-                if var != curr && !done {
-                    *curr = var;
-                    break;
-                }
-            }
+            None
         }
-
-        false
     }
 }
 
@@ -1285,6 +1245,12 @@ fn args_iterator() {
         kind: VarKind::Normal,
     };
 
+    let z = Var {
+        name: "z".to_owned(),
+        op_arg: None,
+        kind: VarKind::Normal,
+    };
+
     let a = Arc::new(VarAssignment {
         name: "A",
         classes: HashMap::new(),
@@ -1297,17 +1263,87 @@ fn args_iterator() {
         funcs: HashMap::new(),
     });
 
-    let hash0 = ProofArgs::arg_hash_val(&[(&x, a.clone()), (&y, b.clone())]);
-    let expecting = vec![hash0];
+    let c = Arc::new(VarAssignment {
+        name: "C",
+        classes: HashMap::new(),
+        funcs: HashMap::new(),
+    });
 
-    let mut input = HashMap::with_capacity(2);
-    input.insert(&x, vec![a.clone()]);
-    input.insert(&y, vec![b.clone()]);
+    fn compare(expecting: &HashSet<u64>, input: HashMap<&Var, Vec<Arc<VarAssignment>>>) {
+        let actual = ArgsProduct::product(input)
+            .unwrap()
+            .map(|a| ProofArgs::arg_hash_val(&a))
+            .collect::<HashSet<_>>();
+        assert_eq!(expecting, &actual);
+    }
 
-    let actual = ArgsProduct::product(input)
-        .unwrap()
-        .map(|a| ProofArgs::arg_hash_val(&a))
-        .collect::<Vec<_>>();
+    // different sized assignments
+    {
+        let hash0 = ProofArgs::arg_hash_val(&[(&x, a.clone()), (&y, a.clone()), (&z, a.clone())]);
+        let hash1 = ProofArgs::arg_hash_val(&[(&x, a.clone()), (&y, b.clone()), (&z, a.clone())]);
+        let hash2 = ProofArgs::arg_hash_val(&[(&x, a.clone()), (&y, a.clone()), (&z, b.clone())]);
+        let hash3 = ProofArgs::arg_hash_val(&[(&x, a.clone()), (&y, b.clone()), (&z, b.clone())]);
+        let hash4 = ProofArgs::arg_hash_val(&[(&x, a.clone()), (&y, a.clone()), (&z, c.clone())]);
+        let hash5 = ProofArgs::arg_hash_val(&[(&x, a.clone()), (&y, b.clone()), (&z, c.clone())]);
+        let expecting = HashSet::from_iter(vec![hash0, hash1, hash2, hash3, hash4, hash5]);
 
-    assert_eq!(expecting, actual)
+        for _ in 0..100 {
+            // repeat multiple times to guarantee different ordering in the inputs
+            let mut input1 = HashMap::with_capacity(3);
+            input1.insert(&x, vec![a.clone()]);
+            input1.insert(&y, vec![a.clone(), b.clone()]);
+            input1.insert(&z, vec![a.clone(), b.clone(), c.clone()]);
+
+            compare(&expecting, input1);
+        }
+    }
+
+    // equally sized assignments
+    {
+        let hash0 = ProofArgs::arg_hash_val(&[(&x, a.clone()), (&y, a.clone())]);
+        let hash1 = ProofArgs::arg_hash_val(&[(&x, a.clone()), (&y, b.clone())]);
+        let hash2 = ProofArgs::arg_hash_val(&[(&x, a.clone()), (&y, c.clone())]);
+        let hash3 = ProofArgs::arg_hash_val(&[(&x, b.clone()), (&y, a.clone())]);
+        let hash4 = ProofArgs::arg_hash_val(&[(&x, b.clone()), (&y, b.clone())]);
+        let hash5 = ProofArgs::arg_hash_val(&[(&x, b.clone()), (&y, c.clone())]);
+        let hash6 = ProofArgs::arg_hash_val(&[(&x, c.clone()), (&y, a.clone())]);
+        let hash7 = ProofArgs::arg_hash_val(&[(&x, c.clone()), (&y, b.clone())]);
+        let hash8 = ProofArgs::arg_hash_val(&[(&x, c.clone()), (&y, c.clone())]);
+        let expecting = HashSet::from_iter(vec![
+            hash0, hash1, hash2, hash3, hash4, hash5, hash6, hash7, hash8,
+        ]);
+
+        for _ in 0..100 {
+            // repeat multiple times to guarantee different ordering in the inputs
+            let mut input2 = HashMap::with_capacity(3);
+            input2.insert(&x, vec![a.clone(), b.clone(), c.clone()]);
+            input2.insert(&y, vec![a.clone(), b.clone(), c.clone()]);
+
+            compare(&expecting, input2);
+        }
+    }
+
+    // multiple equally sized assignments
+    {
+        let hash0 = ProofArgs::arg_hash_val(&[(&x, a.clone()), (&y, a.clone()), (&z, a.clone())]);
+        let hash1 = ProofArgs::arg_hash_val(&[(&x, a.clone()), (&y, a.clone()), (&z, b.clone())]);
+        let hash2 = ProofArgs::arg_hash_val(&[(&x, a.clone()), (&y, b.clone()), (&z, a.clone())]);
+        let hash3 = ProofArgs::arg_hash_val(&[(&x, a.clone()), (&y, b.clone()), (&z, b.clone())]);
+        let hash4 = ProofArgs::arg_hash_val(&[(&x, b.clone()), (&y, a.clone()), (&z, a.clone())]);
+        let hash5 = ProofArgs::arg_hash_val(&[(&x, b.clone()), (&y, a.clone()), (&z, b.clone())]);
+        let hash6 = ProofArgs::arg_hash_val(&[(&x, b.clone()), (&y, b.clone()), (&z, a.clone())]);
+        let hash7 = ProofArgs::arg_hash_val(&[(&x, b.clone()), (&y, b.clone()), (&z, b.clone())]);
+        let expecting =
+            HashSet::from_iter(vec![hash0, hash1, hash2, hash3, hash4, hash5, hash6, hash7]);
+
+        for _ in 0..100 {
+            // repeat multiple times to guarantee different ordering in the inputs
+            let mut input3 = HashMap::with_capacity(3);
+            input3.insert(&x, vec![a.clone(), b.clone()]);
+            input3.insert(&y, vec![a.clone(), b.clone()]);
+            input3.insert(&z, vec![a.clone(), b.clone()]);
+
+            compare(&expecting, input3);
+        }
+    }
 }

@@ -743,7 +743,7 @@ impl TimeFn {
         if slice == b"now" {
             Ok(TimeFn::Now)
         } else {
-            let s = unsafe { str::from_utf8_unchecked(slice) };
+            let s = str::from_utf8(slice).unwrap();
             match DateTime::parse_from_rfc3339(s) {
                 Err(_e) => Err(TimeFnErr::WrongFormat(s.to_owned()).into()),
                 Ok(time) => Ok(TimeFn::Time(time.with_timezone(&Utc))),
@@ -930,7 +930,7 @@ impl Var {
             }
             None => None,
         };
-        let name = unsafe { String::from(str::from_utf8_unchecked(name)) };
+        let name = str::from_utf8(name).unwrap().to_owned();
         if reserved(&name) {
             return Err(ParseErrF::ReservedKW(name));
         }
@@ -1008,7 +1008,7 @@ impl Skolem {
             }
             None => None,
         };
-        let name = unsafe { String::from(str::from_utf8_unchecked(name)) };
+        let name = str::from_utf8(name).unwrap().to_owned();
         if reserved(&name) {
             return Err(ParseErrF::ReservedKW(name));
         }
@@ -1033,7 +1033,7 @@ impl<'a> Terminal {
         context: &mut ParseContext,
     ) -> Result<Terminal, ParseErrF> {
         let &TerminalBorrowed(slice) = other;
-        let name = unsafe { String::from(str::from_utf8_unchecked(slice)) };
+        let name = str::from_utf8(slice).unwrap().to_owned();
         if reserved(&name) {
             return Err(ParseErrF::ReservedKW(name));
         }
@@ -1046,7 +1046,7 @@ impl<'a> Terminal {
     }
 
     fn from_slice(slice: &[u8], context: &ParseContext) -> Result<Terminal, ParseErrF> {
-        let name = unsafe { String::from(str::from_utf8_unchecked(slice)) };
+        let name = str::from_utf8(slice).unwrap().to_owned();
         if reserved(&name) {
             return Err(ParseErrF::ReservedKW(name));
         }

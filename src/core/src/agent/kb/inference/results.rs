@@ -48,6 +48,8 @@ impl<'b> InfResults<'b> {
         let mut lock = self.relationships.write().unwrap();
         for func in rel {
             for obj in func.get_args_names() {
+                // obj lives for the duration of var as both are borrowed
+                // from a repr further up the stack
                 let obj = unsafe { std::mem::transmute::<&str, &'b str>(obj) };
                 lock.entry(var)
                     .or_insert_with(HashMap::new)
@@ -59,6 +61,8 @@ impl<'b> InfResults<'b> {
     }
 
     pub fn add_grounded(&self, obj: &str, pred: &str, res: Option<(bool, Option<Time>)>) {
+        // obj lives for the duration of var as both are borrowed
+        // from a repr further up the stack
         let obj = unsafe { std::mem::transmute::<&str, &'b str>(obj) };
         let mut lock = self.grounded_queries.write().unwrap();
         lock.entry(pred.to_string())
@@ -101,6 +105,8 @@ impl<'b> InfResults<'b> {
         for preds in lock.values() {
             for members in preds.values() {
                 for gr in members {
+                    // this is safe because gr lives for the duration of a repr further
+                    // up the stack that outlives self
                     let gr = unsafe { &*(&**gr as *const GroundedMemb) as &'b GroundedMemb };
                     if res.contains_key(gr.get_name()) {
                         let prev = res.get_mut(gr.get_name()).unwrap();
@@ -124,6 +130,8 @@ impl<'b> InfResults<'b> {
                 for grfunc in relation_ls {
                     for name in grfunc.get_args_names() {
                         unsafe {
+                            // this is safe because gr lives for the duration of a repr further
+                            // up the stack that outlives self
                             let name = mem::transmute::<&str, &'b str>(name);
                             if res.contains_key(name) {
                                 let prev = res.get_mut(name).unwrap();

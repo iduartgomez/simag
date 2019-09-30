@@ -71,8 +71,8 @@ struct Logger;
 
 #[cfg(feature = "tracing")]
 impl Logger {
-    fn global() -> Logger {
-        *LOGGER
+    fn get_logger() -> &'static Logger {
+        Lazy::force(&LOGGER)
     }
 }
 
@@ -80,7 +80,7 @@ impl Logger {
 use once_cell::sync::Lazy;
 
 #[cfg(feature = "tracing")]
-const LOGGER: Lazy<Logger> = Lazy::new(|| {
+static LOGGER: Lazy<Logger> = Lazy::new(|| {
     use log::LevelFilter;
 
     env_logger::builder()

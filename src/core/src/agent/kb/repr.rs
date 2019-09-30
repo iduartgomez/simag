@@ -42,7 +42,7 @@ impl Representation {
     pub fn new() -> Representation {
         #[cfg(feature = "tracing")]
         {
-            super::Logger::global();
+            super::Logger::get_logger();
         }
 
         Representation {
@@ -649,6 +649,7 @@ impl Representation {
                         let mut v: HashMap<&str, Vec<Arc<GroundedFunc>>> =
                             entity.get_relationships(pos, arg);
                         for (_, mut funcs) in v.drain() {
+                            // guaranteed this lives as long as self
                             let t = unsafe { &*(&*funcs[0] as *const GroundedFunc) };
                             let rel = t.get_name();
                             res.entry(rel).or_insert_with(|| vec![]).append(&mut funcs);
@@ -658,6 +659,7 @@ impl Representation {
                     let mut v: HashMap<&str, Vec<Arc<GroundedFunc>>> =
                         class.get_relationships(pos, arg);
                     for (_, mut funcs) in v.drain() {
+                        // guaranteed this lives as long as self
                         let t = unsafe { &*(&*funcs[0] as *const GroundedFunc) };
                         let rel = t.get_name();
                         res.entry(rel).or_insert_with(|| vec![]).append(&mut funcs);
@@ -885,6 +887,7 @@ impl Entity {
         for functions in lock.values() {
             for f in functions {
                 if f.name_in_pos(&*self.name, pos) {
+                    // guaranteed this lives as long as self
                     let t = unsafe { &*(&**f as *const GroundedFunc) };
                     let rel_name = t.get_name();
                     match op {
@@ -1213,6 +1216,7 @@ impl Class {
         for functions in lock.values() {
             for f in functions {
                 if f.name_in_pos(&*self.name, pos) {
+                    // guaranteed this lives as long as self
                     let t = unsafe { &*(&**f as *const GroundedFunc) };
                     let rel_name = t.get_name();
                     match op {
