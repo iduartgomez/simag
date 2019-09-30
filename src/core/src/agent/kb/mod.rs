@@ -3,6 +3,7 @@
 //! serve as representations of the different objects and the relationships
 //! between them.
 pub(in crate::agent) mod bms;
+pub(self) mod class;
 mod inference;
 pub(super) mod repr;
 
