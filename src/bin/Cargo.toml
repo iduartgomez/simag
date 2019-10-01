@@ -5,11 +5,22 @@ authors = ["Ignacio Duart Gómez <iduartgomez@gmail.com>"]
 autobins = false
 edition = "2018"
 
+[lib]
+name = "simag_terminals"
+path = "terminals/lib.rs"
+
 [[bin]]
 name = "simag_repl"
 path = "repl.rs"
 
+[[bin]]
+name = "simag_manager"
+path = "manager.rs"
+
 [dependencies]
 simag_core = { path = "../core" }
 simag_maths = { path = "../maths" }
-termion = "^1.5"
+nom = "^5.0.0"
+termion = "^1.5.0"
+ansi_term = "0.12.1"
+once_cell = "1.2.0"

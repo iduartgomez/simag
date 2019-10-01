@@ -24,13 +24,13 @@ impl<'a> SimagInterpreter<'a> {
         }
     }
 
-    fn eval(&mut self) -> Result<Action, String> {
+    fn eval(&mut self) -> Result<InterpreterAction, String> {
         let mut input = String::new();
         mem::swap(&mut self.source, &mut input);
         if !self.ask {
             match self.state.tell(&input) {
                 Err(errors) => Err(format!("{}", &errors[0])),
-                Ok(_) => Ok(Action::Continue),
+                Ok(_) => Ok(InterpreterAction::Continue),
             }
         } else {
             input.remove(0);
@@ -42,7 +42,7 @@ impl<'a> SimagInterpreter<'a> {
                 },
             } {
                 self.result = Some(r);
-                Ok(Action::Write("Query executed succesfully".to_owned()))
+                Ok(InterpreterAction::Write("Query executed succesfully".to_owned()))
             } else {
                 self.result = None;
                 Err("Incorrect query".to_string())
@@ -52,45 +52,45 @@ impl<'a> SimagInterpreter<'a> {
 }
 
 impl<'a> Interpreter for SimagInterpreter<'a> {
-    fn read(&mut self, input: char) -> Action {
+    fn read(&mut self, input: char) -> InterpreterAction {
         match input {
             '\n' => {
                 if self.reading && !self.source.ends_with('\n') {
                     self.source.push('\n');
-                    Action::Read
+                    InterpreterAction::Read
                 } else if self.reading {
                     self.reading = false;
                     let action = match self.eval() {
-                        Ok(Action::Write(p)) => Action::Write(p),
-                        Err(msg) => Action::Write(msg),
-                        _ => Action::Newline,
+                        Ok(InterpreterAction::Write(p)) => InterpreterAction::Write(p),
+                        Err(msg) => InterpreterAction::Write(msg),
+                        _ => InterpreterAction::Newline,
                     };
                     self.ask = false;
                     action
                 } else if !self.command.trim().is_empty() {
                     let mut command = String::new();
                     mem::swap(&mut self.command, &mut command);
-                    Action::Command(command)
+                    InterpreterAction::Command(command)
                 } else {
-                    Action::Newline
+                    InterpreterAction::Newline
                 }
             }
             '(' if !self.reading => {
                 self.source.push('(');
                 self.reading = true;
-                Action::Continue
+                InterpreterAction::Continue
             }
             '?' if !self.reading => {
                 self.source.push('?');
                 self.ask = true;
                 self.reading = true;
-                Action::Continue
+                InterpreterAction::Continue
             }
             '?' if self.reading && self.ask => {
                 // Query the answer
                 self.reading = false;
                 self.ask = false;
-                Action::Continue
+                InterpreterAction::Continue
             }
             c => {
                 if self.reading {
@@ -98,35 +98,35 @@ impl<'a> Interpreter for SimagInterpreter<'a> {
                 } else {
                     self.command.push(c);
                 }
-                Action::Continue
+                InterpreterAction::Continue
             }
         }
     }
 
-    fn delete_last(&mut self) -> Option<Action> {
+    fn delete_last(&mut self) -> Option<InterpreterAction> {
         if self.reading {
             self.source.pop();
             if self.source.is_empty() {
                 self.ask = false;
                 self.reading = false;
-                Some(Action::Discard)
+                Some(InterpreterAction::Discard)
             } else {
                 None
             }
         } else {
             self.command.pop();
             if self.command.is_empty() {
-                Some(Action::Discard)
+                Some(InterpreterAction::Discard)
             } else {
                 None
             }
         }
     }
 
-    fn query_result(&self, _query: ResultQuery) -> Result<Action, String> {
+    fn query_result(&self, _query: ResultQuery) -> Result<InterpreterAction, String> {
         if let Some(ref result) = self.result {
             if let Some(r) = result.get_results_single() {
-                Ok(Action::Write(r.to_string()))
+                Ok(InterpreterAction::Write(r.to_string()))
             } else {
                 Err("Query didn't return any results".to_owned())
             }
@@ -137,12 +137,12 @@ impl<'a> Interpreter for SimagInterpreter<'a> {
 }
 
 pub trait Interpreter {
-    fn read(&mut self, input: char) -> Action;
-    fn delete_last(&mut self) -> Option<Action>;
-    fn query_result(&self, query: ResultQuery) -> Result<Action, String>;
+    fn read(&mut self, input: char) -> InterpreterAction;
+    fn delete_last(&mut self) -> Option<InterpreterAction>;
+    fn query_result(&self, query: ResultQuery) -> Result<InterpreterAction, String>;
 }
 
-pub enum Action {
+pub enum InterpreterAction {
     Read,
     Write(String),
     Continue,

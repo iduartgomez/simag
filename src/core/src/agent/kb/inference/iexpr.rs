@@ -954,26 +954,30 @@ impl<'a> ArgsProduct<'a> {
             let next = selected + 1;
 
             if next < self.grouping && self.counter[next] < self.var_assignments[next].1.len() {
-                // peek forward
+                // peeked forward, is ok to advance next, so don't advance this item
                 advanced = false;
             } else if idx < max_idx && !advanced {
-                // advance this
+                // peeking forward failed, so advance this if possible
                 self.counter[selected] = idx + 1;
                 advanced = true;
             } else if idx == max_idx {
-                self.counter[selected] = 0;
+                // iterated over all possible positions of this, try to advance something else
+                self.counter[selected] = 0; // reset this item position
                 advanced = false;
                 if selected > 0 {
-                    // peek backward
+                    // first item cannot advance other items
                     let previous = selected - 1;
                     if self.counter[previous] < (self.var_assignments[previous].1.len() - 1) {
+                        // peeked backwards and was ok to advance
                         self.counter[previous] += 1;
                         advanced = true;
                     } else if next == self.grouping
                         && self.counter[0] < (self.var_assignments[0].1.len() - 1)
                     {
+                        // peeked first and was ok to advance
                         self.counter[0] += 1;
                         advanced = true;
+                        // set rest of items to first position to start over
                         for i in 1..self.grouping {
                             self.counter[i] = 0;
                         }
