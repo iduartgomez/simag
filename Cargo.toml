@@ -12,7 +12,7 @@ path = "src/main.rs"
 [dependencies]
 simag_core = { path = "src/core" }
 simag_maths = { path = "src/maths" }
-simag_binaries = { path = "src/bin" }
+simag_term = { path = "src/term" }
 
 [workspace]
-members = ["src/core", "src/maths", "src/bin"]
+members = ["src/core", "src/maths", "src/term"]

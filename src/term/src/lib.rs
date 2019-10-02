@@ -1,13 +1,11 @@
-use once_cell::sync::Lazy;
-use std::io::{stdout, Bytes, Error, Read, Stdout, StdoutLock, Write};
+use std::io::{stdout, Bytes, Read, Stdout, StdoutLock, Write};
 use std::iter::Iterator;
 use std::time;
-use termion::{async_stdin, AsyncReader};
 
-pub mod commands;
-
+use once_cell::sync::Lazy;
 use termion::event::{parse_event, Event, Key};
 use termion::raw::{IntoRawMode, RawTerminal};
+use termion::{async_stdin, AsyncReader};
 
 fn get_raw_stdout() -> RawTerminal<StdoutLock<'static>> {
     static STDOUT: Lazy<Stdout> = Lazy::new(stdout);
@@ -19,38 +17,48 @@ fn get_stdin() -> Bytes<AsyncReader> {
     async_stdin().bytes()
 }
 
-#[derive(Default)]
-pub struct TerminalState {
-    reading: bool,
-}
-
-impl TerminalState {
-    pub fn new() -> Self {
-        TerminalState { reading: false }
-    }
-}
-
-pub trait Terminal<I>
+pub struct Terminal<I>
 where
-    I: Iterator<Item = Result<u8, Error>>,
+    I: Interpreter,
 {
-    fn set_up(&self) {
+    interpreter: I,
+    state: TerminalState,
+    cursor: Cursor,
+    stdin: Bytes<AsyncReader>,
+    stdout: RawTerminal<StdoutLock<'static>>,
+}
+
+impl<I> Terminal<I>
+where
+    I: Interpreter,
+{
+    pub fn new(interpreter: I) -> Self {
+        let mut stdout = get_raw_stdout();
+
         write!(
-            get_raw_stdout(),
+            stdout,
             "{}{}",
             termion::clear::BeforeCursor,
             termion::cursor::Goto(1, 1)
         )
         .unwrap();
+
+        Terminal {
+            interpreter,
+            state: TerminalState::new(),
+            cursor: Cursor::new(),
+            stdout,
+            stdin: get_stdin(),
+        }
     }
 
-    fn read(&mut self) {
+    pub fn start_event_loop(&mut self) {
         loop {
-            if self.get_cursor().effect_on {
-                let stdout = &mut get_raw_stdout();
-                self.get_cursor().cursor_effect(stdout);
+            if self.cursor.effect_on {
+                let stdout = &mut self.stdout;
+                self.cursor.cursor_effect(stdout);
             }
-            if let Some(Ok(c)) = get_stdin().next() {
+            if let Some(Ok(c)) = self.stdin.next() {
                 if c == b'\x1B' {
                     match self.sequence() {
                         Ok(action) => {
@@ -59,14 +67,14 @@ where
                             }
                         }
                         Err(val) => {
-                            if let Ok(event) = parse_event(val, &mut get_stdin()) {
+                            if let Ok(event) = parse_event(val, &mut self.stdin) {
                                 if let Some(Action::Exit) = self.parse_event(&event) {
                                     break;
                                 }
                             }
                         }
                     }
-                } else if let Ok(event) = parse_event(c, &mut get_stdin()) {
+                } else if let Ok(event) = parse_event(c, &mut self.stdin) {
                     if let Some(Action::Exit) = self.parse_event(&event) {
                         break;
                     }
@@ -74,7 +82,7 @@ where
             }
         }
         write!(
-            get_raw_stdout(),
+            self.stdout,
             "{}{}{}{}",
             termion::style::Reset,
             termion::clear::All,
@@ -92,25 +100,20 @@ where
                     if c != &'\n' {
                         self.print_char(*c);
                     }
-                    // FIXME: Actionable interpreter; check core/utils
-                    //self.interpreter.read(*c)
-                    Action::None
+                    self.interpreter.read(*c)
                 }
                 Key::Backspace => {
-                    if self.get_cursor().column > 5 {
+                    if self.cursor.column > 5 {
                         self.delete();
-                        // FIXME: Actionable interpreter; check core/utils
-                        /*
                         match self.interpreter.delete_last() {
                             Some(Action::Discard) => {
                                 self.cursor.effect_on = true;
-                                self.reading = false;
+                                self.state.reading = false;
                                 return Some(Action::None);
                             }
                             Some(other) => return Some(other),
                             None => {}
                         }
-                        */
                     }
                     Action::Continue
                 }
@@ -130,7 +133,7 @@ where
         let mut num = false;
 
         loop {
-            match get_stdin().next() {
+            match self.stdin.next() {
                 Some(Ok(b'O')) => {
                     combo.buffered.push(b'O');
                     end = true;
@@ -169,56 +172,41 @@ where
     fn exec_action(&mut self, action: Action) -> Option<Action> {
         match action {
             Action::Continue => {
-                let stdout = &mut get_raw_stdout();
-                let cursor = self.get_cursor();
-                cursor.effect_on = false;
-                cursor.show(stdout);
+                let stdout = &mut self.stdout;
+                self.cursor.effect_on = false;
+                self.cursor.show(stdout);
             }
             Action::Read => {
-                self.get_state_mut().reading = true;
+                self.state.reading = true;
                 self.newline();
             }
             Action::Newline => {
-                self.get_state_mut().reading = false;
+                self.state.reading = false;
                 self.newline();
             }
             Action::Discard => {
-                let stdout = &mut get_raw_stdout();
-                self.get_cursor().move_down(stdout, 1);
+                let stdout = &mut self.stdout;
+                self.cursor.move_down(stdout, 1);
                 self.newline();
             }
             Action::Command(cmd) => {
-                let stdout = &mut get_raw_stdout();
-                self.get_cursor().move_down(stdout, 1);
-                // FIXME: Actionable interpreter; check core/utils
-                /*
-                match Command::from(cmd.as_str()) {
-                    Command::Err => self.print_str("Unknown command"),
-                    Command::Help => self.print_multiline(HELP_COMMAND),
-                    Command::HelpCommands => self.print_multiline(HELP_COMMANDS),
-                    Command::HelpQuerying => self.print_multiline(HELP_QUERYING),
-                    Command::Query(ResultQuery::Single) => {
-                        match self.interpreter.query_result(ResultQuery::Single) {
-                            Ok(Action::Write(result)) => {
-                                self.print_multiline(result.as_str());
-                            }
-                            Ok(action) => return self.exec_action(action),
-                            Err(msg) => {
-                                self.print_multiline(msg.as_str());
-                            }
-                        }
-                        self.newline();
-                        return Some(Action::Continue);
+                let stdout = &mut self.stdout;
+                self.cursor.move_down(stdout, 1);
+                if let Some(action) = self.interpreter.cmd_executor(cmd) {
+                    match action {
+                        Action::WriteStr(val) => self.print_str(val),
+                        Action::Write(val) => self.print_str(&val),
+                        Action::WriteMulti(val) => self.print_multiline(&val),
+                        Action::WriteMultiStr(val) => self.print_multiline(&val),
+                        Action::Command(cmd) => return self.interpreter.cmd_executor(cmd),
+                        _ => return Some(action),
                     }
-                    Command::Query(ResultQuery::Multiple) => unimplemented!(),
-                    Command::Exit => return Some(Action::Exit),
                 }
-                */
                 self.newline();
             }
             Action::Write(msg) => {
                 self.print_multiline(msg.as_str());
-                self.get_state_mut().reading = false;
+                self.state.reading = false;
                 self.newline();
             }
             Action::Exit => return Some(Action::Exit),
@@ -228,12 +216,12 @@ where
     }
 
     fn print_str(&mut self, output: &str) {
-        let mut stdout = get_raw_stdout();
-        let cursor = self.get_cursor();
-
-        write!(stdout, "{}", output).unwrap();
-        if let Action::Newline = cursor.move_right(&mut stdout, output.len() as u16) {
-            cursor.move_down(&mut stdout, 1);
+        write!(self.stdout, "{}", output).unwrap();
+        if let Action::Newline = self
+            .cursor
+            .move_right(&mut self.stdout, output.len() as u16)
+        {
+            self.cursor.move_down(&mut self.stdout, 1);
             self.print_str(output);
             return;
         }
@@ -241,42 +229,32 @@ where
     }
 
     fn print_char(&mut self, output: char) {
-        let mut stdout = get_raw_stdout();
-        let cursor = self.get_cursor();
-
-        write!(stdout, "{}", output).unwrap();
-        if let Action::Newline = cursor.move_right(&mut stdout, 1) {
-            cursor.move_down(&mut stdout, 1);
+        write!(self.stdout, "{}", output).unwrap();
+        if let Action::Newline = self.cursor.move_right(&mut self.stdout, 1) {
+            self.cursor.move_down(&mut self.stdout, 1);
             self.print_char(output);
             return;
         }
         self.flush();
     }
 
-    /// take a multiline str and output it in the terminal properly
-    fn print_multiline(&mut self, output: &str) {
-        let mut stdout = get_raw_stdout();
-        let cursor = self.get_cursor();
-
+    /// Prints a multiline text in the terminal.
+    pub fn print_multiline(&mut self, output: &str) {
         for (i, line) in output.lines().enumerate() {
             if i != 0 {
-                cursor.move_down(&mut stdout, 1);
+                self.cursor.move_down(&mut self.stdout, 1);
             }
-            write!(stdout, "{}", line).unwrap();
+            write!(self.stdout, "{}", line).unwrap();
         }
         self.flush()
     }
 
-    fn newline(&mut self) {
-        let mut stdout = get_raw_stdout();
-        {
-            let mut cursor = self.get_cursor();
-            cursor.move_down(&mut stdout, 1);
-            cursor.column = 5;
-        }
-        if self.get_state().reading {
+    pub fn newline(&mut self) {
+        self.cursor.move_down(&mut self.stdout, 1);
+        self.cursor.column = 5;
+        if self.state.reading {
             write!(
-                stdout,
+                self.stdout,
                 "{}... {}",
                 termion::style::Bold,
                 termion::style::Reset
@@ -284,7 +262,7 @@ where
             .unwrap();
         } else {
             write!(
-                stdout,
+                self.stdout,
                 "{}>>> {}",
                 termion::style::Bold,
                 termion::style::Reset
@@ -292,34 +270,52 @@ where
             .unwrap();
         }
         self.flush();
-        self.get_cursor().effect_on = true;
+        self.cursor.effect_on = true;
     }
 
     fn delete(&mut self) {
-        let mut stdout = get_raw_stdout();
-        let mut cursor = self.get_cursor();
-
-        cursor.column -= 1;
+        self.cursor.column -= 1;
         write!(
-            stdout,
+            self.stdout,
             "{} {}",
-            termion::cursor::Goto(cursor.column, cursor.row),
-            termion::cursor::Goto(cursor.column, cursor.row)
+            termion::cursor::Goto(self.cursor.column, self.cursor.row),
+            termion::cursor::Goto(self.cursor.column, self.cursor.row)
         )
         .unwrap();
         self.flush();
     }
 
     fn flush(&mut self) {
-        get_raw_stdout().flush().unwrap();
+        self.stdout.flush().unwrap();
     }
-
-    fn get_state_mut(&mut self) -> &mut TerminalState;
-    fn get_cursor(&mut self) -> &mut Cursor;
-    fn get_state(&self) -> &TerminalState;
 }
 
-pub struct Cursor {
+pub enum Action {
+    Read,
+    Write(String),
+    WriteStr(&'static str),
+    WriteMulti(String),
+    WriteMultiStr(&'static str),
+    Command(String),
+    Continue,
+    Exit,
+    Discard,
+    Newline,
+    None,
+}
+
+#[derive(Default)]
+struct TerminalState {
+    reading: bool,
+}
+
+impl TerminalState {
+    pub fn new() -> Self {
+        TerminalState { reading: false }
+    }
+}
+
+struct Cursor {
     column: u16,
     row: u16,
     space: (u16, u16),
@@ -394,17 +390,6 @@ impl Cursor {
     }
 }
 
-pub enum Action {
-    Read,
-    Write(String),
-    Continue,
-    Exit,
-    Discard,
-    Newline,
-    Command(String),
-    None,
-}
-
 struct Combo {
     buffered: Vec<u8>,
 }
@@ -418,4 +403,10 @@ impl Iterator for Combo {
             None
         }
     }
+}
+
+pub trait Interpreter {
+    fn read(&mut self, input: char) -> Action;
+    fn cmd_executor(&mut self, command: String) -> Option<Action>;
+    fn delete_last(&mut self) -> Option<Action>;
 }
