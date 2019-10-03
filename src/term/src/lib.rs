@@ -57,10 +57,7 @@ where
 
     pub fn start_event_loop(&mut self) {
         loop {
-            if self.cursor.effect_on {
-                let stdout = &mut self.stdout;
-                self.cursor.cursor_effect(stdout);
-            }
+            self.side_effects();
             if let Some(Ok(c)) = self.stdin.next() {
                 if c == b'\x1B' {
                     match self.sequence() {
@@ -84,6 +81,7 @@ where
                 }
             }
         }
+
         write!(
             self.stdout,
             "{}{}{}{}",
@@ -95,6 +93,13 @@ where
         .unwrap();
 
         self.flush();
+    }
+
+    fn side_effects(&mut self) {
+        if self.cursor.effect_on {
+            let stdout = &mut self.stdout;
+            self.cursor.cursor_effect(stdout);
+        }
     }
 
     fn parse_event(&mut self, event: &Event) -> Option<Action> {
@@ -195,7 +200,7 @@ where
             }
             Action::Command(cmd) => {
                 self.cursor
-                    .action(&mut self.stdout, CursorMovement::MoveRight(1));
+                    .action(&mut self.stdout, CursorMovement::MoveDown(1));
                 if let Some(action) = self.interpreter.cmd_executor(cmd) {
                     match action {
                         Action::WriteStr(val) => self.print_str(val),
@@ -214,9 +219,21 @@ where
                 self.newline();
             }
             Action::Exit => return Some(Action::Exit),
+            Action::Newline => {
+                self.check_reading_status();
+                self.newline()
+            }
             _ => {}
         }
         None
+    }
+
+    fn check_reading_status(&mut self) {
+        if self.interpreter.is_reading() {
+            self.state.reading = true;
+        } else {
+            self.state.reading = false;
+        }
     }
 
     fn print_str(&mut self, output: &str) {
@@ -263,6 +280,7 @@ where
         self.cursor
             .action(&mut self.stdout, CursorMovement::MoveDown(1));
         self.cursor.command_line_start();
+
         if self.state.reading {
             write!(
                 self.stdout,
@@ -318,8 +336,8 @@ pub enum Action {
     Exit,
     /// Signal cancelation of any ongoing evaluation
     Discard,
-    /// Do nothing
     None,
+    Newline,
 }
 
 #[derive(Default)]
@@ -349,8 +367,8 @@ impl Iterator for Combo {
 }
 
 pub trait Interpreter {
-    /// Last input char that was received by the interpreter.
-    fn last_input(&self) -> Option<char>;
+    /// Last source code input char that was received by the interpreter.
+    fn last_source_input(&self) -> Option<char>;
 
     /// Returns if the interpreter is currently receiving source stream
     /// or is parsing commmand.
@@ -380,9 +398,8 @@ pub trait Interpreter {
     /// Evaluate the special newline eval character
     fn newline_eval(&mut self) -> Action {
         let currently_reading = self.is_reading();
-        let last_input = self.last_input();
+        let last_input = self.last_source_input();
         if currently_reading && last_input.is_some() && last_input.unwrap() != '\n' {
-            self.digest('\n');
             Action::Read
         } else if currently_reading {
             self.set_reading(false);
@@ -393,8 +410,10 @@ pub trait Interpreter {
             }
         } else if let Some(command) = self.queued_command() {
             Action::Command(command)
+        } else if last_input.is_some() && last_input.unwrap() == '\n' {
+            Action::StopReading
         } else {
-            Action::None
+            Action::Newline
         }
     }
 }

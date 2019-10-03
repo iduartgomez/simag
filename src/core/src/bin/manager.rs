@@ -137,7 +137,7 @@ impl Interpreter for Manager {
         self.reading = currently_reading;
     }
 
-    fn last_input(&self) -> Option<char> {
+    fn last_source_input(&self) -> Option<char> {
         self.buffer.chars().last()
     }
 

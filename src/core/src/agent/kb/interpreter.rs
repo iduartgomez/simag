@@ -70,7 +70,16 @@ impl<'a> SimagInterpreter<'a> {
 impl<'a> Interpreter for SimagInterpreter<'a> {
     fn digest(&mut self, input: char) -> Action {
         match input {
-            '\n' => self.newline_eval(),
+            '\n' => {
+                let action = self.newline_eval();
+                let last_source = self.last_source_input();
+                if self.reading && last_source.is_some() && last_source.unwrap() == '\n' {
+                    self.reading = false;
+                } else if self.reading {
+                    self.source.push('\n');
+                }
+                action
+            }
             '(' if !self.reading => {
                 self.source.push('(');
                 self.reading = true;
@@ -153,7 +162,7 @@ impl<'a> Interpreter for SimagInterpreter<'a> {
         self.reading = currently_reading;
     }
 
-    fn last_input(&self) -> Option<char> {
+    fn last_source_input(&self) -> Option<char> {
         self.source.chars().last()
     }
 
