@@ -1,9 +1,9 @@
 mod kb;
 mod lang;
 
-pub(crate) use self::kb::repr::Representation;
-pub use self::kb::repr::{Answer, QueryErr};
+pub use self::kb::{repr::{Answer, QueryErr}, interpreter::SimagInterpreter};
 pub(self) use self::lang::ParseErrF;
+pub(crate) use self::kb::repr::Representation;
 
 /// Represent an alive object which can interact with environment.
 ///

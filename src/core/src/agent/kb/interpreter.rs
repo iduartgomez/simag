@@ -21,6 +21,7 @@ List of valid commands:
 
 * help > the help command
 * help commands > this command, prints info about commands
+* help queries > how to query the engine
 ";
 
 const HELP_QUERYING: &str = "\
@@ -53,32 +54,6 @@ impl<'a> SimagInterpreter<'a> {
         }
     }
 
-    fn eval(&mut self) -> Result<Action, String> {
-        let mut input = String::new();
-        mem::swap(&mut self.source, &mut input);
-        if !self.ask {
-            match self.state.tell(&input) {
-                Err(errors) => Err(format!("{}", &errors[0])),
-                Ok(_) => Ok(Action::Continue),
-            }
-        } else {
-            input.remove(0);
-            if let Some(r) = match self.state.ask(&input) {
-                Err(QueryErr::ParseErr(_)) | Err(QueryErr::QueryErr) => None,
-                Ok(result) => unsafe {
-                    let answ = mem::transmute::<Answer, Answer<'a>>(result);
-                    Some(answ)
-                },
-            } {
-                self.result = Some(r);
-                Ok(Action::Write("Query executed succesfully".to_owned()))
-            } else {
-                self.result = None;
-                Err("Incorrect query".to_string())
-            }
-        }
-    }
-
     fn query_result(&self, _query: ResultQuery) -> Result<String, String> {
         if let Some(ref result) = self.result {
             if let Some(r) = result.get_results_single() {
@@ -93,29 +68,9 @@ impl<'a> SimagInterpreter<'a> {
 }
 
 impl<'a> Interpreter for SimagInterpreter<'a> {
-    fn read(&mut self, input: char) -> Action {
+    fn digest(&mut self, input: char) -> Action {
         match input {
-            '\n' => {
-                if self.reading && !self.source.ends_with('\n') {
-                    self.source.push('\n');
-                    Action::Read
-                } else if self.reading {
-                    self.reading = false;
-                    let action = match self.eval() {
-                        Ok(Action::Write(p)) => Action::Write(p),
-                        Err(msg) => Action::Write(msg),
-                        _ => Action::Newline,
-                    };
-                    self.ask = false;
-                    action
-                } else if !self.command.trim().is_empty() {
-                    let mut command = String::new();
-                    mem::swap(&mut self.command, &mut command);
-                    Action::Command(command)
-                } else {
-                    Action::Newline
-                }
-            }
+            '\n' => self.newline_eval(),
             '(' if !self.reading => {
                 self.source.push('(');
                 self.reading = true;
@@ -142,6 +97,10 @@ impl<'a> Interpreter for SimagInterpreter<'a> {
                 Action::Continue
             }
         }
+    }
+
+    fn is_reading(&self) -> bool {
+        self.reading
     }
 
     fn delete_last(&mut self) -> Option<Action> {
@@ -176,6 +135,51 @@ impl<'a> Interpreter for SimagInterpreter<'a> {
             },
             Command::Query(ResultQuery::Multiple) => unimplemented!(),
             Command::Exit => Some(Action::Exit),
+        }
+    }
+
+    fn queued_command(&mut self) -> Option<String> {
+        if !self.command.trim().is_empty() {
+            let mut command = String::new();
+            mem::swap(&mut self.command, &mut command);
+            Some(command)
+        } else {
+            None
+        }
+    }
+
+    fn set_reading(&mut self, currently_reading: bool) {
+        self.ask = false;
+        self.reading = currently_reading;
+    }
+
+    fn last_input(&self) -> Option<char> {
+        self.source.chars().last()
+    }
+
+    fn evaluate(&mut self) -> Result<Action, String> {
+        let mut input = String::new();
+        mem::swap(&mut self.source, &mut input);
+        if !self.ask {
+            match self.state.tell(&input) {
+                Err(errors) => Err(format!("{}", &errors[0])),
+                Ok(_) => Ok(Action::Continue),
+            }
+        } else {
+            input.remove(0);
+            if let Some(r) = match self.state.ask(&input) {
+                Err(QueryErr::ParseErr(_)) | Err(QueryErr::QueryErr) => None,
+                Ok(result) => unsafe {
+                    let answ = mem::transmute::<Answer, Answer<'a>>(result);
+                    Some(answ)
+                },
+            } {
+                self.result = Some(r);
+                Ok(Action::Write("Query executed succesfully".to_owned()))
+            } else {
+                self.result = None;
+                Err("Incorrect query".to_string())
+            }
         }
     }
 }

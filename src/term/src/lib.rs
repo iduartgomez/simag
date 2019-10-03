@@ -1,11 +1,14 @@
+mod cursor;
+
 use std::io::{stdout, Bytes, Read, Stdout, StdoutLock, Write};
 use std::iter::Iterator;
-use std::time;
 
 use once_cell::sync::Lazy;
 use termion::event::{parse_event, Event, Key};
 use termion::raw::{IntoRawMode, RawTerminal};
 use termion::{async_stdin, AsyncReader};
+
+use cursor::{Cursor, CursorMovement};
 
 fn get_raw_stdout() -> RawTerminal<StdoutLock<'static>> {
     static STDOUT: Lazy<Stdout> = Lazy::new(stdout);
@@ -23,7 +26,7 @@ where
 {
     interpreter: I,
     state: TerminalState,
-    cursor: Cursor,
+    cursor: Cursor<RawTerminal<StdoutLock<'static>>>,
     stdin: Bytes<AsyncReader>,
     stdout: RawTerminal<StdoutLock<'static>>,
 }
@@ -90,6 +93,7 @@ where
             termion::cursor::Show
         )
         .unwrap();
+
         self.flush();
     }
 
@@ -100,10 +104,10 @@ where
                     if c != &'\n' {
                         self.print_char(*c);
                     }
-                    self.interpreter.read(*c)
+                    self.interpreter.digest(*c)
                 }
                 Key::Backspace => {
-                    if self.cursor.column > 5 {
+                    if self.cursor.at_start_of_the_line() {
                         self.delete();
                         match self.interpreter.delete_last() {
                             Some(Action::Discard) => {
@@ -180,18 +184,18 @@ where
                 self.state.reading = true;
                 self.newline();
             }
-            Action::Newline => {
+            Action::StopReading => {
                 self.state.reading = false;
                 self.newline();
             }
             Action::Discard => {
-                let stdout = &mut self.stdout;
-                self.cursor.move_down(stdout, 1);
+                self.cursor
+                    .action(&mut self.stdout, CursorMovement::MoveRight(1));
                 self.newline();
             }
             Action::Command(cmd) => {
-                let stdout = &mut self.stdout;
-                self.cursor.move_down(stdout, 1);
+                self.cursor
+                    .action(&mut self.stdout, CursorMovement::MoveRight(1));
                 if let Some(action) = self.interpreter.cmd_executor(cmd) {
                     match action {
                         Action::WriteStr(val) => self.print_str(val),
@@ -217,11 +221,12 @@ where
 
     fn print_str(&mut self, output: &str) {
         write!(self.stdout, "{}", output).unwrap();
-        if let Action::Newline = self
-            .cursor
-            .move_right(&mut self.stdout, output.len() as u16)
-        {
-            self.cursor.move_down(&mut self.stdout, 1);
+        if let CursorMovement::Newline = self.cursor.action(
+            &mut self.stdout,
+            CursorMovement::MoveRight(output.len() as u16),
+        ) {
+            self.cursor
+                .action(&mut self.stdout, CursorMovement::MoveDown(1));
             self.print_str(output);
             return;
         }
@@ -230,8 +235,12 @@ where
 
     fn print_char(&mut self, output: char) {
         write!(self.stdout, "{}", output).unwrap();
-        if let Action::Newline = self.cursor.move_right(&mut self.stdout, 1) {
-            self.cursor.move_down(&mut self.stdout, 1);
+        if let CursorMovement::Newline = self
+            .cursor
+            .action(&mut self.stdout, CursorMovement::MoveRight(1))
+        {
+            self.cursor
+                .action(&mut self.stdout, CursorMovement::MoveDown(1));
             self.print_char(output);
             return;
         }
@@ -242,7 +251,8 @@ where
     pub fn print_multiline(&mut self, output: &str) {
         for (i, line) in output.lines().enumerate() {
             if i != 0 {
-                self.cursor.move_down(&mut self.stdout, 1);
+                self.cursor
+                    .action(&mut self.stdout, CursorMovement::MoveDown(1));
             }
             write!(self.stdout, "{}", line).unwrap();
         }
@@ -250,8 +260,9 @@ where
     }
 
     pub fn newline(&mut self) {
-        self.cursor.move_down(&mut self.stdout, 1);
-        self.cursor.column = 5;
+        self.cursor
+            .action(&mut self.stdout, CursorMovement::MoveDown(1));
+        self.cursor.command_line_start();
         if self.state.reading {
             write!(
                 self.stdout,
@@ -274,15 +285,8 @@ where
     }
 
     fn delete(&mut self) {
-        self.cursor.column -= 1;
-        write!(
-            self.stdout,
-            "{} {}",
-            termion::cursor::Goto(self.cursor.column, self.cursor.row),
-            termion::cursor::Goto(self.cursor.column, self.cursor.row)
-        )
-        .unwrap();
-        self.flush();
+        self.cursor
+            .action(&mut self.stdout, CursorMovement::MoveLeft(1));
     }
 
     fn flush(&mut self) {
@@ -291,16 +295,30 @@ where
 }
 
 pub enum Action {
+    /// Signal to the terminal that the interpreter is currently reading
+    /// source interpretable instructions.
     Read,
+    /// Signal to the terminal that the interpreter is done ingesting
+    /// source of interpretable instructions.
+    StopReading,
+    /// Output a single line message to the terminal.  
     Write(String),
+    /// Output a single line message to the terminal.
     WriteStr(&'static str),
+    /// Output multiple lines message to the terminal.
     WriteMulti(String),
+    /// Output multiple lines message to the terminal.
     WriteMultiStr(&'static str),
+    /// Signal an interpretable command to the terminal main event loop
+    /// for the interpreter.
     Command(String),
+    /// Continue digesting input
     Continue,
+    /// Exit the program
     Exit,
+    /// Signal cancelation of any ongoing evaluation
     Discard,
-    Newline,
+    /// Do nothing
     None,
 }
 
@@ -312,81 +330,6 @@ struct TerminalState {
 impl TerminalState {
     pub fn new() -> Self {
         TerminalState { reading: false }
-    }
-}
-
-struct Cursor {
-    column: u16,
-    row: u16,
-    space: (u16, u16),
-    time: time::Instant,
-    show: bool,
-    effect_on: bool,
-}
-
-impl Default for Cursor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Cursor {
-    pub fn new() -> Cursor {
-        Cursor {
-            row: 1,
-            column: 1,
-            space: termion::terminal_size().unwrap(),
-            time: time::Instant::now(),
-            show: true,
-            effect_on: true,
-        }
-    }
-
-    pub fn move_down<O: Write>(&mut self, stdout: &mut O, pos: u16) {
-        if self.row + pos > self.space.1 {
-            write!(stdout, "{}", termion::scroll::Up(pos)).unwrap();
-        }
-        self.row += pos;
-        write!(stdout, "{}", termion::cursor::Goto(1, self.row)).unwrap();
-        stdout.flush().unwrap();
-    }
-
-    pub fn move_right<O: Write>(&mut self, stdout: &mut O, pos: u16) -> Action {
-        if self.column + pos > self.space.0 {
-            return Action::Newline;
-        } else {
-            self.column += pos;
-        }
-        write!(stdout, "{}", termion::cursor::Goto(self.column, self.row)).unwrap();
-        stdout.flush().unwrap();
-        Action::None
-    }
-
-    pub fn cursor_effect<O: Write>(&mut self, stdout: &mut O) {
-        if !self.effect_on {
-            return;
-        }
-        let nt = time::Instant::now();
-        if nt.duration_since(self.time) >= time::Duration::new(0, 500_000_000) {
-            if self.show {
-                self.show = false;
-                self.hide(stdout);
-            } else {
-                self.show = true;
-                self.show(stdout);
-            }
-            self.time = nt;
-        }
-    }
-
-    pub fn show<O: Write>(&self, stdout: &mut O) {
-        write!(stdout, "{}", termion::cursor::Show).unwrap();
-        stdout.flush().unwrap();
-    }
-
-    pub fn hide<O: Write>(&self, stdout: &mut O) {
-        write!(stdout, "{}", termion::cursor::Hide).unwrap();
-        stdout.flush().unwrap();
     }
 }
 
@@ -406,7 +349,52 @@ impl Iterator for Combo {
 }
 
 pub trait Interpreter {
-    fn read(&mut self, input: char) -> Action;
+    /// Last input char that was received by the interpreter.
+    fn last_input(&self) -> Option<char>;
+
+    /// Returns if the interpreter is currently receiving source stream
+    /// or is parsing commmand.
+    fn is_reading(&self) -> bool;
+
+    /// Feed new input characters to the interpreter and return
+    /// a new action after digestion.
+    fn digest(&mut self, input: char) -> Action;
+
+    /// Execute a command and return the continuation action if there
+    /// is one.
     fn cmd_executor(&mut self, command: String) -> Option<Action>;
+
+    /// Drop last change of the input stream and return an optional action
+    /// to be performed after rollingback last change.
     fn delete_last(&mut self) -> Option<Action>;
+
+    /// Set current reading source disposition.
+    fn set_reading(&mut self, currently_reading: bool);
+
+    /// Evaluate the currently ingested source.
+    fn evaluate(&mut self) -> Result<Action, String>;
+
+    /// Return any queued command if there is one.
+    fn queued_command(&mut self) -> Option<String>;
+
+    /// Evaluate the special newline eval character
+    fn newline_eval(&mut self) -> Action {
+        let currently_reading = self.is_reading();
+        let last_input = self.last_input();
+        if currently_reading && last_input.is_some() && last_input.unwrap() != '\n' {
+            self.digest('\n');
+            Action::Read
+        } else if currently_reading {
+            self.set_reading(false);
+            match self.evaluate() {
+                Ok(Action::Write(p)) => Action::Write(p),
+                Err(msg) => Action::Write(msg),
+                _ => Action::None,
+            }
+        } else if let Some(command) = self.queued_command() {
+            Action::Command(command)
+        } else {
+            Action::None
+        }
+    }
 }

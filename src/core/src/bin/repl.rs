@@ -1,6 +1,6 @@
 //! A REPL (Read-Eval-Print-Loop) terminal interface for the language
 
-use simag_core::utils::SimagInterpreter;
+use simag_core::SimagInterpreter;
 use simag_term::Terminal;
 
 const INFO: &str = "Simag Logic Lang 0.0.1 Interpreter\nType \"help\" for more information";

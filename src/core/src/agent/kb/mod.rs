@@ -5,6 +5,7 @@
 pub(in crate::agent) mod bms;
 pub(self) mod class;
 mod inference;
+pub mod interpreter;
 pub(super) mod repr;
 
 #[cfg(test)]

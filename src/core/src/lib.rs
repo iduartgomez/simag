@@ -11,9 +11,8 @@ extern crate num_cpus;
 extern crate rayon;
 
 mod agent;
-pub mod utils;
 
-pub use self::agent::{Agent, Answer, QueryErr};
+pub use self::agent::{Agent, Answer, QueryErr, SimagInterpreter};
 
 const TIME_EQ_DIFF: i64 = 1;
 const FLOAT_EQ_ULPS: i32 = 2;
