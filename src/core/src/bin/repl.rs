@@ -21,6 +21,5 @@ fn main() {
     let interpreter = SimagInterpreter::new();
     let mut repl = SimagRepl::new(interpreter);
     repl.terminal.print_multiline(INFO);
-    repl.terminal.newline();
     repl.terminal.start_event_loop();
 }

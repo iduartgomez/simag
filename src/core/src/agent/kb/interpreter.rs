@@ -68,7 +68,7 @@ impl<'a> SimagInterpreter<'a> {
 }
 
 impl<'a> Interpreter for SimagInterpreter<'a> {
-    fn digest(&mut self, input: char) -> Action {
+    fn digest<'b, 'c: 'b>(&'b mut self, input: char) -> Action<'c> {
         match input {
             '\n' => {
                 let action = self.newline_eval();
@@ -112,7 +112,7 @@ impl<'a> Interpreter for SimagInterpreter<'a> {
         self.reading
     }
 
-    fn delete_last(&mut self) -> Option<Action> {
+    fn delete_last<'b, 'c: 'b>(&'b mut self) -> Option<Action<'c>> {
         if self.reading {
             self.source.pop();
             if self.source.is_empty() {
@@ -132,7 +132,7 @@ impl<'a> Interpreter for SimagInterpreter<'a> {
         }
     }
 
-    fn cmd_executor(&mut self, command: String) -> Option<Action> {
+    fn cmd_executor<'b, 'c: 'b>(&'b mut self, command: String) -> Option<Action<'c>> {
         match Command::from(command.as_str()) {
             Command::Err => Some(Action::WriteStr("Unknown command")),
             Command::Help => Some(Action::WriteMultiStr(HELP_COMMAND)),
@@ -166,7 +166,7 @@ impl<'a> Interpreter for SimagInterpreter<'a> {
         self.source.chars().last()
     }
 
-    fn evaluate(&mut self) -> Result<Action, String> {
+    fn evaluate<'b, 'c: 'b>(&'b mut self) -> Result<Action<'c>, String> {
         let mut input = String::new();
         mem::swap(&mut self.source, &mut input);
         if !self.ask {

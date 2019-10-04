@@ -32,7 +32,7 @@ static INFO: Lazy<String> = Lazy::new(|| {
 struct Manager {
     messages: ConsoleMsg,
     buffer: String,
-    reading: bool,
+    on_going_cmd: Option<Args>,
 }
 
 impl Manager {
@@ -40,7 +40,7 @@ impl Manager {
         Manager {
             messages: ConsoleMsg::new(),
             buffer: String::new(),
-            reading: false,
+            on_going_cmd: None,
         }
     }
 
@@ -75,32 +75,34 @@ impl Manager {
         Args { cmd, args: parsed }
     }
 
-    fn make(&self, cmd: &Args) {
+    fn make(&self) -> Action<'static> {
+        let cmd = self.on_going_cmd.as_ref().unwrap();
         if cmd.args.is_empty() {
             let mut args = HashMap::new();
             args.insert("num", "0");
             args.insert("cmd", "make");
             args.insert("helper", "make --help");
-            self.messages.cmd_errors("arg_num", args);
-            return;
+            return self.messages.cmd_errors("arg_num", args);
         }
         for a in cmd.args.keys() {
             if a == "help" {
-                self.messages.help_for_cmd(&cmd);
-                return;
+                return self.messages.help_for_cmd(&cmd);
             }
         }
-        self.messages.done();
+        Action::WriteStr(self.messages.done())
     }
 
-    fn clean_up(&self) {
-        println!("Closing gracefully, please wait ...");
-        self.messages.done();
+    fn clean_up(&self) -> Action<'static> {
+        let clean_up_pipe = vec![
+            Action::WriteStr("Closing gracefully, please wait ..."),
+            Action::Command("closing".to_string()),
+        ];
+        Action::Chain(clean_up_pipe)
     }
 }
 
 impl Interpreter for Manager {
-    fn digest(&mut self, input: char) -> Action {
+    fn digest<'b, 'a: 'b>(&'b mut self, input: char) -> Action<'a> {
         match input {
             '\n' => self.newline_eval(),
             _ => {
@@ -110,42 +112,49 @@ impl Interpreter for Manager {
         }
     }
 
-    fn cmd_executor(&mut self, command: String) -> Option<Action> {
-        let parsed: Args = self.parse_args(command);
-
-        if parsed.cmd == "quit" {
-            return Some(Action::Exit);
-        }
-
-        match parsed.cmd.as_ref() {
-            //"make" => self.make(&parsed),
-            "help" => Some(Action::WriteMulti(self.messages.help().to_owned())),
-            //"quit" => self.clean_up(),
-            _ => Some(Action::WriteMulti(self.messages.unknown().to_owned())),
+    fn cmd_executor<'b, 'a: 'b>(&'b mut self, command: String) -> Option<Action<'a>> {
+        match command.as_str() {
+            "make" => Some(self.make()),
+            "help" => Some(Action::WriteMultiStr(self.messages.help())),
+            "quit" => Some(self.clean_up()),
+            "closing" => Some(Action::Chain(vec![
+                Action::WriteStr(self.messages.done()),
+                Action::Sleep(2000),
+                Action::Exit,
+            ])),
+            _ => Some(Action::WriteMultiStr(self.messages.unknown())),
         }
     }
 
-    fn evaluate(&mut self) -> Result<Action, String> {
-        Ok(Action::Continue)
+    fn evaluate<'b, 'a: 'b>(&'b mut self) -> Result<Action<'a>, String> {
+        unreachable!()
     }
 
     fn is_reading(&self) -> bool {
-        self.reading
+        false
     }
 
-    fn set_reading(&mut self, currently_reading: bool) {
-        self.reading = currently_reading;
-    }
+    fn set_reading(&mut self, _currently_reading: bool) {}
 
     fn last_source_input(&self) -> Option<char> {
         self.buffer.chars().last()
     }
 
     fn queued_command(&mut self) -> Option<String> {
-        unimplemented!();
+        if self.buffer.is_empty() {
+            return None;
+        }
+
+        let new_cmd = String::new();
+        let exec_cmd = std::mem::replace(&mut self.buffer, new_cmd);
+        let args = self.parse_args(exec_cmd);
+        let cmd = args.cmd.clone();
+        self.on_going_cmd = Some(args);
+        Some(cmd)
     }
 
-    fn delete_last(&mut self) -> Option<Action> {
+    fn delete_last<'b, 'a: 'b>(&'b mut self) -> Option<Action<'a>> {
+        self.buffer.pop();
         None
     }
 }
@@ -155,93 +164,94 @@ struct Args {
     args: HashMap<String, Vec<String>>,
 }
 
-// Commands and std output
+// Commands
 
 struct ConsoleMsg {
-    messages: HashMap<&'static str, String>,
+    messages: HashMap<&'static str, &'static str>,
 }
 
 impl ConsoleMsg {
     fn new() -> ConsoleMsg {
         let mut messages = HashMap::new();
 
-        let unknown_command: &[ANSIString] = &[
-            Red.paint("Unknown command, write "),
-            Black.bold().on(White).paint("help"),
-            Red.paint(" for a list of commands"),
-        ];
-        messages.insert("unknown", format!("{}", ANSIStrings(&unknown_command)));
+        static UNKNOWN_COMMAND: Lazy<String> = Lazy::new(|| {
+            ANSIStrings(&[
+                Red.paint("Unknown command, write "),
+                Black.bold().on(White).paint("help"),
+                Red.paint(" for a list of commands"),
+            ])
+            .to_string()
+        });
+        messages.insert("unknown", &**UNKNOWN_COMMAND);
 
-        messages.insert(
-            "help",
-            format!("{}", Style::default().paint("Help commands:")),
-        );
+        static HELP: Lazy<String> =
+            Lazy::new(|| format!("{}", Style::default().paint("Help commands:")));
+        messages.insert("help", &**HELP);
 
-        messages.insert("done", format!("{}", Green.bold().paint("Done!")));
+        static DONE: Lazy<String> = Lazy::new(|| format!("{}", Green.bold().paint("Done!")));
+        messages.insert("done", &**DONE);
 
-        messages.insert(
-            "arg_num",
-            "Wrong number of arguments ({}), for {} command, write {} for help".to_string(),
-        );
+        static ARG_NUM: Lazy<String> = Lazy::new(|| {
+            "Wrong number of arguments ({}), for {} command, write {} for help".to_string()
+        });
+        messages.insert("arg_num", &**ARG_NUM);
 
         ConsoleMsg { messages }
     }
 
-    fn unknown(&self) -> &str {
+    fn unknown(&self) -> &'static str {
         self.messages.get("unknown").unwrap()
     }
 
-    fn help(&self) -> &str {
+    fn help(&self) -> &'static str {
         self.messages.get("help").unwrap()
     }
 
-    fn done(&self) -> &str {
+    fn done(&self) -> &'static str {
         self.messages.get("done").unwrap()
     }
 
-    fn cmd_errors(&self, err: &str, args: HashMap<&str, &str>) {
-        if err == "arg_num" {
-            let msg_ori = self.messages.get("arg_num").unwrap();
-            let mut msg_ori: Vec<&str> = msg_ori.split("{}").collect();
-            let mut msg_new: Vec<ANSIString> = Vec::with_capacity(7);
+    fn cmd_errors(&self, err: &str, args: HashMap<&str, &str>) -> Action<'static> {
+        match err {
+            "arg_num" => {
+                let msg_ori = self.messages.get("arg_num").unwrap();
+                let mut msg_ori: Vec<&str> = msg_ori.split("{}").collect();
+                let mut msg_new: Vec<ANSIString> = Vec::with_capacity(7);
 
-            let &num = args.get("num").unwrap();
-            let &cmd = args.get("cmd").unwrap();
-            let &helper = args.get("helper").unwrap();
+                let &num = args.get("num").unwrap();
+                let &cmd = args.get("cmd").unwrap();
+                let &helper = args.get("helper").unwrap();
 
-            msg_new.push(Style::default().paint(num));
-            msg_new.push(Black.bold().on(White).paint(cmd));
-            msg_new.push(Black.bold().on(White).paint(helper));
+                msg_new.push(Style::default().paint(num));
+                msg_new.push(Black.bold().on(White).paint(cmd));
+                msg_new.push(Black.bold().on(White).paint(helper));
 
-            let mut i = 0;
-            while !msg_ori.is_empty() {
-                if (i + 1) % 2 != 0 {
-                    msg_new.insert(i, Red.paint(msg_ori.remove(0)));
+                let mut i = 0;
+                while !msg_ori.is_empty() {
+                    if (i + 1) % 2 != 0 {
+                        msg_new.insert(i, Red.paint(msg_ori.remove(0)));
+                    }
+                    i += 1;
                 }
-                i += 1;
+                let msg = format!("{}", ANSIStrings(&msg_new));
+                Action::WriteMulti(msg)
             }
-            let msg = format!("{}", ANSIStrings(&msg_new));
-            self.print(&msg);
-        } else if err == "wrong_args" {
-
+            "wrong_args" | _ => Action::WriteStr("Wrong arguments..."),
         }
     }
 
-    fn print(&self, line: &str) -> String {
-        format!("{}", &line)
-    }
-
-    fn help_for_cmd(&self, cmd: &Args) -> String {
-        format!(
+    fn help_for_cmd(&self, cmd: &Args) -> Action<'static> {
+        let cmd_help = format!(
             "Commands for {}:\n --no make",
             Black.bold().on(White).paint(&cmd.cmd)
-        )
+        );
+        Action::WriteMulti(cmd_help)
     }
 }
 
 fn main() {
-    let mut terminal = Terminal::new(Manager::new());
+    let manager = Manager::new();
+    let mut terminal = Terminal::new(manager);
     terminal.print_multiline(&INFO);
-    terminal.newline();
     terminal.start_event_loop();
 }

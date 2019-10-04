@@ -1,13 +1,16 @@
 mod cursor;
+mod action;
 
 use std::io::{stdout, Bytes, Read, Stdout, StdoutLock, Write};
 use std::iter::Iterator;
+use std::time::Duration;
 
 use once_cell::sync::Lazy;
 use termion::event::{parse_event, Event, Key};
 use termion::raw::{IntoRawMode, RawTerminal};
 use termion::{async_stdin, AsyncReader};
 
+pub use action::Action;
 use cursor::{Cursor, CursorMovement};
 
 fn get_raw_stdout() -> RawTerminal<StdoutLock<'static>> {
@@ -55,17 +58,35 @@ where
         }
     }
 
+    fn exec_or_break<'a>(&mut self, mut chain: Vec<Action<'a>>) -> Option<Action<'a>> {
+        while !chain.is_empty() {
+            let mut chained = Vec::new();
+            for action in chain.into_iter().filter_map(|a| self.exec_action(a)) {
+                if let Action::Chain(new_chain) = action {
+                    chained.extend(new_chain);
+                } else if action.exit() {
+                    return Some(Action::Exit);
+                }
+            }
+            chain = Vec::with_capacity(chained.len());
+            chain.extend(chained);
+        }
+        None
+    }
+
     pub fn start_event_loop(&mut self) {
         loop {
             self.side_effects();
             if let Some(Ok(c)) = self.stdin.next() {
                 if c == b'\x1B' {
                     match self.sequence() {
-                        Ok(action) => {
-                            if let Some(Action::Exit) = self.exec_action(action) {
-                                break;
+                        Ok(action) => match self.exec_action(action) {
+                            Some(Action::Exit) => break,
+                            Some(Action::Chain(chain)) => {
+                                self.exec_or_break(chain);
                             }
-                        }
+                            _ => {}
+                        },
                         Err(val) => {
                             if let Ok(event) = parse_event(val, &mut self.stdin) {
                                 if let Some(Action::Exit) = self.parse_event(&event) {
@@ -102,7 +123,7 @@ where
         }
     }
 
-    fn parse_event(&mut self, event: &Event) -> Option<Action> {
+    fn parse_event<'b, 'a: 'b>(&'b mut self, event: &Event) -> Option<Action<'a>> {
         if let Event::Key(key) = event {
             let action = match key {
                 Key::Char(c) => {
@@ -136,7 +157,7 @@ where
         }
     }
 
-    fn sequence(&mut self) -> Result<Action, u8> {
+    fn sequence<'b, 'a: 'b>(&'b mut self) -> Result<Action<'a>, u8> {
         let combo = &mut Combo { buffered: vec![] };
         let mut end = false;
         let mut num = false;
@@ -178,7 +199,7 @@ where
         })
     }
 
-    fn exec_action(&mut self, action: Action) -> Option<Action> {
+    fn exec_action<'b, 'a: 'b>(&'b mut self, action: Action<'a>) -> Option<Action<'a>> {
         match action {
             Action::Continue => {
                 let stdout = &mut self.stdout;
@@ -202,28 +223,21 @@ where
                 self.cursor
                     .action(&mut self.stdout, CursorMovement::MoveDown(1));
                 if let Some(action) = self.interpreter.cmd_executor(cmd) {
-                    match action {
-                        Action::WriteStr(val) => self.print_str(val),
-                        Action::Write(val) => self.print_str(&val),
-                        Action::WriteMulti(val) => self.print_multiline(&val),
-                        Action::WriteMultiStr(val) => self.print_multiline(&val),
-                        Action::Command(cmd) => return self.interpreter.cmd_executor(cmd),
-                        _ => return Some(action),
-                    }
+                    return self.exec_action(action);
                 }
-                self.newline();
             }
-            Action::Write(msg) => {
-                self.print_multiline(msg.as_str());
-                self.state.reading = false;
-                self.newline();
-            }
-            Action::Exit => return Some(Action::Exit),
+            Action::Write(val) => self.print_str(&val),
+            Action::WriteStr(val) => self.print_str(val),
+            Action::WriteMulti(val) => self.print_multiline(&val),
+            Action::WriteMultiStr(val) => self.print_multiline(val),
             Action::Newline => {
                 self.check_reading_status();
                 self.newline()
             }
-            _ => {}
+            Action::None => {}
+            Action::Chain(chain) => return self.exec_or_break(chain),
+            Action::Sleep(val) => std::thread::sleep(Duration::from_millis(val)),
+            Action::Exit => return Some(Action::Exit),
         }
         None
     }
@@ -234,20 +248,6 @@ where
         } else {
             self.state.reading = false;
         }
-    }
-
-    fn print_str(&mut self, output: &str) {
-        write!(self.stdout, "{}", output).unwrap();
-        if let CursorMovement::Newline = self.cursor.action(
-            &mut self.stdout,
-            CursorMovement::MoveRight(output.len() as u16),
-        ) {
-            self.cursor
-                .action(&mut self.stdout, CursorMovement::MoveDown(1));
-            self.print_str(output);
-            return;
-        }
-        self.flush();
     }
 
     fn print_char(&mut self, output: char) {
@@ -264,8 +264,26 @@ where
         self.flush();
     }
 
+    fn print_str(&mut self, output: &str) {
+        self.state.reading = false;
+
+        write!(self.stdout, "{}", output).unwrap();
+        if let CursorMovement::Newline = self.cursor.action(
+            &mut self.stdout,
+            CursorMovement::MoveRight(output.len() as u16),
+        ) {
+            self.cursor
+                .action(&mut self.stdout, CursorMovement::MoveDown(1));
+            self.print_str(output);
+            return;
+        }
+        self.flush();
+    }
+
     /// Prints a multiline text in the terminal.
     pub fn print_multiline(&mut self, output: &str) {
+        self.state.reading = false;
+
         for (i, line) in output.lines().enumerate() {
             if i != 0 {
                 self.cursor
@@ -273,10 +291,11 @@ where
             }
             write!(self.stdout, "{}", line).unwrap();
         }
-        self.flush()
+        self.flush();
+        self.newline();
     }
 
-    pub fn newline(&mut self) {
+    fn newline(&mut self) {
         self.cursor
             .action(&mut self.stdout, CursorMovement::MoveDown(1));
         self.cursor.command_line_start();
@@ -310,34 +329,6 @@ where
     fn flush(&mut self) {
         self.stdout.flush().unwrap();
     }
-}
-
-pub enum Action {
-    /// Signal to the terminal that the interpreter is currently reading
-    /// source interpretable instructions.
-    Read,
-    /// Signal to the terminal that the interpreter is done ingesting
-    /// source of interpretable instructions.
-    StopReading,
-    /// Output a single line message to the terminal.  
-    Write(String),
-    /// Output a single line message to the terminal.
-    WriteStr(&'static str),
-    /// Output multiple lines message to the terminal.
-    WriteMulti(String),
-    /// Output multiple lines message to the terminal.
-    WriteMultiStr(&'static str),
-    /// Signal an interpretable command to the terminal main event loop
-    /// for the interpreter.
-    Command(String),
-    /// Continue digesting input
-    Continue,
-    /// Exit the program
-    Exit,
-    /// Signal cancelation of any ongoing evaluation
-    Discard,
-    None,
-    Newline,
 }
 
 #[derive(Default)]
@@ -376,27 +367,27 @@ pub trait Interpreter {
 
     /// Feed new input characters to the interpreter and return
     /// a new action after digestion.
-    fn digest(&mut self, input: char) -> Action;
+    fn digest<'b, 'a: 'b>(&'b mut self, input: char) -> Action<'a>;
 
     /// Execute a command and return the continuation action if there
     /// is one.
-    fn cmd_executor(&mut self, command: String) -> Option<Action>;
+    fn cmd_executor<'b, 'a: 'b>(&'b mut self, command: String) -> Option<Action<'a>>;
 
     /// Drop last change of the input stream and return an optional action
     /// to be performed after rollingback last change.
-    fn delete_last(&mut self) -> Option<Action>;
+    fn delete_last<'b, 'a: 'b>(&'b mut self) -> Option<Action<'a>>;
 
     /// Set current reading source disposition.
     fn set_reading(&mut self, currently_reading: bool);
 
     /// Evaluate the currently ingested source.
-    fn evaluate(&mut self) -> Result<Action, String>;
+    fn evaluate<'b, 'a: 'b>(&'b mut self) -> Result<Action<'a>, String>;
 
     /// Return any queued command if there is one.
     fn queued_command(&mut self) -> Option<String>;
 
     /// Evaluate the special newline eval character
-    fn newline_eval(&mut self) -> Action {
+    fn newline_eval<'b, 'a: 'b>(&'b mut self) -> Action<'a> {
         let currently_reading = self.is_reading();
         let last_input = self.last_source_input();
         if currently_reading && last_input.is_some() && last_input.unwrap() != '\n' {
