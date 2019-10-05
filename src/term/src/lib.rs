@@ -1,10 +1,11 @@
-mod cursor;
 mod action;
+mod cursor;
 
 use std::io::{stdout, Bytes, Read, Stdout, StdoutLock, Write};
 use std::iter::Iterator;
 use std::time::Duration;
 
+use copypasta::{ClipboardContext, ClipboardProvider};
 use once_cell::sync::Lazy;
 use termion::event::{parse_event, Event, Key};
 use termion::raw::{IntoRawMode, RawTerminal};
@@ -23,6 +24,8 @@ fn get_stdin() -> Bytes<AsyncReader> {
     async_stdin().bytes()
 }
 
+const ESCAPE: u8 = b'\x1B';
+
 pub struct Terminal<I>
 where
     I: Interpreter,
@@ -32,9 +35,11 @@ where
     cursor: Cursor<RawTerminal<StdoutLock<'static>>>,
     stdin: Bytes<AsyncReader>,
     stdout: RawTerminal<StdoutLock<'static>>,
+    clipboard: ClipboardContext,
+    clipped_content: Option<Vec<u8>>,
 }
 
-impl<I> Terminal<I>
+impl<'a, I> Terminal<I>
 where
     I: Interpreter,
 {
@@ -55,10 +60,12 @@ where
             cursor: Cursor::new(),
             stdout,
             stdin: get_stdin(),
+            clipboard: ClipboardContext::new().unwrap(),
+            clipped_content: None,
         }
     }
 
-    fn exec_or_break<'a>(&mut self, mut chain: Vec<Action<'a>>) -> Option<Action<'a>> {
+    fn exec_or_break(&mut self, mut chain: Vec<Action<'a>>) -> Option<Action<'a>> {
         while !chain.is_empty() {
             let mut chained = Vec::new();
             for action in chain.into_iter().filter_map(|a| self.exec_action(a)) {
@@ -77,29 +84,34 @@ where
     pub fn start_event_loop(&mut self) {
         loop {
             self.side_effects();
-            if let Some(Ok(c)) = self.stdin.next() {
-                if c == b'\x1B' {
-                    match self.sequence() {
-                        Ok(action) => match self.exec_action(action) {
-                            Some(Action::Exit) => break,
-                            Some(Action::Chain(chain)) => {
-                                self.exec_or_break(chain);
-                            }
-                            _ => {}
-                        },
-                        Err(val) => {
-                            if let Ok(event) = parse_event(val, &mut self.stdin) {
-                                if let Some(Action::Exit) = self.parse_event(&event) {
-                                    break;
+            let input = self.next_input();
+            match input {
+                Some(Ok(c)) => {
+                    if c == ESCAPE {
+                        match self.sequence() {
+                            Ok(action) => match self.exec_action(action) {
+                                Some(Action::Exit) => break,
+                                Some(Action::Chain(chain)) => {
+                                    self.exec_or_break(chain);
+                                }
+                                _ => {}
+                            },
+                            Err(val) => {
+                                if let Ok(event) = parse_event(val, &mut self.stdin) {
+                                    if let Some(Action::Exit) = self.parse_event(&event) {
+                                        break;
+                                    }
                                 }
                             }
                         }
-                    }
-                } else if let Ok(event) = parse_event(c, &mut self.stdin) {
-                    if let Some(Action::Exit) = self.parse_event(&event) {
-                        break;
+                    } else if let Ok(event) = parse_event(c, &mut self.stdin) {
+                        if let Some(Action::Exit) = self.parse_event(&event) {
+                            break;
+                        }
                     }
                 }
+                Some(Err(_)) => break,
+                None => {}
             }
         }
 
@@ -116,6 +128,19 @@ where
         self.flush();
     }
 
+    fn next_input(&mut self) -> Option<Result<u8, std::io::Error>> {
+        if self.clipped_content.is_some() {
+            if let Some(c) = self.clipped_content.as_mut().unwrap().pop() {
+                Some(Ok(c))
+            } else {
+                self.clipped_content = None;
+                None
+            }
+        } else {
+            self.stdin.next()
+        }
+    }
+
     fn side_effects(&mut self) {
         if self.cursor.effect_on {
             let stdout = &mut self.stdout;
@@ -123,7 +148,7 @@ where
         }
     }
 
-    fn parse_event<'b, 'a: 'b>(&'b mut self, event: &Event) -> Option<Action<'a>> {
+    fn parse_event(&mut self, event: &Event) -> Option<Action<'a>> {
         if let Event::Key(key) = event {
             let action = match key {
                 Key::Char(c) => {
@@ -147,8 +172,8 @@ where
                     }
                     Action::Continue
                 }
-                Key::Ctrl('d') | Key::Esc => Action::Exit,
-                Key::Ctrl('c') => Action::Discard,
+                Key::Esc => Action::Exit,
+                Key::Ctrl(key) => self.ctrl_action(*key),
                 _ => Action::Continue,
             };
             self.exec_action(action)
@@ -157,13 +182,31 @@ where
         }
     }
 
-    fn sequence<'b, 'a: 'b>(&'b mut self) -> Result<Action<'a>, u8> {
+    fn ctrl_action(&mut self, key: char) -> Action<'a> {
+        match key {
+            'd' => Action::Exit,
+            'c' => Action::Discard,
+            'v' => {
+                // copy from clipboard
+                self.clipped_content = self.clipboard.get_contents().ok().map(|string| {
+                    let mut bytes: Vec<u8> = string.into();
+                    bytes.reverse();
+                    bytes
+                });
+                Action::None
+            }
+            _ => Action::None,
+        }
+    }
+
+    fn sequence(&mut self) -> Result<Action<'a>, u8> {
         let combo = &mut Combo { buffered: vec![] };
         let mut end = false;
         let mut num = false;
 
         loop {
-            match self.stdin.next() {
+            let next = self.stdin.next();
+            match next {
                 Some(Ok(b'O')) => {
                     combo.buffered.push(b'O');
                     end = true;
@@ -186,9 +229,10 @@ where
                     combo.buffered.push(c);
                     break;
                 }
-                None if num => break,
-                Some(Err(_)) => break,
-                _ => {}
+                Some(Err(_)) | None => break,
+                Some(Ok(val)) => {
+                    unreachable!("byte seq {} is not parseable under this context", val);
+                }
             }
         }
 
@@ -199,7 +243,7 @@ where
         })
     }
 
-    fn exec_action<'b, 'a: 'b>(&'b mut self, action: Action<'a>) -> Option<Action<'a>> {
+    fn exec_action(&mut self, action: Action<'a>) -> Option<Action<'a>> {
         match action {
             Action::Continue => {
                 let stdout = &mut self.stdout;
@@ -220,26 +264,52 @@ where
                 self.newline();
             }
             Action::Command(cmd) => {
-                self.cursor
-                    .action(&mut self.stdout, CursorMovement::MoveDown(1));
-                if let Some(action) = self.interpreter.cmd_executor(cmd) {
-                    return self.exec_action(action);
+                if let Some(cmd) = self.built_cmd_exec(cmd) {
+                    self.cursor
+                        .action(&mut self.stdout, CursorMovement::MoveDown(1));
+                    if let Some(action) = self.interpreter.cmd_executor(cmd) {
+                        return self.exec_action(action);
+                    }
                 }
+                self.newline();
             }
-            Action::Write(val) => self.print_str(&val),
-            Action::WriteStr(val) => self.print_str(val),
-            Action::WriteMulti(val) => self.print_multiline(&val),
-            Action::WriteMultiStr(val) => self.print_multiline(val),
+            Action::Write((val, new_line)) => self.print_str(&val, new_line),
+            Action::WriteStr((val, new_line)) => self.print_str(val, new_line),
+            Action::WriteMulti((val, new_line)) => self.print_multiline(&val, new_line),
+            Action::WriteMultiStr((val, new_line)) => self.print_multiline(val, new_line),
+            Action::Chain(chain) => return self.exec_or_break(chain),
             Action::Newline => {
                 self.check_reading_status();
-                self.newline()
+                self.newline();
             }
-            Action::None => {}
-            Action::Chain(chain) => return self.exec_or_break(chain),
             Action::Sleep(val) => std::thread::sleep(Duration::from_millis(val)),
+            Action::None => {}
             Action::Exit => return Some(Action::Exit),
         }
         None
+    }
+
+    fn built_cmd_exec(&mut self, cmd: String) -> Option<String> {
+        match cmd.as_str() {
+            "clear" => {
+                self.clear();
+                None
+            }
+            _non_executable_cmd => Some(cmd),
+        }
+    }
+
+    fn clear(&mut self) {
+        write!(
+            self.stdout,
+            "{}{}",
+            termion::clear::BeforeCursor,
+            termion::cursor::Goto(1, 1)
+        )
+        .unwrap();
+
+        self.cursor.row = 0;
+        self.cursor.column = 0;
     }
 
     fn check_reading_status(&mut self) {
@@ -264,7 +334,7 @@ where
         self.flush();
     }
 
-    fn print_str(&mut self, output: &str) {
+    fn print_str(&mut self, output: &str, new_line: bool) {
         self.state.reading = false;
 
         write!(self.stdout, "{}", output).unwrap();
@@ -274,14 +344,17 @@ where
         ) {
             self.cursor
                 .action(&mut self.stdout, CursorMovement::MoveDown(1));
-            self.print_str(output);
+            self.print_str(output, new_line);
             return;
         }
         self.flush();
+        if new_line {
+            self.newline();
+        };
     }
 
     /// Prints a multiline text in the terminal.
-    pub fn print_multiline(&mut self, output: &str) {
+    pub fn print_multiline(&mut self, output: &str, print_newline: bool) {
         self.state.reading = false;
 
         for (i, line) in output.lines().enumerate() {
@@ -292,7 +365,9 @@ where
             write!(self.stdout, "{}", line).unwrap();
         }
         self.flush();
-        self.newline();
+        if print_newline {
+            self.newline();
+        }
     }
 
     fn newline(&mut self) {
@@ -396,8 +471,11 @@ pub trait Interpreter {
             self.set_reading(false);
             match self.evaluate() {
                 Ok(Action::Write(p)) => Action::Write(p),
-                Err(msg) => Action::Write(msg),
-                _ => Action::None,
+                Ok(Action::WriteStr(p)) => Action::WriteStr(p),
+                Ok(Action::WriteMulti(p)) => Action::WriteMulti(p),
+                Ok(Action::WriteMultiStr(p)) => Action::WriteMultiStr(p),
+                Err(msg) => Action::WriteMulti((msg, true)),
+                _ => Action::StopReading,
             }
         } else if let Some(command) = self.queued_command() {
             Action::Command(command)

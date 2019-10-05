@@ -3,34 +3,8 @@ use std::mem;
 
 use crate::agent::{Answer, QueryErr, Representation};
 
+use super::*;
 use simag_term::Interpreter;
-
-const HELP_COMMAND: &str = "\
-Welcome to the interactive Simag 0.0.1 interpreter!
-
-You can start feeding information for the interpreter by writing syntactically valid expressions.
-For querying the interpreter just preceed your expression query with a ?. For more info on 
-the query expression operator write \"help queries\".
-
-To quit this utility just write \"quit\" or \"exit\". For a complete list of commands write 
-\"help commands\".
-";
-
-const HELP_COMMANDS: &str = "\
-List of valid commands:
-
-* help > the help command
-* help commands > this command, prints info about commands
-* help queries > how to query the engine
-";
-
-const HELP_QUERYING: &str = "\
-For querying just preceed your query with ?. If the query is valid you can explore the results 
-using ??<expr>, substitue <expr> for a valid expression for the ?? operator:
-
-> ??single > return the global result for the query
-> ??multi <expr> > return the result for this part of the query
-";
 
 #[derive(Default)]
 pub struct SimagInterpreter<'a> {
@@ -134,13 +108,13 @@ impl<'a> Interpreter for SimagInterpreter<'a> {
 
     fn cmd_executor<'b, 'c: 'b>(&'b mut self, command: String) -> Option<Action<'c>> {
         match Command::from(command.as_str()) {
-            Command::Err => Some(Action::WriteStr("Unknown command")),
-            Command::Help => Some(Action::WriteMultiStr(HELP_COMMAND)),
-            Command::HelpCommands => Some(Action::WriteMultiStr(HELP_COMMANDS)),
-            Command::HelpQuerying => Some(Action::WriteMultiStr(HELP_QUERYING)),
+            Command::Err => Some(Action::WriteStr(("Unknown command", true))),
+            Command::Help => Some(Action::WriteMultiStr((HELP_COMMAND, true))),
+            Command::HelpCommands => Some(Action::WriteMultiStr((HELP_COMMANDS, true))),
+            Command::HelpQuerying => Some(Action::WriteMultiStr((HELP_QUERYING, true))),
             Command::Query(ResultQuery::Single) => match self.query_result(ResultQuery::Single) {
-                Ok(result) => Some(Action::WriteMulti(result)),
-                Err(msg) => Some(Action::WriteMulti(msg)),
+                Ok(result) => Some(Action::WriteMulti((result, true))),
+                Err(msg) => Some(Action::WriteMulti((msg, true))),
             },
             Command::Query(ResultQuery::Multiple) => unimplemented!(),
             Command::Exit => Some(Action::Exit),
@@ -158,7 +132,6 @@ impl<'a> Interpreter for SimagInterpreter<'a> {
     }
 
     fn set_reading(&mut self, currently_reading: bool) {
-        self.ask = false;
         self.reading = currently_reading;
     }
 
@@ -184,7 +157,7 @@ impl<'a> Interpreter for SimagInterpreter<'a> {
                 },
             } {
                 self.result = Some(r);
-                Ok(Action::Write("Query executed succesfully".to_owned()))
+                Ok(Action::WriteStr(("Query executed succesfully", true)))
             } else {
                 self.result = None;
                 Err("Incorrect query".to_string())

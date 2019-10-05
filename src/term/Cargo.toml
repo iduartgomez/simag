@@ -6,6 +6,6 @@ autobins = false
 edition = "2018"
 
 [dependencies]
-termion = "^1.5.0"
-ansi_term = "0.12.1"
+termion = "1.5.0"
 once_cell = "1.2.0"
+copypasta = "0.6.0"

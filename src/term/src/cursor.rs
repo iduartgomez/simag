@@ -38,7 +38,11 @@ impl<O: Write> Cursor<O> {
             }
             CursorMovement::MoveRight(pos) => self.move_right(stdout, pos),
             CursorMovement::MoveLeft(pos) => self.move_left(stdout, pos),
-            _ => unimplemented!(),
+            CursorMovement::Newline => {
+                self.move_down(stdout, 1);
+                CursorMovement::None
+            }
+            CursorMovement::None => CursorMovement::None,
         }
     }
 

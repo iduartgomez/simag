@@ -13,20 +13,6 @@ use ansi_term::{ANSIString, ANSIStrings, Style};
 
 use once_cell::sync::Lazy;
 
-static INFO: Lazy<String> = Lazy::new(|| {
-    let msg: &[ANSIString] = &[
-        Black.on(White).paint("\n    Welcome to the "),
-        Red.bold().underline().on(White).paint("SimAg"),
-        Style::default().on(White).paint(" "),
-        Blue.bold()
-            .underline()
-            .on(White)
-            .paint("Management Command Line"),
-        Style::default().on(White).paint("    \n"),
-    ];
-    ANSIStrings(msg).to_string()
-});
-
 // Env management
 
 struct Manager {
@@ -89,12 +75,12 @@ impl Manager {
                 return self.messages.help_for_cmd(&cmd);
             }
         }
-        Action::WriteStr(self.messages.done())
+        Action::WriteStr((self.messages.done(), true))
     }
 
     fn clean_up(&self) -> Action<'static> {
         let clean_up_pipe = vec![
-            Action::WriteStr("Closing gracefully, please wait ..."),
+            Action::WriteStr(("Closing gracefully, please wait ...", false)),
             Action::Command("closing".to_string()),
         ];
         Action::Chain(clean_up_pipe)
@@ -115,14 +101,14 @@ impl Interpreter for Manager {
     fn cmd_executor<'b, 'a: 'b>(&'b mut self, command: String) -> Option<Action<'a>> {
         match command.as_str() {
             "make" => Some(self.make()),
-            "help" => Some(Action::WriteMultiStr(self.messages.help())),
+            "help" => Some(Action::WriteMultiStr((self.messages.help(), true))),
             "quit" => Some(self.clean_up()),
             "closing" => Some(Action::Chain(vec![
-                Action::WriteStr(self.messages.done()),
+                Action::WriteStr((self.messages.done(), false)),
                 Action::Sleep(2000),
                 Action::Exit,
             ])),
-            _ => Some(Action::WriteMultiStr(self.messages.unknown())),
+            _ => Some(Action::WriteMultiStr((self.messages.unknown(), true))),
         }
     }
 
@@ -170,9 +156,19 @@ struct ConsoleMsg {
     messages: HashMap<&'static str, &'static str>,
 }
 
+const HELP: &str = "\
+Help commands:
+* help > the help command
+* <COMMAND> --help > prints the help for the command
+* make > creates a new network 
+* quit > gracefully shut down the program and all the nodes
+* CTRL+D > exit the program non gracefully 
+";
+
 impl ConsoleMsg {
     fn new() -> ConsoleMsg {
         let mut messages = HashMap::new();
+        messages.insert("help", HELP);
 
         static UNKNOWN_COMMAND: Lazy<String> = Lazy::new(|| {
             ANSIStrings(&[
@@ -183,10 +179,6 @@ impl ConsoleMsg {
             .to_string()
         });
         messages.insert("unknown", &**UNKNOWN_COMMAND);
-
-        static HELP: Lazy<String> =
-            Lazy::new(|| format!("{}", Style::default().paint("Help commands:")));
-        messages.insert("help", &**HELP);
 
         static DONE: Lazy<String> = Lazy::new(|| format!("{}", Green.bold().paint("Done!")));
         messages.insert("done", &**DONE);
@@ -234,24 +226,38 @@ impl ConsoleMsg {
                     i += 1;
                 }
                 let msg = format!("{}", ANSIStrings(&msg_new));
-                Action::WriteMulti(msg)
+                Action::WriteMulti((msg, true))
             }
-            "wrong_args" | _ => Action::WriteStr("Wrong arguments..."),
+            "wrong_args" | _ => Action::WriteStr(("Wrong arguments...", true)),
         }
     }
 
     fn help_for_cmd(&self, cmd: &Args) -> Action<'static> {
         let cmd_help = format!(
-            "Commands for {}:\n --no make",
+            "Arguments for {}:\n --num <NODES>",
             Black.bold().on(White).paint(&cmd.cmd)
         );
-        Action::WriteMulti(cmd_help)
+        Action::WriteMulti((cmd_help, true))
     }
 }
+
+static INFO: Lazy<String> = Lazy::new(|| {
+    let msg: &[ANSIString] = &[
+        Black.on(White).paint("\n    Welcome to the "),
+        Red.bold().underline().on(White).paint("SimAg"),
+        Style::default().on(White).paint(" "),
+        Blue.bold()
+            .underline()
+            .on(White)
+            .paint("Management Command Line"),
+        Style::default().on(White).paint("    \n"),
+    ];
+    ANSIStrings(msg).to_string()
+});
 
 fn main() {
     let manager = Manager::new();
     let mut terminal = Terminal::new(manager);
-    terminal.print_multiline(&INFO);
+    terminal.print_multiline(&INFO, true);
     terminal.start_event_loop();
 }

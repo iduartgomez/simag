@@ -20,6 +20,6 @@ impl<'a> SimagRepl<'_> {
 fn main() {
     let interpreter = SimagInterpreter::new();
     let mut repl = SimagRepl::new(interpreter);
-    repl.terminal.print_multiline(INFO);
+    repl.terminal.print_multiline(INFO, true);
     repl.terminal.start_event_loop();
 }

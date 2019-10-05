@@ -1,4 +1,3 @@
-
 #[derive(PartialEq)]
 pub enum Action<'a> {
     /// Signal to the terminal that the interpreter is currently reading
@@ -8,13 +7,13 @@ pub enum Action<'a> {
     /// source of interpretable instructions.
     StopReading,
     /// Output a single line message to the terminal.  
-    Write(String),
+    Write((String, bool)),
     /// Output a single line message to the terminal.
-    WriteStr(&'a str),
+    WriteStr((&'a str, bool)),
     /// Output multiple lines message to the terminal.
-    WriteMulti(String),
+    WriteMulti((String, bool)),
     /// Output multiple lines message to the terminal.
-    WriteMultiStr(&'static str),
+    WriteMultiStr((&'static str, bool)),
     /// Signal an interpretable command to the terminal main event loop
     /// for the interpreter.
     Command(String),
@@ -28,6 +27,7 @@ pub enum Action<'a> {
     Newline,
     /// Make the thread sleep for this ammount of ms
     Sleep(u64),
+    /// Chain several actions together after processing an event
     Chain(Vec<Action<'a>>),
     None,
 }
