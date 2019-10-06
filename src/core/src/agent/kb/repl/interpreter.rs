@@ -106,6 +106,10 @@ impl<'a> Interpreter for SimagInterpreter<'a> {
         }
     }
 
+    fn drop_command(&mut self) {
+        self.command.truncate(0);
+    }
+
     fn cmd_executor<'b, 'c: 'b>(&'b mut self, command: String) -> Option<Action<'c>> {
         match Command::from(command.as_str()) {
             Command::Err => Some(Action::WriteStr(("Unknown command", true))),

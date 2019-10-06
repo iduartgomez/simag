@@ -18,7 +18,7 @@ List of valid commands:
 * help > the help command
 * help commands > this command, prints info about commands
 * help queries > how to query the engine
-* quit | exit | CTRL+D > close down the program
+* quit | exit > close down the program
 ";
 
 const HELP_QUERYING: &str = "\

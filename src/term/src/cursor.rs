@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::time::{Duration, Instant};
 
-pub struct Cursor<O> {
+pub(crate) struct Cursor<O> {
     _writter: std::marker::PhantomData<O>,
     pub column: u16,
     pub row: u16,
@@ -30,7 +30,7 @@ impl<O: Write> Cursor<O> {
         }
     }
 
-    pub(crate) fn action(&mut self, stdout: &mut O, action: CursorMovement) -> CursorMovement {
+    pub fn action(&mut self, stdout: &mut O, action: CursorMovement) -> CursorMovement {
         match action {
             CursorMovement::MoveDown(pos) => {
                 self.move_down(stdout, pos);
@@ -46,7 +46,11 @@ impl<O: Write> Cursor<O> {
         }
     }
 
-    pub fn cursor_effect(&mut self, stdout: &mut O) {
+    pub fn side_effects(&mut self, stdout: &mut O) {
+        // re-evaluate terminal size for dynamic changes in size
+        self.space = termion::terminal_size().unwrap();
+
+        // cursor effect
         if !self.effect_on {
             return;
         }
@@ -78,7 +82,7 @@ impl<O: Write> Cursor<O> {
     }
 
     pub fn at_start_of_the_line(&self) -> bool {
-        self.column > 5
+        self.column <= 5
     }
 
     fn move_down(&mut self, stdout: &mut O, pos: u16) {
@@ -102,15 +106,10 @@ impl<O: Write> Cursor<O> {
     }
 
     fn move_left(&mut self, stdout: &mut O, pos: u16) -> CursorMovement {
-        //FIXME: this breaks out if the move to the left goes beyond the start of the line
-        self.column -= pos;
-        write!(
-            stdout,
-            "{} {}",
-            termion::cursor::Goto(self.column, self.row),
-            termion::cursor::Goto(self.column, self.row)
-        )
-        .unwrap();
+        if self.column > 2 {
+            self.column -= pos;
+        }
+        write!(stdout, "{}", termion::cursor::Goto(self.column, self.row)).unwrap();
         stdout.flush().unwrap();
         CursorMovement::None
     }
