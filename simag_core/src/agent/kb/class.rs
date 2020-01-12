@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+use dashmap::DashMap;
 use float_cmp::ApproxEqUlps;
 
 use crate::agent::kb::{
@@ -22,26 +23,23 @@ use crate::FLOAT_EQ_ULPS;
 ///
 /// All the attributes of a class are inherited by their members
 /// (to a fuzzy degree).
-#[derive(Debug)]
 pub(in crate::agent) struct Class {
     pub name: String,
-    classes: RwLock<HashMap<String, Arc<GroundedMemb>>>,
-    relations: RwLock<HashMap<String, Vec<Arc<GroundedFunc>>>>,
-    pub beliefs: RwLock<HashMap<String, Vec<Arc<LogSentence>>>>,
+    classes: DashMap<String, Arc<GroundedMemb>>,
+    relations: DashMap<String, Vec<Arc<GroundedFunc>>>,
+    pub beliefs: DashMap<String, Vec<Arc<LogSentence>>>,
     pub rules: RwLock<Vec<Arc<LogSentence>>>,
-    kind: ClassKind,
     pub(in crate::agent::kb) members: RwLock<Vec<ClassMember>>,
 }
 
 impl Class {
-    pub(in crate::agent::kb) fn new(name: String, kind: ClassKind) -> Class {
+    pub(in crate::agent::kb) fn new(name: String, _kind: ClassKind) -> Class {
         Class {
             name,
-            classes: RwLock::new(HashMap::new()),
-            relations: RwLock::new(HashMap::new()),
-            beliefs: RwLock::new(HashMap::new()),
+            classes: DashMap::new(),
+            relations: DashMap::new(),
+            beliefs: DashMap::new(),
             rules: RwLock::new(Vec::new()),
-            kind,
             members: RwLock::new(Vec::new()),
         }
     }
@@ -51,8 +49,7 @@ impl Class {
         class_name: &str,
         interval: bool,
     ) -> Option<Arc<GroundedMemb>> {
-        let lock = self.classes.read().unwrap();
-        match lock.get(class_name) {
+        match self.classes.get(class_name) {
             Some(r) if r.get_value().is_some() || interval => Some(r.clone()),
             Some(_) | None => None,
         }
@@ -62,10 +59,15 @@ impl Class {
         &self,
         compare: &FreeClassMembership,
     ) -> Vec<Arc<GroundedMemb>> {
-        let lock = self.classes.read().unwrap();
-        lock.values()
-            .filter(|x| compare.filter_grounded(&**x))
-            .cloned()
+        self.classes
+            .iter()
+            .filter_map(|x| {
+                if compare.filter_grounded(x.value()) {
+                    Some(x.value().clone())
+                } else {
+                    None
+                }
+            })
             .collect::<Vec<_>>()
     }
 
@@ -86,13 +88,8 @@ impl Class {
         } else if lookahead_rules(agent, name, &GroundedRef::Class(&*grounded)) {
             return false;
         }
-        let stmt_exists = {
-            let lock = self.classes.read().unwrap();
-            lock.contains_key(name)
-        };
-        if stmt_exists {
-            let lock = self.classes.read().unwrap();
-            let current = lock.get(name).unwrap();
+        if self.classes.contains_key(name) {
+            let current = self.classes.get(name).unwrap();
             if let Some(context) = context {
                 current.update(
                     agent,
@@ -108,7 +105,6 @@ impl Class {
             }
             false
         } else {
-            let mut lock = self.classes.write().unwrap();
             if let Some(context) = context {
                 let bms = grounded.bms.as_ref().unwrap();
                 bms.set_last_rec_producer(Some((context.get_id(), context.get_production_time())));
@@ -117,7 +113,7 @@ impl Class {
                     context,
                 );
             }
-            lock.insert(name.to_string(), grounded.clone());
+            self.classes.insert(name.to_string(), grounded.clone());
             true
         }
     }
@@ -139,9 +135,8 @@ impl Class {
         &self,
         func: &GroundedFunc,
     ) -> Option<Arc<GroundedFunc>> {
-        let lock = self.relations.read().unwrap();
-        if let Some(relation_type) = lock.get(func.get_name()) {
-            for rel in relation_type {
+        if let Some(relation_type) = self.relations.get(func.get_name()) {
+            for rel in relation_type.value() {
                 if rel.comparable(func) {
                     return Some(rel.clone());
                 }
@@ -157,9 +152,8 @@ impl Class {
     ) -> HashMap<&str, Vec<Arc<GroundedFunc>>> {
         let mut res = HashMap::new();
         let (op, val) = compare.get_uval();
-        let lock = self.relations.read().unwrap();
-        for functions in lock.values() {
-            for f in functions {
+        for functions in self.relations.iter() {
+            for f in functions.value() {
                 if f.name_in_pos(&*self.name, pos) {
                     // guaranteed this lives as long as self
                     let t = unsafe { &*(&**f as *const GroundedFunc) };
@@ -301,16 +295,11 @@ impl Class {
         } else if lookahead_rules(agent, name, &GroundedRef::Function(&*func)) {
             return false;
         }
-        let stmt_exists = {
-            let lock = self.relations.write().unwrap();
-            lock.contains_key(name)
-        };
-        if stmt_exists {
+        if self.relations.contains_key(name) {
             let mut found_rel = false;
             {
-                let lock = self.relations.read().unwrap();
-                let funcs_type = lock.get(name).unwrap();
-                for f in funcs_type {
+                let funcs_type = self.relations.get(name).unwrap();
+                for f in funcs_type.value() {
                     if f.comparable(&*func) {
                         if let Some(context) = context {
                             f.update(
@@ -331,7 +320,6 @@ impl Class {
                 }
             }
             if !found_rel {
-                let mut lock = self.relations.write().unwrap();
                 if let Some(context) = context {
                     func.bms.set_last_rec_producer(Some((
                         context.get_id(),
@@ -342,14 +330,13 @@ impl Class {
                         context,
                     );
                 }
-                let funcs_type = lock.get_mut(name).unwrap();
+                let mut funcs_type = self.relations.get_mut(name).unwrap();
                 funcs_type.push(func.clone());
                 true
             } else {
                 false
             }
         } else {
-            let mut lock = self.relations.write().unwrap();
             if let Some(context) = context {
                 func.bms
                     .set_last_rec_producer(Some((context.get_id(), context.get_production_time())));
@@ -358,7 +345,7 @@ impl Class {
                     context,
                 );
             }
-            lock.insert(name.to_string(), vec![func.clone()]);
+            self.relations.insert(name.to_string(), vec![func.clone()]);
             true
         }
     }
@@ -369,16 +356,12 @@ impl Class {
     }
 
     pub(in crate::agent::kb) fn add_belief(&self, belief: Arc<LogSentence>, parent: &str) {
-        let sent_exists = self.beliefs.read().unwrap().contains_key(parent);
-        if sent_exists {
-            if let Some(ls) = self.beliefs.write().unwrap().get_mut(parent) {
+        if self.beliefs.contains_key(parent) {
+            if let Some(mut ls) = self.beliefs.get_mut(parent) {
                 ls.push(belief)
             }
         } else {
-            self.beliefs
-                .write()
-                .unwrap()
-                .insert(parent.to_string(), vec![belief]);
+            self.beliefs.insert(parent.to_string(), vec![belief]);
         }
     }
 

@@ -748,8 +748,7 @@ impl<'a> InfTrial<'a> {
         for cls in cls_ls {
             if let Some(stored) = self.kb.classes.get(cls) {
                 let comp: HashSet<Arc<LogSentence>> = {
-                    let lock = stored.beliefs.read().unwrap();
-                    if let Some(beliefs) = lock.get(cls) {
+                    if let Some(beliefs) = stored.beliefs.get(cls) {
                         HashSet::from_iter(beliefs.iter().cloned())
                     } else {
                         HashSet::new()

@@ -759,7 +759,7 @@ impl Entity {
             .iter()
             .filter_map(|r| {
                 if compare.filter_grounded(r.value()) {
-                    Some(r.clone())
+                    Some(r.value().clone())
                 } else {
                     None
                 }
