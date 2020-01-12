@@ -4,12 +4,12 @@
 //! ## Safety
 //! There is some unsafe code on this module, the unsafe code performs two tasks:
 //!     * Assure the compiler that data being referenced has the same lifetime
-//!       ass its owner (is self-referential).
+//!       as its owner (is self-referential).
 //!     * Cheat the compiler on ```Send + Sync``` impl in certain types because
 //!       we guarantee that those types are thread-safe to pass on.
 //!
 //! Both of those are safe because a Representation owns, uniquely, all its
-//! knowledge by the duration of it's own lifetime (data is never dropped, while
+//! knowledge by the duration of it's own lifetime (data is never dropped while
 //! the representation is alive), thereby is safe to point to the data being
 //! referenced from the representation or the query (for the duration of the query).
 //!
@@ -28,7 +28,7 @@ use rayon;
 use rayon::prelude::*;
 
 #[cfg(feature = "tracing")]
-use crate::agent::kb::tracing_info;
+use crate::agent::kb::tracing::tracing_info;
 
 use crate::agent::kb::{
     inference::results::{GroundedResults, InfResults},
@@ -112,9 +112,8 @@ impl<'a> Inference<'a> {
                     } else {
                         None
                     };
-                    if result.is_some() {
-                        self.results
-                            .add_grounded(obj, query, Some((result.unwrap(), None)));
+                    if let Some(result) = result {
+                        self.results.add_grounded(obj, query, Some((result, None)));
                     } else {
                         self.results.add_grounded(obj, query, None);
                         // if no result was found from the kb directly
@@ -141,9 +140,8 @@ impl<'a> Inference<'a> {
                     if !self.ignore_current {
                         result = self.kb.has_relationship(pred, obj);
                     }
-                    if result.is_some() {
-                        self.results
-                            .add_grounded(obj, query, Some((result.unwrap(), None)));
+                    if let Some(result) = result {
+                        self.results.add_grounded(obj, query, Some((result, None)));
                     } else {
                         self.results.add_grounded(obj, query, None);
                         let actv_query = ActiveQuery::new_with_func(i, pred.clone());

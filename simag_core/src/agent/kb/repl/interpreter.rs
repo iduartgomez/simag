@@ -1,10 +1,10 @@
-use simag_term::Action;
+use simag_terminal::Action;
 use std::mem;
 
 use crate::agent::{Answer, QueryErr, Representation};
 
 use super::*;
-use simag_term::Interpreter;
+use simag_terminal::Interpreter;
 
 #[derive(Default)]
 pub struct SimagInterpreter<'a> {
@@ -156,6 +156,7 @@ impl<'a> Interpreter for SimagInterpreter<'a> {
             if let Some(r) = match self.state.ask(&input) {
                 Err(QueryErr::ParseErr(_)) | Err(QueryErr::QueryErr) => None,
                 Ok(result) => unsafe {
+                    // Lives as long as self really because the references come from self.state
                     let answ = mem::transmute::<Answer, Answer<'a>>(result);
                     Some(answ)
                 },

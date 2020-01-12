@@ -1,5 +1,5 @@
 [package]
-name = "simag_term"
+name = "simag_terminal"
 version = "0.0.1"
 authors = ["Ignacio Duart Gómez <iduartgomez@gmail.com>"]
 autobins = false

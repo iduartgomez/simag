@@ -46,6 +46,8 @@ pub(in crate::agent) struct LogSentence {
     sent_kind: SentKind,
 }
 
+/// Safe because at any single point in time ref counted particles are uniquelly owned by this object.
+/// And thus safe to send, sync and drop without leaving dangling references.
 unsafe impl std::marker::Sync for LogSentence {}
 unsafe impl std::marker::Send for LogSentence {}
 
@@ -83,6 +85,7 @@ impl<'a> LogSentence {
                 .filter(|x| x.is_atom())
                 .map(|x| &**x as *const Particle)
                 .collect();
+            // FIXME: use of unsafe here is unnecessary and lazy here. Find a better solution.
             let rhs_v: Vec<_> = rhs
                 .difference(&lhs)
                 .map(|p| unsafe { &**p })

@@ -13,7 +13,7 @@ pub enum Action<'a> {
     /// Output multiple lines message to the terminal.
     WriteMulti((String, bool)),
     /// Output multiple lines message to the terminal.
-    WriteMultiStr((&'static str, bool)),
+    WriteMultiStr((&'a str, bool)),
     /// Signal an interpretable command to the terminal main event loop
     /// for the interpreter.
     Command(String),

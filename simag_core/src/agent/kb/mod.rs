@@ -68,46 +68,44 @@ impl<'a> std::fmt::Debug for VarAssignment<'a> {
 }
 
 #[cfg(feature = "tracing")]
-#[derive(Clone, Copy)]
-struct Logger;
+pub(self) mod tracing {
+    #[derive(Clone, Copy)]
+    pub struct Logger;
 
-#[cfg(feature = "tracing")]
-impl Logger {
-    fn get_logger() -> &'static Logger {
-        Lazy::force(&LOGGER)
+    impl Logger {
+        pub fn get_logger() -> &'static Logger {
+            Lazy::force(&LOGGER)
+        }
     }
-}
 
-#[cfg(feature = "tracing")]
-use once_cell::sync::Lazy;
+    use once_cell::sync::Lazy;
 
-#[cfg(feature = "tracing")]
-static LOGGER: Lazy<Logger> = Lazy::new(|| {
-    use log::LevelFilter;
+    static LOGGER: Lazy<Logger> = Lazy::new(|| {
+        use log::LevelFilter;
 
-    env_logger::builder()
-        .default_format_module_path(true)
-        .default_format_timestamp_nanos(true)
-        .target(env_logger::Target::Stderr)
-        .filter(None, LevelFilter::Trace)
-        .init();
+        env_logger::builder()
+            .default_format_module_path(true)
+            .default_format_timestamp_nanos(true)
+            .target(env_logger::Target::Stderr)
+            .filter(None, LevelFilter::Trace)
+            .init();
 
-    Logger
-});
+        Logger
+    });
 
-#[cfg(feature = "tracing")]
-fn tracing_info<T: std::fmt::Display, I: std::fmt::Display>(
-    item_to_log: T,
-    log_level: log::Level,
-    extra_info: Option<I>,
-) {
-    use log::{log, log_enabled};
+    pub fn tracing_info<T: std::fmt::Display, I: std::fmt::Display>(
+        item_to_log: T,
+        log_level: log::Level,
+        extra_info: Option<I>,
+    ) {
+        use log::{log, log_enabled};
 
-    if log_enabled!(log_level) {
-        if let Some(info) = extra_info {
-            log!(log_level, "{}: {}", info, item_to_log);
-        } else {
-            log!(log_level, "{}", item_to_log);
+        if log_enabled!(log_level) {
+            if let Some(info) = extra_info {
+                log!(log_level, "{}: {}", info, item_to_log);
+            } else {
+                log!(log_level, "{}", item_to_log);
+            }
         }
     }
 }

@@ -97,13 +97,12 @@ impl<'a> ClassDecl {
                 _ => {}
             }
         }
-        if v.is_none() {
-            let bms = BmsWrapper::new(ow);
-            bms.new_record(None, value, None);
+        if let Some(mut bms) = v {
+            bms.overwrite = AtomicBool::new(ow);
             bms
         } else {
-            let mut bms = v.unwrap();
-            bms.overwrite = AtomicBool::new(ow);
+            let bms = BmsWrapper::new(ow);
+            bms.new_record(None, value, None);
             bms
         }
     }

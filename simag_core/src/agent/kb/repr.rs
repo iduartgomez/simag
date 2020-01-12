@@ -1,6 +1,6 @@
 use float_cmp::ApproxEqUlps;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::iter::FromIterator;
 use std::rc::Rc;
 use std::sync::{Arc, RwLock};
@@ -14,11 +14,15 @@ use crate::agent::kb::{
     VarAssignment,
 };
 use crate::agent::lang::{
-    logic_parser, Assert, ClassDecl, CompOperator, FreeClassMembership, FuncDecl,
-    Grounded, GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ParseErrF, ParseTree,
-    Predicate, ProofResContext, Var,
+    logic_parser, Assert, ClassDecl, CompOperator, FreeClassMembership, FuncDecl, Grounded,
+    GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ParseErrF, ParseTree, Predicate,
+    ProofResContext, Var,
 };
 use crate::FLOAT_EQ_ULPS;
+
+// TODO: find better solution for self-referential borrows escaping self method scopes
+// this should remove the use of unsafe in this module which seems a little bit unnecessary?
+// Avoid copying/cloning if possible.
 
 /// A container for internal agent's representations.
 ///
@@ -44,7 +48,7 @@ impl Representation {
     pub fn new() -> Representation {
         #[cfg(feature = "tracing")]
         {
-            super::Logger::get_logger();
+            super::tracing::Logger::get_logger();
         }
 
         Representation {
@@ -74,8 +78,7 @@ impl Representation {
     /// For more examples check the LogSentence type docs.
     pub fn tell(&mut self, source: &str) -> Result<(), Vec<ParseErrF>> {
         let pres = logic_parser(source, true, self.threads);
-        if pres.is_ok() {
-            let mut sentences: VecDeque<ParseTree> = pres.unwrap();
+        if let Ok(mut sentences) = pres {
             let mut errors = Vec::new();
             for _ in 0..sentences.len() {
                 match sentences.pop_front().unwrap() {
@@ -120,8 +123,8 @@ impl Representation {
     /// Asks the KB if some fact is true and returns the answer to the query.
     pub fn ask(&self, source: &str) -> Result<Answer, QueryErr> {
         let queries = logic_parser(source, false, self.threads);
-        if queries.is_ok() {
-            let pres = QueryInput::ManyQueries(queries.unwrap());
+        if let Ok(queries) = queries {
+            let pres = QueryInput::ManyQueries(queries);
             self.ask_processed(pres, usize::max_value(), false)
         } else {
             Err(QueryErr::ParseErr(queries.unwrap_err()))

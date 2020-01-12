@@ -4,15 +4,16 @@ version = "0.0.1"
 authors = ["Ignacio Duart Gómez <iduartgomez@gmail.com>"]
 autobins = false
 edition = "2018"
+license = "Apache-2.0 OR MIT"
 
 [[bin]]
 name="simag"
-path = "src/main.rs"
+path = "simag/main.rs"
 
 [dependencies]
-simag_core = { path = "src/core" }
-simag_maths = { path = "src/maths" }
-simag_term = { path = "src/term" }
+simag_core = { path = "simag_core" }
+simag_maths = { path = "simag_maths" }
+simag_terminal = { path = "simag_terminal" }
 
 [workspace]
-members = ["src/core", "src/maths", "src/term"]
+members = ["simag_core", "simag_maths", "simag_networking", "simag_terminal"]

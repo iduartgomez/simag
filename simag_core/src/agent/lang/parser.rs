@@ -62,7 +62,7 @@ impl Parser {
         // store is a vec where the sequence of characters after cleaning up comments
         // will be stored, both have to be extended to 'static lifetime so they can be
         let mut clean = vec![];
-        let scopes = match Self::p1(input.as_bytes(), &mut clean) {
+        let scopes = match Self::get_blocks(input.as_bytes(), &mut clean) {
             Ok(scopes) => scopes.into_par_iter(),
             Err(err) => return Err(ParseErrF::from(err)),
         };
@@ -87,12 +87,13 @@ impl Parser {
     }
 
     /// Tokenize and output an AST
-    fn p1<'b: 'a, 'a>(
-        input: &'a [u8],
+    fn get_blocks<'b>(
+        input: &[u8],
         p2: &'b mut Vec<u8>,
-    ) -> Result<Vec<ASTNode<'b>>, ParseErrB<'a>> {
+    ) -> Result<Vec<ASTNode<'b>>, ParseErrB<'b>> {
         // clean up every comment to facilitate further parsing
-        // TODO: clean up or ignore comments without having to collect over the initial slice
+        
+        //TODO: clean up or ignore comments without having to collect over the initial slice
         let p1 = match remove_comments(input) {
             IResult::Done(_, done) => done,
             IResult::Error(nom::Err::Position(_, _)) => return Err(ParseErrB::UnclosedComment),
@@ -313,13 +314,6 @@ impl<'a> Scope<'a> {
             _ => return Ok(None),
         }
         if context.depth == 1 && self.vars.is_some() {
-            // let mut filtered = Vec::new();
-            // for var in self.vars.as_ref().unwrap() {
-            //     if context.var_in_context(var)? {
-            //         filtered.push(var);
-            //     }
-            // }
-            // filtered.iter()
             self.vars.as_ref().unwrap().iter()
                 .map(|x| context.push_var(x))
                 .collect::<Result<Vec<_>, _>>()?;
@@ -1296,7 +1290,7 @@ mod test {
             */
         ";
         let mut clean = vec![];
-        let scanned = Parser::p1(source, &mut clean);
+        let scanned = Parser::get_blocks(source, &mut clean);
         assert!(scanned.is_ok());
 
         // split per scopes and declarations
@@ -1304,42 +1298,42 @@ mod test {
             ( american[x,u=1] && ( weapon[y,u=1] && hostile[z,u=1] ) )
         ";
         let mut clean = vec![];
-        let scanned = Parser::p1(source, &mut clean);
+        let scanned = Parser::get_blocks(source, &mut clean);
         assert!(scanned.is_ok());
 
         let source = b"
             ( ( american[x,u=1] && hostile[z,u=1] ) && hostile[z,u=1] )
         ";
         let mut clean = vec![];
-        let scanned = Parser::p1(source, &mut clean);
+        let scanned = Parser::get_blocks(source, &mut clean);
         assert!(scanned.is_ok());
 
         let source = b"
             ( american[x,u=1] && hostile[z,u=1] && ( weapon[y,u=1]) )
         ";
         let mut clean = vec![];
-        let scanned = Parser::p1(source, &mut clean);
+        let scanned = Parser::get_blocks(source, &mut clean);
         assert!(scanned.is_err());
 
         let source = b"
             ( ( american[x,u=1] ) && hostile[z,u=1] && weapon[y,u=1] )
         ";
         let mut clean = vec![];
-        let scanned = Parser::p1(source, &mut clean);
+        let scanned = Parser::get_blocks(source, &mut clean);
         assert!(scanned.is_err());
 
         let source = b"
             ( ( ( american[x,u=1] ) ) && hostile[z,u=1] && ( ( weapon[y,u=1] ) ) )
         ";
         let mut clean = vec![];
-        let scanned = Parser::p1(source, &mut clean);
+        let scanned = Parser::get_blocks(source, &mut clean);
         assert!(scanned.is_err());
 
         let source = b"
             ( american[x,u=1] && ( ( hostile[z,u=1] ) ) && weapon[y,u=1] )
         ";
         let mut clean = vec![];
-        let scanned = Parser::p1(source, &mut clean);
+        let scanned = Parser::get_blocks(source, &mut clean);
         assert!(scanned.is_err());
 
         let source = b"
@@ -1348,7 +1342,7 @@ mod test {
         ((let x y) (american[x,u=1] && hostile[z,u=1]) := criminal[x,u=1])
         ";
         let mut clean = vec![];
-        let scanned = Parser::p1(source, &mut clean);
+        let scanned = Parser::get_blocks(source, &mut clean);
         assert!(scanned.is_ok());
         let out = scanned.unwrap();
         assert_eq!(out.len(), 3);

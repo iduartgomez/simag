@@ -1,5 +1,5 @@
 [package]
-name = "simag_network"
+name = "simag_networking"
 version = "0.0.1"
 authors = ["IDG <iduartgomez@gmail.com>"]
 

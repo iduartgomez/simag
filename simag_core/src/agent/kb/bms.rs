@@ -48,7 +48,6 @@ impl BmsWrapper {
             Some((_, production_time)) => Some(production_time),
             None => None,
         };
-        
         let time = match time {
             Some(_) if production_time.is_some() => production_time.unwrap(),
             Some(time) => time,
@@ -589,7 +588,9 @@ mod test {
     }
 
     #[test]
-    fn bms_maybe_rollback() {}
+    fn bms_maybe_rollback() {
+        unimplemented!()
+    }
 
     #[test]
     fn bms_review_after_change() {

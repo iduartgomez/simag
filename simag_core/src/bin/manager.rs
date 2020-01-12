@@ -104,8 +104,9 @@ impl Interpreter for Manager {
             "help" => Some(Action::WriteMultiStr((self.messages.help(), true))),
             "quit" => Some(self.clean_up()),
             "closing" => Some(Action::Chain(vec![
-                Action::WriteStr((self.messages.done(), false)),
                 Action::Sleep(2000),
+                Action::WriteStr((self.messages.done(), false)),
+                Action::Sleep(1000),
                 Action::Exit,
             ])),
             _ => Some(Action::WriteMultiStr((self.messages.unknown(), true))),
@@ -142,6 +143,10 @@ impl Interpreter for Manager {
     fn delete_last<'b, 'a: 'b>(&'b mut self) -> Option<Action<'a>> {
         self.buffer.pop();
         None
+    }
+
+    fn drop_command(&mut self) {
+        self.buffer.truncate(0);
     }
 }
 
