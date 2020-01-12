@@ -120,7 +120,7 @@ impl<'a> Interpreter for SimagInterpreter<'a> {
                 Ok(result) => Some(Action::WriteMulti((result, true))),
                 Err(msg) => Some(Action::WriteMulti((msg, true))),
             },
-            Command::Query(ResultQuery::Multiple) => unimplemented!(),
+            Command::Query(ResultQuery::Multiple) => todo!(),
             Command::Exit => Some(Action::Exit),
         }
     }

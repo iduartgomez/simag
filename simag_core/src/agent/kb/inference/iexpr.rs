@@ -191,8 +191,7 @@ impl<'a> Inference<'a> {
             .for_each(|(var, classes)| {
                 for cls in classes {
                     let cls_name = cls.get_parent();
-                    let lock = self.kb.classes.read().unwrap();
-                    if let Some(cls_curr) = lock.get(cls_name) {
+                    if let Some(cls_curr) = self.kb.classes.get(cls_name) {
                         let members: Vec<Arc<GroundedMemb>> = cls_curr.get_members(cls);
                         for m in members {
                             let t = unsafe { &*(&*m as *const GroundedMemb) as &GroundedMemb };
@@ -212,7 +211,7 @@ impl<'a> Inference<'a> {
             .for_each(|(var, funcs)| {
                 for func in funcs {
                     let func_name = func.get_name();
-                    let lock = &self.kb.classes.read().unwrap();
+                    let lock = &self.kb.classes;
                     if let Some(cls_curr) = lock.get(func_name) {
                         let members: Vec<Arc<GroundedFunc>> = cls_curr.get_funcs(func);
                         self.results.add_relationships(var, &members);
@@ -747,7 +746,7 @@ impl<'a> InfTrial<'a> {
             }
         }
         for cls in cls_ls {
-            if let Some(stored) = self.kb.classes.read().unwrap().get(cls) {
+            if let Some(stored) = self.kb.classes.get(cls) {
                 let comp: HashSet<Arc<LogSentence>> = {
                     let lock = stored.beliefs.read().unwrap();
                     if let Some(beliefs) = lock.get(cls) {

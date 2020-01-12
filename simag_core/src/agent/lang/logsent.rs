@@ -1608,9 +1608,9 @@ fn walk_ast(
                             } else {
                                 context.in_rhs = in_side;
                                 if context.in_rhs {
-                                    parent.add_rhs(c.clone());
+                                    parent.add_rhs(c);
                                 } else {
-                                    parent.add_lhs(c.clone());
+                                    parent.add_lhs(c);
                                 }
                                 break;
                             }

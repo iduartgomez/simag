@@ -1,9 +1,10 @@
-use float_cmp::ApproxEqUlps;
-
 use std::collections::HashMap;
 use std::iter::FromIterator;
 use std::rc::Rc;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+
+use dashmap::DashMap;
+use float_cmp::ApproxEqUlps;
 
 use crate::agent::kb::{
     bms::{BmsWrapper, ReplaceMode},
@@ -37,11 +38,16 @@ use crate::FLOAT_EQ_ULPS;
 ///     | Entities are denoted with a $ symbol followed by an alphanumeric literal.
 ///     classes -> Sets of objects (entities or subclasses) that share a common property.
 ///     | This includes 'classes of relationships' and other 'functions'.
-#[derive(Default, Debug)]
 pub struct Representation {
-    pub(in crate::agent) entities: RwLock<HashMap<String, Entity>>,
-    pub(in crate::agent) classes: RwLock<HashMap<String, Class>>,
+    pub(in crate::agent) entities: DashMap<String, Entity>,
+    pub(in crate::agent) classes: DashMap<String, Class>,
     threads: usize,
+}
+
+impl Default for Representation {
+    fn default() -> Self {
+        Representation::new()
+    }
 }
 
 impl Representation {
@@ -52,8 +58,8 @@ impl Representation {
         }
 
         Representation {
-            entities: RwLock::new(HashMap::new()),
-            classes: RwLock::new(HashMap::new()),
+            entities: DashMap::new(),
+            classes: DashMap::new(),
             threads: 4,
         }
     }
@@ -153,64 +159,42 @@ impl Representation {
         assert: &Arc<GroundedMemb>,
         context: Option<&T>,
     ) {
-        let parent_exists = self
-            .classes
-            .read()
-            .unwrap()
-            .contains_key(assert.get_parent());
+        let parent_exists = self.classes.contains_key(assert.get_parent());
         if !parent_exists {
             let class = Class::new(assert.get_parent().to_string(), ClassKind::Membership);
-            self.classes
-                .write()
-                .unwrap()
-                .insert(class.name.clone(), class);
+            self.classes.insert(class.name.clone(), class);
         }
         let decl;
         let is_new: bool;
         if (assert.get_name()).starts_with('$') {
-            let entity_exists = self
-                .entities
-                .read()
-                .unwrap()
-                .contains_key(assert.get_name());
+            let entity_exists = self.entities.contains_key(assert.get_name());
             if entity_exists {
-                let lock = self.entities.read().unwrap();
-                let entity = lock.get(assert.get_name()).unwrap();
+                let entity = self.entities.get(assert.get_name()).unwrap();
                 is_new = entity.add_class_membership(self, assert, context);
                 decl = ClassMember::Entity(assert.clone());
             } else {
                 let entity = Entity::new(assert.get_name().to_string());
-                self.entities
-                    .write()
-                    .unwrap()
-                    .insert(entity.name.clone(), entity);
-                let lock = self.entities.read().unwrap();
-                let entity = lock.get(assert.get_name()).unwrap();
+                self.entities.insert(entity.name.clone(), entity);
+                let entity = self.entities.get(assert.get_name()).unwrap();
                 is_new = entity.add_class_membership(self, assert, context);
                 decl = ClassMember::Entity(assert.clone());
             }
         } else {
-            let class_exists = self.classes.read().unwrap().contains_key(assert.get_name());
+            let class_exists = self.classes.contains_key(assert.get_name());
             if class_exists {
-                let lock = self.classes.read().unwrap();
-                let class = lock.get(assert.get_name()).unwrap();
+                let class = self.classes.get(assert.get_name()).unwrap();
                 is_new = class.add_class_membership(self, assert, context);
                 decl = ClassMember::Class(assert.clone());
             } else {
                 let class = Class::new(assert.get_name().to_string(), ClassKind::Membership);
-                self.classes
-                    .write()
-                    .unwrap()
-                    .insert(class.name.clone(), class);
-                let lock = self.classes.read().unwrap();
-                let class = lock.get(assert.get_name()).unwrap();
+                self.classes.insert(class.name.clone(), class);
+                let class = self.classes.get(assert.get_name()).unwrap();
                 is_new = class.add_class_membership(self, assert, context);
                 decl = ClassMember::Class(assert.clone());
             }
         }
         if is_new {
-            let lock = self.classes.read().unwrap();
-            let parent = lock.get(assert.get_parent()).unwrap();
+            let parent = self.classes.get(assert.get_parent()).unwrap();
             parent.add_member(decl);
         }
     }
@@ -226,55 +210,41 @@ impl Representation {
             let subject = a.get_name();
             let is_new1;
             if (subject).starts_with('$') {
-                let entity_exists = self.entities.read().unwrap().contains_key(subject);
+                let entity_exists = self.entities.contains_key(subject);
                 if entity_exists {
-                    let lock = self.entities.read().unwrap();
-                    let entity = lock.get(subject).unwrap();
+                    let entity = self.entities.get(subject).unwrap();
                     is_new1 = entity.add_relationship(self, assert, context);
                 } else {
                     let entity = Entity::new(subject.to_string());
-                    self.entities
-                        .write()
-                        .unwrap()
-                        .insert(entity.name.clone(), entity);
-                    let lock = self.entities.read().unwrap();
-                    let entity = lock.get(subject).unwrap();
+                    self.entities.insert(entity.name.clone(), entity);
+                    let entity = self.entities.get(subject).unwrap();
                     is_new1 = entity.add_relationship(self, assert, context);
                 }
             } else {
-                let class_exists = self.classes.read().unwrap().contains_key(subject);
+                let class_exists = self.classes.contains_key(subject);
                 if class_exists {
-                    let lock = self.classes.read().unwrap();
-                    let class = lock.get(subject).unwrap();
+                    let class = self.classes.get(subject).unwrap();
                     is_new1 = class.add_relationship(self, assert, context);
                 } else {
                     let class = Class::new(subject.to_string(), ClassKind::Membership);
-                    self.classes
-                        .write()
-                        .unwrap()
-                        .insert(class.name.clone(), class);
-                    let lock = self.classes.read().unwrap();
-                    let class = lock.get(subject).unwrap();
+                    self.classes.insert(class.name.clone(), class);
+                    let class = self.classes.get(subject).unwrap();
                     is_new1 = class.add_relationship(self, assert, context);
                 }
             }
             let new_check = is_new.clone();
             *new_check.borrow_mut() = is_new1;
         };
-        let relation_exists = self.classes.read().unwrap().contains_key(assert.get_name());
+        let relation_exists = self.classes.contains_key(assert.get_name());
         if !relation_exists {
             let relationship = Class::new(assert.get_name().to_string(), ClassKind::Relationship);
-            self.classes
-                .write()
-                .unwrap()
-                .insert(relationship.name.clone(), relationship);
+            self.classes.insert(relationship.name.clone(), relationship);
         }
         for arg in assert.get_args() {
             process_arg(arg);
         }
         if *is_new.borrow() {
-            let lock = self.classes.read().unwrap();
-            let parent = lock.get(assert.get_name()).unwrap();
+            let parent = self.classes.get(assert.get_name()).unwrap();
             parent.add_relation_to_class(assert.clone());
         }
     }
@@ -288,32 +258,24 @@ impl Representation {
             repr: &Representation,
         ) {
             if is_entity {
-                let entity_exists = repr.entities.read().unwrap().contains_key(subject);
+                let entity_exists = repr.entities.contains_key(subject);
                 if entity_exists {
-                    let lock = repr.entities.read().unwrap();
-                    let entity = lock.get(subject).unwrap();
+                    let entity = repr.entities.get(subject).unwrap();
                     entity.add_belief(belief.clone(), subject);
                 } else {
                     let entity = Entity::new(subject.to_string());
                     entity.add_belief(belief.clone(), name);
-                    repr.entities
-                        .write()
-                        .unwrap()
-                        .insert(subject.to_string(), entity);
+                    repr.entities.insert(subject.to_string(), entity);
                 }
             } else {
-                let class_exists = repr.classes.read().unwrap().contains_key(subject);
+                let class_exists = repr.classes.contains_key(subject);
                 if class_exists {
-                    let lock = repr.classes.read().unwrap();
-                    let class = lock.get(subject).unwrap();
+                    let class = repr.classes.get(subject).unwrap();
                     class.add_belief(belief.clone(), name);
                 } else {
                     let class = Class::new(subject.to_string(), ClassKind::Membership);
                     class.add_belief(belief.clone(), name);
-                    repr.classes
-                        .write()
-                        .unwrap()
-                        .insert(subject.to_string(), class);
+                    repr.classes.insert(subject.to_string(), class);
                 }
             }
         };
@@ -321,15 +283,9 @@ impl Representation {
         for p in belief.get_all_predicates() {
             match *p {
                 Assert::ClassDecl(ref cls_decl) => {
-                    let class_exists = self
-                        .classes
-                        .read()
-                        .unwrap()
-                        .contains_key(cls_decl.get_name());
+                    let class_exists = self.classes.contains_key(cls_decl.get_name());
                     if class_exists {
                         self.classes
-                            .read()
-                            .unwrap()
                             .get(cls_decl.get_name())
                             .unwrap()
                             .add_belief(belief.clone(), cls_decl.get_name())
@@ -337,10 +293,7 @@ impl Representation {
                         let class =
                             Class::new(cls_decl.get_name().to_string(), ClassKind::Membership);
                         class.add_belief(belief.clone(), cls_decl.get_name());
-                        self.classes
-                            .write()
-                            .unwrap()
-                            .insert(class.name.clone(), class);
+                        self.classes.insert(class.name.clone(), class);
                     }
                     for arg in cls_decl.get_args() {
                         if !arg.is_var() {
@@ -357,15 +310,9 @@ impl Representation {
                     if !fn_decl.is_relational() {
                         continue;
                     }
-                    let class_exists = self
-                        .classes
-                        .read()
-                        .unwrap()
-                        .contains_key(fn_decl.get_name());
+                    let class_exists = self.classes.contains_key(fn_decl.get_name());
                     if class_exists {
                         self.classes
-                            .read()
-                            .unwrap()
                             .get(fn_decl.get_name())
                             .unwrap()
                             .add_belief(belief.clone(), fn_decl.get_name())
@@ -373,10 +320,7 @@ impl Representation {
                         let class =
                             Class::new(fn_decl.get_name().to_string(), ClassKind::Relationship);
                         class.add_belief(belief.clone(), fn_decl.get_name());
-                        self.classes
-                            .write()
-                            .unwrap()
-                            .insert(class.name.clone(), class);
+                        self.classes.insert(class.name.clone(), class);
                     }
                     for arg in fn_decl.get_args() {
                         if !arg.is_var() {
@@ -452,10 +396,9 @@ impl Representation {
         let preds = rule.get_all_predicates();
         for p in preds {
             let name = p.get_name();
-            let class_exists = self.classes.read().unwrap().contains_key(name);
+            let class_exists = self.classes.contains_key(name);
             if class_exists {
-                let lock = self.classes.read().unwrap();
-                let class = lock.get(name).unwrap();
+                let class = self.classes.get(name).unwrap();
                 class.add_rule(rule.clone());
             } else {
                 let nc = match *p {
@@ -463,7 +406,7 @@ impl Representation {
                     Assert::FuncDecl(_) => Class::new(name.to_string(), ClassKind::Relationship),
                 };
                 nc.add_rule(rule.clone());
-                self.classes.write().unwrap().insert(name.to_string(), nc);
+                self.classes.insert(name.to_string(), nc);
             }
         }
         rollback_from_rule(self, &rule);
@@ -476,9 +419,8 @@ impl Representation {
         classes: &'b [&str],
     ) -> HashMap<&'b str, Vec<Arc<GroundedMemb>>> {
         let mut dict = HashMap::new();
-        let lock = self.classes.read().unwrap();
         for cls in classes {
-            let cls_ref = lock.get(*cls);
+            let cls_ref = self.classes.get(*cls);
             if cls_ref.is_none() {
                 continue;
             }
@@ -506,25 +448,22 @@ impl Representation {
         funcs: &'b [&'b FuncDecl],
     ) -> HashMap<&'b str, HashMap<&'a str, Vec<Arc<GroundedFunc>>>> {
         let mut dict = HashMap::new();
-        let lock = self.classes.read().unwrap();
         for func in funcs {
-            let func_ref: Option<&Class> = lock.get(func.get_name());
-            if func_ref.is_none() {
-                continue;
-            }
-            let mut m = HashMap::new();
-            for e in &**func_ref.unwrap().members.read().unwrap() {
-                if let ClassMember::Func(ref f) = *e {
-                    if f.get_value().is_some() {
-                        for name in f.get_args_names() {
-                            let name = unsafe { std::mem::transmute::<&str, &'a str>(name) };
-                            let e: &mut Vec<_> = m.entry(name).or_insert_with(|| vec![]);
-                            e.push(f.clone());
+            if let Some(func_ref) = self.classes.get(&*func.get_name()) {
+                let mut m = HashMap::new();
+                for e in &**func_ref.value().members.read().unwrap() {
+                    if let ClassMember::Func(ref f) = *e {
+                        if f.get_value().is_some() {
+                            for name in f.get_args_names() {
+                                let name = unsafe { std::mem::transmute::<&str, &'a str>(name) };
+                                let e: &mut Vec<_> = m.entry(name).or_insert_with(|| vec![]);
+                                e.push(f.clone());
+                            }
                         }
                     }
                 }
+                dict.insert(func.get_name(), m);
             }
-            dict.insert(func.get_name(), m);
         }
         dict
     }
@@ -535,22 +474,30 @@ impl Representation {
         subject: &str,
     ) -> Option<Arc<GroundedMemb>> {
         if subject.starts_with('$') {
-            let entity_exists = self.entities.read().unwrap().contains_key(subject);
+            let entity_exists = self.entities.contains_key(subject);
             if entity_exists {
-                let lock = self.entities.read().unwrap();
-                match lock.get(subject).unwrap().belongs_to_class(class, false) {
-                    Some(r) => Some(r.clone()),
+                match self
+                    .entities
+                    .get(subject)
+                    .unwrap()
+                    .belongs_to_class(class, false)
+                {
+                    Some(r) => Some(r),
                     None => None,
                 }
             } else {
                 None
             }
         } else {
-            let class_exists = self.classes.read().unwrap().contains_key(subject);
+            let class_exists = self.classes.contains_key(subject);
             if class_exists {
-                let lock = self.classes.read().unwrap();
-                match lock.get(subject).unwrap().belongs_to_class(class, false) {
-                    Some(r) => Some(r.clone()),
+                match self
+                    .classes
+                    .get(subject)
+                    .unwrap()
+                    .belongs_to_class(class, false)
+                {
+                    Some(r) => Some(r),
                     None => None,
                 }
             } else {
@@ -564,12 +511,12 @@ impl Representation {
     pub(in crate::agent) fn class_membership_query(&self, pred: &GroundedMemb) -> Option<bool> {
         let subject = pred.get_name();
         if subject.starts_with('$') {
-            if let Some(entity) = self.entities.read().unwrap().get(subject) {
+            if let Some(entity) = self.entities.get(subject) {
                 if let Some(current) = entity.belongs_to_class(pred.get_parent(), true) {
                     return current.compare_at_time_intervals(pred);
                 }
             }
-        } else if let Some(class) = self.classes.read().unwrap().get(subject) {
+        } else if let Some(class) = self.classes.get(subject) {
             if let Some(current) = class.belongs_to_class(pred.get_parent(), true) {
                 return current.compare_at_time_intervals(pred);
             }
@@ -583,12 +530,12 @@ impl Representation {
     ) -> Vec<Arc<GroundedMemb>> {
         let name = subject.get_name();
         if name.starts_with('$') {
-            if let Some(entity) = self.entities.read().unwrap().get(name) {
+            if let Some(entity) = self.entities.get(name) {
                 entity.get_class_membership(subject)
             } else {
                 vec![]
             }
-        } else if let Some(class) = self.classes.read().unwrap().get(name) {
+        } else if let Some(class) = self.classes.get(name) {
             class.get_class_membership(subject)
         } else {
             vec![]
@@ -601,12 +548,12 @@ impl Representation {
         subject: &str,
     ) -> Option<bool> {
         if subject.starts_with('$') {
-            if let Some(entity) = self.entities.read().unwrap().get(subject) {
+            if let Some(entity) = self.entities.get(subject) {
                 if let Some(current) = entity.has_relationship(pred) {
                     return current.compare_at_time_intervals(pred);
                 }
             }
-        } else if let Some(class) = self.classes.read().unwrap().get(subject) {
+        } else if let Some(class) = self.classes.get(subject) {
             if let Some(current) = class.has_relationship(pred) {
                 return current.compare_at_time_intervals(pred);
             }
@@ -620,7 +567,7 @@ impl Representation {
         subject: &str,
     ) -> Option<Arc<GroundedFunc>> {
         if subject.starts_with('$') {
-            if let Some(entity) = self.entities.read().unwrap().get(subject) {
+            if let Some(entity) = self.entities.get(subject) {
                 if let Some(current) = entity.has_relationship(pred) {
                     if *current == *pred {
                         return Some(current);
@@ -629,7 +576,7 @@ impl Representation {
                     }
                 }
             }
-        } else if let Some(class) = self.classes.read().unwrap().get(subject) {
+        } else if let Some(class) = self.classes.get(subject) {
             if let Some(current) = class.has_relationship(pred) {
                 if *current == *pred {
                     return Some(current);
@@ -650,7 +597,7 @@ impl Representation {
             if !arg.is_var() {
                 let name = arg.get_name();
                 if name.starts_with('$') {
-                    if let Some(entity) = self.entities.read().unwrap().get(name) {
+                    if let Some(entity) = self.entities.get(name) {
                         let mut v: HashMap<&str, Vec<Arc<GroundedFunc>>> =
                             entity.get_relationships(pos, arg);
                         for (_, mut funcs) in v.drain() {
@@ -660,7 +607,7 @@ impl Representation {
                             res.entry(rel).or_insert_with(|| vec![]).append(&mut funcs);
                         }
                     }
-                } else if let Some(class) = self.classes.read().unwrap().get(name) {
+                } else if let Some(class) = self.classes.get(name) {
                     let mut v: HashMap<&str, Vec<Arc<GroundedFunc>>> =
                         class.get_relationships(pos, arg);
                     for (_, mut funcs) in v.drain() {
@@ -783,37 +730,40 @@ impl<'a> Answer<'a> {
 ///       representation.
 ///     * relations: Functions between objects and/or classes.
 ///
-#[derive(Debug)]
 pub(crate) struct Entity {
     pub name: String,
-    classes: RwLock<HashMap<String, Arc<GroundedMemb>>>,
-    relations: RwLock<HashMap<String, Vec<Arc<GroundedFunc>>>>,
-    beliefs: RwLock<HashMap<String, Vec<Arc<LogSentence>>>>,
+    classes: DashMap<String, Arc<GroundedMemb>>,
+    relations: DashMap<String, Vec<Arc<GroundedFunc>>>,
+    beliefs: DashMap<String, Vec<Arc<LogSentence>>>,
 }
 
 impl Entity {
     fn new(name: String) -> Entity {
         Entity {
             name,
-            classes: RwLock::new(HashMap::new()),
-            relations: RwLock::new(HashMap::new()),
-            beliefs: RwLock::new(HashMap::new()),
+            classes: DashMap::new(),
+            relations: DashMap::new(),
+            beliefs: DashMap::new(),
         }
     }
 
     fn belongs_to_class(&self, class_name: &str, interval: bool) -> Option<Arc<GroundedMemb>> {
-        let lock = self.classes.read().unwrap();
-        match lock.get(class_name) {
+        match self.classes.get(class_name) {
             Some(r) if r.get_value().is_some() || interval => Some(r.clone()),
             Some(_) | None => None,
         }
     }
 
     fn get_class_membership(&self, compare: &FreeClassMembership) -> Vec<Arc<GroundedMemb>> {
-        let lock = self.classes.read().unwrap();
-        lock.values()
-            .filter(|x| compare.filter_grounded(&**x))
-            .cloned()
+        self.classes
+            .iter()
+            .filter_map(|r| {
+                if compare.filter_grounded(r.value()) {
+                    Some(r.clone())
+                } else {
+                    None
+                }
+            })
             .collect::<Vec<_>>()
     }
 
@@ -833,13 +783,9 @@ impl Entity {
         } else if lookahead_rules(agent, name, &GroundedRef::Class(&*grounded)) {
             return false;
         }
-        let stmt_exists = {
-            let lock = self.classes.read().unwrap();
-            lock.contains_key(name)
-        };
+        let stmt_exists = self.classes.contains_key(name);
         if stmt_exists {
-            let lock = self.classes.read().unwrap();
-            let current = lock.get(name).unwrap();
+            let current = self.classes.get(name).unwrap();
             if let Some(context) = context {
                 current.update(
                     agent,
@@ -855,7 +801,6 @@ impl Entity {
             }
             false
         } else {
-            let mut lock = self.classes.write().unwrap();
             if let Some(context) = context {
                 let bms = grounded.bms.as_ref().unwrap();
                 bms.set_last_rec_producer(Some((context.get_id(), context.get_production_time())));
@@ -864,15 +809,14 @@ impl Entity {
                     context,
                 );
             }
-            lock.insert(name.to_string(), grounded.clone());
+            self.classes.insert(name.to_string(), grounded.clone());
             true
         }
     }
 
     fn has_relationship(&self, func: &GroundedFunc) -> Option<Arc<GroundedFunc>> {
-        let lock = self.relations.read().unwrap();
-        if let Some(relation_type) = lock.get(func.get_name()) {
-            for rel in relation_type {
+        if let Some(relation_type) = self.relations.get(func.get_name()) {
+            for rel in relation_type.value() {
                 if rel.comparable(func) {
                     return Some(rel.clone());
                 }
@@ -888,9 +832,8 @@ impl Entity {
     ) -> HashMap<&str, Vec<Arc<GroundedFunc>>> {
         let mut res = HashMap::new();
         let (op, val) = compare.get_uval();
-        let lock = self.relations.read().unwrap();
-        for functions in lock.values() {
-            for f in functions {
+        for relations in self.relations.iter() {
+            for f in relations.value() {
                 if f.name_in_pos(&*self.name, pos) {
                     // guaranteed this lives as long as self
                     let t = unsafe { &*(&**f as *const GroundedFunc) };
@@ -975,16 +918,10 @@ impl Entity {
         } else if lookahead_rules(agent, name, &GroundedRef::Function(&*func)) {
             return false;
         }
-        let stmt_exists = {
-            let lock = self.relations.write().unwrap();
-            lock.contains_key(name)
-        };
-        if stmt_exists {
+        if self.relations.contains_key(name) {
             let mut found_rel = false;
             {
-                let lock = self.relations.read().unwrap();
-                let funcs_type = lock.get(name).unwrap();
-                for f in funcs_type {
+                for f in self.relations.get(name).unwrap().value() {
                     if f.comparable(&*func) {
                         if let Some(context) = context {
                             f.update(
@@ -1005,7 +942,6 @@ impl Entity {
                 }
             }
             if !found_rel {
-                let mut lock = self.relations.write().unwrap();
                 if let Some(context) = context {
                     func.bms.set_last_rec_producer(Some((
                         context.get_id(),
@@ -1016,14 +952,13 @@ impl Entity {
                         context,
                     );
                 }
-                let funcs_type = lock.get_mut(name).unwrap();
+                let mut funcs_type = self.relations.get_mut(name).unwrap();
                 funcs_type.push(func.clone());
                 true
             } else {
                 false
             }
         } else {
-            let mut lock = self.relations.write().unwrap();
             if let Some(context) = context {
                 func.bms
                     .set_last_rec_producer(Some((context.get_id(), context.get_production_time())));
@@ -1032,22 +967,19 @@ impl Entity {
                     context,
                 );
             }
-            lock.insert(name.to_string(), vec![func.clone()]);
+            self.relations.insert(name.to_string(), vec![func.clone()]);
             true
         }
     }
 
     fn add_belief(&self, belief: Arc<LogSentence>, parent: &str) {
-        let sent_exists = self.beliefs.read().unwrap().contains_key(parent);
+        let sent_exists = self.beliefs.contains_key(parent);
         if sent_exists {
-            if let Some(ls) = self.beliefs.write().unwrap().get_mut(parent) {
+            if let Some(mut ls) = self.beliefs.get_mut(parent) {
                 ls.push(belief)
             }
         } else {
-            self.beliefs
-                .write()
-                .unwrap()
-                .insert(parent.to_string(), vec![belief]);
+            self.beliefs.insert(parent.to_string(), vec![belief]);
         }
     }
 }
@@ -1056,8 +988,7 @@ impl Entity {
 pub(super) fn lookahead_rules(agent: &Representation, name: &str, grounded: &GroundedRef) -> bool {
     use super::inference::rules_inference_lookahead;
     let rules: Vec<Arc<LogSentence>> = {
-        let classes = agent.classes.read().unwrap();
-        let class = classes.get(name).unwrap();
+        let class = agent.classes.get(name).unwrap();
         let rules = &*class.rules.read().unwrap();
         rules.clone()
     };

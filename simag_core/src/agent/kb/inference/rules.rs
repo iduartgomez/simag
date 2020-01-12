@@ -30,7 +30,7 @@ pub(in crate::agent::kb) fn rules_inference_lookahead(
         // if the rule has any special var, get proper assignments
         let assignments: Option<&HashMap<&Var, &VarAssignment>> = {
             if rule.has_time_vars > 0 {
-                unimplemented!()
+                todo!()
             } else {
                 None
             }
@@ -61,7 +61,7 @@ pub(in crate::agent::kb) fn rules_inference_rollback(
     // if the rule has any special var, get proper assignments
     let assignments: Option<&HashMap<&Var, &VarAssignment>> = {
         if rule.has_time_vars > 0 {
-            unimplemented!()
+            todo!()
         } else {
             None
         }

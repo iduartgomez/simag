@@ -11,7 +11,6 @@ pub(self) use self::lang::ParseErrF;
 /// Represent an alive object which can interact with environment.
 ///
 /// Is the core construct of the simAG framework.
-#[derive(Debug)]
 pub struct Agent {
     /// available threads for this agent
     thread_manager: ThreadManager,
