@@ -38,7 +38,8 @@ pub(in crate::agent) struct LogSentence {
     particles: Vec<Rc<Particle>>,
     vars: Option<Vec<Arc<Var>>>,
     skolem: Option<Vec<Arc<Skolem>>>,
-    root: Option<Rc<Particle>>,
+    /// position of the root at the particles vec
+    root: usize,
     predicates: (Vec<Rc<Assert>>, Vec<Rc<Assert>>),
     pub has_time_vars: usize,
     pub created: Time,
@@ -57,7 +58,7 @@ impl<'a> LogSentence {
             particles: Vec::new(),
             skolem: None,
             vars: None,
-            root: None,
+            root: 0,
             predicates: (vec![], vec![]),
             has_time_vars: 0,
             created: Utc::now(),
@@ -72,8 +73,8 @@ impl<'a> LogSentence {
                 root.unwrap()
             }
         };
-        sent.particles.push(root.clone());
-        sent.root = Some(root);
+        sent.particles.push(root);
+        sent.root = sent.particles.len() - 1;
         // classify the kind of sentence and check that are correct
         if context.iexpr() {
             let mut lhs: Vec<Rc<Particle>> = vec![];
@@ -206,7 +207,7 @@ impl<'a> LogSentence {
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
         mut context: T,
     ) -> T {
-        let root = &self.root;
+        let root = &self.particles[self.root];
         let time_assign = {
             if self.vars.is_some() {
                 self.get_time_assignments(agent, assignments)
@@ -221,60 +222,28 @@ impl<'a> LogSentence {
         }
 
         if self.sent_kind.is_iexpr() {
-            if let Some(res) =
-                root.as_ref()
-                    .unwrap()
-                    .solve(agent, assignments, &time_assign, &mut context)
-            {
+            if let Some(res) = root.solve(agent, assignments, &time_assign, &mut context) {
                 if res {
-                    root.as_ref().unwrap().substitute(
-                        agent,
-                        assignments,
-                        &time_assign,
-                        &mut context,
-                        false,
-                    );
+                    root.substitute(agent, assignments, &time_assign, &mut context, false);
                     context.set_result(Some(true));
                 } else {
-                    root.as_ref().unwrap().substitute(
-                        agent,
-                        assignments,
-                        &time_assign,
-                        &mut context,
-                        true,
-                    );
+                    root.substitute(agent, assignments, &time_assign, &mut context, true);
                     context.set_result(Some(false));
                 }
             } else {
                 context.set_result(None);
             }
-        } else if let Some(res) =
-            root.as_ref()
-                .unwrap()
-                .solve(agent, assignments, &time_assign, &mut context)
-        {
+        } else if let Some(res) = root.solve(agent, assignments, &time_assign, &mut context) {
             if res {
-                if root.as_ref().unwrap().is_icond() {
+                if root.is_icond() {
                     context.substituting();
-                    root.as_ref().unwrap().substitute(
-                        agent,
-                        assignments,
-                        &time_assign,
-                        &mut context,
-                        false,
-                    )
+                    root.substitute(agent, assignments, &time_assign, &mut context, false)
                 }
                 context.set_result(Some(true));
             } else {
-                if root.as_ref().unwrap().is_icond() {
+                if root.is_icond() {
                     context.substituting();
-                    root.as_ref().unwrap().substitute(
-                        agent,
-                        assignments,
-                        &time_assign,
-                        &mut context,
-                        true,
-                    )
+                    root.substitute(agent, assignments, &time_assign, &mut context, true)
                 }
                 context.set_result(Some(false));
             }
@@ -359,7 +328,7 @@ impl<'a> LogSentence {
     }
 
     pub fn get_lhs_predicates(&self) -> LhsPreds {
-        LhsPreds::new(&*self.root.as_ref().unwrap().get_next(0).unwrap(), self)
+        LhsPreds::new(&*self.particles[self.root].get_next(0).unwrap(), self)
     }
 
     fn add_var(&mut self, var: &Arc<Var>) {
@@ -562,7 +531,7 @@ impl fmt::Display for LogSentence {
         let prelim: String = format!(
             "Sentence(id: {}, {})",
             self.id.unwrap(),
-            self.root.as_ref().unwrap()
+            self.particles[self.root]
         );
         let mut breaks = Vec::new();
         let mut depth = 0_usize;
@@ -1682,7 +1651,7 @@ fn correct_iexpr(sent: &LogSentence, lhs: &mut Vec<Rc<Particle>>) -> Result<(), 
         }
     }
 
-    let first: &Particle = &*sent.root.as_ref().unwrap();
+    let first: &Particle = &sent.particles[sent.root];
     match *first {
         Particle::IndConditional(_) => {}
         _ => return Err(LogSentErr::IExprNotIcond),
@@ -1770,7 +1739,7 @@ mod test {
             ParseTree::IExpr(sent) => sent,
             _ => panic!(),
         };
-        let root = &**(sent.root.as_ref().unwrap());
+        let root = &*sent.particles[sent.root];
         match root {
             Particle::IndConditional(ref p) => {
                 match &*p.next_lhs {
