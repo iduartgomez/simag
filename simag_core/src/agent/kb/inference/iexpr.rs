@@ -397,7 +397,7 @@ impl IExprResult {
             args,
             node: node as *const ProofNode as usize,
             newest_grfact: chrono::MIN_DATE.and_hms(0, 0, 0),
-            sent_id: node.proof.get_id(),
+            sent_id: node.proof.id,
             global_subtitution_time: Utc::now(),
             antecedents: vec![],
             grounded_func: vec![],
@@ -769,8 +769,8 @@ impl<'a> InfTrial<'a> {
                         let ls = lock.entry(name).or_insert_with(Vec::new);
                         if ls
                             .iter()
-                            .map(|x| x.proof.get_id())
-                            .find(|x| *x == sent.get_id())
+                            .map(|x| x.proof.id)
+                            .find(|x| *x == sent.id)
                             .is_none()
                         {
                             ls.push(node.clone());
@@ -1017,7 +1017,7 @@ impl<'a> ProofNode<'a> {
 
 impl<'a> std::cmp::PartialEq for ProofNode<'a> {
     fn eq(&self, other: &ProofNode) -> bool {
-        self.proof.get_id() == other.proof.get_id()
+        self.proof.id == other.proof.id
     }
 }
 
@@ -1025,7 +1025,7 @@ impl<'a> std::cmp::Eq for ProofNode<'a> {}
 
 impl<'a> Hash for ProofNode<'a> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.proof.get_id().hash(state);
+        self.proof.id.hash(state);
     }
 }
 

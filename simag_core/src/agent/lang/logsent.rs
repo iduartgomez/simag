@@ -26,7 +26,7 @@ use super::{
 use crate::agent::{kb::bms::BmsWrapper, kb::repr::Representation, kb::VarAssignment};
 
 pub use self::errors::LogSentErr;
-pub(in crate::agent) type SentID = usize;
+pub(in crate::agent) type SentID = u64;
 
 /// Type to store a first-order logic complex sentence.
 ///
@@ -36,14 +36,14 @@ pub(in crate::agent) type SentID = usize;
 #[derive(Debug)]
 pub(in crate::agent) struct LogSentence {
     particles: Vec<Rc<Particle>>,
-    vars: Option<Vec<Arc<Var>>>,
-    skolem: Option<Vec<Arc<Skolem>>>,
+    vars: Vec<Arc<Var>>,
+    skolem: Vec<Arc<Skolem>>,
     /// position of the root at the particles vec
     root: usize,
     predicates: (Vec<Rc<Assert>>, Vec<Rc<Assert>>),
     pub has_time_vars: usize,
     pub created: Time,
-    id: Option<SentID>,
+    pub id: SentID,
     sent_kind: SentKind,
 }
 
@@ -54,33 +54,52 @@ unsafe impl std::marker::Send for LogSentence {}
 
 impl<'a> LogSentence {
     pub fn try_new(ast: &ASTNode, context: &mut ParseContext) -> Result<LogSentence, LogSentErr> {
-        let mut sent = LogSentence {
-            particles: Vec::new(),
-            skolem: None,
-            vars: None,
-            root: 0,
-            predicates: (vec![], vec![]),
-            has_time_vars: 0,
-            created: Utc::now(),
-            id: None,
-            sent_kind: context.stype,
-        };
-        let first = PIntermediate::new(None, None);
-        let root = match walk_ast(ast, &mut sent, context, first) {
+        let mut builder = SentenceBuilder::default();
+        let root = match walk_ast(ast, &mut builder, context, PIntermediate::new(None, None)) {
             Err(err) => return Err(err),
             Ok(root) => {
                 let PIntermediate { rhs: root, .. } = root;
                 root.unwrap()
             }
         };
-        sent.particles.push(root);
-        sent.root = sent.particles.len() - 1;
-        // classify the kind of sentence and check that are correct
+        builder.particles.push(root);
+        LogSentence::construct_sentence(builder, context)
+    }
+
+    fn construct_sentence(
+        builder: SentenceBuilder,
+        context: &mut ParseContext,
+    ) -> Result<LogSentence, LogSentErr> {
+        let SentenceBuilder {
+            particles,
+            vars,
+            skolem,
+        } = builder;
+        let root = particles.len() - 1;
+        let id = LogSentence::generate_uid(&particles);
+
+        let mut sent = LogSentence {
+            particles,
+            skolem,
+            vars,
+            root,
+            predicates: (vec![], vec![]),
+            has_time_vars: 0,
+            created: Utc::now(),
+            id,
+            sent_kind: context.stype,
+        };
+        sent.set_sent_kind(context)?;
+        Ok(sent)
+    }
+
+    /// Classify the kind of sentence and check that are correct.
+    fn set_sent_kind(&mut self, context: &mut ParseContext) -> Result<(), LogSentErr> {
         if context.iexpr() {
             let mut lhs: Vec<Rc<Particle>> = vec![];
-            correct_iexpr(&sent, &mut lhs)?;
+            correct_iexpr(&self, &mut lhs)?;
             let lhs: HashSet<_> = lhs.iter().map(|x| &**x as *const Particle).collect();
-            let rhs: HashSet<_> = sent
+            let rhs: HashSet<_> = self
                 .particles
                 .iter()
                 .filter(|x| x.is_atom())
@@ -99,15 +118,14 @@ impl<'a> LogSentence {
                 .filter(|p| p.is_atom())
                 .map(|p| p.clone_pred())
                 .collect();
-            sent.predicates = (lhs_v, rhs_v);
-            sent.iexpr_op_arg_validation()?;
-            if sent.vars.is_some() {
+            self.predicates = (lhs_v, rhs_v);
+            self.iexpr_op_arg_validation()?;
+            if !self.vars.is_empty() {
                 let mut is_normal = false;
-                let sent_r = &mut sent;
-                for var in sent_r.vars.as_ref().unwrap() {
+                for var in &self.vars {
                     match var.kind {
                         VarKind::TimeDecl | VarKind::Time => {
-                            sent_r.has_time_vars += 1;
+                            self.has_time_vars += 1;
                             continue;
                         }
                         VarKind::Normal => is_normal = true,
@@ -116,27 +134,26 @@ impl<'a> LogSentence {
                 // check out that all variables are time or spatial variables
                 if !is_normal {
                     context.stype = SentKind::Rule;
-                    sent_r.sent_kind = SentKind::Rule;
+                    self.sent_kind = SentKind::Rule;
                 } else {
-                    sent_r.sent_kind = SentKind::IExpr;
+                    self.sent_kind = SentKind::IExpr;
                 }
             } else {
                 context.stype = SentKind::Rule;
-                sent.sent_kind = SentKind::Rule;
+                self.sent_kind = SentKind::Rule;
             }
         } else {
-            let preds: Vec<_> = sent
+            let preds: Vec<_> = self
                 .particles
                 .iter()
                 .filter(|p| p.is_atom())
                 .map(|p| p.clone_pred())
                 .collect();
-            sent.predicates = (preds, vec![]);
+            self.predicates = (preds, vec![]);
             context.stype = SentKind::Rule;
-            sent.sent_kind = SentKind::Rule;
+            self.sent_kind = SentKind::Rule;
         }
-        sent.generate_uid();
-        Ok(sent)
+        Ok(())
     }
 
     fn iexpr_op_arg_validation(&self) -> Result<(), LogSentErr> {
@@ -209,7 +226,7 @@ impl<'a> LogSentence {
     ) -> T {
         let root = &self.particles[self.root];
         let time_assign = {
-            if self.vars.is_some() {
+            if !self.vars.is_empty() {
                 self.get_time_assignments(agent, assignments)
             } else {
                 HashMap::with_capacity(0)
@@ -262,7 +279,7 @@ impl<'a> LogSentence {
         var_assign: Option<&HashMap<&Var, &VarAssignment>>,
     ) -> HashMap<&Var, Arc<BmsWrapper>> {
         let mut time_assign = HashMap::new();
-        'outer: for var in self.vars.as_ref().unwrap() {
+        'outer: for var in &self.vars {
             match var.kind {
                 VarKind::Time => {
                     for pred in &self.predicates.0 {
@@ -290,7 +307,6 @@ impl<'a> LogSentence {
         let LogSentence {
             vars, particles, ..
         } = self;
-        let vars = if let Some(vars) = vars { vars } else { vec![] };
         let mut preds = vec![];
         let mut checked: HashSet<*const Particle> = HashSet::new();
         for p in particles {
@@ -331,33 +347,11 @@ impl<'a> LogSentence {
         LhsPreds::new(&*self.particles[self.root].get_next(0).unwrap(), self)
     }
 
-    fn add_var(&mut self, var: &Arc<Var>) {
-        if self.vars.is_none() {
-            self.vars = Some(Vec::new());
-        }
-        self.vars.as_mut().unwrap().push(var.clone())
-    }
-
-    pub fn get_id(&self) -> usize {
-        *self.id.as_ref().unwrap()
-    }
-
-    fn add_skolem(&mut self, skolem: &Arc<Skolem>) {
-        if self.skolem.is_none() {
-            self.vars = Some(Vec::new());
-        }
-        self.skolem.as_mut().unwrap().push(skolem.clone())
-    }
-
-    fn add_particle(&mut self, p: Rc<Particle>) {
-        self.particles.push(p)
-    }
-
-    fn generate_uid(&mut self) {
+    fn generate_uid(particles: &[Rc<Particle>]) -> SentID {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
         let mut id = vec![];
-        for a in &self.particles {
+        for a in particles {
             match **a {
                 Particle::Conjunction(_) => id.push(0),
                 Particle::Disjunction(_) => id.push(1),
@@ -372,7 +366,7 @@ impl<'a> LogSentence {
         }
         let mut s = DefaultHasher::new();
         id.hash(&mut s);
-        self.id = Some(s.finish() as usize);
+        s.finish()
     }
 }
 
@@ -494,9 +488,11 @@ impl<'a> std::iter::Iterator for SentVarReq<'a> {
     /// This just takes into consideration the LHS variables.
     fn next(&mut self) -> Option<HashMap<&'a Var, Vec<&'a Assert>>> {
         if let Some(picks) = self.iter.next() {
+            if self.iter.sent.vars.is_empty() {
+                return None;
+            }
             let mut requeriments = HashMap::new();
-            self.iter.sent.vars.as_ref()?;
-            for var in self.iter.sent.vars.as_ref().unwrap() {
+            for var in &self.iter.sent.vars {
                 let mut var_req = Vec::new();
                 for a in &picks {
                     if a.contains(var) {
@@ -528,11 +524,7 @@ impl std::hash::Hash for LogSentence {
 
 impl fmt::Display for LogSentence {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let prelim: String = format!(
-            "Sentence(id: {}, {})",
-            self.id.unwrap(),
-            self.particles[self.root]
-        );
+        let prelim: String = format!("Sentence(id: {}, {})", self.id, self.particles[self.root]);
         let mut breaks = Vec::new();
         let mut depth = 0_usize;
         use std::iter;
@@ -1361,15 +1353,22 @@ impl PIntermediate {
     }
 }
 
+#[derive(Default)]
+struct SentenceBuilder {
+    vars: Vec<Arc<Var>>,
+    skolem: Vec<Arc<Skolem>>,
+    particles: Vec<Rc<Particle>>,
+}
+
 fn walk_ast(
     ast: &ASTNode,
-    sent: &mut LogSentence,
+    sent: &mut SentenceBuilder,
     context: &mut ParseContext,
     mut parent: PIntermediate,
 ) -> Result<PIntermediate, LogSentErr> {
     fn decl_scope_vars<'a>(
         context: &mut ParseContext,
-        sent: &mut LogSentence,
+        sent: &mut SentenceBuilder,
         vars: &[VarDeclBorrowed<'a>],
         v_cnt: &mut usize,
         s_cnt: &mut usize,
@@ -1390,7 +1389,7 @@ fn walk_ast(
                         }
                     }
                     *v_cnt += 1;
-                    sent.add_var(&var);
+                    sent.vars.push(var.clone());
                     context.vars.push(var);
                 }
                 VarDeclBorrowed::Skolem(ref s) => {
@@ -1404,7 +1403,7 @@ fn walk_ast(
                         }
                     }
                     *s_cnt += 1;
-                    sent.add_skolem(&skolem);
+                    sent.skolem.push(skolem.clone());
                     context.skols.push(skolem);
                 }
             }
@@ -1428,16 +1427,16 @@ fn walk_ast(
         particle: PIntermediate,
         parent: &mut PIntermediate,
         context: &mut ParseContext,
-        sent: &mut LogSentence,
+        sent: &mut SentenceBuilder,
     ) {
         if context.in_rhs {
             let p = Rc::new(particle.into_final(context));
             parent.add_rhs(p.clone());
-            sent.add_particle(p);
+            sent.particles.push(p);
         } else {
             let p = Rc::new(particle.into_final(context));
             parent.add_lhs(p.clone());
-            sent.add_particle(p);
+            sent.particles.push(p);
         }
     }
 
@@ -1571,7 +1570,7 @@ fn walk_ast(
                             }
                             prev_op = walk_ast(&assert.next, sent, context, prev_op)?;
                             let c = Rc::new(prev_op.into_final(context));
-                            sent.add_particle(c.clone());
+                            sent.particles.push(c.clone());
                             if i != 0 {
                                 new_op.add_rhs(c.clone());
                             } else {

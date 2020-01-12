@@ -149,7 +149,7 @@ struct RuleResContext<'a> {
 impl<'a> RuleResContext<'a> {
     fn new(proof: &LogSentence, cmp: Option<GroundedRef<'a>>) -> RuleResContext<'a> {
         RuleResContext {
-            sent_id: proof.get_id(),
+            sent_id: proof.id,
             global_substitution_time: Utc::now(),
             result: None,
             newest_grfact: chrono::MIN_DATE.and_hms(0, 0, 0),
