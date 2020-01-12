@@ -425,7 +425,7 @@ impl Representation {
                 continue;
             }
             let mut v = vec![];
-            for e in &**cls_ref.unwrap().members.read().unwrap() {
+            for e in &**cls_ref.unwrap().members.read() {
                 match *e {
                     ClassMember::Class(ref m) | ClassMember::Entity(ref m) => {
                         if m.get_value().is_some() {
@@ -451,7 +451,7 @@ impl Representation {
         for func in funcs {
             if let Some(func_ref) = self.classes.get(&*func.get_name()) {
                 let mut m = HashMap::new();
-                for e in &**func_ref.value().members.read().unwrap() {
+                for e in &**func_ref.value().members.read() {
                     if let ClassMember::Func(ref f) = *e {
                         if f.get_value().is_some() {
                             for name in f.get_args_names() {
@@ -989,7 +989,7 @@ pub(super) fn lookahead_rules(agent: &Representation, name: &str, grounded: &Gro
     use super::inference::rules_inference_lookahead;
     let rules: Vec<Arc<LogSentence>> = {
         let class = agent.classes.get(name).unwrap();
-        let rules = &*class.rules.read().unwrap();
+        let rules = &*class.rules.read();
         rules.clone()
     };
     rules_inference_lookahead(agent, rules, grounded)

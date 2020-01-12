@@ -1,7 +1,8 @@
 use super::{FreeClsMemb, GroundedRef};
 use float_cmp::ApproxEqUlps;
+use parking_lot::RwLock;
 use std::str;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use super::{
     errors::ParseErrF,
@@ -106,7 +107,7 @@ impl GroundedMemb {
         if let Some(ref cmp) = self.operator {
             cmp.generate_uid(&mut id);
         }
-        if let Some(val) = *self.value.read().unwrap() {
+        if let Some(val) = *self.value.read() {
             let mut id_2 = format!("{}", val).into_bytes();
             id.append(&mut id_2);
         }
@@ -126,7 +127,7 @@ impl GroundedMemb {
 
     #[inline]
     pub fn get_value(&self) -> Option<f32> {
-        if let Some(val) = *self.value.read().unwrap() {
+        if let Some(val) = *self.value.read() {
             Some(val)
         } else {
             None
@@ -141,8 +142,8 @@ impl GroundedMemb {
     ) {
         let new_val: Option<f32>;
         {
-            let mut value_lock = self.value.write().unwrap();
-            new_val = *data.value.read().unwrap();
+            let mut value_lock = self.value.write();
+            new_val = *data.value.read();
             *value_lock = new_val;
         }
         if let Some(ref bms) = self.bms {
@@ -158,7 +159,7 @@ impl GroundedMemb {
     }
 
     pub fn update_value(&self, val: Option<f32>) {
-        *self.value.write().unwrap() = val;
+        *self.value.write() = val;
     }
 
     pub fn from_free(free: &FreeClsMemb, assignment: &str) -> GroundedMemb {
@@ -299,10 +300,10 @@ impl std::cmp::PartialEq for GroundedMemb {
             op_lhs = self.operator.unwrap();
             op_rhs = op;
         } else {
-            return *self.value.read().unwrap() == *other.value.read().unwrap();
+            return *self.value.read() == *other.value.read();
         }
-        let val_lhs: Option<f32> = *self.value.read().unwrap();
-        let val_rhs: Option<f32> = *other.value.read().unwrap();
+        let val_lhs: Option<f32> = *self.value.read();
+        let val_rhs: Option<f32> = *other.value.read();
         Self::compare_two_grounded_eq(val_lhs, val_rhs, op_lhs, op_rhs)
     }
 }
@@ -311,7 +312,7 @@ impl std::clone::Clone for GroundedMemb {
     fn clone(&self) -> GroundedMemb {
         GroundedMemb {
             term: self.term.clone(),
-            value: RwLock::new(*self.value.read().unwrap()),
+            value: RwLock::new(*self.value.read()),
             operator: self.operator,
             parent: self.parent.clone(),
             bms: self.bms.clone(),

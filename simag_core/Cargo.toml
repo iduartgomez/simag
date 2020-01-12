@@ -12,6 +12,7 @@ rayon = "1.3.0"
 num_cpus = "1.11.1"
 log = "0.4.8"
 dashmap = "2.1.1"
+parking_lot = "0.10"
 
 # own packages
 simag_terminal = { path = "../simag_terminal" }

@@ -123,7 +123,7 @@ impl GroundedFunc {
 
     #[inline]
     pub fn get_value(&self) -> Option<f32> {
-        *self.args[0].value.read().unwrap()
+        *self.args[0].value.read()
     }
 
     pub fn get_args(&self) -> Vec<&GroundedMemb> {
@@ -196,8 +196,8 @@ impl GroundedFunc {
         was_produced: Option<(SentID, Time)>,
     ) {
         {
-            let mut value_lock = self.args[0].value.write().unwrap();
-            *value_lock = *data.args[0].value.read().unwrap();
+            let mut value_lock = self.args[0].value.write();
+            *value_lock = *data.args[0].value.read();
         }
         let data_bms = &data.bms;
         self.bms
@@ -205,7 +205,7 @@ impl GroundedFunc {
     }
 
     pub fn update_value(&self, val: Option<f32>) {
-        let mut value_lock = self.args[0].value.write().unwrap();
+        let mut value_lock = self.args[0].value.write();
         *value_lock = val;
     }
 }

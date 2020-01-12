@@ -21,9 +21,10 @@ use std::hash::{Hash, Hasher};
 use std::iter::FromIterator;
 use std::mem;
 use std::rc::Rc;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use chrono::Utc;
+use parking_lot::RwLock;
 use rayon;
 use rayon::prelude::*;
 
@@ -521,7 +522,7 @@ impl<'a> InfTrial<'a> {
             // for each node in the subtitution tree unifify variables
             // and try every possible substitution until (if) a solution is found
             // the proofs are tried in order of addition to the KB
-            if let Some(nodes) = nodes.read().unwrap().get(parent) {
+            if let Some(nodes) = nodes.read().get(parent) {
                 // the node for each rule is stored in an efficient sorted list
                 // by rule creation datetime, from newest to oldest
                 // as the newest rules take precedence
@@ -557,13 +558,13 @@ impl<'a> InfTrial<'a> {
             if !self.feedback {
                 return;
             }
-            if !chk.is_empty() && (*self.depth_cnt.read().unwrap() < self.depth) {
+            if !chk.is_empty() && (*self.depth_cnt.read() < self.depth) {
                 done.insert(parent);
                 self.get_rules(Vec::from_iter(chk.iter().cloned()));
                 let p1 = chk.pop_front().unwrap();
                 parent = p1;
             } else {
-                let mut c = self.depth_cnt.write().unwrap();
+                let mut c = self.depth_cnt.write();
                 *c += 1;
                 return;
             }
@@ -601,7 +602,7 @@ impl<'a> InfTrial<'a> {
     fn unification_trial(&mut self, node: &ProofNode, args: &ProofArgs) {
         let node_raw = node as *const ProofNode as usize;
         let args_done = {
-            if let Some(queued) = self.queue.read().unwrap().get(&node_raw) {
+            if let Some(queued) = self.queue.read().get(&node_raw) {
                 queued.contains(&args.hash_val)
             } else {
                 false
@@ -614,7 +615,7 @@ impl<'a> InfTrial<'a> {
             if solved_proof.result.is_some() {
                 {
                     self.updated.push(true);
-                    let mut lock1 = self.queue.write().unwrap();
+                    let mut lock1 = self.queue.write();
                     lock1
                         .entry(node_raw)
                         .or_insert_with(HashSet::new)
@@ -662,7 +663,7 @@ impl<'a> InfTrial<'a> {
                 let query_cls = self.actv.get_cls();
                 if query_cls.comparable(&gt) {
                     let val = query_cls == &gt;
-                    let mut d = results.grounded_queries.write().unwrap();
+                    let mut d = results.grounded_queries.write();
                     let gr_results_dict = {
                         if d.contains_key(self.actv.get_pred()) {
                             d.get_mut(self.actv.get_pred()).unwrap()
@@ -702,7 +703,7 @@ impl<'a> InfTrial<'a> {
                 let query_func = self.actv.get_func();
                 if query_func.comparable(&gf) {
                     let val = query_func == &gf;
-                    let mut d = results.grounded_queries.write().unwrap();
+                    let mut d = results.grounded_queries.write();
                     let gr_results_dict = {
                         if d.contains_key(self.actv.get_pred()) {
                             d.get_mut(self.actv.get_pred()).unwrap()
@@ -740,7 +741,7 @@ impl<'a> InfTrial<'a> {
     fn get_rules(&self, cls_ls: Vec<&str>) {
         let nodes = unsafe { &*(self.nodes as *const RwLock<HashMap<&str, Vec<ProofNode>>>) };
         let mut rules: HashSet<Arc<LogSentence>> = HashSet::new();
-        for vrules in nodes.read().unwrap().values() {
+        for vrules in nodes.read().values() {
             for r in vrules {
                 rules.insert(r.proof.clone());
             }
@@ -764,7 +765,7 @@ impl<'a> InfTrial<'a> {
                     for pred in sent.get_rhs_predicates() {
                         let pred = unsafe { &*(pred as *const Assert) as &'a Assert };
                         let name = pred.get_name();
-                        let mut lock = nodes.write().unwrap();
+                        let mut lock = nodes.write();
                         let ls = lock.entry(name).or_insert_with(Vec::new);
                         if ls
                             .iter()

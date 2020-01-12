@@ -1,8 +1,9 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use dashmap::DashMap;
 use float_cmp::ApproxEqUlps;
+use parking_lot::RwLock;
 
 use crate::agent::kb::{
     bms::BmsWrapper,
@@ -120,11 +121,11 @@ impl Class {
 
     /// Add members of this class, being them other classes or entities.
     pub(in crate::agent::kb) fn add_member(&self, member: ClassMember) {
-        self.members.write().unwrap().push(member);
+        self.members.write().push(member);
     }
 
     pub fn get_members(&self, comp: &FreeClsMemb) -> Vec<Arc<GroundedMemb>> {
-        let lock = self.members.read().unwrap();
+        let lock = self.members.read();
         lock.iter()
             .map(|x| x.unwrap_memb())
             .filter(|m| comp.grounded_eq(m))
@@ -221,7 +222,7 @@ impl Class {
 
     pub fn get_funcs(&self, func: &FuncDecl) -> Vec<Arc<GroundedFunc>> {
         let mut res = vec![];
-        let lock = self.members.read().unwrap();
+        let lock = self.members.read();
         for curr_func in lock.iter() {
             let curr_func = curr_func.unwrap_fn();
             let mut process = true;
@@ -352,7 +353,7 @@ impl Class {
 
     /// Add a grounded relationship of this kind of relationship
     pub(in crate::agent::kb) fn add_relation_to_class(&self, func: Arc<GroundedFunc>) {
-        self.members.write().unwrap().push(ClassMember::Func(func));
+        self.members.write().push(ClassMember::Func(func));
     }
 
     pub(in crate::agent::kb) fn add_belief(&self, belief: Arc<LogSentence>, parent: &str) {
@@ -366,7 +367,7 @@ impl Class {
     }
 
     pub(in crate::agent::kb) fn add_rule(&self, rule: Arc<LogSentence>) {
-        self.rules.write().unwrap().push(rule);
+        self.rules.write().push(rule);
     }
 }
 

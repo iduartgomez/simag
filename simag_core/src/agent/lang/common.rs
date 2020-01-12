@@ -95,7 +95,7 @@ impl<'a> Predicate {
     pub fn get_uval(&self) -> (Option<CompOperator>, Option<f32>) {
         match *self {
             Predicate::GroundedMemb(ref t) => {
-                let o_val = t.value.read().unwrap();
+                let o_val = t.value.read();
                 if let Some(val) = *o_val {
                     let op = *t.operator.as_ref().unwrap();
                     (Some(op), Some(val))
@@ -144,7 +144,7 @@ impl<'a> Predicate {
 
     pub fn has_uval(&self) -> bool {
         match *self {
-            Predicate::GroundedMemb(ref t) => t.value.read().unwrap().is_some(),
+            Predicate::GroundedMemb(ref t) => t.value.read().is_some(),
             Predicate::FreeClsMemb(ref t) => t.value.is_some(),
             Predicate::FreeClassMembership(ref t) => t.value.is_some(),
         }
@@ -169,11 +169,11 @@ impl<'a> GroundedRef<'a> {
     pub fn update_value(&self, val: Option<f32>) {
         match *self {
             GroundedRef::Function(func) => {
-                let mut original = func.args[0].value.write().unwrap();
+                let mut original = func.args[0].value.write();
                 *original = val;
             }
             GroundedRef::Class(cls) => {
-                let mut original = cls.value.write().unwrap();
+                let mut original = cls.value.write();
                 *original = val;
             }
         }
@@ -238,7 +238,7 @@ impl FreeClsMemb {
         if self.value.is_some() {
             let val_free = self.value.unwrap();
             let val_grounded = {
-                if let Some(val) = *other.value.read().unwrap() {
+                if let Some(val) = *other.value.read() {
                     val
                 } else {
                     return false;
@@ -319,7 +319,7 @@ impl FreeClassMembership {
     pub fn filter_grounded(&self, other: &GroundedMemb) -> bool {
         if self.operator.is_some() {
             let val = self.value.as_ref().unwrap();
-            let o_val = if let Some(o_val) = *other.value.read().unwrap() {
+            let o_val = if let Some(o_val) = *other.value.read() {
                 o_val
             } else {
                 return false;
