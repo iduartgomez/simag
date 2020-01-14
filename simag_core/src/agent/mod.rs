@@ -19,9 +19,10 @@ pub struct Agent {
 
 impl Agent {
     pub fn new(threads: usize) -> Agent {
+        let representation = kb::repr::Representation::new(threads);
         Agent {
             thread_manager: ThreadManager { threads },
-            representation: kb::repr::Representation::new().with_threads(threads),
+            representation,
         }
     }
 

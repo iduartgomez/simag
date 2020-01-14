@@ -57,7 +57,7 @@ impl Parser {
     pub fn parse(
         input: &str,
         tell: bool,
-        num_threads: usize,
+        tpool: &rayon::ThreadPool,
     ) -> Result<VecDeque<ParseTree>, ParseErrF> {
         // store is a vec where the sequence of characters after cleaning up comments
         // will be stored, both have to be extended to 'static lifetime so they can be
@@ -67,10 +67,6 @@ impl Parser {
             Err(err) => return Err(ParseErrF::from(err)),
         };
         // walk the AST output and, if correct, output a final parse tree
-        let tpool = rayon::ThreadPoolBuilder::new()
-            .num_threads(num_threads)
-            .build()
-            .unwrap();
         let parse_trees: Vec<Result<ParseTree, ParseErrF>> = tpool.install(|| {
             scopes
                 .map(|ast| ParseTree::process_ast(&ast, tell))

@@ -132,7 +132,7 @@ pub(in crate::agent::kb) fn rules_inference_rollback(
 
 #[derive(Debug)]
 struct RuleResContext<'a> {
-    sent_id: SentID,
+    sent: &'a LogSentence,
     global_substitution_time: Time,
     result: Option<bool>,
     newest_grfact: Time,
@@ -147,9 +147,9 @@ struct RuleResContext<'a> {
 }
 
 impl<'a> RuleResContext<'a> {
-    fn new(proof: &LogSentence, cmp: Option<GroundedRef<'a>>) -> RuleResContext<'a> {
+    fn new(proof: &'a LogSentence, cmp: Option<GroundedRef<'a>>) -> RuleResContext<'a> {
         RuleResContext {
-            sent_id: proof.id,
+            sent: proof,
             global_substitution_time: Utc::now(),
             result: None,
             newest_grfact: chrono::MIN_DATE.and_hms(0, 0, 0),
@@ -176,14 +176,12 @@ impl<'a> RuleResContext<'a> {
 impl<'a> std::clone::Clone for RuleResContext<'a> {
     fn clone(&self) -> RuleResContext<'a> {
         let RuleResContext {
-            sent_id,
-            ref cmp_pred,
-            ..
+            sent, ref cmp_pred, ..
         } = *self;
         RuleResContext {
+            sent,
             result: None,
             newest_grfact: chrono::MIN_DATE.and_hms(0, 0, 0),
-            sent_id,
             global_substitution_time: Utc::now(),
             antecedents: vec![],
             grounded_fn: vec![],
@@ -198,6 +196,10 @@ impl<'a> std::clone::Clone for RuleResContext<'a> {
 }
 
 impl<'a> ProofResContext for RuleResContext<'a> {
+    fn sent(&self) -> &LogSentence {
+        self.sent
+    }
+
     fn substituting(&mut self) {
         self.sub_mode = true;
     }
@@ -219,7 +221,7 @@ impl<'a> ProofResContext for RuleResContext<'a> {
     }
 
     fn get_id(&self) -> SentID {
-        self.sent_id
+        self.sent.id
     }
 
     fn get_production_time(&self) -> Time {

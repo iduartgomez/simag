@@ -50,7 +50,7 @@ pub(in crate::agent::kb) struct Inference<'a> {
     nodes: RwLock<HashMap<&'a str, Vec<ProofNode<'a>>>>,
     queue: RwLock<HashMap<usize, HashSet<PArgVal>>>, // K: *const ProofNode<'a>
     results: InfResults<'a>,
-    tpool: rayon::ThreadPool,
+    tpool: &'a rayon::ThreadPool,
 }
 
 impl<'a> Inference<'a> {
@@ -59,7 +59,7 @@ impl<'a> Inference<'a> {
         query_input: QueryInput,
         depth: usize,
         ignore_current: bool,
-        num_threads: usize,
+        tpool: &'a rayon::ThreadPool,
     ) -> Result<Inference<'a>, ()> {
         let query = Arc::new(QueryProcessed::new().get_query(query_input)?);
         Ok(Inference {
@@ -70,10 +70,7 @@ impl<'a> Inference<'a> {
             nodes: RwLock::new(HashMap::new()),
             queue: RwLock::new(HashMap::new()),
             results: InfResults::new(query),
-            tpool: rayon::ThreadPoolBuilder::new()
-                .num_threads(num_threads)
-                .build()
-                .unwrap(),
+            tpool,
         })
     }
 
@@ -377,27 +374,27 @@ struct ValidAnswer {
 }
 
 #[derive(Debug)]
-pub struct IExprResult {
+pub struct IExprResult<'a> {
     result: Option<bool>,
     newest_grfact: Time,
     antecedents: Vec<Grounded>,
     grounded_func: Vec<(GroundedFunc, Time)>,
     grounded_cls: Vec<(GroundedMemb, Time)>,
-    sent_id: SentID,
+    sent: &'a LogSentence,
     global_subtitution_time: Time,
     args: ProofArgs,
     node: usize, // *const ProofNode<'a>
     sub_mode: bool,
 }
 
-impl IExprResult {
-    fn new(args: ProofArgs, node: &ProofNode) -> IExprResult {
+impl<'a> IExprResult<'a> {
+    fn new(args: ProofArgs, node: &'a ProofNode) -> IExprResult<'a> {
         IExprResult {
             result: None,
             args,
             node: node as *const ProofNode as usize,
             newest_grfact: chrono::MIN_DATE.and_hms(0, 0, 0),
-            sent_id: node.proof.id,
+            sent: &node.proof,
             global_subtitution_time: Utc::now(),
             antecedents: vec![],
             grounded_func: vec![],
@@ -407,7 +404,11 @@ impl IExprResult {
     }
 }
 
-impl ProofResContext for IExprResult {
+impl<'a> ProofResContext for IExprResult<'a> {
+    fn sent(&self) -> &LogSentence {
+        self.sent
+    }
+
     fn get_production_time(&self) -> Time {
         self.global_subtitution_time
     }
@@ -431,7 +432,7 @@ impl ProofResContext for IExprResult {
     }
 
     fn get_id(&self) -> SentID {
-        self.sent_id
+        self.sent.id
     }
 
     fn push_grounded_func(&mut self, grounded: GroundedFunc, time: Time) {

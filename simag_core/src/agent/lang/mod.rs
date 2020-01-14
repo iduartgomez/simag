@@ -30,9 +30,9 @@ pub(super) use self::parser::{CompOperator, ParseTree};
 pub(in crate::agent) fn logic_parser(
     source: &str,
     tell: bool,
-    thread_num: usize,
+    thread_pool: &rayon::ThreadPool,
 ) -> Result<VecDeque<parser::ParseTree>, ParseErrF> {
-    parser::Parser::parse(source, tell, thread_num)
+    parser::Parser::parse(source, tell, thread_pool)
 }
 
 pub type Time = DateTime<Utc>;

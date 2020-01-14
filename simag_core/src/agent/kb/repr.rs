@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use float_cmp::ApproxEqUlps;
+use num_cpus;
 
 use crate::agent::kb::{
     bms::{BmsWrapper, ReplaceMode},
@@ -41,17 +42,17 @@ use crate::FLOAT_EQ_ULPS;
 pub struct Representation {
     pub(in crate::agent) entities: DashMap<String, Entity>,
     pub(in crate::agent) classes: DashMap<String, Class>,
-    threads: usize,
+    threads: rayon::ThreadPool,
 }
 
 impl Default for Representation {
     fn default() -> Self {
-        Representation::new()
+        Representation::new(num_cpus::get())
     }
 }
 
 impl Representation {
-    pub fn new() -> Representation {
+    pub fn new(threads: usize) -> Representation {
         #[cfg(feature = "tracing")]
         {
             super::tracing::Logger::get_logger();
@@ -60,7 +61,10 @@ impl Representation {
         Representation {
             entities: DashMap::new(),
             classes: DashMap::new(),
-            threads: 4,
+            threads: rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap(),
         }
     }
 
@@ -83,7 +87,7 @@ impl Representation {
     ///
     /// For more examples check the LogSentence type docs.
     pub fn tell(&mut self, source: &str) -> Result<(), Vec<ParseErrF>> {
-        let pres = logic_parser(source, true, self.threads);
+        let pres = logic_parser(source, true, &self.threads);
         if let Ok(mut sentences) = pres {
             let mut errors = Vec::new();
             for _ in 0..sentences.len() {
@@ -128,7 +132,7 @@ impl Representation {
 
     /// Asks the KB if some fact is true and returns the answer to the query.
     pub fn ask(&self, source: &str) -> Result<Answer, QueryErr> {
-        let queries = logic_parser(source, false, self.threads);
+        let queries = logic_parser(source, false, &self.threads);
         if let Ok(queries) = queries {
             let pres = QueryInput::ManyQueries(queries);
             self.ask_processed(pres, usize::max_value(), false)
@@ -143,7 +147,7 @@ impl Representation {
         depth: usize,
         ignore_current: bool,
     ) -> Result<Answer, QueryErr> {
-        let mut inf = match Inference::try_new(self, source, depth, ignore_current, self.threads) {
+        let mut inf = match Inference::try_new(self, source, depth, ignore_current, &self.threads) {
             Ok(inf) => inf,
             Err(()) => return Err(QueryErr::QueryErr),
         };
@@ -622,13 +626,11 @@ impl Representation {
         res
     }
 
-    pub fn with_threads(mut self, threads: usize) -> Self {
-        self.threads = threads;
-        self
-    }
-
     pub fn set_threads(&mut self, threads: usize) {
-        self.threads = threads;
+        self.threads = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap();
     }
 }
 
