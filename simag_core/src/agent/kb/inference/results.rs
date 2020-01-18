@@ -1,4 +1,4 @@
-use parking_lot::RwLock;
+use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
 use std::mem;
@@ -20,25 +20,25 @@ type QueryResRels<'a> = HashMap<ObjName<'a>, Vec<Arc<GroundedFunc>>>;
 /// whatever is requested by the consumer.
 #[derive(Debug)]
 pub(in crate::agent::kb) struct InfResults<'b> {
-    pub grounded_queries: RwLock<HashMap<QueryPred, GroundedResults<'b>>>,
-    membership: RwLock<HashMap<&'b Var, QueryResMemb<'b>>>,
-    relationships: RwLock<HashMap<&'b Var, QueryResRels<'b>>>,
+    pub grounded_queries: DashMap<QueryPred, GroundedResults<'b>>,
+    membership: DashMap<&'b Var, QueryResMemb<'b>>,
+    relationships: DashMap<&'b Var, QueryResRels<'b>>,
     query: Arc<QueryProcessed<'b>>,
 }
 
 impl<'b> InfResults<'b> {
     pub fn new(query: Arc<QueryProcessed<'b>>) -> InfResults<'b> {
         InfResults {
-            grounded_queries: RwLock::new(HashMap::new()),
-            membership: RwLock::new(HashMap::new()),
-            relationships: RwLock::new(HashMap::new()),
+            grounded_queries: DashMap::new(),
+            membership: DashMap::new(),
+            relationships: DashMap::new(),
             query,
         }
     }
 
     pub fn add_membership(&self, var: &'b Var, name: &'b str, membership: Arc<GroundedMemb>) {
-        let mut lock = self.membership.write();
-        lock.entry(var)
+        self.membership
+            .entry(var)
             .or_insert_with(HashMap::new)
             .entry(name)
             .or_insert_with(Vec::new)
@@ -46,13 +46,13 @@ impl<'b> InfResults<'b> {
     }
 
     pub fn add_relationships(&self, var: &'b Var, rel: &[Arc<GroundedFunc>]) {
-        let mut lock = self.relationships.write();
         for func in rel {
             for obj in func.get_args_names() {
-                // obj lives for the duration of var as both are borrowed
+                // Safety: obj lives for the duration of var as both are borrowed
                 // from a repr further up the stack
                 let obj = unsafe { std::mem::transmute::<&str, &'b str>(obj) };
-                lock.entry(var)
+                self.relationships
+                    .entry(var)
                     .or_insert_with(HashMap::new)
                     .entry(obj)
                     .or_insert_with(Vec::new)
@@ -65,18 +65,17 @@ impl<'b> InfResults<'b> {
         // obj lives for the duration of var as both are borrowed
         // from a repr further up the stack
         let obj = unsafe { std::mem::transmute::<&str, &'b str>(obj) };
-        let mut lock = self.grounded_queries.write();
-        lock.entry(pred.to_string())
+        self.grounded_queries
+            .entry(pred.to_string())
             .or_insert_with(HashMap::new)
             .insert(obj, res);
     }
 
     pub fn get_results_single(&self) -> Option<bool> {
-        let results = self.grounded_queries.read();
-        if results.len() == 0 {
+        if self.grounded_queries.is_empty() {
             return None;
         }
-        for r0 in results.values() {
+        for r0 in self.grounded_queries.iter() {
             for r1 in r0.values() {
                 if let Some((false, _)) = *r1 {
                     return Some(false);
@@ -88,25 +87,26 @@ impl<'b> InfResults<'b> {
         Some(true)
     }
 
+    //pub type GroundedResult = Option<(bool, Option<Time>)>;
     pub fn get_results_multiple(self) -> HashMap<QueryPred, HashMap<String, GroundedResult>> {
-        // WARNING: ObjName<'a> may (truly) outlive the content, own the &str first
-        let orig: &mut HashMap<QueryPred, GroundedResults<'b>> =
-            &mut *self.grounded_queries.write();
+        // TODO: change collection of results to iterator over owned values when dashmap exposes a method
+        // Safety WARNING: ObjName<'a> may (truly) outlive the content, own the &str first
         let mut res = HashMap::new();
-        for (qpred, r) in orig.drain() {
-            let r = HashMap::from_iter(r.into_iter().map(|(k, v)| (k.to_string(), v)));
+        for entry in self.grounded_queries.iter() {
+            let qpred = entry.key().to_owned();
+            let owned_values = entry.value().iter().map(|(k, v)| ((*k).to_owned(), *v));
+            let r = HashMap::from_iter(owned_values);
             res.insert(qpred, r);
         }
         res
     }
 
     pub fn get_memberships(&self) -> HashMap<ObjName<'b>, Vec<&'b GroundedMemb>> {
-        let lock = self.membership.read();
         let mut res: HashMap<ObjName<'b>, Vec<&GroundedMemb>> = HashMap::new();
-        for preds in lock.values() {
+        for preds in self.membership.iter() {
             for members in preds.values() {
                 for gr in members {
-                    // this is safe because gr lives for the duration of a repr further
+                    // Safety: this is safe because gr lives for the duration of a repr further
                     // up the stack that outlives self
                     let gr = unsafe { &*(&**gr as *const GroundedMemb) as &'b GroundedMemb };
                     if res.contains_key(gr.get_name()) {
@@ -124,9 +124,8 @@ impl<'b> InfResults<'b> {
     }
 
     pub fn get_relationships(&self) -> HashMap<ObjName<'b>, Vec<&'b GroundedFunc>> {
-        let lock = self.relationships.read();
         let mut res: HashMap<ObjName<'b>, HashSet<*const GroundedFunc>> = HashMap::new();
-        for relations in lock.values() {
+        for relations in self.relationships.iter() {
             for relation_ls in relations.values() {
                 for grfunc in relation_ls {
                     for name in grfunc.get_args_names() {

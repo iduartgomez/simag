@@ -9,7 +9,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::rc::Rc;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -41,17 +40,12 @@ pub(in crate::agent) struct LogSentence {
     skolem: Vec<Arc<Skolem>>,
     /// position of the root at the particles vec
     root: usize,
-    predicates: (Vec<Rc<Assert>>, Vec<Rc<Assert>>),
+    predicates: (Vec<usize>, Vec<usize>),
     pub has_time_vars: usize,
     pub created: Time,
     pub id: SentID,
     sent_kind: SentKind,
 }
-
-/// Safe because at any single point in time ref counted particles are uniquelly owned by this object.
-/// And thus safe to send, sync and drop without leaving dangling references.
-unsafe impl std::marker::Sync for LogSentence {}
-unsafe impl std::marker::Send for LogSentence {}
 
 impl<'a> LogSentence {
     pub fn try_new(ast: &ASTNode, context: &mut ParseContext) -> Result<LogSentence, LogSentErr> {
@@ -90,6 +84,16 @@ impl<'a> LogSentence {
         };
         sent.set_predicates(context)?;
         sent.set_sent_kind(context)?;
+
+        sent.particles.sort_unstable_by(|f, s| f.pos().cmp(&s.pos()));
+
+        // free any extra allocated memory as this is an inmutable structure
+        sent.particles.shrink_to_fit();
+        sent.vars.shrink_to_fit();
+        sent.skolem.shrink_to_fit();
+        sent.predicates.0.shrink_to_fit();
+        sent.predicates.1.shrink_to_fit();
+
         Ok(sent)
     }
 
@@ -143,7 +147,7 @@ impl<'a> LogSentence {
                 .filter_map(|p| {
                     let v = &self.particles[*p];
                     if v.is_atom() {
-                        Some(v.clone_pred())
+                        Some(v.pos())
                     } else {
                         None
                     }
@@ -154,7 +158,7 @@ impl<'a> LogSentence {
                 .filter_map(|p| {
                     let v = &self.particles[*p];
                     if v.is_atom() {
-                        Some(v.clone_pred())
+                        Some(v.pos())
                     } else {
                         None
                     }
@@ -166,7 +170,7 @@ impl<'a> LogSentence {
                 .particles
                 .iter()
                 .filter(|p| p.is_atom())
-                .map(|p| p.clone_pred())
+                .map(|p| p.pos())
                 .collect();
             self.predicates = (preds, vec![]);
         }
@@ -256,7 +260,7 @@ impl<'a> LogSentence {
     fn iexpr_op_arg_validation(&self) -> Result<(), LogSentErr> {
         // check validity of optional arguments for predicates in the LHS:
         for decl in &self.predicates.0 {
-            match **decl {
+            match self.particles[*decl].pred_ref() {
                 Assert::FuncDecl(ref func) => {
                     if let Some(ref opargs) = func.op_args {
                         for arg in opargs {
@@ -285,7 +289,7 @@ impl<'a> LogSentence {
         }
         // check validity of optional arguments for predicates in the RHS:
         for decl in &self.predicates.1 {
-            match **decl {
+            match self.particles[*decl].pred_ref() {
                 Assert::FuncDecl(ref func) => {
                     if let Some(ref opargs) = func.op_args {
                         for arg in opargs {
@@ -380,6 +384,7 @@ impl<'a> LogSentence {
             match var.kind {
                 VarKind::Time => {
                     for pred in &self.predicates.0 {
+                        let pred = self.particles[*pred].pred_ref();
                         if pred.get_time_decl(&*var) {
                             let times = pred.get_times(agent, var_assign);
                             if times.is_none() {
@@ -400,7 +405,7 @@ impl<'a> LogSentence {
         time_assign
     }
 
-    pub fn extract_all_predicates(self) -> (Vec<Arc<Var>>, Vec<Rc<Assert>>) {
+    pub fn extract_all_predicates(self) -> (Vec<Arc<Var>>, Vec<Assert>) {
         let LogSentence {
             vars, particles, ..
         } = self;
@@ -408,8 +413,8 @@ impl<'a> LogSentence {
         let mut checked = HashSet::new();
         for p in particles {
             if !checked.contains(&p.pos()) && p.is_atom() {
-                preds.push(p.clone_pred());
                 checked.insert(p.pos());
+                preds.push(p.pred());
             }
         }
         (vars, preds)
@@ -426,7 +431,7 @@ impl<'a> LogSentence {
         // TODO: from particles[root] .. particles.len()
         let mut v = vec![];
         for p in &self.predicates.1 {
-            let p = &**p as &Assert;
+            let p = self.particles[*p].pred_ref();
             v.push(p);
         }
         v
@@ -436,7 +441,7 @@ impl<'a> LogSentence {
         // TODO: from 0..particles[root]
         let mut v = vec![];
         for p in &self.predicates.0 {
-            let p = &**p as &Assert;
+            let p = self.particles[*p].pred_ref();
             v.push(p);
         }
         v
@@ -1235,8 +1240,15 @@ impl Particle {
     }
 
     #[inline]
-    fn clone_pred(&self) -> Rc<Assert> {
-        todo!()
+    fn pred(self) -> Assert {
+        match self {
+            Particle::Atom(_, p) => p.pred,
+            Particle::Conjunction(_, _)
+            | Particle::Disjunction(_, _)
+            | Particle::Equivalence(_, _)
+            | Particle::Implication(_, _)
+            | Particle::IndConditional(_, _) => panic!(),
+        }
     }
 
     #[inline]
@@ -1808,81 +1820,81 @@ mod test {
 
     #[test]
     fn parser_icond_exprs() {
-        //     let source = String::from(
-        //         "
-        //         # Err:
-        //         ((let x y z)
-        //          ( ( cde[x,u=1] := fn::fgh[y,u>0.5;x;z] ) := hij[y,u=1] )
-        //         )
+        let source = String::from(
+            "
+                # Err:
+                ((let x y z)
+                 ( ( cde[x,u=1] := fn::fgh[y,u>0.5;x;z] ) := hij[y,u=1] )
+                )
 
-        //         # Err:
-        //         ((let x y z)
-        //          ( abc[x,u=1]  := (( cde[x,u=1] := fn::fgh[y,u>0.5;x;z] ) && hij[y,u=1] ))
-        //         )
+                # Err:
+                ((let x y z)
+                 ( abc[x,u=1]  := (( cde[x,u=1] := fn::fgh[y,u>0.5;x;z] ) && hij[y,u=1] ))
+                )
 
-        //         # Ok:
-        //         ((let x y z)
-        //          ( abc[x,u=1]  := (
-        //              ( cde[x,u=1] && fn::fgh[y,u>0.5;x;z] ) := hij[y,u=1]
-        //          )))
+                # Ok:
+                ((let x y z)
+                 ( abc[x,u=1]  := (
+                     ( cde[x,u=1] && fn::fgh[y,u>0.5;x;z] ) := hij[y,u=1]
+                 )))
 
-        //         # Ok:
-        //         (( let x y z )
-        //          (( cde[x,u=1] && hij[y,u=1] && fn::fgh[y,u>0.5;x;z] ) := abc[x,u=1]))
-        //     ",
-        //     );
-        //     let tpool = rayon::ThreadPoolBuilder::new().build().unwrap();
-        //     let tree = Parser::parse(source.as_str(), true, &tpool);
-        //     assert!(tree.is_ok());
-        //     let mut tree = tree.unwrap();
+                # Ok:
+                (( let x y z )
+                 (( cde[x,u=1] && hij[y,u=1] && fn::fgh[y,u>0.5;x;z] ) := abc[x,u=1]))
+            ",
+        );
+        let tpool = rayon::ThreadPoolBuilder::new().build().unwrap();
+        let tree = Parser::parse(source.as_str(), true, &tpool);
+        assert!(tree.is_ok());
+        let mut tree = tree.unwrap();
 
-        //     assert!(tree.pop_front().unwrap().is_err());
-        //     assert!(tree.pop_front().unwrap().is_err());
-        //     assert_eq!(tree.pop_front().unwrap().is_err(), false);
+        assert!(tree.pop_front().unwrap().is_err());
+        assert!(tree.pop_front().unwrap().is_err());
+        assert!(!tree.pop_front().unwrap().is_err());
 
-        //     let sent = match tree.pop_front().unwrap() {
-        //         ParseTree::IExpr(sent) => sent,
-        //         _ => panic!(),
-        //     };
-        //     let root = &*sent.particles[sent.root];
-        //     match root {
-        //         Particle::IndConditional(_, ref p) => {
-        //             match &*p.next_lhs {
-        //                 Particle::Conjunction(_, ref op) => {
-        //                     match *op.next_lhs {
-        //                         Particle::Atom(_, ref atm) => {
-        //                             assert_eq!(atm.get_name(), "cde");
-        //                         }
-        //                         Particle::Conjunction(_, _)
-        //                         | Particle::Disjunction(_, _)
-        //                         | Particle::Equivalence(_, _)
-        //                         | Particle::Implication(_, _)
-        //                         | Particle::IndConditional(_, _) => panic!(),
-        //                     };
-        //                     match &*op.next_rhs {
-        //                         Particle::Conjunction(_, ref op) => {
-        //                             match &*op.next_lhs {
-        //                                 Particle::Atom(_, ref atm) => assert_eq!(atm.get_name(), "hij"),
-        //                                 _ => panic!(),
-        //                             };
-        //                             match &*op.next_rhs {
-        //                                 Particle::Atom(_, ref atm) => {
-        //                                     assert_eq!(atm.get_name(), "fgh");
-        //                                 }
-        //                                 _ => panic!(),
-        //                             };
-        //                         }
-        //                         _ => panic!(),
-        //                     }
-        //                 }
-        //                 _ => panic!(),
-        //             }
-        //             match &*p.next_rhs {
-        //                 Particle::Atom(_, ref atm) => assert_eq!(atm.get_name(), "abc"),
-        //                 _ => panic!(),
-        //             }
-        //         }
-        //         _ => panic!(),
-        //     }
+        let sent = match tree.pop_front().unwrap() {
+            ParseTree::IExpr(sent) => sent,
+            _ => panic!(),
+        };
+        let root = &sent.particles[sent.root];
+        match root {
+            Particle::IndConditional(_, ref p) => {
+                match &sent.particles[p.next_lhs] {
+                    Particle::Conjunction(_, ref op) => {
+                        match sent.particles[op.next_lhs] {
+                            Particle::Atom(_, ref atm) => {
+                                assert_eq!(atm.get_name(), "cde");
+                            }
+                            Particle::Conjunction(_, _)
+                            | Particle::Disjunction(_, _)
+                            | Particle::Equivalence(_, _)
+                            | Particle::Implication(_, _)
+                            | Particle::IndConditional(_, _) => panic!(),
+                        };
+                        match &sent.particles[op.next_rhs] {
+                            Particle::Conjunction(_, ref op) => {
+                                match sent.particles[op.next_lhs] {
+                                    Particle::Atom(_, ref atm) => assert_eq!(atm.get_name(), "hij"),
+                                    _ => panic!(),
+                                };
+                                match sent.particles[op.next_rhs] {
+                                    Particle::Atom(_, ref atm) => {
+                                        assert_eq!(atm.get_name(), "fgh");
+                                    }
+                                    _ => panic!(),
+                                };
+                            }
+                            _ => panic!(),
+                        }
+                    }
+                    _ => panic!(),
+                }
+                match &sent.particles[p.next_rhs] {
+                    Particle::Atom(_, ref atm) => assert_eq!(atm.get_name(), "abc"),
+                    _ => panic!(),
+                }
+            }
+            _ => panic!(),
+        }
     }
 }

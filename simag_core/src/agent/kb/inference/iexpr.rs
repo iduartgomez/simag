@@ -24,6 +24,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use chrono::Utc;
+use dashmap::DashMap;
 use parking_lot::RwLock;
 use rayon;
 use rayon::prelude::*;
@@ -47,8 +48,8 @@ pub(in crate::agent::kb) struct Inference<'a> {
     kb: &'a Representation,
     depth: usize,
     ignore_current: bool,
-    nodes: RwLock<HashMap<&'a str, Vec<ProofNode<'a>>>>,
-    queue: RwLock<HashMap<usize, HashSet<PArgVal>>>, // K: *const ProofNode<'a>
+    nodes: DashMap<&'a str, Vec<ProofNode<'a>>>,
+    queue: DashMap<usize, HashSet<PArgVal>>, // K: *const ProofNode<'a>
     results: InfResults<'a>,
     tpool: &'a rayon::ThreadPool,
 }
@@ -67,8 +68,8 @@ impl<'a> Inference<'a> {
             kb: agent,
             depth,
             ignore_current,
-            nodes: RwLock::new(HashMap::new()),
-            queue: RwLock::new(HashMap::new()),
+            nodes: DashMap::new(),
+            queue: DashMap::new(),
             results: InfResults::new(query),
             tpool,
         })
@@ -486,8 +487,8 @@ struct InfTrial<'a> {
     updated: Vec<bool>,
     feedback: bool,
     valid: Option<ValidAnswer>,
-    nodes: usize, // &'a RwLock<HashMap<&'a str, Vec<ProofNode<'a>>>>,
-    queue: &'a RwLock<HashMap<usize, HashSet<PArgVal>>>, // K: *const ProofNode<'a>
+    nodes: usize, // &'a DashMap<&'a str, Vec<ProofNode<'a>>>>,
+    queue: &'a DashMap<usize, HashSet<PArgVal>>, // K: *const ProofNode<'a>
     results: usize, // &'a InfResults<'a>,
     depth: usize,
     depth_cnt: RwLock<usize>,
@@ -495,7 +496,7 @@ struct InfTrial<'a> {
 
 impl<'a> InfTrial<'a> {
     fn new(inf: &'a Inference, actv_query: &ActiveQuery) -> InfTrial<'a> {
-        let nodes = &inf.nodes as *const RwLock<_> as usize;
+        let nodes = &inf.nodes as *const DashMap<_, _> as usize;
         let results = &inf.results as *const InfResults as usize;
         InfTrial {
             kb: inf.kb,
@@ -517,13 +518,13 @@ impl<'a> InfTrial<'a> {
         mut chk: VecDeque<&'a str>,
         mut done: HashSet<&'a str>,
     ) {
-        let nodes = unsafe { &*(self.nodes as *const RwLock<HashMap<&str, Vec<ProofNode>>>) };
+        let nodes = unsafe { &*(self.nodes as *const DashMap<&str, Vec<ProofNode>>) };
         loop {
             self.valid = None;
             // for each node in the subtitution tree unifify variables
             // and try every possible substitution until (if) a solution is found
             // the proofs are tried in order of addition to the KB
-            if let Some(nodes) = nodes.read().get(parent) {
+            if let Some(nodes) = nodes.get(parent) {
                 // the node for each rule is stored in an efficient sorted list
                 // by rule creation datetime, from newest to oldest
                 // as the newest rules take precedence
@@ -603,7 +604,7 @@ impl<'a> InfTrial<'a> {
     fn unification_trial(&mut self, node: &ProofNode, args: &ProofArgs) {
         let node_raw = node as *const ProofNode as usize;
         let args_done = {
-            if let Some(queued) = self.queue.read().get(&node_raw) {
+            if let Some(queued) = self.queue.get(&node_raw) {
                 queued.contains(&args.hash_val)
             } else {
                 false
@@ -614,14 +615,11 @@ impl<'a> InfTrial<'a> {
             let context = IExprResult::new(args.clone(), node);
             let solved_proof = node.proof.solve(self.kb, Some(n_args), context);
             if solved_proof.result.is_some() {
-                {
-                    self.updated.push(true);
-                    let mut lock1 = self.queue.write();
-                    lock1
-                        .entry(node_raw)
-                        .or_insert_with(HashSet::new)
-                        .insert(args.hash_val);
-                }
+                self.updated.push(true);
+                self.queue
+                    .entry(node_raw)
+                    .or_insert_with(HashSet::new)
+                    .insert(args.hash_val);
                 self.add_result(solved_proof);
             }
         }
@@ -664,8 +662,8 @@ impl<'a> InfTrial<'a> {
                 let query_cls = self.actv.get_cls();
                 if query_cls.comparable(&gt) {
                     let val = query_cls == &gt;
-                    let mut d = results.grounded_queries.write();
-                    let gr_results_dict = {
+                    let d = &results.grounded_queries;
+                    let mut gr_results_dict = {
                         if d.contains_key(self.actv.get_pred()) {
                             d.get_mut(self.actv.get_pred()).unwrap()
                         } else {
@@ -688,10 +686,15 @@ impl<'a> InfTrial<'a> {
                             cond_ok = true;
                         }
                         if cond_ok {
-                            self.add_as_last_valid(&context, gr_results_dict, time, val);
+                            self.add_as_last_valid(
+                                &context,
+                                gr_results_dict.value_mut(),
+                                time,
+                                val,
+                            );
                         }
                     } else {
-                        self.add_as_last_valid(&context, gr_results_dict, time, val);
+                        self.add_as_last_valid(&context, gr_results_dict.value_mut(), time, val);
                     }
                     self.feedback = false;
                 }
@@ -704,8 +707,8 @@ impl<'a> InfTrial<'a> {
                 let query_func = self.actv.get_func();
                 if query_func.comparable(&gf) {
                     let val = query_func == &gf;
-                    let mut d = results.grounded_queries.write();
-                    let gr_results_dict = {
+                    let d = &results.grounded_queries;
+                    let mut gr_results_dict = {
                         if d.contains_key(self.actv.get_pred()) {
                             d.get_mut(self.actv.get_pred()).unwrap()
                         } else {
@@ -728,10 +731,15 @@ impl<'a> InfTrial<'a> {
                             cond_ok = true;
                         }
                         if cond_ok {
-                            self.add_as_last_valid(&context, gr_results_dict, time, val);
+                            self.add_as_last_valid(
+                                &context,
+                                gr_results_dict.value_mut(),
+                                time,
+                                val,
+                            );
                         }
                     } else {
-                        self.add_as_last_valid(&context, gr_results_dict, time, val);
+                        self.add_as_last_valid(&context, gr_results_dict.value_mut(), time, val);
                     }
                     self.feedback = false;
                 }
@@ -740,10 +748,10 @@ impl<'a> InfTrial<'a> {
     }
 
     fn get_rules(&self, cls_ls: Vec<&str>) {
-        let nodes = unsafe { &*(self.nodes as *const RwLock<HashMap<&str, Vec<ProofNode>>>) };
+        let nodes = unsafe { &*(self.nodes as *const DashMap<&str, Vec<ProofNode>>) };
         let mut rules: HashSet<Arc<LogSentence>> = HashSet::new();
-        for vrules in nodes.read().values() {
-            for r in vrules {
+        for vrules in nodes.iter() {
+            for r in vrules.value() {
                 rules.insert(r.proof.clone());
             }
         }
@@ -766,8 +774,7 @@ impl<'a> InfTrial<'a> {
                     for pred in sent.get_rhs_predicates() {
                         let pred = unsafe { &*(pred as *const Assert) as &'a Assert };
                         let name = pred.get_name();
-                        let mut lock = nodes.write();
-                        let ls = lock.entry(name).or_insert_with(Vec::new);
+                        let mut ls = nodes.entry(name).or_insert_with(Vec::new);
                         if ls
                             .iter()
                             .map(|x| x.proof.id)
@@ -1169,20 +1176,17 @@ impl<'b> QueryProcessed<'b> {
                         ParseTree::Expr(expr) => {
                             let (_, preds) = expr.extract_all_predicates();
                             for a in preds {
-                                if let Err(()) = match Rc::try_unwrap(a).unwrap() {
+                                match a {
                                     Assert::ClassDecl(cdecl) => {
                                         let mut cdecl = Rc::new(cdecl);
                                         assert_memb(&mut self, Rc::get_mut(&mut cdecl).unwrap())?;
                                         self.cls.push(cdecl);
-                                        Ok(())
                                     }
                                     Assert::FuncDecl(fdecl) => {
                                         self.func.push(Rc::new(fdecl.clone()));
                                         let fdecl = self.func.last().unwrap().clone();
-                                        assert_rel(&mut self, fdecl)
+                                        assert_rel(&mut self, fdecl)?;
                                     }
-                                } {
-                                    return Err(());
                                 }
                             }
                         }
