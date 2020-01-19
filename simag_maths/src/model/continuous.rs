@@ -142,7 +142,7 @@ where
             .cloned()
             .ok_or(())?;
         node.add_parent(parent.clone(), weight);
-        parent.add_child(node.clone());
+        parent.add_child(node);
         // check if it's a DAG and topologically sort the graph
         self.vars.topological_sort()
     }

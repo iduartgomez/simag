@@ -161,7 +161,7 @@ where
             return Err(());
         }
         node.add_parent(parent.clone());
-        parent.add_child(node.clone());
+        parent.add_child(node);
         // check if it's a DAG and topologically sort the graph
         self.vars.topological_sort()
     }
@@ -183,9 +183,9 @@ where
                 let parent = &self.vars.nodes[pos];
                 for node in &self.vars.nodes[pos + 1..] {
                     node.set_position(node.position() - 1);
-                    let cpt = probs
-                        .remove(node.get_dist())
-                        .ok_or_else(|| format!("CPT not provided for var: {:?}", node.get_dist()))?;
+                    let cpt = probs.remove(node.get_dist()).ok_or_else(|| {
+                        format!("CPT not provided for var: {:?}", node.get_dist())
+                    })?;
                     node.remove_parent(var);
                     node.build_cpt(cpt, 1)?;
                     parent.remove_child(node.get_dist());

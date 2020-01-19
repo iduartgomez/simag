@@ -9,11 +9,12 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::iter::FromIterator;
 use std::sync::Arc;
 
 use chrono::Utc;
 
-use self::ast_walker::{PIntermediate, SentenceBuilder};
+use self::ast_walker::PIntermediate;
 use super::{
     cls_decl::ClassDecl,
     common::{Assert, Grounded, OpArg, Skolem, Var, VarKind},
@@ -24,7 +25,6 @@ use super::{
     ParseErrF, Time,
 };
 use crate::agent::{kb::bms::BmsWrapper, kb::repr::Representation, kb::VarAssignment};
-
 pub(in crate::agent) type SentID = u64;
 pub use self::errors::LogSentErr;
 
@@ -35,45 +35,33 @@ pub use self::errors::LogSentErr;
 /// objects and relations, cannot be instantiated directly.
 #[derive(Debug)]
 pub(in crate::agent) struct LogSentence {
+    pub id: SentID,
+    pub created: Time,
+    pub has_time_vars: usize,
     particles: Vec<Particle>,
     vars: Vec<Arc<Var>>,
     skolem: Vec<Arc<Skolem>>,
     /// position of the root at the particles vec
     root: usize,
     predicates: (Vec<usize>, Vec<usize>),
-    pub has_time_vars: usize,
-    pub created: Time,
-    pub id: SentID,
     sent_kind: SentKind,
 }
 
 impl<'a> LogSentence {
     pub fn try_new(ast: &ASTNode, context: &mut ParseContext) -> Result<LogSentence, LogSentErr> {
-        let mut builder = SentenceBuilder::default();
-        match ast_walker::walk_ast(ast, &mut builder, context, PIntermediate::new()) {
-            Err(err) => return Err(err),
-            Ok(root) => {
-                let PIntermediate { rhs: root, .. } = root;
-                builder.particles.push(root.unwrap());
-            }
-        }
-        LogSentence::construct_sentence(builder, context)
-    }
+        ast_walker::walk_ast(ast, context, PIntermediate::new())?;
 
-    fn construct_sentence(
-        builder: SentenceBuilder,
-        context: &mut ParseContext,
-    ) -> Result<LogSentence, LogSentErr> {
-        let SentenceBuilder {
-            particles,
-            vars,
-            skolem,
-            ..
-        } = builder;
-        let id = LogSentence::generate_uid(&particles);
+        let id = LogSentence::generate_uid(&context.particles);
+        let mut particles = HashSet::new();
+        let mut skolem = Vec::new();
+        let mut vars = Vec::new();
+        std::mem::swap(&mut particles, &mut context.particles);
+        std::mem::swap(&mut skolem, &mut context.all_skols);
+        std::mem::swap(&mut vars, &mut context.all_vars);
+
         let mut sent = LogSentence {
             root: particles.len() - 1,
-            particles,
+            particles: Vec::from_iter(particles.into_iter()),
             skolem,
             vars,
             predicates: (vec![], vec![]),
@@ -82,10 +70,10 @@ impl<'a> LogSentence {
             id,
             sent_kind: context.stype,
         };
+        sent.particles
+            .sort_unstable_by(|f, s| f.pos().cmp(&s.pos()));
         sent.set_predicates(context)?;
         sent.set_sent_kind(context)?;
-
-        sent.particles.sort_unstable_by(|f, s| f.pos().cmp(&s.pos()));
 
         // free any extra allocated memory as this is an inmutable structure
         sent.particles.shrink_to_fit();
@@ -101,7 +89,7 @@ impl<'a> LogSentence {
     fn set_sent_kind(&mut self, context: &mut ParseContext) -> Result<(), LogSentErr> {
         if context.iexpr() {
             self.iexpr_op_arg_validation()?;
-            if !self.vars.is_empty() {
+            if !self.vars.is_empty() || !self.skolem.is_empty() {
                 for var in &self.vars {
                     match var.kind {
                         VarKind::TimeDecl | VarKind::Time => {
@@ -111,8 +99,9 @@ impl<'a> LogSentence {
                         VarKind::Normal => {}
                     }
                 }
+                let total_vars = self.vars.len() + self.skolem.len();
                 // check out that all variables are time or spatial variables
-                if self.has_time_vars == self.vars.len() {
+                if self.has_time_vars == total_vars {
                     context.stype = SentKind::Rule;
                     self.sent_kind = SentKind::Rule;
                 } else {
@@ -132,7 +121,6 @@ impl<'a> LogSentence {
     /// Completes LHS/RHS predicates set up.
     fn set_predicates(&mut self, context: &ParseContext) -> Result<(), LogSentErr> {
         if context.iexpr() {
-            use std::iter::FromIterator;
             let mut lhs = Vec::new();
             self.correct_iexpr(&mut lhs)?;
             let lhs: HashSet<_> = HashSet::from_iter(lhs.into_iter());
@@ -452,7 +440,7 @@ impl<'a> LogSentence {
         LhsPreds::new(&self.particles[next], self)
     }
 
-    fn generate_uid(particles: &[Particle]) -> SentID {
+    fn generate_uid(particles: &HashSet<Particle>) -> SentID {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
         let mut id = vec![];
@@ -639,46 +627,51 @@ impl std::hash::Hash for LogSentence {
 
 impl fmt::Display for LogSentence {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let prelim: String = format!("Sentence(id: {}, {})", self.id, self.particles[self.root]);
-        let mut breaks = Vec::new();
-        let mut depth = 0_usize;
-        use std::iter;
-        let tab_times = |depth: usize| -> String { iter::repeat("    ").take(depth).collect() };
-        let mut in_atom = false;
-        for (i, c) in prelim.chars().enumerate() {
-            if c == '(' {
-                if (i >= 10) && (&prelim[i - 9..i] == "Predicate") {
-                    in_atom = true;
-                    continue;
-                }
-                depth += 1;
-                let s = format!("\n{}", tab_times(depth));
-                breaks.push((i + 1, s));
-            } else if c == ')' {
-                if in_atom {
-                    in_atom = false;
-                    continue;
-                }
-                depth -= 1;
-                let s = format!("\n{}", tab_times(depth));
-                breaks.push((i, s));
-            } else if c == 'n' && &prelim[i..i + 3] == "n1:" {
-                let s = format!("\n{}", tab_times(depth));
-                breaks.push((i, s));
-            }
+        let mut particles = String::new();
+        for p in &self.particles {
+            particles.extend(format!("{}, ", p).chars());
         }
-        let mut slices = Vec::new();
-        let mut prev: usize = 0;
-        for (pos, b) in breaks.drain(..) {
-            slices.push(String::from(&prelim[prev..pos]));
-            slices.push(b);
-            prev = pos;
-        }
-        slices.push(String::from(&prelim[prev..]));
-        let mut collected = String::new();
-        for s in slices {
-            collected.push_str(&s)
-        }
+        let collected: String = format!("Sentence(id: {}, {})", self.id, particles);
+
+        // let prelim: String = format!("Sentence(id: {}, {})", self.id, self.particles[self.root]);
+        // let mut breaks = Vec::new();
+        // let mut depth = 0_usize;
+        // let tab_times = |depth: usize| -> String { iter::repeat("    ").take(depth).collect() };
+        // let mut in_atom = false;
+        // for (i, c) in prelim.chars().enumerate() {
+        //     if c == '(' {
+        //         if (i >= 10) && (&prelim[i - 9..i] == "Predicate") {
+        //             in_atom = true;
+        //             continue;
+        //         }
+        //         depth += 1;
+        //         let s = format!("\n{}", tab_times(depth));
+        //         breaks.push((i + 1, s));
+        //     } else if c == ')' {
+        //         if in_atom {
+        //             in_atom = false;
+        //             continue;
+        //         }
+        //         depth -= 1;
+        //         let s = format!("\n{}", tab_times(depth));
+        //         breaks.push((i, s));
+        //     } else if c == 'n' && &prelim[i..i + 3] == "n1:" {
+        //         let s = format!("\n{}", tab_times(depth));
+        //         breaks.push((i, s));
+        //     }
+        // }
+        // let mut slices = Vec::new();
+        // let mut prev: usize = 0;
+        // for (pos, b) in breaks.drain(..) {
+        //     slices.push(String::from(&prelim[prev..pos]));
+        //     slices.push(b);
+        //     prev = pos;
+        // }
+        // slices.push(String::from(&prelim[prev..]));
+        // let mut collected = String::new();
+        // for s in slices {
+        //     collected.push_str(&s)
+        // }
         #[cfg(feature = "tracing")]
         {
             collected = collected.split_whitespace().collect::<String>();
@@ -768,9 +761,9 @@ impl LogicIndCond {
 
 impl fmt::Display for LogicIndCond {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let n0 = format!("{}", self.next_lhs);
-        let n1 = format!("{}", self.next_rhs);
-        write!(f, "Conditional(n0: {}, n1: {})", n0, n1)
+        let lhs = format!("{}", self.next_lhs);
+        let rhs = format!("{}", self.next_rhs);
+        write!(f, "Conditional(lhs: {}, rhs: {})", lhs, rhs)
     }
 }
 
@@ -846,9 +839,9 @@ impl LogicEquivalence {
 
 impl fmt::Display for LogicEquivalence {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let n0 = format!("{}", self.next_lhs);
-        let n1 = format!("{}", self.next_rhs);
-        write!(f, "Equivalence(n0: {}, n1: {})", n0, n1)
+        let lhs = format!("{}", self.next_lhs);
+        let rhs = format!("{}", self.next_rhs);
+        write!(f, "Equivalence(lhs: {}, rhs: {})", lhs, rhs)
     }
 }
 
@@ -912,9 +905,9 @@ impl LogicImplication {
 
 impl fmt::Display for LogicImplication {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let n0 = format!("{}", self.next_lhs);
-        let n1 = format!("{}", self.next_rhs);
-        write!(f, "Implication(n0: {}, n1: {})", n0, n1)
+        let lhs = format!("{}", self.next_lhs);
+        let rhs = format!("{}", self.next_rhs);
+        write!(f, "Implication(lhs: {}, rhs: {})", lhs, rhs)
     }
 }
 
@@ -946,18 +939,18 @@ impl LogicConjunction {
             time_assign,
             context,
         );
-        let n1_res = context.sent().particles[self.next_rhs].clone().solve(
+        let rhs_res = context.sent().particles[self.next_rhs].clone().solve(
             agent,
             assignments,
             time_assign,
             context,
         );
-        if n0_res.is_none() | n1_res.is_none() {
+        if n0_res.is_none() | rhs_res.is_none() {
             return None;
         }
         if let Some(false) = n0_res {
             return Some(false);
-        } else if let Some(false) = n1_res {
+        } else if let Some(false) = rhs_res {
             return Some(false);
         }
         Some(true)
@@ -999,9 +992,9 @@ impl LogicConjunction {
 
 impl fmt::Display for LogicConjunction {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let n0 = format!("{}", self.next_lhs);
-        let n1 = format!("{}", self.next_rhs);
-        write!(f, "Conjunction(n0: {}, n1: {})", n0, n1)
+        let lhs = format!("{}", self.next_lhs);
+        let rhs = format!("{}", self.next_rhs);
+        write!(f, "Conjunction(lhs: {}, rhs: {})", lhs, rhs)
     }
 }
 
@@ -1095,9 +1088,9 @@ impl LogicDisjunction {
 
 impl fmt::Display for LogicDisjunction {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let n0 = format!("{}", self.next_lhs);
-        let n1 = format!("{}", self.next_rhs);
-        write!(f, "Disjunction(n0: {}, n1: {})", n0, n1)
+        let lhs = format!("{}", self.next_lhs);
+        let rhs = format!("{}", self.next_rhs);
+        write!(f, "Disjunction(lhs: {}, rhs: {})", lhs, rhs)
     }
 }
 
@@ -1286,18 +1279,44 @@ impl Particle {
             Particle::Atom(p, _) => *p,
         }
     }
+
+    // #[inline]
+    // fn update_pos(&mut self, new: usize) {
+    //     match self {
+    //         Particle::Conjunction(ref mut p, _) => *p = new,
+    //         Particle::Disjunction(ref mut p, _) => *p = new,
+    //         Particle::Implication(ref mut p, _) => *p = new,
+    //         Particle::Equivalence(ref mut p, _) => *p = new,
+    //         Particle::IndConditional(ref mut p, _) => *p = new,
+    //         Particle::Atom(ref mut p, _) => *p = new,
+    //     }
+    // }
 }
 
 impl fmt::Display for Particle {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Particle::Atom(_, ref p) => write!(f, "{}", p),
-            Particle::Conjunction(_, ref p) => write!(f, "{}", p),
-            Particle::Disjunction(_, ref p) => write!(f, "{}", p),
-            Particle::Equivalence(_, ref p) => write!(f, "{}", p),
-            Particle::Implication(_, ref p) => write!(f, "{}", p),
-            Particle::IndConditional(_, ref p) => write!(f, "{}", p),
+            Particle::Atom(pos, ref p) => write!(f, "p{}.{}", pos, p),
+            Particle::Conjunction(pos, ref p) => write!(f, "p{}.{}", pos, p),
+            Particle::Disjunction(pos, ref p) => write!(f, "p{}.{}", pos, p),
+            Particle::Equivalence(pos, ref p) => write!(f, "p{}.{}", pos, p),
+            Particle::Implication(pos, ref p) => write!(f, "p{}.{}", pos, p),
+            Particle::IndConditional(pos, ref p) => write!(f, "p{}.{}", pos, p),
         }
+    }
+}
+
+impl PartialEq for Particle {
+    fn eq(&self, other: &Self) -> bool {
+        self.pos() == other.pos()
+    }
+}
+
+impl Eq for Particle {}
+
+impl std::hash::Hash for Particle {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.pos().hash(state);
     }
 }
 
@@ -1371,8 +1390,12 @@ pub(in crate::agent) struct ParseContext {
     pub depth: usize,
     pub vars: Vec<Arc<Var>>,
     pub skols: Vec<Arc<Skolem>>,
+    particles: HashSet<Particle>,
+    particles_num: usize,
     shadowing_vars: HashMap<Arc<Var>, (usize, Arc<Var>)>,
     shadowing_skols: HashMap<Arc<Skolem>, (usize, Arc<Skolem>)>,
+    all_vars: Vec<Arc<Var>>,
+    all_skols: Vec<Arc<Skolem>>,
     in_rhs: bool,
 }
 
@@ -1385,15 +1408,19 @@ impl Default for ParseContext {
 impl ParseContext {
     pub fn new() -> ParseContext {
         ParseContext {
-            vars: Vec::new(),
-            skols: Vec::new(),
             stype: SentKind::Expr,
-            in_rhs: true,
-            shadowing_vars: HashMap::new(),
-            shadowing_skols: HashMap::new(),
             in_assertion: false,
             is_tell: false,
             depth: 0,
+            vars: Vec::new(),
+            skols: Vec::new(),
+            particles: HashSet::new(),
+            particles_num: 0,
+            shadowing_vars: HashMap::new(),
+            shadowing_skols: HashMap::new(),
+            all_vars: Vec::new(),
+            all_skols: Vec::new(),
+            in_rhs: true,
         }
     }
 
@@ -1401,12 +1428,14 @@ impl ParseContext {
         match decl {
             VarDeclBorrowed::Var(ref var) => {
                 let var = Arc::new(Var::from(var, self)?);
-                self.vars.push(var);
+                self.vars.push(var.clone());
+                self.all_vars.push(var);
                 Ok(())
             }
             VarDeclBorrowed::Skolem(ref var) => {
                 let var = Arc::new(Skolem::from(var, self)?);
-                self.skols.push(var);
+                self.skols.push(var.clone());
+                self.all_skols.push(var);
                 Ok(())
             }
         }
@@ -1485,10 +1514,10 @@ mod ast_walker {
             self.lhs = Some(p);
         }
 
-        fn into_final(self, context: &mut ParseContext, sent: &mut SentenceBuilder) -> Particle {
+        fn into_final(self, context: &mut ParseContext) -> Particle {
             if self.pred.is_some() {
-                let p = Particle::Atom(sent.particles_num, LogicAtom::new(self.pred.unwrap()));
-                sent.particles_num += 1;
+                let p = Particle::Atom(context.particles_num, LogicAtom::new(self.pred.unwrap()));
+                context.particles_num += 1;
                 p
             } else {
                 let PIntermediate { cond, rhs, lhs, .. } = self;
@@ -1497,64 +1526,38 @@ mod ast_walker {
                 let particle = match cond.unwrap() {
                     LogicOperator::Entail => {
                         context.stype = SentKind::IExpr;
-                        let p = Particle::IndConditional(
-                            sent.particles_num,
+                        Particle::IndConditional(
+                            context.particles_num,
                             LogicIndCond::new(lhs.pos(), rhs.pos()),
-                        );
-                        sent.particles_num += 1;
-                        p
+                        )
                     }
-                    LogicOperator::And => {
-                        let p = Particle::Conjunction(
-                            sent.particles_num,
-                            LogicConjunction::new(lhs.pos(), rhs.pos()),
-                        );
-                        sent.particles_num += 1;
-                        p
-                    }
-                    LogicOperator::Or => {
-                        let p = Particle::Disjunction(
-                            sent.particles_num,
-                            LogicDisjunction::new(lhs.pos(), rhs.pos()),
-                        );
-                        sent.particles_num += 1;
-                        p
-                    }
-                    LogicOperator::Implication => {
-                        let p = Particle::Implication(
-                            sent.particles_num,
-                            LogicImplication::new(lhs.pos(), rhs.pos()),
-                        );
-                        sent.particles_num += 1;
-                        p
-                    }
-                    LogicOperator::Biconditional => {
-                        let p = Particle::Equivalence(
-                            sent.particles_num,
-                            LogicEquivalence::new(lhs.pos(), rhs.pos()),
-                        );
-                        sent.particles_num += 1;
-                        p
-                    }
+                    LogicOperator::And => Particle::Conjunction(
+                        context.particles_num,
+                        LogicConjunction::new(lhs.pos(), rhs.pos()),
+                    ),
+                    LogicOperator::Or => Particle::Disjunction(
+                        context.particles_num,
+                        LogicDisjunction::new(lhs.pos(), rhs.pos()),
+                    ),
+                    LogicOperator::Implication => Particle::Implication(
+                        context.particles_num,
+                        LogicImplication::new(lhs.pos(), rhs.pos()),
+                    ),
+                    LogicOperator::Biconditional => Particle::Equivalence(
+                        context.particles_num,
+                        LogicEquivalence::new(lhs.pos(), rhs.pos()),
+                    ),
                 };
-                sent.particles.push(rhs);
-                sent.particles.push(lhs);
+                context.particles_num += 1;
+                context.particles.insert(rhs);
+                context.particles.insert(lhs);
                 particle
             }
         }
     }
 
-    #[derive(Default)]
-    pub(super) struct SentenceBuilder {
-        pub vars: Vec<Arc<Var>>,
-        pub skolem: Vec<Arc<Skolem>>,
-        pub particles: Vec<Particle>,
-        pub particles_num: usize,
-    }
-
     pub(super) fn walk_ast(
         ast: &ASTNode,
-        sent: &mut SentenceBuilder,
         context: &mut ParseContext,
         mut parent: PIntermediate,
     ) -> Result<PIntermediate, LogSentErr> {
@@ -1578,7 +1581,7 @@ mod ast_walker {
                         PIntermediate::from(Assert::FuncDecl(func))
                     }
                 };
-                add_particle(particle, &mut parent, context, sent);
+                add_particle(particle, &mut parent, context);
                 Ok(parent)
             }
             ASTNode::Scope(ref ast) => {
@@ -1607,17 +1610,17 @@ mod ast_walker {
                 // make vars and add to sent, also add them to local scope context
                 if ast.vars.is_some() {
                     let vars = ast.vars.as_ref().unwrap();
-                    decl_scope_vars(context, sent, vars, &mut v_cnt, &mut s_cnt)?;
+                    decl_scope_vars(context, vars, &mut v_cnt, &mut s_cnt)?;
                 }
                 if ast.logic_op.is_some() {
                     let op = PIntermediate::from(ast.logic_op.unwrap());
-                    let next = walk_ast(&ast.next, sent, context, op)?;
+                    let next = walk_ast(&ast.next, context, op)?;
                     drop_local_vars(context, v_cnt);
                     drop_local_skolems(context, s_cnt);
-                    add_particle(next, &mut parent, context, sent);
+                    add_particle(next, &mut parent, context);
                     Ok(parent)
                 } else {
-                    let res = walk_ast(&ast.next, sent, context, parent)?;
+                    let res = walk_ast(&ast.next, context, parent)?;
                     drop_local_vars(context, v_cnt);
                     drop_local_skolems(context, s_cnt);
                     Ok(res)
@@ -1635,11 +1638,11 @@ mod ast_walker {
                         if op.is_some() && next.would_assert() {
                             context.in_rhs = false;
                             let new_op = PIntermediate::from(op.unwrap());
-                            let new_op = walk_ast(next, sent, context, new_op)?;
+                            let new_op = walk_ast(next, context, new_op)?;
                             context.in_rhs = true;
-                            let new_op = walk_ast(&nodes[1], sent, context, new_op)?;
+                            let new_op = walk_ast(&nodes[1], context, new_op)?;
                             context.in_rhs = in_side;
-                            add_particle(new_op, &mut parent, context, sent);
+                            add_particle(new_op, &mut parent, context);
                             return Ok(parent);
                         }
                     }
@@ -1652,18 +1655,18 @@ mod ast_walker {
                         if op.is_some() && next.would_assert() {
                             context.in_rhs = true;
                             let new_op = PIntermediate::from(op.unwrap());
-                            let new_op = walk_ast(next, sent, context, new_op)?;
+                            let new_op = walk_ast(next, context, new_op)?;
                             context.in_rhs = false;
-                            let new_op = walk_ast(&nodes[1], sent, context, new_op)?;
+                            let new_op = walk_ast(&nodes[1], context, new_op)?;
                             context.in_rhs = in_side;
-                            add_particle(new_op, &mut parent, context, sent);
+                            add_particle(new_op, &mut parent, context);
                             return Ok(parent);
                         }
                     }
                     context.in_rhs = false;
-                    let parent = walk_ast(&nodes[0], sent, context, parent)?;
+                    let parent = walk_ast(&nodes[0], context, parent)?;
                     context.in_rhs = true;
-                    let parent = walk_ast(&nodes[1], sent, context, parent)?;
+                    let parent = walk_ast(&nodes[1], context, parent)?;
                     context.in_rhs = in_side;
                     Ok(parent)
                 } else {
@@ -1673,7 +1676,7 @@ mod ast_walker {
                     }
                     let mut prev_op = PIntermediate::from(op);
                     context.in_rhs = true;
-                    prev_op = walk_ast(nodes.last().unwrap(), sent, context, prev_op)?;
+                    prev_op = walk_ast(nodes.last().unwrap(), context, prev_op)?;
                     context.in_rhs = false;
                     let mut new_op;
                     for i in 1..nodes.len() {
@@ -1686,8 +1689,8 @@ mod ast_walker {
                                         return Err(LogSentErr::IConnectInChain);
                                     }
                                 }
-                                prev_op = walk_ast(&assert.next, sent, context, prev_op)?;
-                                let op = prev_op.into_final(context, sent);
+                                prev_op = walk_ast(&assert.next, context, prev_op)?;
+                                let op = prev_op.into_final(context);
                                 if i != 0 {
                                     new_op.add_rhs(op.clone());
                                 } else {
@@ -1699,7 +1702,7 @@ mod ast_walker {
                                     }
                                     break;
                                 }
-                                sent.particles.push(op);
+                                context.particles.insert(op);
                                 prev_op = new_op;
                             }
                             _ => return Err(LogSentErr::WrongDef),
@@ -1714,7 +1717,6 @@ mod ast_walker {
 
     fn decl_scope_vars<'a>(
         context: &mut ParseContext,
-        sent: &mut SentenceBuilder,
         vars: &[VarDeclBorrowed<'a>],
         v_cnt: &mut usize,
         s_cnt: &mut usize,
@@ -1735,8 +1737,8 @@ mod ast_walker {
                         }
                     }
                     *v_cnt += 1;
-                    sent.vars.push(var.clone());
-                    context.vars.push(var);
+                    context.vars.push(var.clone());
+                    context.all_vars.push(var);
                 }
                 VarDeclBorrowed::Skolem(ref s) => {
                     let skolem = match Skolem::from(s, context) {
@@ -1749,8 +1751,8 @@ mod ast_walker {
                         }
                     }
                     *s_cnt += 1;
-                    sent.skolem.push(skolem.clone());
-                    context.skols.push(skolem);
+                    context.skols.push(skolem.clone());
+                    context.all_skols.push(skolem);
                 }
             }
         }
@@ -1773,16 +1775,15 @@ mod ast_walker {
         particle: PIntermediate,
         parent: &mut PIntermediate,
         context: &mut ParseContext,
-        sent: &mut SentenceBuilder,
     ) {
         if context.in_rhs {
-            let p = particle.into_final(context, sent);
+            let p = particle.into_final(context);
             parent.add_rhs(p.clone());
-            sent.particles.push(p);
+            context.particles.insert(p);
         } else {
-            let p = particle.into_final(context, sent);
+            let p = particle.into_final(context);
             parent.add_lhs(p.clone());
-            sent.particles.push(p);
+            context.particles.insert(p);
         }
     }
 }
@@ -1819,7 +1820,7 @@ mod test {
     use crate::agent::lang::parser::*;
 
     #[test]
-    fn parser_icond_exprs() {
+    fn parse_wrong_funcs() {
         let source = String::from(
             "
                 # Err:
@@ -1830,29 +1831,27 @@ mod test {
                 # Err:
                 ((let x y z)
                  ( abc[x,u=1]  := (( cde[x,u=1] := fn::fgh[y,u>0.5;x;z] ) && hij[y,u=1] ))
-                )
+                ))
+            ",
+        );
+        let tpool = rayon::ThreadPoolBuilder::new().build().unwrap();
+        let mut tree = Parser::parse(source.as_str(), true, &tpool).unwrap();
+        assert!(tree.pop_front().unwrap().is_err());
+        assert!(tree.pop_front().unwrap().is_err());
+    }
 
-                # Ok:
-                ((let x y z)
-                 ( abc[x,u=1]  := (
-                     ( cde[x,u=1] && fn::fgh[y,u>0.5;x;z] ) := hij[y,u=1]
-                 )))
-
-                # Ok:
-                (( let x y z )
-                 (( cde[x,u=1] && hij[y,u=1] && fn::fgh[y,u>0.5;x;z] ) := abc[x,u=1]))
+    #[test]
+    fn parser_correct_icond_exprs() {
+        let source = String::from(
+            "
+            # Ok:
+            (( let x y z )
+            (( cde[x,u=1] && hij[y,u=1] && fn::fgh[y,u>0.5;x;z] ) := abc[x,u=1]))
             ",
         );
         let tpool = rayon::ThreadPoolBuilder::new().build().unwrap();
         let tree = Parser::parse(source.as_str(), true, &tpool);
-        assert!(tree.is_ok());
-        let mut tree = tree.unwrap();
-
-        assert!(tree.pop_front().unwrap().is_err());
-        assert!(tree.pop_front().unwrap().is_err());
-        assert!(!tree.pop_front().unwrap().is_err());
-
-        let sent = match tree.pop_front().unwrap() {
+        let sent = match tree.unwrap().pop_front().unwrap() {
             ParseTree::IExpr(sent) => sent,
             _ => panic!(),
         };
@@ -1896,5 +1895,22 @@ mod test {
             }
             _ => panic!(),
         }
+
+        let source = String::from(
+            "
+            # Ok:
+            ((let x y z)
+             ( abc[x,u=1]  := (
+                 ( cde[x,u=1] && fn::fgh[y,u>0.5;x;z] ) := hij[y,u=1]
+             )))
+            ",
+        );
+        let tpool = rayon::ThreadPoolBuilder::new().build().unwrap();
+        let tree = Parser::parse(source.as_str(), true, &tpool);
+        match tree.unwrap().pop_front().unwrap() {
+            ParseTree::IExpr(_sent) => {}
+            _ => panic!(),
+        };
+        panic!()
     }
 }

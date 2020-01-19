@@ -339,7 +339,7 @@ impl ProofArgs {
 
     fn as_proof_input(&self) -> HashMap<&Var, &VarAssignment> {
         let data = unsafe {
-            let data = self.ptr as *mut Vec<(&Var, Arc<VarAssignment>)>;
+            let data = self.ptr as *const Vec<(&Var, Arc<VarAssignment>)>;
             &*data as &Vec<(&Var, Arc<VarAssignment>)>
         };
         let mut n_args = HashMap::with_capacity(data.len());
@@ -353,7 +353,7 @@ impl ProofArgs {
 impl std::clone::Clone for ProofArgs {
     fn clone(&self) -> ProofArgs {
         unsafe {
-            let data = self.ptr as *mut Vec<(&Var, Arc<VarAssignment>)>;
+            let data = self.ptr as *const Vec<(&Var, Arc<VarAssignment>)>;
             let data = &*data as &Vec<(&Var, Arc<VarAssignment>)>;
             ProofArgs::new(data.clone())
         }

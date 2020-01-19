@@ -586,6 +586,7 @@ mod test {
     }
 
     #[test]
+    #[ignore]
     fn bms_maybe_rollback() {
         todo!()
     }
