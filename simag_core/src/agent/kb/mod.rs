@@ -84,8 +84,8 @@ pub(self) mod tracing {
         use log::LevelFilter;
 
         env_logger::builder()
-            .default_format_module_path(true)
-            .default_format_timestamp_nanos(true)
+            .format_module_path(true)
+            .format_timestamp_nanos()
             .target(env_logger::Target::Stderr)
             .filter(None, LevelFilter::Trace)
             .init();

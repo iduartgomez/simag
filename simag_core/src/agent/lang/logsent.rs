@@ -463,6 +463,61 @@ impl<'a> LogSentence {
     }
 }
 
+impl fmt::Display for LogSentence {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut particles = String::new();
+        for p in &self.particles {
+            particles.extend(format!("{}, ", p).chars());
+        }
+        let collected: String = format!("Sentence(id: {}, {})", self.id, particles);
+
+        // let prelim: String = format!("Sentence(id: {}, {})", self.id, self.particles[self.root]);
+        // let mut breaks = Vec::new();
+        // let mut depth = 0_usize;
+        // let tab_times = |depth: usize| -> String { iter::repeat("    ").take(depth).collect() };
+        // let mut in_atom = false;
+        // for (i, c) in prelim.chars().enumerate() {
+        //     if c == '(' {
+        //         if (i >= 10) && (&prelim[i - 9..i] == "Predicate") {
+        //             in_atom = true;
+        //             continue;
+        //         }
+        //         depth += 1;
+        //         let s = format!("\n{}", tab_times(depth));
+        //         breaks.push((i + 1, s));
+        //     } else if c == ')' {
+        //         if in_atom {
+        //             in_atom = false;
+        //             continue;
+        //         }
+        //         depth -= 1;
+        //         let s = format!("\n{}", tab_times(depth));
+        //         breaks.push((i, s));
+        //     } else if c == 'n' && &prelim[i..i + 3] == "n1:" {
+        //         let s = format!("\n{}", tab_times(depth));
+        //         breaks.push((i, s));
+        //     }
+        // }
+        // let mut slices = Vec::new();
+        // let mut prev: usize = 0;
+        // for (pos, b) in breaks.drain(..) {
+        //     slices.push(String::from(&prelim[prev..pos]));
+        //     slices.push(b);
+        //     prev = pos;
+        // }
+        // slices.push(String::from(&prelim[prev..]));
+        // let mut collected = String::new();
+        // for s in slices {
+        //     collected.push_str(&s)
+        // }
+        // #[cfg(feature = "tracing")]
+        // {
+        //     collected = collected.split_whitespace().collect::<String>();
+        // }
+        write!(f, "{}", collected)
+    }
+}
+
 pub(in crate::agent) struct LhsPreds<'a> {
     preds: Vec<Vec<&'a Assert>>,
     index: Vec<(usize, bool)>,
@@ -625,61 +680,6 @@ impl std::hash::Hash for LogSentence {
     }
 }
 
-impl fmt::Display for LogSentence {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut particles = String::new();
-        for p in &self.particles {
-            particles.extend(format!("{}, ", p).chars());
-        }
-        let collected: String = format!("Sentence(id: {}, {})", self.id, particles);
-
-        // let prelim: String = format!("Sentence(id: {}, {})", self.id, self.particles[self.root]);
-        // let mut breaks = Vec::new();
-        // let mut depth = 0_usize;
-        // let tab_times = |depth: usize| -> String { iter::repeat("    ").take(depth).collect() };
-        // let mut in_atom = false;
-        // for (i, c) in prelim.chars().enumerate() {
-        //     if c == '(' {
-        //         if (i >= 10) && (&prelim[i - 9..i] == "Predicate") {
-        //             in_atom = true;
-        //             continue;
-        //         }
-        //         depth += 1;
-        //         let s = format!("\n{}", tab_times(depth));
-        //         breaks.push((i + 1, s));
-        //     } else if c == ')' {
-        //         if in_atom {
-        //             in_atom = false;
-        //             continue;
-        //         }
-        //         depth -= 1;
-        //         let s = format!("\n{}", tab_times(depth));
-        //         breaks.push((i, s));
-        //     } else if c == 'n' && &prelim[i..i + 3] == "n1:" {
-        //         let s = format!("\n{}", tab_times(depth));
-        //         breaks.push((i, s));
-        //     }
-        // }
-        // let mut slices = Vec::new();
-        // let mut prev: usize = 0;
-        // for (pos, b) in breaks.drain(..) {
-        //     slices.push(String::from(&prelim[prev..pos]));
-        //     slices.push(b);
-        //     prev = pos;
-        // }
-        // slices.push(String::from(&prelim[prev..]));
-        // let mut collected = String::new();
-        // for s in slices {
-        //     collected.push_str(&s)
-        // }
-        #[cfg(feature = "tracing")]
-        {
-            collected = collected.split_whitespace().collect::<String>();
-        }
-        write!(f, "{}", collected)
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub(in crate::agent) enum SentKind {
     IExpr,
@@ -745,7 +745,7 @@ impl LogicIndCond {
             return;
         };
         let next_p = context.sent().particles[self.next_rhs].clone();
-        if next_p.is_disjunction() {
+        if next_p.is_disjunction() || !rhs {
             next_p.substitute(agent, assignments, time_assign, context, rhs);
         }
     }
@@ -1381,8 +1381,6 @@ pub(in crate::agent) trait LogSentResolution<T: ProofResContext> {
     );
 }
 
-// infrastructure to construct compiled logsentences:
-
 pub(in crate::agent) struct ParseContext {
     pub stype: SentKind,
     pub in_assertion: bool,
@@ -1831,7 +1829,7 @@ mod test {
                 # Err:
                 ((let x y z)
                  ( abc[x,u=1]  := (( cde[x,u=1] := fn::fgh[y,u>0.5;x;z] ) && hij[y,u=1] ))
-                ))
+                )
             ",
         );
         let tpool = rayon::ThreadPoolBuilder::new().build().unwrap();
@@ -1846,7 +1844,8 @@ mod test {
             "
             # Ok:
             (( let x y z )
-            (( cde[x,u=1] && hij[y,u=1] && fn::fgh[y,u>0.5;x;z] ) := abc[x,u=1]))
+              (( cde[x,u=1] && hij[y,u=1] && fn::fgh[y,u>0.5;x;z] ) := abc[x,u=1])
+            )
             ",
         );
         let tpool = rayon::ThreadPoolBuilder::new().build().unwrap();
@@ -1902,7 +1901,8 @@ mod test {
             ((let x y z)
              ( abc[x,u=1]  := (
                  ( cde[x,u=1] && fn::fgh[y,u>0.5;x;z] ) := hij[y,u=1]
-             )))
+             ))
+            )
             ",
         );
         let tpool = rayon::ThreadPoolBuilder::new().build().unwrap();
@@ -1911,6 +1911,5 @@ mod test {
             ParseTree::IExpr(_sent) => {}
             _ => panic!(),
         };
-        panic!()
     }
 }
