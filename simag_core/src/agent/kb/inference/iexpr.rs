@@ -323,9 +323,7 @@ struct ProofArgs<'rep> {
 impl<'rep> ProofArgs<'rep> {
     fn new(assignments: Vec<(&'rep Var, Arc<VarAssignment<'rep>>)>) -> ProofArgs<'rep> {
         let hash_val = ProofArgs::arg_hash_val(&assignments[..]);
-        // let ptr = Box::into_raw(Box::new(input));
         ProofArgs {
-            // ptr: ptr as usize,
             assignments,
             hash_val,
         }
@@ -366,7 +364,6 @@ pub struct IExprResult<'rep: 'inf, 'inf> {
     sent: &'inf LogSentence,
     global_subtitution_time: Time,
     args: ProofArgs<'rep>,
-    // node: usize, // *'b const ProofNode<'rep>
     node: &'inf ProofNode<'rep>,
     sub_mode: bool,
 }
@@ -472,15 +469,13 @@ struct InfTrial<'rep, 'inf> {
     valid: Option<ValidAnswer<'rep, 'inf>>,
     nodes: &'inf DashMap<&'rep str, Vec<ProofNode<'rep>>>,
     queue: &'inf DashMap<ProofNodeId, HashSet<PArgVal>>,
-    results: usize, // &'inf InfResults<'rep>,
+    results: &'inf InfResults<'rep>,
     depth: usize,
     depth_cnt: RwLock<usize>,
 }
 
 impl<'rep, 'inf> InfTrial<'rep, 'inf> {
     fn new(inf: &'inf Inference<'rep>, actv_query: ActiveQuery) -> InfTrial<'rep, 'inf> {
-        // let nodes = &inf.nodes as *const DashMap<_, _> as usize;
-        let results = &inf.results as *const InfResults as usize;
         InfTrial {
             kb: inf.kb,
             actv: actv_query,
@@ -489,7 +484,7 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
             valid: None,
             nodes: &inf.nodes,
             queue: &inf.queue,
-            results,
+            results: &inf.results,
             depth: inf.depth,
             depth_cnt: RwLock::new(0_usize),
         }
@@ -646,7 +641,6 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
         // add category/function to the object dictionary
         // and to results dict if is the result for the query
         let is_func = self.actv.is_func();
-        let results = unsafe { &*(self.results as *const InfResults) };
 
         let gr_cls: Vec<_> = context.grounded_cls.drain(..).collect();
         for (gt, time) in gr_cls {
@@ -654,7 +648,7 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
                 let query_cls = self.actv.get_cls();
                 if query_cls.comparable(&gt) {
                     let val = query_cls == &gt;
-                    let d = &results.grounded_queries;
+                    let d = &self.results.grounded_queries;
                     let mut gr_results_dict = {
                         if d.contains_key(self.actv.get_pred()) {
                             d.get_mut(self.actv.get_pred()).unwrap()
@@ -699,7 +693,7 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
                 let query_func = self.actv.get_func();
                 if query_func.comparable(&gf) {
                     let val = query_func == &gf;
-                    let d = &results.grounded_queries;
+                    let d = &self.results.grounded_queries;
                     let mut gr_results_dict = {
                         if d.contains_key(self.actv.get_pred()) {
                             d.get_mut(self.actv.get_pred()).unwrap()
