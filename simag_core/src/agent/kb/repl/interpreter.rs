@@ -156,7 +156,7 @@ impl<'a> Interpreter for SimagInterpreter<'a> {
             if let Some(r) = match self.state.ask(&input) {
                 Err(QueryErr::ParseErr(_)) | Err(QueryErr::QueryErr) => None,
                 Ok(result) => unsafe {
-                    // Lives as long as self really because the references come from self.state
+                    // Safety: lives as long as self really because the references come from self.state
                     let answ = mem::transmute::<Answer, Answer<'a>>(result);
                     Some(answ)
                 },

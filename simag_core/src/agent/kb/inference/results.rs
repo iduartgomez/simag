@@ -62,7 +62,7 @@ impl<'b> InfResults<'b> {
     }
 
     pub fn add_grounded(&self, obj: &str, pred: &str, res: Option<(bool, Option<Time>)>) {
-        // obj lives for the duration of var as both are borrowed
+        // Safety: obj lives for the duration of var as both are borrowed
         // from a repr further up the stack
         let obj = unsafe { std::mem::transmute::<&str, &'b str>(obj) };
         self.grounded_queries
@@ -130,7 +130,7 @@ impl<'b> InfResults<'b> {
                 for grfunc in relation_ls {
                     for name in grfunc.get_args_names() {
                         unsafe {
-                            // this is safe because gr lives for the duration of a repr further
+                            // Safety: safe because gr lives for the duration of a repr further
                             // up the stack that outlives self
                             let name = mem::transmute::<&str, &'b str>(name);
                             if res.contains_key(name) {

@@ -5,14 +5,14 @@ mod gr_func;
 mod gr_memb;
 mod logsent;
 mod parser;
+mod var;
 
 use chrono::{DateTime, Utc};
 use std::collections::VecDeque;
 
 pub(super) use self::cls_decl::ClassDecl;
 pub(super) use self::common::{
-    Assert, FreeClassMembership, FreeClsMemb, Grounded, GroundedRef, Predicate, Terminal, Var,
-    VarKind,
+    Assert, FreeClassMembership, FreeClsMemb, Grounded, GroundedRef, Predicate, Terminal,
 };
 pub(super) use self::errors::ParseErrF;
 pub(super) use self::fn_decl::FuncDecl;
@@ -20,6 +20,7 @@ pub(super) use self::gr_func::GroundedFunc;
 pub(super) use self::gr_memb::GroundedMemb;
 pub(super) use self::logsent::{LogSentence, ProofResContext, SentID};
 pub(super) use self::parser::{CompOperator, ParseTree};
+pub(super) use self::var::{Var, VarKind};
 
 /// Takes an owned String and returns the corresponding structure representing
 /// object program for the logic function. It can parse several statements
@@ -36,6 +37,15 @@ pub(in crate::agent) fn logic_parser(
 }
 
 pub type Time = DateTime<Utc>;
+
+fn reserved(s: &str) -> bool {
+    match s {
+        "let" | "time_calc" | "exists" | "fn" | "time" | "overwrite" | "ow" | "self" | "none" => {
+            true
+        }
+        _ => false,
+    }
+}
 
 mod errors {
     use super::common::TimeFnErr;

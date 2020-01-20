@@ -156,7 +156,7 @@ impl Class {
         for functions in self.relations.iter() {
             for f in functions.value() {
                 if f.name_in_pos(&*self.name, pos) {
-                    // guaranteed this lives as long as self
+                    // Safety: guaranteed this lives as long as self
                     let t = unsafe { &*(&**f as *const GroundedFunc) };
                     let rel_name = t.get_name();
                     match op {

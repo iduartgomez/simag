@@ -1,14 +1,17 @@
 use std::collections::HashMap;
 use std::sync::{atomic::AtomicBool, Arc};
 
-use super::*;
+use super::{
+    common::*,
+    logsent::{LogSentResolution, ParseContext},
+    parser::{FuncDeclBorrowed, FuncVariants},
+    var::Var,
+    *,
+};
 use crate::agent::{
     kb::bms::BmsWrapper,
     kb::{repr::Representation, VarAssignment},
 };
-use common::*;
-use logsent::{LogSentResolution, ParseContext};
-use parser::{FuncDeclBorrowed, FuncVariants};
 
 #[derive(Debug, Clone)]
 pub(in crate::agent) struct FuncDecl {
