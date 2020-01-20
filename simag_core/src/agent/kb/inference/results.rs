@@ -21,8 +21,8 @@ type QueryResRels<'a> = HashMap<ObjName<'a>, Vec<Arc<GroundedFunc>>>;
 #[derive(Debug)]
 pub(in crate::agent::kb) struct InfResults<'b> {
     pub grounded_queries: DashMap<QueryPred, GroundedResults<'b>>,
-    membership: DashMap<&'b Var, QueryResMemb<'b>>,
-    relationships: DashMap<&'b Var, QueryResRels<'b>>,
+    membership: DashMap<Arc<Var>, QueryResMemb<'b>>,
+    relationships: DashMap<Arc<Var>, QueryResRels<'b>>,
     query: Arc<QueryProcessed>,
 }
 
@@ -36,7 +36,7 @@ impl<'b> InfResults<'b> {
         }
     }
 
-    pub fn add_membership(&self, var: &'b Var, name: &'b str, membership: Arc<GroundedMemb>) {
+    pub fn add_membership(&self, var: Arc<Var>, name: &'b str, membership: Arc<GroundedMemb>) {
         self.membership
             .entry(var)
             .or_insert_with(HashMap::new)
@@ -45,14 +45,14 @@ impl<'b> InfResults<'b> {
             .push(membership);
     }
 
-    pub fn add_relationships(&self, var: &'b Var, rel: &[Arc<GroundedFunc>]) {
+    pub fn add_relationships(&self, var: Arc<Var>, rel: &[Arc<GroundedFunc>]) {
         for func in rel {
             for obj in func.get_args_names() {
                 // Safety: obj lives for the duration of var as both are borrowed
                 // from a repr further up the stack
                 let obj = unsafe { std::mem::transmute::<&str, &'b str>(obj) };
                 self.relationships
-                    .entry(var)
+                    .entry(var.clone())
                     .or_insert_with(HashMap::new)
                     .entry(obj)
                     .or_insert_with(Vec::new)

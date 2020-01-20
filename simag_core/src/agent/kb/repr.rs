@@ -11,7 +11,8 @@ use crate::agent::kb::{
     bms::{BmsWrapper, ReplaceMode},
     class::*,
     inference::{
-        meet_sent_req, ArgsProduct, GroundedResult, IExprResult, InfResults, Inference, QueryInput,
+        meet_sent_requirements, ArgsProduct, GroundedResult, IExprResult, InfResults, Inference,
+        QueryInput,
     },
     VarAssignment,
 };
@@ -378,7 +379,7 @@ impl Representation {
             };
 
         for var_req in belief.get_lhs_predicates().into_sent_req() {
-            if let Some(candidates) = meet_sent_req(self, &var_req) {
+            if let Some(candidates) = meet_sent_requirements(self, &var_req) {
                 for var in candidates.keys() {
                     let it = belief.get_rhs_predicates();
                     for pred in it.iter().filter(|x| x.contains(&**var)) {

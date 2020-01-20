@@ -16,13 +16,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Clone)]
-pub(in crate::agent) struct VarAssignment<'a> {
-    pub name: &'a str,
-    classes: HashMap<&'a str, Arc<GroundedMemb>>,
-    funcs: HashMap<&'a str, Vec<Arc<GroundedFunc>>>,
+pub(in crate::agent) struct VarAssignment<'rep> {
+    pub name: &'rep str,
+    classes: HashMap<&'rep str, Arc<GroundedMemb>>,
+    funcs: HashMap<&'rep str, Vec<Arc<GroundedFunc>>>,
 }
 
-impl<'a> VarAssignment<'a> {
+impl<'rep> VarAssignment<'rep> {
     #[inline]
     pub fn get_class(&self, name: &str) -> Option<&Arc<GroundedMemb>> {
         self.classes.get(name)
@@ -41,27 +41,27 @@ impl<'a> VarAssignment<'a> {
     }
 }
 
-impl<'a> std::cmp::PartialEq for VarAssignment<'a> {
+impl<'rep> std::cmp::PartialEq for VarAssignment<'rep> {
     fn eq(&self, other: &VarAssignment) -> bool {
         *self.name == *other.name
     }
 }
 
-impl<'a> std::cmp::Eq for VarAssignment<'a> {}
+impl<'rep> std::cmp::Eq for VarAssignment<'rep> {}
 
-impl<'a> std::hash::Hash for VarAssignment<'a> {
+impl<'rep> std::hash::Hash for VarAssignment<'rep> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         (*self.name).hash(state);
     }
 }
 
-impl<'a> std::fmt::Display for VarAssignment<'a> {
+impl<'rep> std::fmt::Display for VarAssignment<'rep> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{}", self.name)
     }
 }
 
-impl<'a> std::fmt::Debug for VarAssignment<'a> {
+impl<'rep> std::fmt::Debug for VarAssignment<'rep> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{}", self)
     }

@@ -117,7 +117,7 @@ impl<'rep> Inference<'rep> {
                         // if no result was found from the kb directly
                         // make an inference from a grounded fact
                         let actv_query = ActiveQuery::new_with_class(pred.clone());
-                        self.queue_query(query, &actv_query);
+                        self.queue_query(query, actv_query);
                     }
                 }
             });
@@ -149,15 +149,15 @@ impl<'rep> Inference<'rep> {
                             tracing_info(&**pred, log::Level::Trace, Some("Start querying for"));
                         }
 
-                        self.queue_query(query, &actv_query);
+                        self.queue_query(query, actv_query);
                     }
                 }
             });
     }
 
-    fn queue_query<'inf>(&'inf self, query: &'rep str, actv_query: &'inf ActiveQuery) {
-        let mut pass = InfTrial::new(self, actv_query);
-        pass.get_rules(vec![query]);
+    fn queue_query<'inf>(&self, query: &'inf str, actv_query: ActiveQuery) {
+        let mut pass = InfTrial::new(self, actv_query.clone());
+        pass.get_rules(std::iter::once(&query));
         // run the query, if there is no result and there is an update,
         // then loop again, else stop
         loop {
@@ -192,8 +192,9 @@ impl<'rep> Inference<'rep> {
                     if let Some(cls_curr) = self.kb.classes.get(cls_name) {
                         let members: Vec<Arc<GroundedMemb>> = cls_curr.get_members(cls);
                         for m in members {
-                            let t = unsafe { &*(&*m as *const GroundedMemb) as &GroundedMemb };
-                            self.results.add_membership(var, t.get_name(), m.clone());
+                            let t = unsafe { &*(&*m as *const GroundedMemb) as &'rep GroundedMemb };
+                            self.results
+                                .add_membership(var.clone(), t.get_name(), m.clone());
                         }
                     }
                 }
@@ -212,7 +213,7 @@ impl<'rep> Inference<'rep> {
                     let lock = &self.kb.classes;
                     if let Some(cls_curr) = lock.get(func_name) {
                         let members: Vec<Arc<GroundedFunc>> = cls_curr.get_funcs(func);
-                        self.results.add_relationships(var, &members);
+                        self.results.add_relationships(var.clone(), &members);
                     }
                 }
             });
@@ -228,7 +229,9 @@ impl<'rep> Inference<'rep> {
                 for obj in objs {
                     let member_of = self.kb.get_class_membership(obj);
                     for m in member_of {
-                        self.results.add_membership(var, obj.get_name(), m.clone());
+                        let t = unsafe { &*(&*m as *const GroundedMemb) as &'rep GroundedMemb };
+                        self.results
+                            .add_membership(var.clone(), t.get_name(), m.clone());
                     }
                 }
             });
@@ -244,7 +247,7 @@ impl<'rep> Inference<'rep> {
                 for func in funcs {
                     let relationships = self.kb.get_relationships(func);
                     for funcs in relationships.values() {
-                        self.results.add_relationships(var, funcs);
+                        self.results.add_relationships(var.clone(), funcs);
                     }
                 }
             });
@@ -311,14 +314,14 @@ impl ActiveQuery {
 type PArgVal = u64;
 
 #[derive(Clone, Debug)]
-struct ProofArgs<'a> {
-    //ptr: usize, // *mut Vec<(&'a Var, Arc<VarAssignment<'a>>)>
-    assignments: Vec<(&'a Var, Arc<VarAssignment<'a>>)>,
+struct ProofArgs<'rep> {
+    //ptr: usize, // *mut Vec<(&'rep Var, Arc<VarAssignment<'rep>>)>
+    assignments: Vec<(&'rep Var, Arc<VarAssignment<'rep>>)>,
     hash_val: PArgVal,
 }
 
-impl<'a> ProofArgs<'a> {
-    fn new(assignments: Vec<(&'a Var, Arc<VarAssignment<'a>>)>) -> ProofArgs<'a> {
+impl<'rep> ProofArgs<'rep> {
+    fn new(assignments: Vec<(&'rep Var, Arc<VarAssignment<'rep>>)>) -> ProofArgs<'rep> {
         let hash_val = ProofArgs::arg_hash_val(&assignments[..]);
         // let ptr = Box::into_raw(Box::new(input));
         ProofArgs {
@@ -347,28 +350,28 @@ impl<'a> ProofArgs<'a> {
     }
 }
 
-struct ValidAnswer<'a> {
-    node: usize, // *const ProofNode<'a>,
-    args: ProofArgs<'a>,
+struct ValidAnswer<'rep> {
+    node: usize, // *const ProofNode<'rep>,
+    args: ProofArgs<'rep>,
     newest_grfact: Time,
 }
 
 #[derive(Debug)]
-pub struct IExprResult<'a, 'b> {
+pub struct IExprResult<'rep: 'inf, 'inf> {
     result: Option<bool>,
     newest_grfact: Time,
     antecedents: Vec<Grounded>,
     grounded_func: Vec<(GroundedFunc, Time)>,
     grounded_cls: Vec<(GroundedMemb, Time)>,
-    sent: &'b LogSentence,
+    sent: &'inf LogSentence,
     global_subtitution_time: Time,
-    args: ProofArgs<'a>,
-    node: usize, // *'b const ProofNode<'a> <-- 'b:
+    args: ProofArgs<'rep>,
+    node: usize, // *'b const ProofNode<'rep>
     sub_mode: bool,
 }
 
-impl<'a: 'b, 'b> IExprResult<'a, 'b> {
-    fn new(args: ProofArgs<'a>, node: &'b ProofNode<'a>) -> IExprResult<'a, 'b> {
+impl<'rep, 'inf> IExprResult<'rep, 'inf> {
+    fn new(args: ProofArgs<'rep>, node: &'inf ProofNode<'rep>) -> IExprResult<'rep, 'inf> {
         IExprResult {
             result: None,
             args,
@@ -384,7 +387,7 @@ impl<'a: 'b, 'b> IExprResult<'a, 'b> {
     }
 }
 
-impl<'a: 'b, 'b> ProofResContext for IExprResult<'a, 'b> {
+impl<'rep, 'inf> ProofResContext for IExprResult<'rep, 'inf> {
     fn sent(&self) -> &LogSentence {
         self.sent
     }
@@ -460,26 +463,26 @@ impl<'a: 'b, 'b> ProofResContext for IExprResult<'a, 'b> {
     }
 }
 
-struct InfTrial<'rep: 'inf, 'inf> {
+struct InfTrial<'rep, 'inf> {
     kb: &'rep Representation,
     actv: ActiveQuery,
     updated: Vec<bool>,
     feedback: bool,
     valid: Option<ValidAnswer<'rep>>,
     nodes: &'inf DashMap<&'rep str, Vec<ProofNode<'rep>>>,
-    queue: &'inf DashMap<usize, HashSet<PArgVal>>, // K: *const ProofNode<'a>
-    results: usize,                                // &'a InfResults<'a>,
+    queue: &'inf DashMap<usize, HashSet<PArgVal>>, // K: *const ProofNode<'rep>
+    results: usize,                                // &'inf InfResults<'rep>,
     depth: usize,
     depth_cnt: RwLock<usize>,
 }
 
-impl<'rep: 'inf, 'inf> InfTrial<'rep, 'inf> {
-    fn new(inf: &'inf Inference<'rep>, actv_query: &'inf ActiveQuery) -> InfTrial<'rep, 'inf> {
+impl<'rep, 'inf> InfTrial<'rep, 'inf> {
+    fn new(inf: &'inf Inference<'rep>, actv_query: ActiveQuery) -> InfTrial<'rep, 'inf> {
         // let nodes = &inf.nodes as *const DashMap<_, _> as usize;
         let results = &inf.results as *const InfResults as usize;
         InfTrial {
             kb: inf.kb,
-            actv: actv_query.clone(),
+            actv: actv_query,
             updated: vec![],
             feedback: true,
             valid: None,
@@ -491,18 +494,20 @@ impl<'rep: 'inf, 'inf> InfTrial<'rep, 'inf> {
         }
     }
 
-    fn unify(
+    fn unify<'a>(
         &mut self,
-        mut parent: &'rep str,
-        mut chk: VecDeque<&'rep str>,
-        mut done: HashSet<&'rep str>,
+        mut parent: &'a str,
+        mut chk: VecDeque<&'a str>,
+        mut done: HashSet<&'a str>,
     ) {
         loop {
             self.valid = None;
             // for each node in the subtitution tree unifify variables
             // and try every possible substitution until (if) a solution is found
             // the proofs are tried in order of addition to the KB
+
             if let Some(nodes) = self.nodes.get(parent) {
+                // if let Some(nodes) = self.nodes.get(parent) {
                 // the node for each rule is stored in an efficient sorted list
                 // by rule creation datetime, from newest to oldest
                 // as the newest rules take precedence
@@ -511,21 +516,28 @@ impl<'rep: 'inf, 'inf> InfTrial<'rep, 'inf> {
                     {
                         tracing_info(&*node.proof, log::Level::Trace, Some("Querying sentence"));
                     }
+
+                    // Safety: lifetimes of node fit perfectly fine here because both:
+                    // a) node ref does not escape this scope
+                    // b) the contents of node have lifetime 'rep
+                    let node = unsafe { std::mem::transmute::<&ProofNode, &ProofNode<'_>>(node) };
+
                     // recursively try unifying all possible argument with the
                     // operating logic sentence:
                     // get all the entities/classes from the kb that meet the proof requeriments
-                    for var_req in node.proof.get_lhs_predicates().into_sent_req() {
-                        let assignments = meet_sent_req(self.kb, &var_req);
-                        if assignments.is_none() {
-                            for e in node.antecedents.clone() {
-                                if !done.contains(&e) && !chk.contains(&e) {
-                                    chk.push_back(e);
+                    for var_requirements in node.proof.get_lhs_predicates().into_sent_req() {
+                        if let Some(assignments) =
+                            meet_sent_requirements(self.kb, &var_requirements)
+                        {
+                            self.iterate_argument_permutations(node, assignments);
+                            if self.feedback {
+                                for e in node.antecedents.clone() {
+                                    if !done.contains(&e) && !chk.contains(&e) {
+                                        chk.push_back(e);
+                                    }
                                 }
                             }
-                            continue;
-                        }
-                        self.iterate_argument_permutations(node, assignments.unwrap());
-                        if self.feedback {
+                        } else {
                             for e in node.antecedents.clone() {
                                 if !done.contains(&e) && !chk.contains(&e) {
                                     chk.push_back(e);
@@ -535,12 +547,14 @@ impl<'rep: 'inf, 'inf> InfTrial<'rep, 'inf> {
                     }
                 }
             }
+
             if !self.feedback {
                 return;
             }
+
             if !chk.is_empty() && (*self.depth_cnt.read() < self.depth) {
                 done.insert(parent);
-                self.get_rules(Vec::from_iter(chk.iter().cloned()));
+                self.get_rules(chk.iter());
                 let p1 = chk.pop_front().unwrap();
                 parent = p1;
             } else {
@@ -552,9 +566,9 @@ impl<'rep: 'inf, 'inf> InfTrial<'rep, 'inf> {
     }
 
     /// Lazily iterate over all possible combinations of the substitutions
-    fn iterate_argument_permutations<'b>(
+    fn iterate_argument_permutations(
         &mut self,
-        node: &'b ProofNode<'rep>,
+        node: &'inf ProofNode<'rep>,
         assignments: HashMap<&'rep Var, Vec<Arc<VarAssignment<'rep>>>>,
     ) {
         if let Some(mapped) = ArgsProduct::product(assignments) {
@@ -574,12 +588,12 @@ impl<'rep: 'inf, 'inf> InfTrial<'rep, 'inf> {
                     );
                 }
                 let args: ProofArgs = ProofArgs::new(args);
-                self.unification_trial(node, &args);
+                self.unification_trial(node, args);
             }
         }
     }
 
-    fn unification_trial<'b>(&mut self, node: &'b ProofNode<'rep>, args: &'b ProofArgs<'rep>) {
+    fn unification_trial(&mut self, node: &'inf ProofNode<'rep>, args: ProofArgs<'rep>) {
         let node_raw = node as *const ProofNode as usize;
         let args_done = {
             if let Some(queued) = self.queue.get(&node_raw) {
@@ -603,9 +617,9 @@ impl<'rep: 'inf, 'inf> InfTrial<'rep, 'inf> {
         }
     }
 
-    fn add_as_last_valid<'b>(
+    fn add_as_last_valid(
         &mut self,
-        context: &'b IExprResult<'rep, 'b>,
+        context: &IExprResult<'rep, 'inf>,
         r_dict: &mut GroundedResults<'rep>,
         time: Time,
         value: bool,
@@ -628,7 +642,7 @@ impl<'rep: 'inf, 'inf> InfTrial<'rep, 'inf> {
         self.valid = Some(answ);
     }
 
-    fn add_result<'b>(&mut self, mut context: IExprResult<'rep, 'b>) {
+    fn add_result(&mut self, mut context: IExprResult<'rep, 'inf>) {
         // add category/function to the object dictionary
         // and to results dict if is the result for the query
         let is_func = self.actv.is_func();
@@ -725,8 +739,12 @@ impl<'rep: 'inf, 'inf> InfTrial<'rep, 'inf> {
         }
     }
 
-    fn get_rules(&self, cls_ls: Vec<&str>) {
-        let nodes = unsafe { &*(self.nodes as *const DashMap<&str, Vec<ProofNode>>) };
+    fn get_rules<'a, T, U>(&self, cls_ls: T)
+    where
+        T: Iterator<Item = U>,
+        U: std::ops::Deref<Target = &'a str>,
+    {
+        let nodes = unsafe { &*(self.nodes as *const DashMap<&'rep str, Vec<ProofNode<'rep>>>) };
         let mut rules: HashSet<Arc<LogSentence>> = HashSet::new();
         for vrules in nodes.iter() {
             for r in vrules.value() {
@@ -734,9 +752,9 @@ impl<'rep: 'inf, 'inf> InfTrial<'rep, 'inf> {
             }
         }
         for cls in cls_ls {
-            if let Some(stored) = self.kb.classes.get(cls) {
+            if let Some(stored) = self.kb.classes.get(*cls) {
                 let comp: HashSet<Arc<LogSentence>> = {
-                    if let Some(beliefs) = stored.beliefs.get(cls) {
+                    if let Some(beliefs) = stored.beliefs.get(*cls) {
                         HashSet::from_iter(beliefs.iter().cloned())
                     } else {
                         HashSet::new()
@@ -769,9 +787,9 @@ impl<'rep: 'inf, 'inf> InfTrial<'rep, 'inf> {
     }
 }
 
-pub(in crate::agent::kb) fn meet_sent_req<'rep: 'req, 'req>(
+pub(in crate::agent::kb) fn meet_sent_requirements<'rep>(
     rep: &'rep Representation,
-    req: &'req HashMap<&'rep Var, Vec<&'rep Assert>>,
+    req: &HashMap<&'rep Var, Vec<&'rep Assert>>,
 ) -> Option<HashMap<&'rep Var, Vec<Arc<VarAssignment<'rep>>>>> {
     let mut results: HashMap<&Var, Vec<Arc<VarAssignment>>> = HashMap::new();
     for (var, asserts) in req.iter() {
@@ -987,13 +1005,13 @@ impl<'a> std::iter::Iterator for ArgsProduct<'a> {
 }
 
 #[derive(Debug, Clone)]
-struct ProofNode<'a> {
+struct ProofNode<'rep> {
     proof: Arc<LogSentence>,
-    antecedents: Vec<&'a str>,
+    antecedents: Vec<&'rep str>,
 }
 
-impl<'a> ProofNode<'a> {
-    fn new(proof: &Arc<LogSentence>, antecedents: Vec<&'a str>) -> ProofNode<'a> {
+impl<'rep> ProofNode<'rep> {
+    fn new(proof: &Arc<LogSentence>, antecedents: Vec<&'rep str>) -> ProofNode<'rep> {
         ProofNode {
             proof: proof.clone(),
             antecedents,
@@ -1001,15 +1019,15 @@ impl<'a> ProofNode<'a> {
     }
 }
 
-impl<'a> std::cmp::PartialEq for ProofNode<'a> {
+impl<'rep> std::cmp::PartialEq for ProofNode<'rep> {
     fn eq(&self, other: &ProofNode) -> bool {
         self.proof.id == other.proof.id
     }
 }
 
-impl<'a> std::cmp::Eq for ProofNode<'a> {}
+impl<'rep> std::cmp::Eq for ProofNode<'rep> {}
 
-impl<'a> Hash for ProofNode<'a> {
+impl<'rep> Hash for ProofNode<'rep> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.proof.id.hash(state);
     }
@@ -1027,9 +1045,9 @@ pub(in crate::agent::kb) struct QueryProcessed {
     cls_queries_free: HashMap<Arc<Var>, Vec<FreeClsMemb>>,
     cls_queries_grounded: HashMap<String, Vec<Arc<GroundedMemb>>>,
     cls_memb_query: HashMap<Arc<Var>, Vec<FreeClassMembership>>,
-    func_queries_free: HashMap<Arc<Var>, Vec<FuncDecl>>,
+    func_queries_free: HashMap<Arc<Var>, Vec<Arc<FuncDecl>>>,
     func_queries_grounded: Vec<Arc<GroundedFunc>>,
-    func_memb_query: HashMap<Arc<Var>, Vec<FuncDecl>>,
+    func_memb_query: HashMap<Arc<Var>, Vec<Arc<FuncDecl>>>,
 }
 
 impl QueryProcessed {
@@ -1045,11 +1063,11 @@ impl QueryProcessed {
     }
 
     fn get_query(mut self, prequery: QueryInput) -> Result<QueryProcessed, ()> {
-        fn assert_memb(query: &mut QueryProcessed, cdecl: ClassDecl) -> Result<(), ()> {
-            for a in cdecl.get_args_mut() {
+        fn assert_memb(query: &mut QueryProcessed, mut cdecl: Arc<ClassDecl>) -> Result<(), ()> {
+            for a in Arc::get_mut(&mut cdecl).ok_or_else(|| ())?.get_args_mut() {
                 if let Predicate::GroundedMemb(t) = a {
                     if let Some(bms) = t.bms.as_mut() {
-                        Arc::get_mut(bms).unwrap().of_predicate();
+                        Arc::get_mut(bms).ok_or_else(|| ())?.of_predicate();
                     }
                 }
             }
@@ -1091,17 +1109,17 @@ impl QueryProcessed {
             Ok(())
         }
 
-        fn assert_rel(query: &mut QueryProcessed, fdecl: FuncDecl) -> Result<(), ()> {
+        fn assert_rel(query: &mut QueryProcessed, fdecl: Arc<FuncDecl>) -> Result<(), ()> {
             match *fdecl.get_parent() {
                 Terminal::GroundedTerm(_) => {
                     if fdecl.is_grounded() {
-                        let mut fgr = fdecl.clone().into_grounded();
+                        let mut fgr = Arc::try_unwrap(fdecl).map_err(|_| ())?.into_grounded();
                         Arc::get_mut(&mut fgr.bms).unwrap().of_predicate();
                         query.push_to_fnquery_grounded(fgr);
                     } else {
                         for a in fdecl.get_args() {
                             if let Predicate::FreeClsMemb(ref t) = *a {
-                                query.push_to_fnquery_free(t.get_var(), fdecl);
+                                query.push_to_fnquery_free(t.get_var(), fdecl.clone());
                             }
                         }
                     }
@@ -1127,10 +1145,12 @@ impl QueryProcessed {
                             for a in assertions {
                                 match a {
                                     Assert::ClassDecl(cdecl) => {
-                                        assert_memb(&mut self, cdecl.clone())?;
+                                        let cdecl = Arc::new(cdecl);
+                                        assert_memb(&mut self, cdecl)?;
                                     }
                                     Assert::FuncDecl(fdecl) => {
-                                        assert_rel(&mut self, fdecl.clone())?;
+                                        let fdecl = Arc::new(fdecl);
+                                        assert_rel(&mut self, fdecl)?;
                                     }
                                 }
                             }
@@ -1140,10 +1160,12 @@ impl QueryProcessed {
                             for a in preds {
                                 match a {
                                     Assert::ClassDecl(cdecl) => {
-                                        assert_memb(&mut self, cdecl.clone())?;
+                                        let cdecl = Arc::new(cdecl);
+                                        assert_memb(&mut self, cdecl)?;
                                     }
                                     Assert::FuncDecl(fdecl) => {
-                                        assert_rel(&mut self, fdecl.clone())?;
+                                        let fdecl = Arc::new(fdecl);
+                                        assert_rel(&mut self, fdecl)?;
                                     }
                                 }
                             }
@@ -1178,7 +1200,7 @@ impl QueryProcessed {
     }
 
     #[inline]
-    fn push_to_fnquery_free(&mut self, term: Arc<Var>, func: FuncDecl) {
+    fn push_to_fnquery_free(&mut self, term: Arc<Var>, func: Arc<FuncDecl>) {
         self.func_queries_free
             .entry(term)
             .or_insert_with(Vec::new)
@@ -1194,7 +1216,7 @@ impl QueryProcessed {
     }
 
     #[inline]
-    fn ask_relationships(&mut self, term: FuncDecl) {
+    fn ask_relationships(&mut self, term: Arc<FuncDecl>) {
         self.func_memb_query
             .entry(term.get_parent().get_var())
             .or_insert_with(Vec::new)

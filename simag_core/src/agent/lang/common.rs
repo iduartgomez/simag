@@ -357,11 +357,6 @@ impl FreeClassMembership {
     }
 
     #[inline]
-    pub fn get_var_ref(&self) -> &Var {
-        &*self.parent
-    }
-
-    #[inline]
     pub fn get_var(&self) -> Arc<Var> {
         self.parent.clone()
     }
