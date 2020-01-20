@@ -2,19 +2,10 @@
 //! representation querying.
 //!
 //! ## Safety
-//! There is some unsafe code on this module, the unsafe code performs two tasks:
-//!     * Assure the compiler that data being referenced has the same lifetime
-//!       as its owner (is self-referential).
-//!     * Cheat the compiler on ```Send + Sync``` impl in certain types because
-//!       we guarantee that those types are thread-safe to pass on.
-//!
-//! Both of those are safe because a Representation owns, uniquely, all its
+//! Unsafe in this module is safe because a Representation owns, uniquely, all its
 //! knowledge by the duration of it's own lifetime (data is never dropped while
 //! the representation is alive), thereby is safe to point to the data being
 //! referenced from the representation or the query (for the duration of the query).
-//!
-//! Furthermore, is safe to to pass onto other threads because mutable data is never
-//! never leaked and it's shared state is controlled atomically.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
@@ -738,9 +729,8 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
         T: Iterator<Item = U>,
         U: std::ops::Deref<Target = &'a str>,
     {
-        let nodes = unsafe { &*(self.nodes as *const DashMap<&'rep str, Vec<ProofNode<'rep>>>) };
         let mut rules: HashSet<Arc<LogSentence>> = HashSet::new();
-        for vrules in nodes.iter() {
+        for vrules in self.nodes.iter() {
             for r in vrules.value() {
                 rules.insert(r.proof.clone());
             }
@@ -764,7 +754,7 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
                     for pred in sent.get_rhs_predicates() {
                         let pred = unsafe { &*(pred as *const Assert) as &'rep Assert };
                         let name = pred.get_name();
-                        let mut ls = nodes.entry(name).or_insert_with(Vec::new);
+                        let mut ls = self.nodes.entry(name).or_insert_with(Vec::new);
                         if ls
                             .iter()
                             .map(|x| x.proof.id)
