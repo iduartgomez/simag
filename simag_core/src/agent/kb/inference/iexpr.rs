@@ -48,7 +48,7 @@ pub(in crate::agent::kb) struct Inference<'rep> {
     depth: usize,
     ignore_current: bool,
     nodes: DashMap<&'rep str, Vec<ProofNode<'rep>>>,
-    queue: DashMap<usize, HashSet<PArgVal>>, // K: *const ProofNode<'a>
+    queue: DashMap<ProofNodeId, HashSet<PArgVal>>,
     results: InfResults<'rep>,
     tpool: &'rep rayon::ThreadPool,
 }
@@ -173,9 +173,10 @@ impl<'rep> Inference<'rep> {
             self.results.add_grounded(obj, pred, None);
         } else {
             let valid = pass.valid.as_ref().unwrap();
-            let node: &ProofNode = unsafe { &*(valid.node as *const ProofNode) };
-            let context = IExprResult::new(valid.args.clone(), node);
-            node.proof
+            let context = IExprResult::new(valid.args.clone(), &valid.node);
+            valid
+                .node
+                .proof
                 .solve(self.kb, Some(&valid.args.as_proof_input()), context);
         }
     }
@@ -315,7 +316,6 @@ type PArgVal = u64;
 
 #[derive(Clone, Debug)]
 struct ProofArgs<'rep> {
-    //ptr: usize, // *mut Vec<(&'rep Var, Arc<VarAssignment<'rep>>)>
     assignments: Vec<(&'rep Var, Arc<VarAssignment<'rep>>)>,
     hash_val: PArgVal,
 }
@@ -350,8 +350,8 @@ impl<'rep> ProofArgs<'rep> {
     }
 }
 
-struct ValidAnswer<'rep> {
-    node: usize, // *const ProofNode<'rep>,
+struct ValidAnswer<'rep, 'inf> {
+    node: &'inf ProofNode<'rep>,
     args: ProofArgs<'rep>,
     newest_grfact: Time,
 }
@@ -366,7 +366,8 @@ pub struct IExprResult<'rep: 'inf, 'inf> {
     sent: &'inf LogSentence,
     global_subtitution_time: Time,
     args: ProofArgs<'rep>,
-    node: usize, // *'b const ProofNode<'rep>
+    // node: usize, // *'b const ProofNode<'rep>
+    node: &'inf ProofNode<'rep>,
     sub_mode: bool,
 }
 
@@ -375,7 +376,7 @@ impl<'rep, 'inf> IExprResult<'rep, 'inf> {
         IExprResult {
             result: None,
             args,
-            node: node as *const ProofNode as usize,
+            node,
             newest_grfact: chrono::MIN_DATE.and_hms(0, 0, 0),
             sent: &node.proof,
             global_subtitution_time: Utc::now(),
@@ -468,10 +469,10 @@ struct InfTrial<'rep, 'inf> {
     actv: ActiveQuery,
     updated: Vec<bool>,
     feedback: bool,
-    valid: Option<ValidAnswer<'rep>>,
+    valid: Option<ValidAnswer<'rep, 'inf>>,
     nodes: &'inf DashMap<&'rep str, Vec<ProofNode<'rep>>>,
-    queue: &'inf DashMap<usize, HashSet<PArgVal>>, // K: *const ProofNode<'rep>
-    results: usize,                                // &'inf InfResults<'rep>,
+    queue: &'inf DashMap<ProofNodeId, HashSet<PArgVal>>,
+    results: usize, // &'inf InfResults<'rep>,
     depth: usize,
     depth_cnt: RwLock<usize>,
 }
@@ -574,7 +575,7 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
         if let Some(mapped) = ArgsProduct::product(assignments) {
             for args in mapped {
                 if let Some(ref valid) = self.valid {
-                    if valid.node == &*node as *const ProofNode as usize {
+                    if valid.node == node {
                         break;
                     }
                 }
@@ -594,9 +595,8 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
     }
 
     fn unification_trial(&mut self, node: &'inf ProofNode<'rep>, args: ProofArgs<'rep>) {
-        let node_raw = node as *const ProofNode as usize;
         let args_done = {
-            if let Some(queued) = self.queue.get(&node_raw) {
+            if let Some(queued) = self.queue.get(&node.proof.id) {
                 queued.contains(&args.hash_val)
             } else {
                 false
@@ -609,7 +609,7 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
             if solved_proof.result.is_some() {
                 self.updated.push(true);
                 self.queue
-                    .entry(node_raw)
+                    .entry(node.proof.id)
                     .or_insert_with(HashSet::new)
                     .insert(args.hash_val);
                 self.add_result(solved_proof);
@@ -1003,6 +1003,8 @@ impl<'a> std::iter::Iterator for ArgsProduct<'a> {
         }
     }
 }
+
+type ProofNodeId = u64;
 
 #[derive(Debug, Clone)]
 struct ProofNode<'rep> {
