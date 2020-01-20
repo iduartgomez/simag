@@ -17,13 +17,12 @@ use chrono::Utc;
 use self::ast_walker::PIntermediate;
 use super::{
     cls_decl::ClassDecl,
-    common::{Assert, Grounded, OpArg, Skolem},
+    common::{Assert, Grounded, OpArg},
     fn_decl::FuncDecl,
     gr_func::GroundedFunc,
     gr_memb::GroundedMemb,
     parser::{ASTNode, AssertBorrowed, LogicOperator, Scope, VarDeclBorrowed},
-    var::{Var, VarKind},
-    ParseErrF, Time,
+    ParseErrF, Skolem, Time, Var, VarKind,
 };
 use crate::agent::{kb::bms::BmsWrapper, kb::repr::Representation, kb::VarAssignment};
 pub(in crate::agent) type SentID = u64;

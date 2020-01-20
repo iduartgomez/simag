@@ -5,6 +5,7 @@ mod gr_func;
 mod gr_memb;
 mod logsent;
 mod parser;
+mod skolem;
 mod var;
 
 use chrono::{DateTime, Utc};
@@ -20,6 +21,7 @@ pub(super) use self::gr_func::GroundedFunc;
 pub(super) use self::gr_memb::GroundedMemb;
 pub(super) use self::logsent::{LogSentence, ProofResContext, SentID};
 pub(super) use self::parser::{CompOperator, ParseTree};
+pub(super) use self::skolem::Skolem;
 pub(super) use self::var::{Var, VarKind};
 
 /// Takes an owned String and returns the corresponding structure representing
