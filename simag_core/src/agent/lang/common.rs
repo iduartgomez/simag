@@ -225,8 +225,14 @@ impl FreeClsMemb {
         self.parent.get_name()
     }
 
+    #[inline]
     pub fn get_var_ref(&self) -> &Var {
         &*self.term
+    }
+
+    #[inline]
+    pub fn get_var(&self) -> Arc<Var> {
+        self.term.clone()
     }
 
     /// Compares a free term with a grounded term, assumes they are comparable
@@ -353,6 +359,11 @@ impl FreeClassMembership {
     #[inline]
     pub fn get_var_ref(&self) -> &Var {
         &*self.parent
+    }
+
+    #[inline]
+    pub fn get_var(&self) -> Arc<Var> {
+        self.parent.clone()
     }
 }
 
@@ -1079,7 +1090,7 @@ impl<'a> Terminal {
         if let Terminal::GroundedTerm(ref name) = *self {
             name
         } else {
-            panic!()
+            unreachable!()
         }
     }
 
@@ -1095,11 +1106,11 @@ impl<'a> Terminal {
         if let Terminal::FreeTerm(ref var) = *self {
             &*var
         } else {
-            panic!()
+            unreachable!()
         }
     }
 
-    fn get_var(&self) -> Arc<Var> {
+    pub fn get_var(&self) -> Arc<Var> {
         if let Terminal::FreeTerm(ref var) = *self {
             var.clone()
         } else {

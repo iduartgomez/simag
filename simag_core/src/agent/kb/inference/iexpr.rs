@@ -20,7 +20,6 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::iter::FromIterator;
 use std::mem;
-use std::rc::Rc;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -43,25 +42,25 @@ use crate::agent::lang::{
     VarKind,
 };
 
-pub(in crate::agent::kb) struct Inference<'a> {
-    query: Arc<QueryProcessed<'a>>,
-    kb: &'a Representation,
+pub(in crate::agent::kb) struct Inference<'rep> {
+    query: Arc<QueryProcessed>,
+    kb: &'rep Representation,
     depth: usize,
     ignore_current: bool,
-    nodes: DashMap<&'a str, Vec<ProofNode<'a>>>,
+    nodes: DashMap<&'rep str, Vec<ProofNode<'rep>>>,
     queue: DashMap<usize, HashSet<PArgVal>>, // K: *const ProofNode<'a>
-    results: InfResults<'a>,
-    tpool: &'a rayon::ThreadPool,
+    results: InfResults<'rep>,
+    tpool: &'rep rayon::ThreadPool,
 }
 
-impl<'a> Inference<'a> {
+impl<'rep> Inference<'rep> {
     pub fn try_new(
-        agent: &'a Representation,
+        agent: &'rep Representation,
         query_input: QueryInput,
         depth: usize,
         ignore_current: bool,
-        tpool: &'a rayon::ThreadPool,
-    ) -> Result<Inference<'a>, ()> {
+        tpool: &'rep rayon::ThreadPool,
+    ) -> Result<Inference<'rep>, ()> {
         let query = Arc::new(QueryProcessed::new().get_query(query_input)?);
         Ok(Inference {
             query: query.clone(),
@@ -75,7 +74,7 @@ impl<'a> Inference<'a> {
         })
     }
 
-    pub fn get_results(self) -> Answer<'a> {
+    pub fn get_results(self) -> Answer<'rep> {
         // TODO: filter results based on query composition
         Answer::new(self.results)
     }
@@ -156,7 +155,7 @@ impl<'a> Inference<'a> {
             });
     }
 
-    fn queue_query(&self, query: &str, actv_query: &ActiveQuery) {
+    fn queue_query<'inf>(&'inf self, query: &'rep str, actv_query: &'inf ActiveQuery) {
         let mut pass = InfTrial::new(self, actv_query);
         pass.get_rules(vec![query]);
         // run the query, if there is no result and there is an update,
@@ -311,18 +310,20 @@ impl ActiveQuery {
 
 type PArgVal = u64;
 
-#[derive(Debug)]
-struct ProofArgs {
-    ptr: usize, // *mut Vec<(&'a Var, Arc<VarAssignment<'a>>)
+#[derive(Clone, Debug)]
+struct ProofArgs<'a> {
+    //ptr: usize, // *mut Vec<(&'a Var, Arc<VarAssignment<'a>>)>
+    assignments: Vec<(&'a Var, Arc<VarAssignment<'a>>)>,
     hash_val: PArgVal,
 }
 
-impl ProofArgs {
-    fn new<'a>(input: Vec<(&Var, Arc<VarAssignment<'a>>)>) -> ProofArgs {
-        let hash_val = ProofArgs::arg_hash_val(&input[..]);
-        let ptr = Box::into_raw(Box::new(input));
+impl<'a> ProofArgs<'a> {
+    fn new(assignments: Vec<(&'a Var, Arc<VarAssignment<'a>>)>) -> ProofArgs<'a> {
+        let hash_val = ProofArgs::arg_hash_val(&assignments[..]);
+        // let ptr = Box::into_raw(Box::new(input));
         ProofArgs {
-            ptr: ptr as usize,
+            // ptr: ptr as usize,
+            assignments,
             hash_val,
         }
     }
@@ -338,58 +339,36 @@ impl ProofArgs {
     }
 
     fn as_proof_input(&self) -> HashMap<&Var, &VarAssignment> {
-        let data = unsafe {
-            let data = self.ptr as *const Vec<(&Var, Arc<VarAssignment>)>;
-            &*data as &Vec<(&Var, Arc<VarAssignment>)>
-        };
-        let mut n_args = HashMap::with_capacity(data.len());
-        for &(k, ref v) in data {
+        let mut n_args = HashMap::with_capacity(self.assignments.len());
+        for &(k, ref v) in &self.assignments {
             n_args.insert(k, &**v);
         }
         n_args
     }
 }
 
-impl std::clone::Clone for ProofArgs {
-    fn clone(&self) -> ProofArgs {
-        unsafe {
-            let data = self.ptr as *const Vec<(&Var, Arc<VarAssignment>)>;
-            let data = &*data as &Vec<(&Var, Arc<VarAssignment>)>;
-            ProofArgs::new(data.clone())
-        }
-    }
-}
-
-impl std::ops::Drop for ProofArgs {
-    fn drop(&mut self) {
-        unsafe {
-            Box::from_raw(self.ptr as *mut Vec<(&Var, Arc<VarAssignment>)>);
-        }
-    }
-}
-
-struct ValidAnswer {
+struct ValidAnswer<'a> {
     node: usize, // *const ProofNode<'a>,
-    args: ProofArgs,
+    args: ProofArgs<'a>,
     newest_grfact: Time,
 }
 
 #[derive(Debug)]
-pub struct IExprResult<'a> {
+pub struct IExprResult<'a, 'b> {
     result: Option<bool>,
     newest_grfact: Time,
     antecedents: Vec<Grounded>,
     grounded_func: Vec<(GroundedFunc, Time)>,
     grounded_cls: Vec<(GroundedMemb, Time)>,
-    sent: &'a LogSentence,
+    sent: &'b LogSentence,
     global_subtitution_time: Time,
-    args: ProofArgs,
-    node: usize, // *const ProofNode<'a>
+    args: ProofArgs<'a>,
+    node: usize, // *'b const ProofNode<'a> <-- 'b:
     sub_mode: bool,
 }
 
-impl<'a> IExprResult<'a> {
-    fn new(args: ProofArgs, node: &'a ProofNode) -> IExprResult<'a> {
+impl<'a: 'b, 'b> IExprResult<'a, 'b> {
+    fn new(args: ProofArgs<'a>, node: &'b ProofNode<'a>) -> IExprResult<'a, 'b> {
         IExprResult {
             result: None,
             args,
@@ -405,7 +384,7 @@ impl<'a> IExprResult<'a> {
     }
 }
 
-impl<'a> ProofResContext for IExprResult<'a> {
+impl<'a: 'b, 'b> ProofResContext for IExprResult<'a, 'b> {
     fn sent(&self) -> &LogSentence {
         self.sent
     }
@@ -481,22 +460,22 @@ impl<'a> ProofResContext for IExprResult<'a> {
     }
 }
 
-struct InfTrial<'a> {
-    kb: &'a Representation,
+struct InfTrial<'rep: 'inf, 'inf> {
+    kb: &'rep Representation,
     actv: ActiveQuery,
     updated: Vec<bool>,
     feedback: bool,
-    valid: Option<ValidAnswer>,
-    nodes: usize, // &'a DashMap<&'a str, Vec<ProofNode<'a>>>>,
-    queue: &'a DashMap<usize, HashSet<PArgVal>>, // K: *const ProofNode<'a>
-    results: usize, // &'a InfResults<'a>,
+    valid: Option<ValidAnswer<'rep>>,
+    nodes: &'inf DashMap<&'rep str, Vec<ProofNode<'rep>>>,
+    queue: &'inf DashMap<usize, HashSet<PArgVal>>, // K: *const ProofNode<'a>
+    results: usize,                                // &'a InfResults<'a>,
     depth: usize,
     depth_cnt: RwLock<usize>,
 }
 
-impl<'a> InfTrial<'a> {
-    fn new(inf: &'a Inference, actv_query: &ActiveQuery) -> InfTrial<'a> {
-        let nodes = &inf.nodes as *const DashMap<_, _> as usize;
+impl<'rep: 'inf, 'inf> InfTrial<'rep, 'inf> {
+    fn new(inf: &'inf Inference<'rep>, actv_query: &'inf ActiveQuery) -> InfTrial<'rep, 'inf> {
+        // let nodes = &inf.nodes as *const DashMap<_, _> as usize;
         let results = &inf.results as *const InfResults as usize;
         InfTrial {
             kb: inf.kb,
@@ -504,7 +483,7 @@ impl<'a> InfTrial<'a> {
             updated: vec![],
             feedback: true,
             valid: None,
-            nodes,
+            nodes: &inf.nodes,
             queue: &inf.queue,
             results,
             depth: inf.depth,
@@ -514,21 +493,20 @@ impl<'a> InfTrial<'a> {
 
     fn unify(
         &mut self,
-        mut parent: &'a str,
-        mut chk: VecDeque<&'a str>,
-        mut done: HashSet<&'a str>,
+        mut parent: &'rep str,
+        mut chk: VecDeque<&'rep str>,
+        mut done: HashSet<&'rep str>,
     ) {
-        let nodes = unsafe { &*(self.nodes as *const DashMap<&str, Vec<ProofNode>>) };
         loop {
             self.valid = None;
             // for each node in the subtitution tree unifify variables
             // and try every possible substitution until (if) a solution is found
             // the proofs are tried in order of addition to the KB
-            if let Some(nodes) = nodes.get(parent) {
+            if let Some(nodes) = self.nodes.get(parent) {
                 // the node for each rule is stored in an efficient sorted list
                 // by rule creation datetime, from newest to oldest
                 // as the newest rules take precedence
-                for node in nodes.iter() {
+                for node in nodes.value().iter() {
                     #[cfg(feature = "tracing")]
                     {
                         tracing_info(&*node.proof, log::Level::Trace, Some("Querying sentence"));
@@ -574,10 +552,10 @@ impl<'a> InfTrial<'a> {
     }
 
     /// Lazily iterate over all possible combinations of the substitutions
-    fn iterate_argument_permutations(
+    fn iterate_argument_permutations<'b>(
         &mut self,
-        node: &ProofNode,
-        assignments: HashMap<&Var, Vec<Arc<VarAssignment>>>,
+        node: &'b ProofNode<'rep>,
+        assignments: HashMap<&'rep Var, Vec<Arc<VarAssignment<'rep>>>>,
     ) {
         if let Some(mapped) = ArgsProduct::product(assignments) {
             for args in mapped {
@@ -601,7 +579,7 @@ impl<'a> InfTrial<'a> {
         }
     }
 
-    fn unification_trial(&mut self, node: &ProofNode, args: &ProofArgs) {
+    fn unification_trial<'b>(&mut self, node: &'b ProofNode<'rep>, args: &'b ProofArgs<'rep>) {
         let node_raw = node as *const ProofNode as usize;
         let args_done = {
             if let Some(queued) = self.queue.get(&node_raw) {
@@ -625,16 +603,16 @@ impl<'a> InfTrial<'a> {
         }
     }
 
-    fn add_as_last_valid(
+    fn add_as_last_valid<'b>(
         &mut self,
-        context: &IExprResult,
-        r_dict: &mut GroundedResults<'a>,
+        context: &'b IExprResult<'rep, 'b>,
+        r_dict: &mut GroundedResults<'rep>,
         time: Time,
         value: bool,
     ) {
         let query_obj = unsafe {
             let obj = self.actv.get_obj();
-            std::mem::transmute::<&str, &'a str>(obj)
+            std::mem::transmute::<&str, &'rep str>(obj)
         };
         if let Some(ref prev_answ) = self.valid {
             if prev_answ.newest_grfact >= context.newest_grfact {
@@ -650,7 +628,7 @@ impl<'a> InfTrial<'a> {
         self.valid = Some(answ);
     }
 
-    fn add_result(&mut self, mut context: IExprResult) {
+    fn add_result<'b>(&mut self, mut context: IExprResult<'rep, 'b>) {
         // add category/function to the object dictionary
         // and to results dict if is the result for the query
         let is_func = self.actv.is_func();
@@ -767,12 +745,12 @@ impl<'a> InfTrial<'a> {
                 for sent in comp.difference(&rules) {
                     let mut antecedents = vec![];
                     for p in sent.get_all_lhs_predicates() {
-                        let p = unsafe { &*(p as *const Assert) as &'a Assert };
+                        let p = unsafe { &*(p as *const Assert) as &'rep Assert };
                         antecedents.push(p.get_name())
                     }
                     let node = ProofNode::new(sent, antecedents);
                     for pred in sent.get_rhs_predicates() {
-                        let pred = unsafe { &*(pred as *const Assert) as &'a Assert };
+                        let pred = unsafe { &*(pred as *const Assert) as &'rep Assert };
                         let name = pred.get_name();
                         let mut ls = nodes.entry(name).or_insert_with(Vec::new);
                         if ls
@@ -791,10 +769,10 @@ impl<'a> InfTrial<'a> {
     }
 }
 
-pub(in crate::agent::kb) fn meet_sent_req<'a>(
-    rep: &'a Representation,
-    req: &'a HashMap<&Var, Vec<&'a Assert>>,
-) -> Option<HashMap<&'a Var, Vec<Arc<VarAssignment<'a>>>>> {
+pub(in crate::agent::kb) fn meet_sent_req<'rep: 'req, 'req>(
+    rep: &'rep Representation,
+    req: &'req HashMap<&'rep Var, Vec<&'rep Assert>>,
+) -> Option<HashMap<&'rep Var, Vec<Arc<VarAssignment<'rep>>>>> {
     let mut results: HashMap<&Var, Vec<Arc<VarAssignment>>> = HashMap::new();
     for (var, asserts) in req.iter() {
         if asserts.is_empty() {
@@ -817,8 +795,8 @@ pub(in crate::agent::kb) fn meet_sent_req<'a>(
             }
         }
         let (class_list, funcs_list) = unsafe {
-            let cl = mem::transmute::<&[&str], &'a [&'a str]>(&cl[..]);
-            let fl = mem::transmute::<&[&FuncDecl], &'a [&'a FuncDecl]>(&fl[..]);
+            let cl = mem::transmute::<&[&str], &'rep [&'rep str]>(&cl[..]);
+            let fl = mem::transmute::<&[&FuncDecl], &'rep [&'rep FuncDecl]>(&fl[..]);
             (cl, fl)
         };
 
@@ -1045,22 +1023,17 @@ pub(in crate::agent) enum QueryInput {
 }
 
 #[derive(Debug)]
-pub(in crate::agent::kb) struct QueryProcessed<'b> {
-    cls_queries_free: HashMap<&'b Var, Vec<&'b FreeClsMemb>>,
-    cls_queries_grounded: HashMap<&'b str, Vec<Arc<GroundedMemb>>>,
-    cls_memb_query: HashMap<&'b Var, Vec<&'b FreeClassMembership>>,
-    func_queries_free: HashMap<&'b Var, Vec<&'b FuncDecl>>,
+pub(in crate::agent::kb) struct QueryProcessed {
+    cls_queries_free: HashMap<Arc<Var>, Vec<FreeClsMemb>>,
+    cls_queries_grounded: HashMap<String, Vec<Arc<GroundedMemb>>>,
+    cls_memb_query: HashMap<Arc<Var>, Vec<FreeClassMembership>>,
+    func_queries_free: HashMap<Arc<Var>, Vec<FuncDecl>>,
     func_queries_grounded: Vec<Arc<GroundedFunc>>,
-    func_memb_query: HashMap<&'b Var, Vec<&'b FuncDecl>>,
-    cls: Vec<Rc<ClassDecl>>,
-    func: Vec<Rc<FuncDecl>>,
+    func_memb_query: HashMap<Arc<Var>, Vec<FuncDecl>>,
 }
 
-unsafe impl<'b> std::marker::Sync for QueryProcessed<'b> {}
-unsafe impl<'b> std::marker::Send for QueryProcessed<'b> {}
-
-impl<'b> QueryProcessed<'b> {
-    fn new() -> QueryProcessed<'b> {
+impl QueryProcessed {
+    fn new() -> QueryProcessed {
         QueryProcessed {
             cls_queries_free: HashMap::new(),
             cls_queries_grounded: HashMap::new(),
@@ -1068,16 +1041,11 @@ impl<'b> QueryProcessed<'b> {
             func_queries_free: HashMap::new(),
             func_queries_grounded: vec![],
             func_memb_query: HashMap::new(),
-            cls: vec![],
-            func: vec![],
         }
     }
 
-    fn get_query(mut self, prequery: QueryInput) -> Result<QueryProcessed<'b>, ()> {
-        #![allow(clippy::needless_pass_by_value)]
-
-        fn assert_memb(query: &mut QueryProcessed, cdecl: &mut ClassDecl) -> Result<(), ()> {
-            let cdecl = unsafe { &mut *(cdecl as *mut ClassDecl) as &mut ClassDecl };
+    fn get_query(mut self, prequery: QueryInput) -> Result<QueryProcessed, ()> {
+        fn assert_memb(query: &mut QueryProcessed, cdecl: ClassDecl) -> Result<(), ()> {
             for a in cdecl.get_args_mut() {
                 if let Predicate::GroundedMemb(t) = a {
                     if let Some(bms) = t.bms.as_mut() {
@@ -1090,15 +1058,18 @@ impl<'b> QueryProcessed<'b> {
                     for a in cdecl.get_args() {
                         match a {
                             Predicate::FreeClsMemb(t) => {
-                                query.push_to_clsquery_free(&*t.get_var_ref(), t);
+                                query.push_to_clsquery_free(t.get_var(), t.clone());
                             }
                             Predicate::GroundedMemb(t) => {
                                 if let Some(times) = cdecl.get_time_payload(t.get_value()) {
                                     t.overwrite_time_data(&times);
                                 }
-                                query.push_to_clsquery_grounded(t.get_name(), Arc::new(t.clone()));
+                                query.push_to_clsquery_grounded(
+                                    t.get_name().to_owned(),
+                                    Arc::new(t.clone()),
+                                );
                             }
-                            _ => return Err(()), // not happening ever
+                            _ => return Err(()), // should not happen ever
                         }
                     }
                 }
@@ -1109,9 +1080,9 @@ impl<'b> QueryProcessed<'b> {
                                 if let Some(times) = cdecl.get_time_payload(None) {
                                     t.overwrite_time_data(&times);
                                 }
-                                query.ask_class_memb(t);
+                                query.ask_class_memb(t.clone());
                             }
-                            _ => return Err(()), // not happening ever
+                            _ => return Err(()), // should not happen ever
                         }
                     }
                 }
@@ -1120,8 +1091,7 @@ impl<'b> QueryProcessed<'b> {
             Ok(())
         }
 
-        fn assert_rel(query: &mut QueryProcessed, fdecl: Rc<FuncDecl>) -> Result<(), ()> {
-            let fdecl = unsafe { &*(&*fdecl as *const FuncDecl) as &FuncDecl };
+        fn assert_rel(query: &mut QueryProcessed, fdecl: FuncDecl) -> Result<(), ()> {
             match *fdecl.get_parent() {
                 Terminal::GroundedTerm(_) => {
                     if fdecl.is_grounded() {
@@ -1131,7 +1101,7 @@ impl<'b> QueryProcessed<'b> {
                     } else {
                         for a in fdecl.get_args() {
                             if let Predicate::FreeClsMemb(ref t) = *a {
-                                query.push_to_fnquery_free(t.get_var_ref(), fdecl);
+                                query.push_to_fnquery_free(t.get_var(), fdecl);
                             }
                         }
                     }
@@ -1144,8 +1114,7 @@ impl<'b> QueryProcessed<'b> {
 
         match prequery {
             QueryInput::AskClassMember(cdecl) => {
-                let t = unsafe { &*(&*cdecl as *const GroundedMemb) as &GroundedMemb };
-                let name = t.get_name();
+                let name = cdecl.get_name().to_owned();
                 self.push_to_clsquery_grounded(name, cdecl);
             }
             QueryInput::AskRelationalFunc(fdecl) => {
@@ -1156,20 +1125,13 @@ impl<'b> QueryProcessed<'b> {
                     match parsetree {
                         ParseTree::Assertion(assertions) => {
                             for a in assertions {
-                                if let Err(()) = match a {
+                                match a {
                                     Assert::ClassDecl(cdecl) => {
-                                        let mut cdecl = Rc::new(cdecl);
-                                        assert_memb(&mut self, Rc::get_mut(&mut cdecl).unwrap())?;
-                                        self.cls.push(cdecl);
-                                        Ok(())
+                                        assert_memb(&mut self, cdecl.clone())?;
                                     }
                                     Assert::FuncDecl(fdecl) => {
-                                        self.func.push(Rc::new(fdecl));
-                                        let fdecl = self.func.last().unwrap().clone();
-                                        assert_rel(&mut self, fdecl)
+                                        assert_rel(&mut self, fdecl.clone())?;
                                     }
-                                } {
-                                    return Err(());
                                 }
                             }
                         }
@@ -1178,14 +1140,10 @@ impl<'b> QueryProcessed<'b> {
                             for a in preds {
                                 match a {
                                     Assert::ClassDecl(cdecl) => {
-                                        let mut cdecl = Rc::new(cdecl);
-                                        assert_memb(&mut self, Rc::get_mut(&mut cdecl).unwrap())?;
-                                        self.cls.push(cdecl);
+                                        assert_memb(&mut self, cdecl.clone())?;
                                     }
                                     Assert::FuncDecl(fdecl) => {
-                                        self.func.push(Rc::new(fdecl.clone()));
-                                        let fdecl = self.func.last().unwrap().clone();
-                                        assert_rel(&mut self, fdecl)?;
+                                        assert_rel(&mut self, fdecl.clone())?;
                                     }
                                 }
                             }
@@ -1199,7 +1157,7 @@ impl<'b> QueryProcessed<'b> {
     }
 
     #[inline]
-    fn push_to_clsquery_grounded(&mut self, term: &'b str, cls: Arc<GroundedMemb>) {
+    fn push_to_clsquery_grounded(&mut self, term: String, cls: Arc<GroundedMemb>) {
         self.cls_queries_grounded
             .entry(term)
             .or_insert_with(Vec::new)
@@ -1207,7 +1165,7 @@ impl<'b> QueryProcessed<'b> {
     }
 
     #[inline]
-    fn push_to_clsquery_free(&mut self, term: &'b Var, cls: &'b FreeClsMemb) {
+    fn push_to_clsquery_free(&mut self, term: Arc<Var>, cls: FreeClsMemb) {
         self.cls_queries_free
             .entry(term)
             .or_insert_with(Vec::new)
@@ -1220,7 +1178,7 @@ impl<'b> QueryProcessed<'b> {
     }
 
     #[inline]
-    fn push_to_fnquery_free(&mut self, term: &'b Var, func: &'b FuncDecl) {
+    fn push_to_fnquery_free(&mut self, term: Arc<Var>, func: FuncDecl) {
         self.func_queries_free
             .entry(term)
             .or_insert_with(Vec::new)
@@ -1228,17 +1186,17 @@ impl<'b> QueryProcessed<'b> {
     }
 
     #[inline]
-    fn ask_class_memb(&mut self, term: &'b FreeClassMembership) {
+    fn ask_class_memb(&mut self, term: FreeClassMembership) {
         self.cls_memb_query
-            .entry(term.get_var_ref())
+            .entry(term.get_var())
             .or_insert_with(Vec::new)
             .push(term);
     }
 
     #[inline]
-    fn ask_relationships(&mut self, term: &'b FuncDecl) {
+    fn ask_relationships(&mut self, term: FuncDecl) {
         self.func_memb_query
-            .entry(term.get_parent().get_var_ref())
+            .entry(term.get_parent().get_var())
             .or_insert_with(Vec::new)
             .push(term);
     }

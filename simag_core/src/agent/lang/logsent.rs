@@ -470,50 +470,6 @@ impl fmt::Display for LogSentence {
             particles.extend(format!("{}, ", p).chars());
         }
         let collected: String = format!("Sentence(id: {}, {})", self.id, particles);
-
-        // let prelim: String = format!("Sentence(id: {}, {})", self.id, self.particles[self.root]);
-        // let mut breaks = Vec::new();
-        // let mut depth = 0_usize;
-        // let tab_times = |depth: usize| -> String { iter::repeat("    ").take(depth).collect() };
-        // let mut in_atom = false;
-        // for (i, c) in prelim.chars().enumerate() {
-        //     if c == '(' {
-        //         if (i >= 10) && (&prelim[i - 9..i] == "Predicate") {
-        //             in_atom = true;
-        //             continue;
-        //         }
-        //         depth += 1;
-        //         let s = format!("\n{}", tab_times(depth));
-        //         breaks.push((i + 1, s));
-        //     } else if c == ')' {
-        //         if in_atom {
-        //             in_atom = false;
-        //             continue;
-        //         }
-        //         depth -= 1;
-        //         let s = format!("\n{}", tab_times(depth));
-        //         breaks.push((i, s));
-        //     } else if c == 'n' && &prelim[i..i + 3] == "n1:" {
-        //         let s = format!("\n{}", tab_times(depth));
-        //         breaks.push((i, s));
-        //     }
-        // }
-        // let mut slices = Vec::new();
-        // let mut prev: usize = 0;
-        // for (pos, b) in breaks.drain(..) {
-        //     slices.push(String::from(&prelim[prev..pos]));
-        //     slices.push(b);
-        //     prev = pos;
-        // }
-        // slices.push(String::from(&prelim[prev..]));
-        // let mut collected = String::new();
-        // for s in slices {
-        //     collected.push_str(&s)
-        // }
-        // #[cfg(feature = "tracing")]
-        // {
-        //     collected = collected.split_whitespace().collect::<String>();
-        // }
         write!(f, "{}", collected)
     }
 }

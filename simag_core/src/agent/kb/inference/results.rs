@@ -23,11 +23,11 @@ pub(in crate::agent::kb) struct InfResults<'b> {
     pub grounded_queries: DashMap<QueryPred, GroundedResults<'b>>,
     membership: DashMap<&'b Var, QueryResMemb<'b>>,
     relationships: DashMap<&'b Var, QueryResRels<'b>>,
-    query: Arc<QueryProcessed<'b>>,
+    query: Arc<QueryProcessed>,
 }
 
 impl<'b> InfResults<'b> {
-    pub fn new(query: Arc<QueryProcessed<'b>>) -> InfResults<'b> {
+    pub fn new(query: Arc<QueryProcessed>) -> InfResults<'b> {
         InfResults {
             grounded_queries: DashMap::new(),
             membership: DashMap::new(),
