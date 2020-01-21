@@ -1005,19 +1005,6 @@ where
     }
 }
 
-// impl<'a, T> AsRef<&GrT> for GrTerminalKind<T>
-// where
-//     T: AsRef<str>,
-// {
-//     fn from(s: T) -> GrTerminalKind<T> {
-//         if s.as_ref().starts_with('$') {
-//             GrTerminalKind::Entity(s)
-//         } else {
-//             GrTerminalKind::Class(s)
-//         }
-//     }
-// }
-
 impl<T> std::fmt::Display for GrTerminalKind<T>
 where
     T: AsRef<str>,

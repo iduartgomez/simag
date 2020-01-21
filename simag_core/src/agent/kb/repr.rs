@@ -270,9 +270,7 @@ impl Representation {
             repr: &Representation,
         ) {
             if is_entity {
-                let entity_exists = repr.entities.contains_key(subject);
-                if entity_exists {
-                    let entity = repr.entities.get(subject).unwrap();
+                if let Some(entity) = repr.entities.get(subject) {
                     entity.add_belief(belief.clone(), subject);
                 } else {
                     let entity = Entity::new(subject.to_string());
@@ -280,9 +278,7 @@ impl Representation {
                     repr.entities.insert(subject.to_string(), entity);
                 }
             } else {
-                let class_exists = repr.classes.contains_key(subject);
-                if class_exists {
-                    let class = repr.classes.get(subject).unwrap();
+                if let Some(class) = repr.classes.get(subject) {
                     class.add_belief(belief.clone(), name);
                 } else {
                     let class = Class::new(subject.to_string(), ClassKind::Membership);
@@ -309,11 +305,13 @@ impl Representation {
                     }
                     for arg in cls_decl.get_args() {
                         if !arg.is_var() {
-                            let subject = arg.get_name();
-                            if subject.starts_with('$') {
-                                update(subject, cls_decl.get_name(), true, &belief, self)
-                            } else {
-                                update(subject, cls_decl.get_name(), false, &belief, self)
+                            match arg.get_name().into() {
+                                ClassTerm(class_name) => {
+                                    update(class_name, cls_decl.get_name(), false, &belief, self)
+                                }
+                                EntityTerm(subject_name) => {
+                                    update(subject_name, cls_decl.get_name(), true, &belief, self)
+                                }
                             }
                         }
                     }
@@ -336,11 +334,13 @@ impl Representation {
                     }
                     for arg in fn_decl.get_args() {
                         if !arg.is_var() {
-                            let subject = arg.get_name();
-                            if subject.starts_with('$') {
-                                update(subject, fn_decl.get_name(), true, &belief, self)
-                            } else {
-                                update(subject, fn_decl.get_name(), false, &belief, self)
+                            match arg.get_name().into() {
+                                ClassTerm(class_name) => {
+                                    update(class_name, fn_decl.get_name(), false, &belief, self)
+                                }
+                                EntityTerm(subject_name) => {
+                                    update(subject_name, fn_decl.get_name(), true, &belief, self)
+                                }
                             }
                         }
                     }
@@ -552,14 +552,13 @@ impl Representation {
         &self,
         subject: &FreeClassMembership,
     ) -> Vec<Arc<GroundedMemb>> {
-        let name = subject.get_name();
-        if name.starts_with('$') {
+        if let EntityTerm(name) = subject.get_name().into() {
             if let Some(entity) = self.entities.get(name) {
                 entity.get_class_membership(subject)
             } else {
                 vec![]
             }
-        } else if let Some(class) = self.classes.get(name) {
+        } else if let Some(class) = self.classes.get(subject.get_name()) {
             class.get_class_membership(subject)
         } else {
             vec![]
@@ -571,8 +570,8 @@ impl Representation {
         pred: &GroundedFunc,
         subject: &str,
     ) -> Option<bool> {
-        if subject.starts_with('$') {
-            if let Some(entity) = self.entities.get(subject) {
+        if let EntityTerm(subject_name) = subject.into() {
+            if let Some(entity) = self.entities.get(subject_name) {
                 if let Some(current) = entity.has_relationship(pred) {
                     return current.compare_at_time_intervals(pred);
                 }
@@ -590,8 +589,8 @@ impl Representation {
         pred: &GroundedFunc,
         subject: &str,
     ) -> Option<Arc<GroundedFunc>> {
-        if subject.starts_with('$') {
-            if let Some(entity) = self.entities.get(subject) {
+        if let EntityTerm(subject_name) = subject.into() {
+            if let Some(entity) = self.entities.get(subject_name) {
                 if let Some(current) = entity.has_relationship(pred) {
                     if *current == *pred {
                         return Some(current);
@@ -619,9 +618,8 @@ impl Representation {
         let mut res = HashMap::new();
         for (pos, arg) in func.get_args().iter().enumerate() {
             if !arg.is_var() {
-                let name = arg.get_name();
-                if name.starts_with('$') {
-                    if let Some(entity) = self.entities.get(name) {
+                if let EntityTerm(subject_name) = arg.get_name().into() {
+                    if let Some(entity) = self.entities.get(subject_name) {
                         let mut v: HashMap<&str, Vec<Arc<GroundedFunc>>> =
                             entity.get_relationships(pos, arg);
                         for (_, mut funcs) in v.drain() {
@@ -631,7 +629,7 @@ impl Representation {
                             res.entry(rel).or_insert_with(|| vec![]).append(&mut funcs);
                         }
                     }
-                } else if let Some(class) = self.classes.get(name) {
+                } else if let Some(class) = self.classes.get(arg.get_name()) {
                     let mut v: HashMap<&str, Vec<Arc<GroundedFunc>>> =
                         class.get_relationships(pos, arg);
                     for (_, mut funcs) in v.drain() {
