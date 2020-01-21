@@ -4,10 +4,10 @@ use std::str;
 use std::sync::Arc;
 
 use super::{
-    common::{GroundedRef, Predicate, Terminal},
+    common::{GroundedRef, Predicate},
     fn_decl::FuncDecl,
     logsent::SentID,
-    var::Var,
+    Terminal, Var,
 };
 use crate::agent::{
     kb::bms::BmsWrapper,

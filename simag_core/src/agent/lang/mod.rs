@@ -6,6 +6,7 @@ mod gr_memb;
 mod logsent;
 mod parser;
 mod skolem;
+mod terminal;
 mod var;
 
 use chrono::{DateTime, Utc};
@@ -13,8 +14,7 @@ use std::collections::VecDeque;
 
 pub(super) use self::cls_decl::ClassDecl;
 pub(super) use self::common::{
-    Assert, FreeClassMembership, FreeClsMemb, GrTerminalKind, Grounded, GroundedRef, Predicate,
-    Terminal,
+    Assert, FreeClassMembership, FreeClsMemb, Grounded, GroundedRef, Predicate,
 };
 pub(super) use self::errors::ParseErrF;
 pub(super) use self::fn_decl::FuncDecl;
@@ -23,6 +23,7 @@ pub(super) use self::gr_memb::GroundedMemb;
 pub(super) use self::logsent::{LogSentence, ProofResContext, SentID};
 pub(super) use self::parser::{CompOperator, ParseTree};
 pub(super) use self::skolem::Skolem;
+pub(super) use self::terminal::{GrTerminalKind, Terminal};
 pub(super) use self::var::{Var, VarKind};
 
 /// Takes an owned String and returns the corresponding structure representing

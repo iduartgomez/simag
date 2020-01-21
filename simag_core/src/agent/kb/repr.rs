@@ -216,13 +216,10 @@ impl Representation {
         // it doesn't matter this is overwritten, as if it exists, it exists for all
         let is_new = Rc::new(::std::cell::RefCell::new(true));
         let process_arg = |a: &GroundedMemb| {
-            let subject = a.get_name();
             let is_new1;
-            match subject {
+            match a.get_name() {
                 ClassTerm(class_name) => {
-                    let class_exists = self.classes.contains_key(class_name);
-                    if class_exists {
-                        let class = self.classes.get(class_name).unwrap();
+                    if let Some(class) = self.classes.get(class_name) {
                         is_new1 = class.add_relationship(self, assert, context);
                     } else {
                         let class = Class::new(class_name.to_owned(), ClassKind::Membership);
@@ -232,9 +229,7 @@ impl Representation {
                     }
                 }
                 EntityTerm(subject) => {
-                    let entity_exists = self.entities.contains_key(subject);
-                    if entity_exists {
-                        let entity = self.entities.get(subject).unwrap();
+                    if let Some(entity) = self.entities.get(subject) {
                         is_new1 = entity.add_relationship(self, assert, context);
                     } else {
                         let entity = Entity::new(subject.to_owned());
@@ -291,12 +286,8 @@ impl Representation {
         for p in belief.get_all_predicates() {
             match *p {
                 Assert::ClassDecl(ref cls_decl) => {
-                    let class_exists = self.classes.contains_key(cls_decl.get_name());
-                    if class_exists {
-                        self.classes
-                            .get(cls_decl.get_name())
-                            .unwrap()
-                            .add_belief(belief.clone(), cls_decl.get_name())
+                    if let Some(class) = self.classes.get(cls_decl.get_name()) {
+                        class.add_belief(belief.clone(), cls_decl.get_name());
                     } else {
                         let class =
                             Class::new(cls_decl.get_name().to_string(), ClassKind::Membership);
@@ -320,12 +311,8 @@ impl Representation {
                     if !fn_decl.is_relational() {
                         continue;
                     }
-                    let class_exists = self.classes.contains_key(fn_decl.get_name());
-                    if class_exists {
-                        self.classes
-                            .get(fn_decl.get_name())
-                            .unwrap()
-                            .add_belief(belief.clone(), fn_decl.get_name())
+                    if let Some(class) = self.classes.get(fn_decl.get_name()) {
+                        class.add_belief(belief.clone(), fn_decl.get_name());
                     } else {
                         let class =
                             Class::new(fn_decl.get_name().to_string(), ClassKind::Relationship);
@@ -408,9 +395,7 @@ impl Representation {
         let preds = rule.get_all_predicates();
         for p in preds {
             let name = p.get_name();
-            let class_exists = self.classes.contains_key(name);
-            if class_exists {
-                let class = self.classes.get(name).unwrap();
+            if let Some(class) = self.classes.get(name) {
                 class.add_rule(rule.clone());
             } else {
                 let nc = match *p {
@@ -432,22 +417,20 @@ impl Representation {
     ) -> HashMap<&'b str, Vec<Arc<GroundedMemb>>> {
         let mut dict = HashMap::new();
         for cls in classes {
-            let cls_ref = self.classes.get(*cls);
-            if cls_ref.is_none() {
-                continue;
-            }
-            let mut v = vec![];
-            for e in &**cls_ref.unwrap().members.read() {
-                match *e {
-                    ClassMember::Class(ref m) | ClassMember::Entity(ref m) => {
-                        if m.get_value().is_some() {
-                            v.push(m.clone());
+            if let Some(klass) = self.classes.get(*cls) {
+                let mut v = vec![];
+                for e in &**klass.members.read() {
+                    match *e {
+                        ClassMember::Class(ref m) | ClassMember::Entity(ref m) => {
+                            if m.get_value().is_some() {
+                                v.push(m.clone());
+                            }
                         }
+                        _ => {}
                     }
-                    _ => {}
                 }
+                dict.insert(*cls, v);
             }
-            dict.insert(*cls, v);
         }
         dict
     }
@@ -491,14 +474,8 @@ impl Representation {
     {
         match *subject {
             EntityTerm(ref subject_name) => {
-                let entity_exists = self.entities.contains_key(subject_name.as_ref());
-                if entity_exists {
-                    match self
-                        .entities
-                        .get(subject_name.as_ref())
-                        .unwrap()
-                        .belongs_to_class(class, false)
-                    {
+                if let Some(entity) = self.entities.get(subject_name.as_ref()) {
+                    match entity.belongs_to_class(class, false) {
                         Some(r) => Some(r),
                         None => None,
                     }
@@ -507,14 +484,8 @@ impl Representation {
                 }
             }
             ClassTerm(ref class_name) => {
-                let class_exists = self.classes.contains_key(class_name.as_ref());
-                if class_exists {
-                    match self
-                        .classes
-                        .get(class_name.as_ref())
-                        .unwrap()
-                        .belongs_to_class(class, false)
-                    {
+                if let Some(klass) = self.classes.get(class_name.as_ref()) {
+                    match klass.belongs_to_class(class, false) {
                         Some(r) => Some(r),
                         None => None,
                     }
@@ -528,8 +499,7 @@ impl Representation {
     /// Takes a grounded predicate from a query and returns the membership truth value.
     /// It checks the truth value based on the time intervals of the predicate.
     pub(in crate::agent) fn class_membership_query(&self, pred: &GroundedMemb) -> Option<bool> {
-        let subject = pred.get_name();
-        match subject {
+        match pred.get_name() {
             EntityTerm(subject) => {
                 if let Some(entity) = self.entities.get(subject) {
                     if let Some(current) = entity.belongs_to_class(pred.get_parent(), true) {
@@ -803,9 +773,7 @@ impl Entity {
         } else if lookahead_rules(agent, name, &GroundedRef::Class(&*grounded)) {
             return false;
         }
-        let stmt_exists = self.classes.contains_key(name);
-        if stmt_exists {
-            let current = self.classes.get(name).unwrap();
+        if let Some(current) = self.classes.get(name) {
             if let Some(context) = context {
                 current.update(
                     agent,
@@ -938,10 +906,10 @@ impl Entity {
         } else if lookahead_rules(agent, name, &GroundedRef::Function(&*func)) {
             return false;
         }
-        if self.relations.contains_key(name) {
+        if let Some(rels) = self.relations.get(name) {
             let mut found_rel = false;
             {
-                for f in self.relations.get(name).unwrap().value() {
+                for f in rels.value() {
                     if f.comparable(&*func) {
                         if let Some(context) = context {
                             f.update(
@@ -993,11 +961,8 @@ impl Entity {
     }
 
     fn add_belief(&self, belief: Arc<LogSentence>, parent: &str) {
-        let sent_exists = self.beliefs.contains_key(parent);
-        if sent_exists {
-            if let Some(mut ls) = self.beliefs.get_mut(parent) {
-                ls.push(belief)
-            }
+        if let Some(mut ls) = self.beliefs.get_mut(parent) {
+            ls.push(belief)
         } else {
             self.beliefs.insert(parent.to_string(), vec![belief]);
         }
