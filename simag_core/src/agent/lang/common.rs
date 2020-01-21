@@ -127,9 +127,9 @@ impl<'a> Predicate {
     #[inline]
     pub fn get_name(&self) -> &str {
         match *self {
-            Predicate::GroundedMemb(ref t) => t.get_name(),
+            Predicate::GroundedMemb(ref t) => t.get_name().into(),
             Predicate::FreeClassMembership(ref t) => &t.term,
-            Predicate::FreeClsMemb(_) => panic!(),
+            Predicate::FreeClsMemb(_) => unreachable!(),
         }
     }
 
@@ -880,6 +880,7 @@ impl<'a> OpArgTerm {
         }
     }
 }
+
 #[derive(Debug, PartialEq, Clone, Eq, Hash)]
 pub(in crate::agent) enum Terminal {
     FreeTerm(Arc<Var>),
@@ -965,6 +966,68 @@ impl<'a> Terminal {
         } else {
             panic!()
         }
+    }
+}
+
+/// Represents a grounded, existing, object which can be a single
+/// individual entity or a class of entities.
+#[derive(Debug, PartialEq, Clone, Eq, Hash)]
+pub(in crate::agent) enum GrTerminalKind<T>
+where
+    T: AsRef<str>,
+{
+    Entity(T),
+    Class(T),
+}
+
+impl<'a, T> Into<&'a str> for &'a GrTerminalKind<T>
+where
+    T: AsRef<str>,
+{
+    fn into(self) -> &'a str {
+        match self {
+            GrTerminalKind::Entity(s) => s.as_ref(),
+            GrTerminalKind::Class(s) => s.as_ref(),
+        }
+    }
+}
+
+impl<'a, T> From<T> for GrTerminalKind<T>
+where
+    T: AsRef<str>,
+{
+    fn from(s: T) -> GrTerminalKind<T> {
+        if s.as_ref().starts_with('$') {
+            GrTerminalKind::Entity(s)
+        } else {
+            GrTerminalKind::Class(s)
+        }
+    }
+}
+
+// impl<'a, T> AsRef<&GrT> for GrTerminalKind<T>
+// where
+//     T: AsRef<str>,
+// {
+//     fn from(s: T) -> GrTerminalKind<T> {
+//         if s.as_ref().starts_with('$') {
+//             GrTerminalKind::Entity(s)
+//         } else {
+//             GrTerminalKind::Class(s)
+//         }
+//     }
+// }
+
+impl<T> std::fmt::Display for GrTerminalKind<T>
+where
+    T: AsRef<str>,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let term = match self {
+            GrTerminalKind::Entity(val) => val,
+            GrTerminalKind::Class(val) => val,
+        };
+        write!(f, "{}", term.as_ref())
     }
 }
 

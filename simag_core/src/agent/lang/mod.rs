@@ -13,7 +13,8 @@ use std::collections::VecDeque;
 
 pub(super) use self::cls_decl::ClassDecl;
 pub(super) use self::common::{
-    Assert, FreeClassMembership, FreeClsMemb, Grounded, GroundedRef, Predicate, Terminal,
+    Assert, FreeClassMembership, FreeClsMemb, GrTerminalKind, Grounded, GroundedRef, Predicate,
+    Terminal,
 };
 pub(super) use self::errors::ParseErrF;
 pub(super) use self::fn_decl::FuncDecl;

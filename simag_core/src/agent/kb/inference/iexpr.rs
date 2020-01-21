@@ -125,7 +125,7 @@ impl<'rep> Inference<'rep> {
                 let mut result = None;
 
                 for (i, arg) in pred.get_args().iter().enumerate() {
-                    let obj = arg.get_name();
+                    let obj = arg.get_name().into();
                     if !self.ignore_current {
                         result = self.kb.has_relationship(pred, obj);
                     }
@@ -185,8 +185,11 @@ impl<'rep> Inference<'rep> {
                         let members: Vec<Arc<GroundedMemb>> = cls_curr.get_members(cls);
                         for m in members {
                             let t = unsafe { &*(&*m as *const GroundedMemb) as &'rep GroundedMemb };
-                            self.results
-                                .add_membership(var.clone(), t.get_name(), m.clone());
+                            self.results.add_membership(
+                                var.clone(),
+                                t.get_name().into(),
+                                m.clone(),
+                            );
                         }
                     }
                 }
@@ -223,7 +226,7 @@ impl<'rep> Inference<'rep> {
                     for m in member_of {
                         let t = unsafe { &*(&*m as *const GroundedMemb) as &'rep GroundedMemb };
                         self.results
-                            .add_membership(var.clone(), t.get_name(), m.clone());
+                            .add_membership(var.clone(), t.get_name().into(), m.clone());
                     }
                 }
             });
@@ -265,7 +268,7 @@ impl ActiveQuery {
     #[inline]
     fn get_obj(&self) -> &str {
         match *self {
-            ActiveQuery::Class(ref decl) => decl.get_name(),
+            ActiveQuery::Class(ref decl) => decl.get_name().into(),
             ActiveQuery::Func(pos, ref decl) => decl.get_arg_name(pos),
         }
     }
@@ -810,7 +813,7 @@ pub(in crate::agent::kb) fn meet_sent_requirements<'rep>(
                 let t = &*(&**x as *const GroundedMemb);
                 t.get_name()
             }) {
-                let cnt: &mut usize = meeting_class_req.entry(name).or_insert(0);
+                let cnt: &mut usize = meeting_class_req.entry(name.into()).or_insert(0);
                 *cnt += 1;
             }
         }
@@ -849,7 +852,8 @@ pub(in crate::agent::kb) fn meet_sent_requirements<'rep>(
             let mut gr_relations: HashMap<&str, Vec<Arc<GroundedFunc>>> = HashMap::new();
             for ls in meet_cls_req.values() {
                 for e in ls {
-                    if e.get_name() == name {
+                    let e_name: &str = e.get_name().into();
+                    if e_name == name {
                         let t = unsafe { &*(&**e as *const GroundedMemb) };
                         gr_memb.insert(t.get_parent(), e.clone());
                     }
@@ -1068,10 +1072,9 @@ impl QueryProcessed {
                                 if let Some(times) = cdecl.get_time_payload(t.get_value()) {
                                     t.overwrite_time_data(&times);
                                 }
-                                query.push_to_clsquery_grounded(
-                                    t.get_name().to_owned(),
-                                    Arc::new(t.clone()),
-                                );
+                                let cls: &str = t.get_name().into();
+                                query
+                                    .push_to_clsquery_grounded(cls.to_owned(), Arc::new(t.clone()));
                             }
                             _ => return Err(()), // should not happen ever
                         }
@@ -1118,8 +1121,8 @@ impl QueryProcessed {
 
         match prequery {
             QueryInput::AskClassMember(cdecl) => {
-                let name = cdecl.get_name().to_owned();
-                self.push_to_clsquery_grounded(name, cdecl);
+                let name: &str = cdecl.get_name().into();
+                self.push_to_clsquery_grounded(name.to_owned(), cdecl);
             }
             QueryInput::AskRelationalFunc(fdecl) => {
                 self.func_queries_grounded.push(fdecl);

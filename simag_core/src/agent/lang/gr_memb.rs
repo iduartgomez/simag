@@ -8,7 +8,7 @@ use super::{
     errors::ParseErrF,
     logsent::{ParseContext, SentID},
     parser::{CompOperator, Number, UVal},
-    Time,
+    GrTerminalKind, Time,
 };
 use crate::agent::{kb::bms::BmsWrapper, kb::repr::Representation};
 use crate::FLOAT_EQ_ULPS;
@@ -19,7 +19,7 @@ use crate::FLOAT_EQ_ULPS;
 /// sentences or processed from `ClassDecl` on `tell` mode.
 #[derive(Debug)]
 pub(in crate::agent) struct GroundedMemb {
-    pub(in crate::agent::lang) term: String,
+    pub(in crate::agent::lang) term: GrTerminalKind<String>,
     pub(in crate::agent::lang) value: RwLock<Option<f32>>,
     pub(in crate::agent::lang) operator: Option<CompOperator>,
     pub(in crate::agent::lang) parent: String,
@@ -93,7 +93,7 @@ impl GroundedMemb {
             bms = None;
         }
         Ok(GroundedMemb {
-            term,
+            term: term.into(),
             value: RwLock::new(val),
             operator: op,
             parent,
@@ -103,7 +103,8 @@ impl GroundedMemb {
 
     pub(in crate::agent::lang) fn generate_uid(&self) -> Vec<u8> {
         let mut id: Vec<u8> = vec![];
-        id.append(&mut Vec::from(self.term.as_bytes()));
+        let term_str: &str = (&self.term).into();
+        id.append(&mut Vec::from(term_str.as_bytes()));
         if let Some(ref cmp) = self.operator {
             cmp.generate_uid(&mut id);
         }
@@ -116,8 +117,8 @@ impl GroundedMemb {
     }
 
     #[inline]
-    pub fn get_name(&self) -> &str {
-        &*self.term
+    pub fn get_name(&self) -> &GrTerminalKind<String> {
+        &self.term
     }
 
     #[inline]
@@ -179,7 +180,7 @@ impl GroundedMemb {
             None
         };
         GroundedMemb {
-            term: assignment.to_string(),
+            term: GrTerminalKind::from(assignment.to_string()),
             value: RwLock::new(val),
             operator: op,
             parent: free.parent.get_name().to_string(),
@@ -189,7 +190,7 @@ impl GroundedMemb {
 
     #[inline]
     pub fn comparable(&self, other: &GroundedMemb) -> bool {
-        if self.term != other.get_name() {
+        if &self.term != other.get_name() {
             return false;
         }
         if self.parent != other.parent {

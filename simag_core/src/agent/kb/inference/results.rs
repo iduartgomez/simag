@@ -108,15 +108,9 @@ impl<'b> InfResults<'b> {
                 for gr in members {
                     // Safety: this is safe because gr lives for the duration of a repr further
                     // up the stack that outlives self
-                    let gr = unsafe { &*(&**gr as *const GroundedMemb) as &'b GroundedMemb };
-                    if res.contains_key(gr.get_name()) {
-                        let prev = res.get_mut(gr.get_name()).unwrap();
-                        prev.push(gr);
-                    } else {
-                        let mut new = vec![];
-                        new.push(gr);
-                        res.insert(gr.get_name(), new);
-                    }
+                    let gr = unsafe { mem::transmute::<&GroundedMemb, &'b GroundedMemb>(gr) };
+                    let gr_name: &str = gr.get_name().into();
+                    res.entry(gr_name).or_insert_with(Vec::new).push(gr);
                 }
             }
         }

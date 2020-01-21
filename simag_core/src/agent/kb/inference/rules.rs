@@ -6,8 +6,8 @@ use chrono::Utc;
 use crate::agent::{
     kb::VarAssignment,
     lang::{
-        Grounded, GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ProofResContext, SentID,
-        Time, Var,
+        GrTerminalKind, Grounded, GroundedFunc, GroundedMemb, GroundedRef, LogSentence,
+        ProofResContext, SentID, Time, Var,
     },
     Representation,
 };
@@ -80,7 +80,9 @@ pub(in crate::agent::kb) fn rules_inference_rollback(
             let cls_name = p.get_name();
             for decl in p.unwrap_cls_as_ref().get_args() {
                 let obj_name = decl.get_name();
-                if let Some(decl) = agent.get_obj_from_class(cls_name, obj_name) {
+                if let Some(decl) =
+                    agent.get_obj_from_class(cls_name, &GrTerminalKind::from(obj_name))
+                {
                     gr_classes.push(decl);
                 }
             }

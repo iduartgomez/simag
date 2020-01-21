@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::sync::{atomic::AtomicBool, Arc};
 
-use super::*;
+use super::{
+    common::*,
+    logsent::{LogSentResolution, ParseContext},
+    parser::ClassDeclBorrowed,
+    *,
+};
 use crate::agent::kb::{bms::BmsWrapper, repr::Representation, VarAssignment};
-use common::*;
-use logsent::{LogSentResolution, ParseContext};
-use parser::ClassDeclBorrowed;
 
 #[derive(Debug, Clone)]
 pub(in crate::agent) struct ClassDecl {

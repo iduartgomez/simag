@@ -139,21 +139,21 @@ impl GroundedFunc {
 
     pub fn get_args_names(&self) -> Vec<&str> {
         let mut v = Vec::with_capacity(3);
-        v.push(self.args[0].get_name());
-        v.push(self.args[1].get_name());
+        v.push(self.args[0].get_name().into());
+        v.push(self.args[1].get_name().into());
         if let Some(ref arg) = self.third {
-            v.push(arg.get_name());
+            v.push(arg.get_name().into());
         }
         v
     }
 
     pub fn get_arg_name(&self, pos: usize) -> &str {
         match pos {
-            0 => self.args[0].get_name(),
-            1 => self.args[1].get_name(),
+            0 => self.args[0].get_name().into(),
+            1 => self.args[1].get_name().into(),
             _ => {
                 if let Some(ref arg) = self.third {
-                    arg.get_name()
+                    arg.get_name().into()
                 } else {
                     panic!()
                 }
@@ -162,11 +162,13 @@ impl GroundedFunc {
     }
 
     pub fn name_in_pos(&self, name: &str, pos: usize) -> bool {
-        if (pos < 2) && (self.args[pos].get_name() == name) {
+        if (pos < 2) && (Into::<&str>::into(self.args[pos].get_name()) == name) {
             return true;
         }
-        if self.third.is_some() && self.third.as_ref().unwrap().get_name() == name {
-            return true;
+        if let Some(ref o_name) = self.third {
+            if Into::<&str>::into(o_name.get_name()) == name {
+                return true;
+            }
         }
         false
     }

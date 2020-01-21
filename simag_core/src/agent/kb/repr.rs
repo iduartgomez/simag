@@ -17,9 +17,10 @@ use crate::agent::kb::{
     VarAssignment,
 };
 use crate::agent::lang::{
-    logic_parser, Assert, ClassDecl, CompOperator, FreeClassMembership, FuncDecl, Grounded,
-    GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ParseErrF, ParseTree, Predicate,
-    ProofResContext, Var,
+    logic_parser, Assert, ClassDecl, CompOperator, FreeClassMembership, FuncDecl, GrTerminalKind,
+    GrTerminalKind::{Class as ClassTerm, Entity as EntityTerm},
+    Grounded, GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ParseErrF, ParseTree,
+    Predicate, ProofResContext, Var,
 };
 use crate::FLOAT_EQ_ULPS;
 
@@ -171,31 +172,34 @@ impl Representation {
         }
         let decl;
         let is_new: bool;
-        if (assert.get_name()).starts_with('$') {
-            let entity_exists = self.entities.contains_key(assert.get_name());
-            if entity_exists {
-                let entity = self.entities.get(assert.get_name()).unwrap();
-                is_new = entity.add_class_membership(self, assert, context);
-                decl = ClassMember::Entity(assert.clone());
-            } else {
-                let entity = Entity::new(assert.get_name().to_string());
-                self.entities.insert(entity.name.clone(), entity);
-                let entity = self.entities.get(assert.get_name()).unwrap();
-                is_new = entity.add_class_membership(self, assert, context);
-                decl = ClassMember::Entity(assert.clone());
+        match assert.get_name() {
+            ClassTerm(class_name) => {
+                let class_exists = self.classes.contains_key(class_name);
+                if class_exists {
+                    let class = self.classes.get(class_name).unwrap();
+                    is_new = class.add_class_membership(self, assert, context);
+                    decl = ClassMember::Class(assert.clone());
+                } else {
+                    let class = Class::new(class_name.to_owned(), ClassKind::Membership);
+                    self.classes.insert(class.name.clone(), class);
+                    let class = self.classes.get(class_name).unwrap();
+                    is_new = class.add_class_membership(self, assert, context);
+                    decl = ClassMember::Class(assert.clone());
+                }
             }
-        } else {
-            let class_exists = self.classes.contains_key(assert.get_name());
-            if class_exists {
-                let class = self.classes.get(assert.get_name()).unwrap();
-                is_new = class.add_class_membership(self, assert, context);
-                decl = ClassMember::Class(assert.clone());
-            } else {
-                let class = Class::new(assert.get_name().to_string(), ClassKind::Membership);
-                self.classes.insert(class.name.clone(), class);
-                let class = self.classes.get(assert.get_name()).unwrap();
-                is_new = class.add_class_membership(self, assert, context);
-                decl = ClassMember::Class(assert.clone());
+            EntityTerm(subject) => {
+                let entity_exists = self.entities.contains_key(subject);
+                if entity_exists {
+                    let entity = self.entities.get(subject).unwrap();
+                    is_new = entity.add_class_membership(self, assert, context);
+                    decl = ClassMember::Entity(assert.clone());
+                } else {
+                    let entity = Entity::new(subject.to_string());
+                    self.entities.insert(entity.name.clone(), entity);
+                    let entity = self.entities.get(subject).unwrap();
+                    is_new = entity.add_class_membership(self, assert, context);
+                    decl = ClassMember::Entity(assert.clone());
+                }
             }
         }
         if is_new {
@@ -214,27 +218,30 @@ impl Representation {
         let process_arg = |a: &GroundedMemb| {
             let subject = a.get_name();
             let is_new1;
-            if (subject).starts_with('$') {
-                let entity_exists = self.entities.contains_key(subject);
-                if entity_exists {
-                    let entity = self.entities.get(subject).unwrap();
-                    is_new1 = entity.add_relationship(self, assert, context);
-                } else {
-                    let entity = Entity::new(subject.to_string());
-                    self.entities.insert(entity.name.clone(), entity);
-                    let entity = self.entities.get(subject).unwrap();
-                    is_new1 = entity.add_relationship(self, assert, context);
+            match subject {
+                ClassTerm(class_name) => {
+                    let class_exists = self.classes.contains_key(class_name);
+                    if class_exists {
+                        let class = self.classes.get(class_name).unwrap();
+                        is_new1 = class.add_relationship(self, assert, context);
+                    } else {
+                        let class = Class::new(class_name.to_owned(), ClassKind::Membership);
+                        self.classes.insert(class.name.clone(), class);
+                        let class = self.classes.get(class_name).unwrap();
+                        is_new1 = class.add_relationship(self, assert, context);
+                    }
                 }
-            } else {
-                let class_exists = self.classes.contains_key(subject);
-                if class_exists {
-                    let class = self.classes.get(subject).unwrap();
-                    is_new1 = class.add_relationship(self, assert, context);
-                } else {
-                    let class = Class::new(subject.to_string(), ClassKind::Membership);
-                    self.classes.insert(class.name.clone(), class);
-                    let class = self.classes.get(subject).unwrap();
-                    is_new1 = class.add_relationship(self, assert, context);
+                EntityTerm(subject) => {
+                    let entity_exists = self.entities.contains_key(subject);
+                    if entity_exists {
+                        let entity = self.entities.get(subject).unwrap();
+                        is_new1 = entity.add_relationship(self, assert, context);
+                    } else {
+                        let entity = Entity::new(subject.to_owned());
+                        self.entities.insert(entity.name.clone(), entity);
+                        let entity = self.entities.get(subject).unwrap();
+                        is_new1 = entity.add_relationship(self, assert, context);
+                    }
                 }
             }
             let new_check = is_new.clone();
@@ -473,40 +480,47 @@ impl Representation {
         dict
     }
 
-    pub(in crate::agent) fn get_obj_from_class(
+    pub(in crate::agent) fn get_obj_from_class<G, S>(
         &self,
         class: &str,
-        subject: &str,
-    ) -> Option<Arc<GroundedMemb>> {
-        if subject.starts_with('$') {
-            let entity_exists = self.entities.contains_key(subject);
-            if entity_exists {
-                match self
-                    .entities
-                    .get(subject)
-                    .unwrap()
-                    .belongs_to_class(class, false)
-                {
-                    Some(r) => Some(r),
-                    None => None,
+        subject: G,
+    ) -> Option<Arc<GroundedMemb>>
+    where
+        G: std::ops::Deref<Target = GrTerminalKind<S>>,
+        S: AsRef<str>,
+    {
+        match *subject {
+            EntityTerm(ref subject_name) => {
+                let entity_exists = self.entities.contains_key(subject_name.as_ref());
+                if entity_exists {
+                    match self
+                        .entities
+                        .get(subject_name.as_ref())
+                        .unwrap()
+                        .belongs_to_class(class, false)
+                    {
+                        Some(r) => Some(r),
+                        None => None,
+                    }
+                } else {
+                    None
                 }
-            } else {
-                None
             }
-        } else {
-            let class_exists = self.classes.contains_key(subject);
-            if class_exists {
-                match self
-                    .classes
-                    .get(subject)
-                    .unwrap()
-                    .belongs_to_class(class, false)
-                {
-                    Some(r) => Some(r),
-                    None => None,
+            ClassTerm(ref class_name) => {
+                let class_exists = self.classes.contains_key(class_name.as_ref());
+                if class_exists {
+                    match self
+                        .classes
+                        .get(class_name.as_ref())
+                        .unwrap()
+                        .belongs_to_class(class, false)
+                    {
+                        Some(r) => Some(r),
+                        None => None,
+                    }
+                } else {
+                    None
                 }
-            } else {
-                None
             }
         }
     }
@@ -515,15 +529,20 @@ impl Representation {
     /// It checks the truth value based on the time intervals of the predicate.
     pub(in crate::agent) fn class_membership_query(&self, pred: &GroundedMemb) -> Option<bool> {
         let subject = pred.get_name();
-        if subject.starts_with('$') {
-            if let Some(entity) = self.entities.get(subject) {
-                if let Some(current) = entity.belongs_to_class(pred.get_parent(), true) {
-                    return current.compare_at_time_intervals(pred);
+        match subject {
+            EntityTerm(subject) => {
+                if let Some(entity) = self.entities.get(subject) {
+                    if let Some(current) = entity.belongs_to_class(pred.get_parent(), true) {
+                        return current.compare_at_time_intervals(pred);
+                    }
                 }
             }
-        } else if let Some(class) = self.classes.get(subject) {
-            if let Some(current) = class.belongs_to_class(pred.get_parent(), true) {
-                return current.compare_at_time_intervals(pred);
+            ClassTerm(class_name) => {
+                if let Some(class) = self.classes.get(class_name) {
+                    if let Some(current) = class.belongs_to_class(pred.get_parent(), true) {
+                        return current.compare_at_time_intervals(pred);
+                    }
+                }
             }
         }
         None
