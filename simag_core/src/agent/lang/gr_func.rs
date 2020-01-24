@@ -38,8 +38,10 @@ impl std::cmp::Eq for GroundedFunc {}
 
 impl GroundedFunc {
     pub fn compare_at_time_intervals(&self, pred: &GroundedFunc) -> Option<bool> {
+        // block both BMS for the duration of the comparison
+        &*self.bms.acquire_read_lock();
+        &*pred.bms.acquire_read_lock();
         if let Some(time) = pred.bms.is_predicate() {
-            // FIXME: Potentially buggy check times as it could be updated concurrently
             let time_pred = pred.bms.get_last_date();
             let val_lhs = pred.bms.get_last_value();
             let val_rhs = if time_pred < *time {

@@ -133,7 +133,7 @@ impl Representation {
     }
 
     /// Asks the KB if some fact is true and returns the answer to the query.
-    pub fn ask(&self, source: &str) -> Result<Answer, QueryErr> {
+    pub fn ask(&mut self, source: &str) -> Result<Answer, QueryErr> {
         let queries = logic_parser(source, false, &self.threads);
         if let Ok(queries) = queries {
             let pres = QueryInput::ManyQueries(queries);

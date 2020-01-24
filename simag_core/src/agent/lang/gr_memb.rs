@@ -269,6 +269,9 @@ impl GroundedMemb {
         }
         let self_bms = &**self.bms.as_ref().unwrap();
         let pred_bms = &**pred.bms.as_ref().unwrap();
+        // block both BMS for the duration of the comparison
+        &*self_bms.acquire_read_lock();
+        &*pred_bms.acquire_read_lock();
 
         if let Some(time) = pred_bms.is_predicate() {
             let op_rhs = self.operator.unwrap();
@@ -295,16 +298,19 @@ impl std::cmp::PartialEq for GroundedMemb {
         if self.term != other.term || self.parent != other.parent {
             return false;
         }
-        let op_lhs;
+        // Block the values being compared for the duration of the comparison
+        let self_value_lock = &*self.value.read();
+        let other_value_lock = &*other.value.read();
         let op_rhs;
+        let op_lhs;
         if let Some(op) = other.operator {
             op_lhs = self.operator.unwrap();
             op_rhs = op;
         } else {
-            return *self.value.read() == *other.value.read();
+            return *self_value_lock == *other_value_lock;
         }
-        let val_lhs: Option<f32> = *self.value.read();
-        let val_rhs: Option<f32> = *other.value.read();
+        let val_lhs: Option<f32> = *self_value_lock;
+        let val_rhs: Option<f32> = *other_value_lock;
         Self::compare_two_grounded_eq(val_lhs, val_rhs, op_lhs, op_rhs)
     }
 }

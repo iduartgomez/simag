@@ -10,7 +10,7 @@ use super::{inference::QueryInput, repr::Representation};
 use crate::agent::lang::{Grounded, GroundedRef, ProofResContext, SentID, Time};
 
 use chrono::Utc;
-use parking_lot::RwLock;
+use parking_lot::{RwLock, RwLockReadGuard};
 
 use std::cmp::Ordering as CmpOrdering;
 use std::mem;
@@ -67,6 +67,13 @@ impl BmsWrapper {
     /// Look for all the changes that were produced, before an update,
     /// due to this belief previous value and test if they still apply.
     /// If the facts no longer hold true rollback them.
+    ///
+    /// Caveat: this implementation is actually not solid and is potentially racey
+    /// because the inner checks for rollbacks could potentially provoque inconsistencies
+    /// when subsequent checks are recursively performed. This is hard to provoque because
+    /// a Representation is performing one query at the same time and is guaranteed
+    /// to be uniquely hold as both `tell` and `ask` require a unique reference, but
+    /// with the right combination of queries it could happen.
     pub fn update(
         &self,
         owner: &GroundedRef,
@@ -80,14 +87,12 @@ impl BmsWrapper {
                     let func = func.upgrade().unwrap();
                     // check if indeed the value was produced by this producer or is more recent
                     let mut ask = false;
-                    {
-                        let lock = func.bms.records.read();
-                        let last = lock.last().unwrap();
-                        if last.time > *cmp_rec {
-                            // if it was produced, run again a test against the kb to check
-                            // if it is still valid
-                            ask = true;
-                        }
+                    let func_lock = func.bms.records.read();
+                    let last = func_lock.last().unwrap();
+                    if last.time > *cmp_rec {
+                        // if it was produced, run again a test against the kb to check
+                        // if it is still valid
+                        ask = true;
                     }
                     if ask {
                         let answ = agent
@@ -98,15 +103,12 @@ impl BmsWrapper {
                             let bms = &func.bms;
                             let mut time: Option<Time> = None;
                             let mut value: Option<f32> = None;
-                            {
-                                let lock = bms.records.read();
-                                let recs = (*lock).iter();
-                                for rec in recs.rev() {
-                                    if rec.was_produced.is_none() {
-                                        time = Some(rec.time);
-                                        value = rec.value;
-                                        break;
-                                    }
+                            let recs = (*func_lock).iter();
+                            for rec in recs.rev() {
+                                if rec.was_produced.is_none() {
+                                    time = Some(rec.time);
+                                    value = rec.value;
+                                    break;
                                 }
                             }
                             func.update_value(value);
@@ -415,8 +417,8 @@ impl BmsWrapper {
     /// the ordering of self vs. other.
     pub fn cmp_by_time(&self, other: &BmsWrapper) -> CmpOrdering {
         let lock0 = &*self.records.read();
-        let own_last_time = &lock0.last().unwrap().time;
         let lock1 = &*other.records.read();
+        let own_last_time = &lock0.last().unwrap().time;
         let other_last_time = &lock1.last().unwrap().time;
         own_last_time.cmp(other_last_time)
     }
@@ -489,6 +491,10 @@ impl BmsWrapper {
     pub fn is_predicate(&self) -> Option<&Time> {
         self.pred.as_ref()
     }
+
+    pub fn acquire_read_lock(&self) -> RwLockReadGuard<Vec<BmsRecord>> {
+        self.records.read()
+    }
 }
 
 impl std::clone::Clone for BmsWrapper {
@@ -517,7 +523,7 @@ impl std::iter::Iterator for TimeValueIterator {
 /// Record of how a belief became to existence and what other believes
 /// it has produced since then.
 #[derive(Debug, Clone)]
-struct BmsRecord {
+pub(in crate::agent) struct BmsRecord {
     produced: Vec<(Grounded, Option<f32>)>,
     time: Time,
     value: Option<f32>,

@@ -26,7 +26,7 @@ impl Agent {
         }
     }
 
-    pub fn ask(&self, source: &str) -> Result<kb::repr::Answer, kb::repr::QueryErr> {
+    pub fn ask(&mut self, source: &str) -> Result<kb::repr::Answer, kb::repr::QueryErr> {
         self.representation.ask(source)
     }
 
