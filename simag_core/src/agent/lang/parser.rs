@@ -1261,7 +1261,6 @@ fn is_multispace(chr: u8) -> bool {
 
 #[cfg(test)]
 mod test {
-    
     use super::*;
     use super::{class_decl, func_decl};
     use std::str;

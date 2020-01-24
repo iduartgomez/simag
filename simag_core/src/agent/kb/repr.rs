@@ -149,14 +149,11 @@ impl Representation {
         depth: usize,
         ignore_current: bool,
     ) -> Result<Answer, QueryErr> {
-        let mut inf = match Inference::try_new(self, source, depth, ignore_current, &self.threads) {
+        let inf = match Inference::try_new(self, source, depth, ignore_current, &self.threads) {
             Ok(inf) => inf,
             Err(()) => return Err(QueryErr::QueryErr),
         };
-        {
-            let inf_r = unsafe { &mut *(&mut inf as *mut Inference) };
-            inf_r.infer_facts();
-        }
+        inf.infer_facts();
         Ok(inf.get_results())
     }
 
@@ -593,9 +590,11 @@ impl Representation {
                         let mut v: HashMap<&str, Vec<Arc<GroundedFunc>>> =
                             entity.get_relationships(pos, arg);
                         for (_, mut funcs) in v.drain() {
-                            // guaranteed this lives as long as self
-                            let t = unsafe { &*(&*funcs[0] as *const GroundedFunc) };
-                            let rel = t.get_name();
+                            // Safety: guaranteed this lives as long as self and mutable borrows don't leak
+                            // return type is: (&'a str, Arc<GrFunc>) where &'str lives as long as Arc<GrFunc>
+                            // &'a str must NOT outlive (nor leak from) this Repr, this would be UB,
+                            let rel =
+                                unsafe { std::mem::transmute::<&str, &str>(&funcs[0].get_name()) };
                             res.entry(rel).or_insert_with(|| vec![]).append(&mut funcs);
                         }
                     }
@@ -603,9 +602,11 @@ impl Representation {
                     let mut v: HashMap<&str, Vec<Arc<GroundedFunc>>> =
                         class.get_relationships(pos, arg);
                     for (_, mut funcs) in v.drain() {
-                        // guaranteed this lives as long as self
-                        let t = unsafe { &*(&*funcs[0] as *const GroundedFunc) };
-                        let rel = t.get_name();
+                        // Safety: guaranteed this lives as long as self and mutable borrows don't leak
+                        // return type is: (&'a str, Arc<GrFunc>) where &'str lives as long as Arc<GrFunc>
+                        // &'a str must NOT outlive (nor leak from) this Repr, this would be UB,
+                        let rel =
+                            unsafe { std::mem::transmute::<&str, &str>(&funcs[0].get_name()) };
                         res.entry(rel).or_insert_with(|| vec![]).append(&mut funcs);
                     }
                 }
@@ -823,9 +824,10 @@ impl Entity {
         for relations in self.relations.iter() {
             for f in relations.value() {
                 if f.name_in_pos(&*self.name, pos) {
-                    // guaranteed this lives as long as self
-                    let t = unsafe { &*(&**f as *const GroundedFunc) };
-                    let rel_name = t.get_name();
+                    // Safety: guaranteed this lives as long as self and mutable borrows don't leak
+                    // return type is: (&'a str, Arc<GrFunc>) where &'a str lives as long as Arc<GrFunc>
+                    // &'a str must NOT outlive (nor leak from) this Repr, this would be UB,
+                    let rel_name = unsafe { std::mem::transmute::<&str, &str>(&f.get_name()) };
                     match op {
                         None => res
                             .entry(rel_name)

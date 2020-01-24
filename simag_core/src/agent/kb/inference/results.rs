@@ -19,15 +19,15 @@ type QueryResRels<'a> = HashMap<ObjName<'a>, Vec<Arc<GroundedFunc>>>;
 /// The data can be manipulated and filtered throught various methods returning
 /// whatever is requested by the consumer.
 #[derive(Debug)]
-pub(in crate::agent::kb) struct InfResults<'b> {
-    pub grounded_queries: DashMap<QueryPred, GroundedResults<'b>>,
-    membership: DashMap<Arc<Var>, QueryResMemb<'b>>,
-    relationships: DashMap<Arc<Var>, QueryResRels<'b>>,
+pub(in crate::agent::kb) struct InfResults<'rep> {
+    pub grounded_queries: DashMap<QueryPred, GroundedResults<'rep>>,
+    membership: DashMap<Arc<Var>, QueryResMemb<'rep>>,
+    relationships: DashMap<Arc<Var>, QueryResRels<'rep>>,
     query: Arc<QueryProcessed>,
 }
 
-impl<'b> InfResults<'b> {
-    pub fn new(query: Arc<QueryProcessed>) -> InfResults<'b> {
+impl<'rep> InfResults<'rep> {
+    pub fn new(query: Arc<QueryProcessed>) -> InfResults<'rep> {
         InfResults {
             grounded_queries: DashMap::new(),
             membership: DashMap::new(),
@@ -36,7 +36,7 @@ impl<'b> InfResults<'b> {
         }
     }
 
-    pub fn add_membership(&self, var: Arc<Var>, name: &'b str, membership: Arc<GroundedMemb>) {
+    pub fn add_membership(&self, var: Arc<Var>, name: &'rep str, membership: Arc<GroundedMemb>) {
         self.membership
             .entry(var)
             .or_insert_with(HashMap::new)
@@ -48,9 +48,8 @@ impl<'b> InfResults<'b> {
     pub fn add_relationships(&self, var: Arc<Var>, rel: &[Arc<GroundedFunc>]) {
         for func in rel {
             for obj in func.get_args_names() {
-                // Safety: obj lives for the duration of var as both are borrowed
-                // from a repr further up the stack
-                let obj = unsafe { std::mem::transmute::<&str, &'b str>(obj) };
+                // Safety: guaranteed this lives as long as Self<'rep> where 'rep is the lifetime of the owning Rep 
+                let obj = unsafe { std::mem::transmute::<&str, &'rep str>(obj) };
                 self.relationships
                     .entry(var.clone())
                     .or_insert_with(HashMap::new)
@@ -62,9 +61,8 @@ impl<'b> InfResults<'b> {
     }
 
     pub fn add_grounded(&self, obj: &str, pred: &str, res: Option<(bool, Option<Time>)>) {
-        // Safety: obj lives for the duration of var as both are borrowed
-        // from a repr further up the stack
-        let obj = unsafe { std::mem::transmute::<&str, &'b str>(obj) };
+        // Safety: guaranteed this lives as long as Self<'rep> where 'rep is the lifetime of the owning Rep 
+        let obj = unsafe { std::mem::transmute::<&str, &'rep str>(obj) };
         self.grounded_queries
             .entry(pred.to_string())
             .or_insert_with(HashMap::new)
@@ -101,14 +99,13 @@ impl<'b> InfResults<'b> {
         res
     }
 
-    pub fn get_memberships(&self) -> HashMap<ObjName<'b>, Vec<&'b GroundedMemb>> {
-        let mut res: HashMap<ObjName<'b>, Vec<&GroundedMemb>> = HashMap::new();
+    pub fn get_memberships(&self) -> HashMap<ObjName<'rep>, Vec<&'rep GroundedMemb>> {
+        let mut res: HashMap<ObjName<'rep>, Vec<&GroundedMemb>> = HashMap::new();
         for preds in self.membership.iter() {
             for members in preds.values() {
                 for gr in members {
-                    // Safety: this is safe because gr lives for the duration of a repr further
-                    // up the stack that outlives self
-                    let gr = unsafe { mem::transmute::<&GroundedMemb, &'b GroundedMemb>(gr) };
+                    // Safety: guaranteed this lives as long as Self<'rep> where 'rep is the lifetime of the owning Rep 
+                    let gr = unsafe { mem::transmute::<&GroundedMemb, &'rep GroundedMemb>(gr) };
                     let gr_name: &str = gr.get_name().into();
                     res.entry(gr_name).or_insert_with(Vec::new).push(gr);
                 }
@@ -117,16 +114,15 @@ impl<'b> InfResults<'b> {
         res
     }
 
-    pub fn get_relationships(&self) -> HashMap<ObjName<'b>, Vec<&'b GroundedFunc>> {
-        let mut res: HashMap<ObjName<'b>, HashSet<*const GroundedFunc>> = HashMap::new();
+    pub fn get_relationships(&self) -> HashMap<ObjName<'rep>, Vec<&'rep GroundedFunc>> {
+        let mut res: HashMap<ObjName<'rep>, HashSet<*const GroundedFunc>> = HashMap::new();
         for relations in self.relationships.iter() {
             for relation_ls in relations.values() {
                 for grfunc in relation_ls {
                     for name in grfunc.get_args_names() {
                         unsafe {
-                            // Safety: safe because gr lives for the duration of a repr further
-                            // up the stack that outlives self
-                            let name = mem::transmute::<&str, &'b str>(name);
+                            // Safety: guaranteed this lives as long as Self<'rep> where 'rep is the lifetime of the owning Rep 
+                            let name = mem::transmute::<&str, &'rep str>(name);
                             if res.contains_key(name) {
                                 let prev = res.get_mut(name).unwrap();
                                 prev.insert(&**grfunc as *const GroundedFunc);
@@ -144,7 +140,10 @@ impl<'b> InfResults<'b> {
             (
                 k,
                 l.into_iter()
-                    .map(|v| unsafe { &*v as &'b GroundedFunc })
+                    .map(|v| 
+                        // Safety: guaranteed this lives as long as Self<'rep> where 'rep is the lifetime of the owning Rep 
+                        unsafe { std::mem::transmute::<&GroundedFunc, &'rep GroundedFunc>(&*v) }
+                )
                     .collect::<Vec<_>>(),
             )
         }))

@@ -42,6 +42,7 @@ pub(in crate::agent) fn logic_parser(
 
 pub type Time = DateTime<Utc>;
 
+#[inline]
 fn reserved(s: &str) -> bool {
     match s {
         "let" | "time_calc" | "exists" | "fn" | "time" | "overwrite" | "ow" | "self" | "none" => {

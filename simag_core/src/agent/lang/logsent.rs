@@ -1235,18 +1235,6 @@ impl Particle {
             Particle::Atom(p, _) => *p,
         }
     }
-
-    // #[inline]
-    // fn update_pos(&mut self, new: usize) {
-    //     match self {
-    //         Particle::Conjunction(ref mut p, _) => *p = new,
-    //         Particle::Disjunction(ref mut p, _) => *p = new,
-    //         Particle::Implication(ref mut p, _) => *p = new,
-    //         Particle::Equivalence(ref mut p, _) => *p = new,
-    //         Particle::IndConditional(ref mut p, _) => *p = new,
-    //         Particle::Atom(ref mut p, _) => *p = new,
-    //     }
-    // }
 }
 
 impl fmt::Display for Particle {
