@@ -11,21 +11,20 @@ chrono = "0.4.10"
 rayon = "1.3.0"
 num_cpus = "^1.12.0"
 log = "0.4.8"
-dashmap = "3.2.1"
+dashmap = "^3.2.0"
 parking_lot = "0.10"
 
 # own packages
 simag_terminal = { path = "../simag_terminal" }
 
 # optionals
-once_cell = "1.2.0"
-env_logger = { version = "0.7.1", optional = true}
+once_cell = "^1.3.0"
+env_logger = "0.7.1"
 
 # bin deps
 ansi_term = { version = "0.12.1", optional = true }
 
 [features]
-tracing = ["env_logger"]
 binaries = ["ansi_term"]
 
 [[bin]]

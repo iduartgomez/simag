@@ -55,9 +55,9 @@ impl Default for Representation {
 
 impl Representation {
     pub fn new(threads: usize) -> Representation {
-        #[cfg(feature = "tracing")]
+        #[cfg(debug_assertions)]
         {
-            super::tracing::Logger::get_logger();
+            crate::agent::conf::tracing::Logger::get_logger();
         }
 
         Representation {
@@ -88,7 +88,7 @@ impl Representation {
     /// class for future use.
     ///
     /// For more examples check the LogSentence type docs.
-    pub fn tell(&mut self, source: &str) -> Result<(), Vec<ParseErrF>> {
+    pub fn tell(&self, source: &str) -> Result<(), Vec<ParseErrF>> {
         let pres = logic_parser(source, true, &self.threads);
         if let Ok(mut sentences) = pres {
             let mut errors = Vec::new();
@@ -133,7 +133,7 @@ impl Representation {
     }
 
     /// Asks the KB if some fact is true and returns the answer to the query.
-    pub fn ask(&mut self, source: &str) -> Result<Answer, QueryErr> {
+    pub fn ask(&self, source: &str) -> Result<Answer, QueryErr> {
         let queries = logic_parser(source, false, &self.threads);
         if let Ok(queries) = queries {
             let pres = QueryInput::ManyQueries(queries);
@@ -269,14 +269,12 @@ impl Representation {
                     entity.add_belief(belief.clone(), name);
                     repr.entities.insert(subject.to_string(), entity);
                 }
+            } else if let Some(class) = repr.classes.get(subject) {
+                class.add_belief(belief.clone(), name);
             } else {
-                if let Some(class) = repr.classes.get(subject) {
-                    class.add_belief(belief.clone(), name);
-                } else {
-                    let class = Class::new(subject.to_string(), ClassKind::Membership);
-                    class.add_belief(belief.clone(), name);
-                    repr.classes.insert(subject.to_string(), class);
-                }
+                let class = Class::new(subject.to_string(), ClassKind::Membership);
+                class.add_belief(belief.clone(), name);
+                repr.classes.insert(subject.to_string(), class);
             }
         };
 
@@ -593,8 +591,7 @@ impl Representation {
                             // Safety: guaranteed this lives as long as self and mutable borrows don't leak
                             // return type is: (&'a str, Arc<GrFunc>) where &'str lives as long as Arc<GrFunc>
                             // &'a str must NOT outlive (nor leak from) this Repr, this would be UB,
-                            let rel =
-                                unsafe { std::mem::transmute::<&str, &str>(&funcs[0].get_name()) };
+                            let rel = unsafe { &*(funcs[0].get_name() as *const str) };
                             res.entry(rel).or_insert_with(|| vec![]).append(&mut funcs);
                         }
                     }
@@ -605,8 +602,7 @@ impl Representation {
                         // Safety: guaranteed this lives as long as self and mutable borrows don't leak
                         // return type is: (&'a str, Arc<GrFunc>) where &'str lives as long as Arc<GrFunc>
                         // &'a str must NOT outlive (nor leak from) this Repr, this would be UB,
-                        let rel =
-                            unsafe { std::mem::transmute::<&str, &str>(&funcs[0].get_name()) };
+                        let rel = unsafe { &*(funcs[0].get_name() as *const str) };
                         res.entry(rel).or_insert_with(|| vec![]).append(&mut funcs);
                     }
                 }
@@ -827,7 +823,7 @@ impl Entity {
                     // Safety: guaranteed this lives as long as self and mutable borrows don't leak
                     // return type is: (&'a str, Arc<GrFunc>) where &'a str lives as long as Arc<GrFunc>
                     // &'a str must NOT outlive (nor leak from) this Repr, this would be UB,
-                    let rel_name = unsafe { std::mem::transmute::<&str, &str>(&f.get_name()) };
+                    let rel_name = unsafe { &*(f.get_name() as *const str) };
                     match op {
                         None => res
                             .entry(rel_name)

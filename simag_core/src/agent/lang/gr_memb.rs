@@ -263,6 +263,7 @@ impl GroundedMemb {
     }
 
     /// Compare if a grounded membership is true at the times stated by the pred
+    #[allow(unused_variables)]
     pub fn compare_at_time_intervals(&self, pred: &GroundedMemb) -> Option<bool> {
         if pred.bms.is_none() {
             return Some(self == pred);
@@ -270,8 +271,8 @@ impl GroundedMemb {
         let self_bms = &**self.bms.as_ref().unwrap();
         let pred_bms = &**pred.bms.as_ref().unwrap();
         // block both BMS for the duration of the comparison
-        &*self_bms.acquire_read_lock();
-        &*pred_bms.acquire_read_lock();
+        let self_lock = &*self_bms.acquire_read_lock();
+        let pred_lock = &*pred_bms.acquire_read_lock();
 
         if let Some(time) = pred_bms.is_predicate() {
             let op_rhs = self.operator.unwrap();

@@ -37,10 +37,11 @@ impl std::cmp::PartialEq for GroundedFunc {
 impl std::cmp::Eq for GroundedFunc {}
 
 impl GroundedFunc {
+    #[allow(unused_variables)]
     pub fn compare_at_time_intervals(&self, pred: &GroundedFunc) -> Option<bool> {
         // block both BMS for the duration of the comparison
-        &*self.bms.acquire_read_lock();
-        &*pred.bms.acquire_read_lock();
+        let self_lock = &*self.bms.acquire_read_lock();
+        let pred_lock = &*pred.bms.acquire_read_lock();
         if let Some(time) = pred.bms.is_predicate() {
             let time_pred = pred.bms.get_last_date();
             let val_lhs = pred.bms.get_last_value();
