@@ -556,7 +556,7 @@ mod test {
 
     #[test]
     fn bms_rollback() {
-        let mut rep = Representation::default();
+        let rep = Representation::default();
 
         let fol = "
             (ugly[$Pancho,u=0])
@@ -599,7 +599,7 @@ mod test {
 
     #[test]
     fn bms_review_after_change() {
-        let mut rep = Representation::default();
+        let rep = Representation::default();
 
         let fol = "            
             ( meat[$M1,u=1] )

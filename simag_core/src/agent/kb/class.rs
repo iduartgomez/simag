@@ -389,7 +389,7 @@ impl ClassMember {
     fn unwrap_memb(&self) -> Arc<GroundedMemb> {
         match *self {
             ClassMember::Entity(ref obj) | ClassMember::Class(ref obj) => obj.clone(),
-            ClassMember::Func(_) => panic!(),
+            ClassMember::Func(_) => unreachable!(),
         }
     }
 
@@ -397,7 +397,7 @@ impl ClassMember {
     fn unwrap_fn(&self) -> Arc<GroundedFunc> {
         match *self {
             ClassMember::Func(ref f) => f.clone(),
-            ClassMember::Entity(_) | ClassMember::Class(_) => panic!(),
+            ClassMember::Entity(_) | ClassMember::Class(_) => unreachable!(),
         }
     }
 }

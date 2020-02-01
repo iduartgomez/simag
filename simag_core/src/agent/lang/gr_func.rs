@@ -7,7 +7,7 @@ use super::{
     common::{GroundedRef, Predicate},
     fn_decl::FuncDecl,
     logsent::SentID,
-    Terminal, Var,
+    Terminal, TimeOps, Var,
 };
 use crate::agent::{
     kb::bms::BmsWrapper,
@@ -20,7 +20,6 @@ use crate::agent::{
 ///
 /// Are not meant to be instantiated directly, but asserted from logic
 /// sentences or processed from `FuncDecl` on `tell` mode.
-#[derive(Debug)]
 pub(in crate::agent) struct GroundedFunc {
     pub(in crate::agent::lang) name: String,
     pub(in crate::agent::lang) args: [GroundedMemb; 2],
@@ -28,19 +27,12 @@ pub(in crate::agent) struct GroundedFunc {
     pub bms: Arc<BmsWrapper>,
 }
 
-impl std::cmp::PartialEq for GroundedFunc {
-    fn eq(&self, other: &GroundedFunc) -> bool {
-        self.name == other.name && self.args == other.args && self.third == other.third
-    }
-}
-
-impl std::cmp::Eq for GroundedFunc {}
-
 impl GroundedFunc {
+    #[allow(unused_variables)]
     pub fn compare_at_time_intervals(&self, pred: &GroundedFunc) -> Option<bool> {
         // block both BMS for the duration of the comparison
-        &*self.bms.acquire_read_lock();
-        &*pred.bms.acquire_read_lock();
+        let self_lock = &*self.bms.acquire_read_lock();
+        let pred_lock = &*pred.bms.acquire_read_lock();
         if let Some(time) = pred.bms.is_predicate() {
             let time_pred = pred.bms.get_last_date();
             let val_lhs = pred.bms.get_last_value();
@@ -157,7 +149,7 @@ impl GroundedFunc {
                 if let Some(ref arg) = self.third {
                     arg.get_name().into()
                 } else {
-                    panic!()
+                    unreachable!()
                 }
             }
         }
@@ -209,9 +201,14 @@ impl GroundedFunc {
             .update(&GroundedRef::Function(self), agent, data_bms, was_produced);
     }
 
+    /// Ensure this only gets called from BMS update method.
     pub fn update_value(&self, val: Option<f32>) {
         let mut value_lock = self.args[0].value.write();
         *value_lock = val;
+    }
+
+    pub fn overwrite_time_data(&self, data: &BmsWrapper) {
+        self.bms.overwrite_data(data);
     }
 }
 
@@ -226,23 +223,42 @@ impl std::clone::Clone for GroundedFunc {
     }
 }
 
+impl std::cmp::PartialEq for GroundedFunc {
+    fn eq(&self, other: &GroundedFunc) -> bool {
+        self.name == other.name && self.args == other.args && self.third == other.third
+    }
+}
+
+impl std::cmp::Eq for GroundedFunc {}
+
+impl std::fmt::Debug for GroundedFunc {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
 impl std::fmt::Display for GroundedFunc {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let args = self.get_args_names();
         let comp_op = if let Some(op) = self.args[0].operator {
             format!("{}", op)
         } else {
             "".to_owned()
         };
+        let third = if let Some(third) = &self.third {
+            format!(";{}", third.get_name())
+        } else {
+            String::from("")
+        };
         write!(
             f,
-            "{}[{},u{}{:?};{};{:?}]",
+            "GrFunc {{ {}[{},u{}{:?};{}{}] @ `{}` }}",
             self.name,
-            args[0],
+            self.args[0].get_name(),
             comp_op,
-            self.get_value(),
-            args[1],
-            args.get(2)
+            self.bms.get_last_value(),
+            self.args[1].get_name(),
+            third,
+            self.bms.get_last_date()
         )
     }
 }

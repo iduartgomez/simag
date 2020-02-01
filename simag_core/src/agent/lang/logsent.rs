@@ -1184,7 +1184,7 @@ impl Particle {
             | Particle::Disjunction(_, _)
             | Particle::Equivalence(_, _)
             | Particle::Implication(_, _)
-            | Particle::IndConditional(_, _) => panic!(),
+            | Particle::IndConditional(_, _) => unreachable!(),
         }
     }
 
@@ -1196,7 +1196,7 @@ impl Particle {
             | Particle::Disjunction(_, _)
             | Particle::Equivalence(_, _)
             | Particle::Implication(_, _)
-            | Particle::IndConditional(_, _) => panic!(),
+            | Particle::IndConditional(_, _) => unreachable!(),
         }
     }
 

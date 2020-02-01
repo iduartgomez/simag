@@ -1,26 +1,24 @@
-use chrono::{DateTime, Duration, Utc};
 use float_cmp::ApproxEqUlps;
 use std::collections::HashMap;
 use std::iter::FromIterator;
 use std::str;
 use std::sync::{Arc, Weak};
 
-pub use self::errors::TimeFnErr;
 use super::{
     cls_decl::ClassDecl,
     errors::ParseErrF,
     fn_decl::FuncDecl,
     logsent::{LogSentResolution, ParseContext, ProofResContext},
     parser::{ArgBorrowed, CompOperator, Number, OpArgBorrowed, OpArgTermBorrowed, UVal},
+    time_semantics::{TimeArg, TimeFn, TimeFnErr, TimeOps},
     var::Var,
-    GroundedFunc, GroundedMemb, Terminal, Time,
+    GroundedFunc, GroundedMemb, Terminal,
 };
 use crate::agent::{
     kb::bms::BmsWrapper,
     kb::{repr::Representation, VarAssignment},
 };
 use crate::FLOAT_EQ_ULPS;
-use crate::TIME_EQ_DIFF;
 
 // Predicate types:
 
@@ -264,7 +262,7 @@ impl FreeClsMemb {
                 CompOperator::Less
                 | CompOperator::More
                 | CompOperator::MoreEqual
-                | CompOperator::LessEqual => panic!(),
+                | CompOperator::LessEqual => unreachable!(),
                 _ => unreachable!(),
             }
         } else {
@@ -458,7 +456,7 @@ impl Assert {
     pub fn unwrap_fn(self) -> FuncDecl {
         match self {
             Assert::FuncDecl(f) => f,
-            Assert::ClassDecl(_) => panic!(),
+            Assert::ClassDecl(_) => unreachable!(),
         }
     }
 
@@ -466,14 +464,14 @@ impl Assert {
     pub fn unwrap_fn_as_ref(&self) -> &FuncDecl {
         match *self {
             Assert::FuncDecl(ref f) => f,
-            Assert::ClassDecl(_) => panic!(),
+            Assert::ClassDecl(_) => unreachable!(),
         }
     }
 
     #[inline]
     pub fn unwrap_cls(self) -> ClassDecl {
         match self {
-            Assert::FuncDecl(_) => panic!(),
+            Assert::FuncDecl(_) => unreachable!(),
             Assert::ClassDecl(c) => c,
         }
     }
@@ -481,7 +479,7 @@ impl Assert {
     #[inline]
     pub fn unwrap_cls_as_ref(&self) -> &ClassDecl {
         match *self {
-            Assert::FuncDecl(_) => panic!(),
+            Assert::FuncDecl(_) => unreachable!(),
             Assert::ClassDecl(ref c) => c,
         }
     }
@@ -574,7 +572,7 @@ impl<'a> OpArg {
                 } else {
                     return Err(ParseErrF::TimeFnErr(TimeFnErr::IsNotVar));
                 };
-                let load1 = OpArgTerm::time_payload(other.comp.as_ref(), context)?;
+                let load1 = TimeArg::time_payload(other.comp.as_ref(), context)?;
                 let load1 = if load1.1.is_var() {
                     load1.1.get_var()
                 } else {
@@ -593,7 +591,7 @@ impl<'a> OpArg {
     ) -> Result<OpArg, ParseErrF> {
         match kw {
             "time" => {
-                let load = OpArgTerm::time_payload(other.comp.as_ref(), context)?;
+                let load = TimeArg::time_payload(other.comp.as_ref(), context)?;
                 if load.1.is_var() {
                     Ok(OpArg::TimeVarAssign(load.1.get_var()))
                 } else {
@@ -642,71 +640,6 @@ impl<'a> OpArg {
         }
     }
 
-    pub(in crate::agent::lang) fn get_time_payload(
-        &self,
-        assignments: &HashMap<&Var, Arc<BmsWrapper>>,
-        value: Option<f32>,
-    ) -> BmsWrapper {
-        let bms = BmsWrapper::new(false);
-        match self {
-            OpArg::TimeDecl(TimeFn::Time(payload)) => {
-                bms.new_record(Some(*payload), value, None);
-            }
-            OpArg::TimeDecl(TimeFn::Now) => {
-                bms.new_record(None, value, None);
-            }
-            OpArg::TimeDecl(TimeFn::Interval(time0, time1)) => {
-                bms.new_record(Some(*time0), value, None);
-                bms.new_record(Some(*time1), None, None);
-            }
-            OpArg::TimeVarAssign(var) => {
-                let assignment = &**(assignments.get(&**var).unwrap());
-                return assignment.clone();
-            }
-            _ => panic!(),
-        }
-        bms
-    }
-
-    pub(in crate::agent::lang) fn compare_time_args(
-        &self,
-        assignments: &HashMap<&Var, Arc<BmsWrapper>>,
-    ) -> bool {
-        let (term, op, comp) = match *self {
-            OpArg::Generic(ref term, Some((ref op, ref comp))) => (term, op, comp),
-            _ => return false,
-        };
-
-        let var0 = term.get_var_ref();
-        let var1 = comp.get_var_ref();
-        let arg0 = assignments.get(&*var0).unwrap().get_last_date();
-        let arg1 = assignments.get(&*var1).unwrap().get_last_date();
-
-        match *op {
-            CompOperator::Equal => {
-                let comp_diff = Duration::seconds(TIME_EQ_DIFF);
-                let lower_bound = arg0 - comp_diff;
-                let upper_bound = arg0 + comp_diff;
-                !((arg1 < lower_bound) || (arg1 > upper_bound))
-            }
-            CompOperator::More => arg0 > arg1,
-            CompOperator::Less => arg0 < arg1,
-            CompOperator::MoreEqual => {
-                let comp_diff = Duration::seconds(TIME_EQ_DIFF);
-                let lower_bound = arg0 - comp_diff;
-                let upper_bound = arg0 + comp_diff;
-                !((arg1 < lower_bound) || (arg1 > upper_bound)) || arg0 > arg1
-            }
-            CompOperator::LessEqual => {
-                let comp_diff = Duration::seconds(TIME_EQ_DIFF);
-                let lower_bound = arg0 - comp_diff;
-                let upper_bound = arg0 + comp_diff;
-                !((arg1 < lower_bound) || (arg1 > upper_bound)) || arg0 < arg1
-            }
-            CompOperator::Until | CompOperator::At | CompOperator::FromUntil => unreachable!(),
-        }
-    }
-
     /// While constructing an assertion in a tell context performs variable
     /// substitution whenever is possible, variables must be declared.
     pub(in crate::agent::lang) fn var_substitution(&mut self) -> Result<(), ParseErrF> {
@@ -730,75 +663,17 @@ impl<'a> OpArg {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(in crate::agent) enum TimeFn {
-    Now,
-    Time(Time),
-    /// Time interval for value decl, in the form of [t0,t1)
-    Interval(Time, Time),
-    IsVar,
-}
-
-impl TimeFn {
-    fn from_str(slice: &[u8]) -> Result<TimeFn, ParseErrF> {
-        if slice == b"now" {
-            Ok(TimeFn::Now)
-        } else {
-            let s = str::from_utf8(slice).unwrap();
-            match DateTime::parse_from_rfc3339(s) {
-                Err(_e) => Err(TimeFnErr::WrongFormat(s.to_owned()).into()),
-                Ok(time) => Ok(TimeFn::Time(time.with_timezone(&Utc))),
-            }
-        }
-    }
-
-    /// Get a time interval from a bmswrapper, ie. created with the
-    /// merge_from_until method.
-    fn from_bms(rec: &BmsWrapper) -> Result<TimeFn, ParseErrF> {
-        let values: Vec<_> = rec.iter_values().map(|(t, _)| t).collect();
-        if values.len() != 2 {
-            return Err(ParseErrF::TimeFnErr(TimeFnErr::IllegalSubstitution));
-        }
-        Ok(TimeFn::Interval(values[0], values[1]))
-    }
-
-    pub(in crate::agent::lang) fn get_time_payload(&self, value: Option<f32>) -> BmsWrapper {
-        let bms = BmsWrapper::new(false);
-        match *self {
-            TimeFn::Time(ref payload) => {
-                bms.new_record(Some(*payload), value, None);
-            }
-            TimeFn::Now => {
-                bms.new_record(None, value, None);
-            }
-            _ => panic!(),
-        }
-        bms
-    }
-
-    fn generate_uid(&self) -> Vec<u8> {
-        let mut id = vec![];
-        match self {
-            TimeFn::Time(time) => {
-                id.push(0);
-                id.append(&mut format!("{}", time).into_bytes());
-            }
-            TimeFn::Interval(time0, time1) => {
-                id.push(1);
-                id.append(&mut format!("{}", time0).into_bytes());
-                id.append(&mut format!("{}", time1).into_bytes());
-            }
-            TimeFn::Now => id.push(2),
-            TimeFn::IsVar => id.push(3),
-        }
-        id
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(in crate::agent) enum OpArgTerm {
     Terminal(Terminal),
     String(String),
     TimePayload(TimeFn),
+}
+
+pub(in crate::agent) fn op_arg_term_from_borrowed<'a>(
+    other: &OpArgTermBorrowed<'a>,
+    context: &ParseContext,
+) -> Result<OpArgTerm, ParseErrF> {
+    OpArgTerm::from(other, context)
 }
 
 impl<'a> OpArgTerm {
@@ -811,34 +686,6 @@ impl<'a> OpArgTerm {
             OpArgTermBorrowed::String(slice) => Ok(OpArgTerm::String(
                 String::from_utf8_lossy(slice).into_owned(),
             )),
-        }
-    }
-
-    fn time_payload(
-        other: Option<&(CompOperator, OpArgTermBorrowed<'a>)>,
-        context: &ParseContext,
-    ) -> Result<(CompOperator, OpArgTerm), ParseErrF> {
-        match other {
-            None => Ok((CompOperator::Equal, OpArgTerm::TimePayload(TimeFn::IsVar))),
-            Some(&(ref op, ref term)) => {
-                if !op.is_time_assignment() {
-                    return Err(TimeFnErr::NotAssignment.into());
-                }
-                match *term {
-                    OpArgTermBorrowed::String(slice) => {
-                        let time = TimeFn::from_str(slice)?;
-                        Ok((CompOperator::Equal, OpArgTerm::TimePayload(time)))
-                    }
-                    OpArgTermBorrowed::Terminal(_) => {
-                        let var = OpArgTerm::from(term, context)?;
-                        if var.is_var() {
-                            Ok((CompOperator::Equal, var))
-                        } else {
-                            Err(TimeFnErr::IsNotVar.into())
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -862,7 +709,7 @@ impl<'a> OpArgTerm {
     fn get_var(&self) -> Arc<Var> {
         match *self {
             OpArgTerm::Terminal(ref term) => term.get_var(),
-            _ => panic!(),
+            _ => unreachable!(),
         }
     }
 
@@ -870,27 +717,7 @@ impl<'a> OpArgTerm {
     pub(in crate::agent::lang) fn get_var_ref(&self) -> &Var {
         match *self {
             OpArgTerm::Terminal(ref term) => term.get_var_ref(),
-            _ => panic!(),
-        }
-    }
-}
-
-mod errors {
-    use super::*;
-
-    #[derive(Debug, PartialEq, Eq)]
-    pub enum TimeFnErr {
-        MultiAssign,
-        NotAssignment,
-        WrongFormat(String),
-        IsNotVar,
-        InsufArgs,
-        IllegalSubstitution,
-    }
-
-    impl Into<ParseErrF> for TimeFnErr {
-        fn into(self) -> ParseErrF {
-            ParseErrF::TimeFnErr(self)
+            _ => unreachable!(),
         }
     }
 }

@@ -1,7 +1,7 @@
 //! # Grammar for the SIMAG declarative language
 //! ```BNF
-//! @comments			::	regex: \/\*(.*)\*\/ (multiline)
-//! @eol_comments 		::	/#.*?$/
+//! @comments           ::  regex: \/\*(.*)\*\/ (multiline)
+//! @eol_comments       ::  /#.*?$/
 //!
 //! scope = '(' ${var_decl}* ${skol_decl}*
 //!             (class_decl | func_decl | scope | multiple)
@@ -12,19 +12,19 @@
 //! skol_decl = '(' 'exists ' ${term [':' op_arg]}','+ ')' ;
 //! class_decl = term ['(' ${op_arg}','+ ')'] args ;
 //! func_decl = 'fn::' term ['(' ${op_arg}','+ ')'] args
-//! 		  | 'fn::' term '(' ${op_arg}','+ ')' ;
+//!             | 'fn::' term '(' ${op_arg}','+ ')' ;
 //! args = '[' ${ arg }';'+ ']';
 //! arg = term [',' uval] ;
 //! uval = 'u' comp_op number ;
 //! op_arg = (string|term) [comp_op (string|term)] ;
-//! icond_op    =	':=' ;
-//! and_op      =	'&&' ;
-//! or_op		=	'||' ;
-//! logic_op	=    '<=>'
-//! 		    |    '=>'
+//! icond_op    =   ':=' ;
+//! and_op      =   '&&' ;
+//! or_op       =   '||' ;
+//! logic_op    =    '<=>'
+//!             |    '=>'
 //!             |    or_op
-//!             |	 and_op ;
-//! comp_op	= ('=' | '<' | '>' | '>=' | '<=' ) ;
+//!             |    and_op ;
+//! comp_op = ('=' | '<' | '>' | '>=' | '<=' ) ;
 //! term = regex: \$?[a-zA-Z0-9_]+ ;
 //! number = regex: -?[0-9\.]+ ;
 //! string = regex: ".*?"|'.*?' ;
@@ -230,7 +230,7 @@ impl<'a> ASTNode<'a> {
     pub fn get_op(&self) -> LogicOperator {
         match *self {
             ASTNode::Scope(ref node) => *node.logic_op.as_ref().unwrap(),
-            ASTNode::Assert(_) | ASTNode::Chain(_) | ASTNode::None => panic!(),
+            ASTNode::Assert(_) | ASTNode::Chain(_) | ASTNode::None => unreachable!(),
         }
     }
 
@@ -1171,7 +1171,7 @@ impl LogicOperator {
         } else if m == IMPL_OP {
             LogicOperator::Implication
         } else {
-            panic!() // will never happen
+            unreachable!() // will never happen
         }
     }
 

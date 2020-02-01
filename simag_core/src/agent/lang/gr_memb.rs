@@ -17,7 +17,6 @@ use crate::FLOAT_EQ_ULPS;
 ///
 /// Not meant to be instantiated directly, but asserted from logic
 /// sentences or processed from `ClassDecl` on `tell` mode.
-#[derive(Debug)]
 pub(in crate::agent) struct GroundedMemb {
     pub(in crate::agent::lang) term: GrTerminalKind<String>,
     pub(in crate::agent::lang) value: RwLock<Option<f32>>,
@@ -209,7 +208,9 @@ impl GroundedMemb {
         self.bms.as_ref().unwrap().overwrite_data(data);
     }
 
-    /// An statement is a time interval if there are only
+    /// An statement is a time interval if there are only two time records and the
+    /// last one is none.
+    // FIXME: this is error prone, encode at the type level when the bms is first created?
     pub fn is_time_interval(&self) -> bool {
         let bms = self.bms.as_ref().unwrap();
         bms.record_len() == 2 && bms.get_last_value().is_none()
@@ -263,6 +264,7 @@ impl GroundedMemb {
     }
 
     /// Compare if a grounded membership is true at the times stated by the pred
+    #[allow(unused_variables)]
     pub fn compare_at_time_intervals(&self, pred: &GroundedMemb) -> Option<bool> {
         if pred.bms.is_none() {
             return Some(self == pred);
@@ -270,8 +272,8 @@ impl GroundedMemb {
         let self_bms = &**self.bms.as_ref().unwrap();
         let pred_bms = &**pred.bms.as_ref().unwrap();
         // block both BMS for the duration of the comparison
-        &*self_bms.acquire_read_lock();
-        &*pred_bms.acquire_read_lock();
+        let self_lock = &*self_bms.acquire_read_lock();
+        let pred_lock = &*pred_bms.acquire_read_lock();
 
         if let Some(time) = pred_bms.is_predicate() {
             let op_rhs = self.operator.unwrap();
@@ -327,6 +329,12 @@ impl std::clone::Clone for GroundedMemb {
     }
 }
 
+impl std::fmt::Debug for GroundedMemb {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
 impl std::fmt::Display for GroundedMemb {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let comp_op = if let Some(op) = self.operator {
@@ -334,13 +342,18 @@ impl std::fmt::Display for GroundedMemb {
         } else {
             "".to_owned()
         };
+        let (value, time) = if let Some(ref bms) = self.bms {
+            (
+                bms.get_last_value(),
+                format!(" @ `{}` ", bms.get_last_date()),
+            )
+        } else {
+            (self.get_value(), "".to_string())
+        };
         write!(
             f,
-            "{}[{},u{}{:?}]",
-            self.parent,
-            self.term,
-            comp_op,
-            self.get_value()
+            "GrMemb {{ {}[{},u{}{:?}{}] }}",
+            self.parent, self.term, comp_op, value, time
         )
     }
 }

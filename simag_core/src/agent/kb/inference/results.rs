@@ -105,7 +105,7 @@ impl<'rep> InfResults<'rep> {
             for members in preds.values() {
                 for gr in members {
                     // Safety: guaranteed this lives as long as Self<'rep> where 'rep is the lifetime of the owning Rep 
-                    let gr = unsafe { mem::transmute::<&GroundedMemb, &'rep GroundedMemb>(gr) };
+                    let gr = unsafe { &*(&**gr as *const GroundedMemb) };
                     let gr_name: &str = gr.get_name().into();
                     res.entry(gr_name).or_insert_with(Vec::new).push(gr);
                 }

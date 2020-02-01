@@ -1,3 +1,4 @@
+pub(self) mod conf;
 mod kb;
 mod lang;
 

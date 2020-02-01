@@ -19,8 +19,8 @@ use parking_lot::RwLock;
 use rayon;
 use rayon::prelude::*;
 
-#[cfg(feature = "tracing")]
-use crate::agent::kb::tracing::tracing_info;
+#[cfg(debug_assertions)]
+use crate::agent::conf::tracing::tracing_info;
 
 use crate::agent::kb::{
     inference::results::{GroundedResults, InfResults},
@@ -135,7 +135,7 @@ impl<'rep> Inference<'rep> {
                         self.results.add_grounded(obj, query, None);
                         let actv_query = ActiveQuery::new_with_func(i, pred.clone());
 
-                        #[cfg(feature = "tracing")]
+                        #[cfg(debug_assertions)]
                         {
                             tracing_info(&**pred, log::Level::Trace, Some("Start querying for"));
                         }
@@ -161,14 +161,20 @@ impl<'rep> Inference<'rep> {
         let obj = actv_query.get_obj();
         let pred = actv_query.get_pred();
         if pass.valid.is_none() {
+            #[cfg(debug_assertions)]
+            {
+                log::trace!("No unification found");
+            }
             self.results.add_grounded(obj, pred, None);
         } else {
             let valid = pass.valid.as_ref().unwrap();
             let context = IExprResult::new(valid.args.clone(), &valid.node);
-            valid
-                .node
-                .proof
-                .solve(self.kb, Some(&valid.args.as_proof_input()), context);
+            let proof_input = valid.args.as_proof_input();
+            #[cfg(debug_assertions)]
+            {
+                log::trace!("Unification found, trying to solve: {:?}", proof_input);
+            }
+            valid.node.proof.solve(self.kb, Some(&proof_input), context);
         }
     }
 
@@ -293,7 +299,7 @@ impl ActiveQuery {
     fn get_func(&self) -> &GroundedFunc {
         match *self {
             ActiveQuery::Func(_, ref gf) => &*gf,
-            ActiveQuery::Class(_) => panic!(),
+            ActiveQuery::Class(_) => unreachable!(),
         }
     }
 
@@ -301,7 +307,7 @@ impl ActiveQuery {
     fn get_cls(&self) -> &GroundedMemb {
         match *self {
             ActiveQuery::Class(ref gt) => &*gt,
-            ActiveQuery::Func(_, _) => panic!(),
+            ActiveQuery::Func(_, _) => unreachable!(),
         }
     }
 }
@@ -502,7 +508,7 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
                 // by rule creation datetime, from newest to oldest
                 // as the newest rules take precedence
                 for node in nodes.value().iter() {
-                    #[cfg(feature = "tracing")]
+                    #[cfg(debug_assertions)]
                     {
                         tracing_info(&*node.proof, log::Level::Trace, Some("Querying sentence"));
                     }
@@ -568,7 +574,7 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
                         break;
                     }
                 }
-                #[cfg(feature = "tracing")]
+                #[cfg(debug_assertions)]
                 {
                     let permutation: Vec<_> = args.iter().map(|(v, a)| (v, &*a)).collect();
                     tracing_info(

@@ -1,10 +1,12 @@
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::sync::{atomic::AtomicBool, Arc};
 
 use super::{
     common::*,
     logsent::{LogSentResolution, ParseContext},
     parser::{FuncDeclBorrowed, FuncVariants},
+    time_semantics::{TimeArg, TimeFn, TimeFnErr, TimeOps},
     var::Var,
     *,
 };
@@ -58,7 +60,7 @@ impl<'a> FuncDecl {
         } = self;
         let name = match name {
             Terminal::GroundedTerm(name) => name,
-            Terminal::FreeTerm(_) | Terminal::Keyword(_) => panic!(),
+            Terminal::FreeTerm(_) | Terminal::Keyword(_) => unreachable!(),
         };
         let mut first = None;
         let mut second = None;
@@ -68,7 +70,7 @@ impl<'a> FuncDecl {
         for (i, a) in args.drain(..).enumerate() {
             let mut n_a = match a {
                 Predicate::GroundedMemb(term) => term,
-                Predicate::FreeClsMemb(_) | Predicate::FreeClassMembership(_) => panic!(),
+                Predicate::FreeClsMemb(_) | Predicate::FreeClassMembership(_) => unreachable!(),
             };
             n_a.bms = None;
             if i == 0 {
@@ -157,84 +159,6 @@ impl<'a> FuncDecl {
 
     pub fn get_args(&self) -> &[Predicate] {
         self.args.as_ref().unwrap()
-    }
-
-    pub fn get_own_time_data(
-        &self,
-        assignments: &HashMap<&Var, Arc<BmsWrapper>>,
-        value: Option<f32>,
-    ) -> BmsWrapper {
-        if self.op_args.is_none() {
-            let t_bms = BmsWrapper::new(false);
-            t_bms.new_record(None, value, None);
-            return t_bms;
-        }
-        let mut v = None;
-        let mut ow = false;
-        for arg in self.op_args.as_ref().unwrap() {
-            match *arg {
-                OpArg::TimeDecl(_) | OpArg::TimeVarAssign(_) => {
-                    v = Some(arg.get_time_payload(assignments, value));
-                }
-                OpArg::OverWrite => {
-                    ow = true;
-                }
-                _ => {}
-            }
-        }
-
-        if let Some(mut bms) = v {
-            bms.overwrite = AtomicBool::new(ow);
-            bms
-        } else {
-            let bms = BmsWrapper::new(ow);
-            bms.new_record(None, value, None);
-            bms
-        }
-    }
-
-    pub(in crate::agent::lang) fn get_time_decl(&self, var0: &Var) -> bool {
-        if self.op_args.is_none() {
-            return false;
-        }
-        for arg in self.op_args.as_ref().unwrap() {
-            if let OpArg::TimeVarFrom(ref var1) = *arg {
-                return var1.as_ref() == var0;
-            }
-        }
-        false
-    }
-
-    pub(in crate::agent::lang) fn get_times(
-        &self,
-        agent: &Representation,
-        var_assign: Option<&HashMap<&Var, &VarAssignment>>,
-    ) -> Option<Arc<BmsWrapper>> {
-        if self.is_grounded() {
-            let sbj = self.args.as_ref().unwrap();
-            let grfunc = self.clone().into_grounded();
-            if let Some(relation) = agent.get_relationship(&grfunc, sbj[0].get_name()) {
-                Some(relation.bms.clone())
-            } else {
-                None
-            }
-        } else {
-            var_assign?;
-            let f = HashMap::new();
-            if let Ok(grfunc) = GroundedFunc::from_free(self, var_assign, &f) {
-                for arg in self.get_args() {
-                    if let Predicate::FreeClsMemb(ref arg) = *arg {
-                        let assignments = var_assign.as_ref().unwrap();
-                        if let Some(entity) = assignments.get(&*arg.term) {
-                            if let Some(current) = entity.get_relationship(&grfunc) {
-                                return Some(current.bms.clone());
-                            }
-                        }
-                    }
-                }
-            }
-            None
-        }
     }
 
     pub(in crate::agent::lang) fn generate_uid(&self) -> Vec<u8> {
@@ -411,9 +335,11 @@ impl<'a> FuncDecl {
 
     fn time_resolution(&self, assignments: &HashMap<&Var, Arc<BmsWrapper>>) -> Option<bool> {
         for arg in self.op_args.as_ref().unwrap() {
-            let not_time_eq = !arg.compare_time_args(assignments);
-            if not_time_eq {
-                return Some(false);
+            if let Ok(arg) = TimeArg::try_from(arg) {
+                let not_time_eq = !arg.compare_time_args(assignments);
+                if not_time_eq {
+                    return Some(false);
+                }
             }
         }
         Some(true)
@@ -426,6 +352,46 @@ impl<'a> FuncDecl {
             }
         }
         Ok(())
+    }
+}
+
+impl OpArgsOps for FuncDecl {
+    fn get_op_args(&self) -> Option<&[common::OpArg]> {
+        self.op_args.as_ref().map(|r| r.as_slice())
+    }
+}
+
+impl TimeOps for FuncDecl {
+    fn get_times(
+        &self,
+        agent: &Representation,
+        var_assign: Option<&HashMap<&Var, &VarAssignment>>,
+    ) -> Option<Arc<BmsWrapper>> {
+        if self.is_grounded() {
+            let sbj = self.args.as_ref().unwrap();
+            let grfunc = self.clone().into_grounded();
+            if let Some(relation) = agent.get_relationship(&grfunc, sbj[0].get_name()) {
+                Some(relation.bms.clone())
+            } else {
+                None
+            }
+        } else {
+            var_assign?;
+            let f = HashMap::new();
+            if let Ok(grfunc) = GroundedFunc::from_free(self, var_assign, &f) {
+                for arg in self.get_args() {
+                    if let Predicate::FreeClsMemb(ref arg) = *arg {
+                        let assignments = var_assign.as_ref().unwrap();
+                        if let Some(entity) = assignments.get(&*arg.term) {
+                            if let Some(current) = entity.get_relationship(&grfunc) {
+                                return Some(current.bms.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            None
+        }
     }
 }
 
@@ -495,7 +461,16 @@ impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
         time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
         context: &mut T,
     ) {
+        use crate::agent::kb::bms::ReplaceMode;
+
         if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, time_assign) {
+            let time_data = self.get_own_time_data(time_assign, None);
+            time_data.replace_value(grfunc.get_value(), ReplaceMode::Substitute);
+            grfunc.overwrite_time_data(&time_data);
+            #[cfg(debug_assertions)]
+            {
+                log::trace!("Correct substitution found, updating: {:?}", grfunc);
+            }
             context.push_grounded_func(grfunc.clone(), grfunc.bms.get_last_date());
             agent.up_relation(&Arc::new(grfunc), Some(context));
         }

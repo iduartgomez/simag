@@ -7,6 +7,7 @@ mod logsent;
 mod parser;
 mod skolem;
 mod terminal;
+pub(self) mod time_semantics;
 mod var;
 
 use chrono::{DateTime, Utc};
@@ -24,6 +25,7 @@ pub(super) use self::logsent::{LogSentence, ProofResContext, SentID};
 pub(super) use self::parser::{CompOperator, ParseTree};
 pub(super) use self::skolem::Skolem;
 pub(super) use self::terminal::{GrTerminalKind, Terminal};
+pub(super) use self::time_semantics::TimeOps;
 pub(super) use self::var::{Var, VarKind};
 
 /// Takes an owned String and returns the corresponding structure representing
@@ -52,10 +54,14 @@ fn reserved(s: &str) -> bool {
     }
 }
 
+pub(in crate::agent) trait OpArgsOps {
+    fn get_op_args(&self) -> Option<&[common::OpArg]>;
+}
+
 mod errors {
-    use super::common::TimeFnErr;
     use super::logsent::LogSentErr;
     use super::parser::ParseErrB;
+    use super::time_semantics::TimeFnErr;
     use crate::agent::kb::bms::BmsError;
 
     use std::fmt;
@@ -72,6 +78,7 @@ mod errors {
         RFuncWrongArgs,
         WrongArgNumb,
         WrongDef,
+        FailedConversion(&'static str),
         LogSentErr(LogSentErr),
         TimeFnErr(TimeFnErr),
         SyntaxErr(String),

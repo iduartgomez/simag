@@ -1,10 +1,11 @@
 use std::collections::HashMap;
-use std::sync::{atomic::AtomicBool, Arc};
+use std::sync::Arc;
 
 use super::{
     common::*,
     logsent::{LogSentResolution, ParseContext},
     parser::ClassDeclBorrowed,
+    time_semantics::TimeOps,
     *,
 };
 use crate::agent::kb::{bms::BmsWrapper, repr::Representation, VarAssignment};
@@ -65,96 +66,13 @@ impl<'a> ClassDecl {
         match self.name {
             Terminal::FreeTerm(ref var) => &var.name,
             Terminal::GroundedTerm(ref name) => name,
-            Terminal::Keyword(_) => panic!(),
+            Terminal::Keyword(_) => unreachable!(),
         }
     }
 
     #[inline]
     pub fn get_parent(&self) -> &Terminal {
         &self.name
-    }
-
-    /// If the class declaration has an overwrite flag then if there are any previous records
-    /// those will be dropped.
-    pub fn get_own_time_data(
-        &self,
-        assignments: &HashMap<&Var, Arc<BmsWrapper>>,
-        value: Option<f32>,
-    ) -> BmsWrapper {
-        if self.op_args.is_none() {
-            let bms = BmsWrapper::new(false);
-            bms.new_record(None, value, None);
-            return bms;
-        }
-        let mut v = None;
-        let mut ow = false;
-        for arg in self.op_args.as_ref().unwrap() {
-            match *arg {
-                OpArg::TimeDecl(_) | OpArg::TimeVarAssign(_) => {
-                    v = Some(arg.get_time_payload(assignments, value));
-                }
-                OpArg::OverWrite => {
-                    ow = true;
-                }
-                _ => {}
-            }
-        }
-        if let Some(mut bms) = v {
-            bms.overwrite = AtomicBool::new(ow);
-            bms
-        } else {
-            let bms = BmsWrapper::new(ow);
-            bms.new_record(None, value, None);
-            bms
-        }
-    }
-
-    pub(in crate::agent::lang) fn get_time_decl(&self, var0: &Var) -> bool {
-        if self.op_args.is_none() {
-            return false;
-        }
-        for arg in self.op_args.as_ref().unwrap() {
-            if let OpArg::TimeVarFrom(ref var1) = *arg {
-                return var1.as_ref() == var0;
-            }
-        }
-        false
-    }
-
-    pub(in crate::agent::lang) fn get_times(
-        &self,
-        agent: &Representation,
-        var_assign: Option<&HashMap<&Var, &VarAssignment>>,
-    ) -> Option<Arc<BmsWrapper>> {
-        let arg = &self.args[0];
-        match *arg {
-            Predicate::FreeClsMemb(ref free) => {
-                var_assign?;
-                if let Some(entity) = var_assign.as_ref().unwrap().get(&*free.term) {
-                    if let Some(grounded) = entity.get_class(free.parent.get_name()) {
-                        if free.grounded_eq(grounded) {
-                            return grounded.bms.clone();
-                        }
-                    } else {
-                        return None;
-                    }
-                } else {
-                    return None;
-                }
-            }
-            Predicate::GroundedMemb(ref compare) => {
-                let entity = agent.get_obj_from_class(self.get_name(), &compare.term);
-                if let Some(grounded) = entity {
-                    if *grounded == *compare {
-                        return grounded.bms.clone();
-                    }
-                } else {
-                    return None;
-                }
-            }
-            _ => return None, // this path won't be taken in any program
-        }
-        None
     }
 
     pub fn get_time_payload(&self, value: Option<f32>) -> Option<BmsWrapper> {
@@ -220,6 +138,50 @@ impl<'a> ClassDecl {
             }
         }
         Ok(())
+    }
+}
+
+impl OpArgsOps for ClassDecl {
+    fn get_op_args(&self) -> Option<&[common::OpArg]> {
+        self.op_args.as_ref().map(|r| r.as_slice())
+    }
+}
+
+impl TimeOps for ClassDecl {
+    fn get_times(
+        &self,
+        agent: &Representation,
+        var_assign: Option<&HashMap<&Var, &VarAssignment>>,
+    ) -> Option<Arc<BmsWrapper>> {
+        let arg = &self.args[0];
+        match *arg {
+            Predicate::FreeClsMemb(ref free) => {
+                var_assign?;
+                if let Some(entity) = var_assign.as_ref().unwrap().get(&*free.term) {
+                    if let Some(grounded) = entity.get_class(free.parent.get_name()) {
+                        if free.grounded_eq(grounded) {
+                            return grounded.bms.clone();
+                        }
+                    } else {
+                        return None;
+                    }
+                } else {
+                    return None;
+                }
+            }
+            Predicate::GroundedMemb(ref compare) => {
+                let entity = agent.get_obj_from_class(self.get_name(), &compare.term);
+                if let Some(grounded) = entity {
+                    if *grounded == *compare {
+                        return grounded.bms.clone();
+                    }
+                } else {
+                    return None;
+                }
+            }
+            _ => return None, // this path won't be taken in any program
+        }
+        None
     }
 }
 
@@ -338,6 +300,10 @@ impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
             let t = time_data.clone();
             t.replace_value(grfact.get_value(), ReplaceMode::Substitute);
             grfact.overwrite_time_data(&t);
+            #[cfg(debug_assertions)]
+            {
+                log::trace!("Correct substitution found, updating: {:?}", grfact);
+            }
             context.push_grounded_cls(grfact.clone(), grfact.bms.as_ref().unwrap().get_last_date());
             agent.up_membership(&Arc::new(grfact), Some(context))
         }
