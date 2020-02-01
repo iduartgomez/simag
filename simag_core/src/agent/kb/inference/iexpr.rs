@@ -161,14 +161,20 @@ impl<'rep> Inference<'rep> {
         let obj = actv_query.get_obj();
         let pred = actv_query.get_pred();
         if pass.valid.is_none() {
+            #[cfg(debug_assertions)]
+            {
+                log::trace!("No unification found");
+            }
             self.results.add_grounded(obj, pred, None);
         } else {
             let valid = pass.valid.as_ref().unwrap();
             let context = IExprResult::new(valid.args.clone(), &valid.node);
-            valid
-                .node
-                .proof
-                .solve(self.kb, Some(&valid.args.as_proof_input()), context);
+            let proof_input = valid.args.as_proof_input();
+            #[cfg(debug_assertions)]
+            {
+                log::trace!("Unification found, trying to solve: {:?}", proof_input);
+            }
+            valid.node.proof.solve(self.kb, Some(&proof_input), context);
         }
     }
 

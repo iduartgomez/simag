@@ -642,7 +642,7 @@ impl<'a> OpArg {
         }
     }
 
-    pub(in crate::agent::lang) fn get_time_payload(
+    pub(in crate::agent) fn get_time_payload(
         &self,
         assignments: &HashMap<&Var, Arc<BmsWrapper>>,
         value: Option<f32>,

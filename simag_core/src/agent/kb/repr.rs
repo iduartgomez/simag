@@ -919,8 +919,16 @@ impl Entity {
                                 &Grounded::Function(Arc::downgrade(&f.clone())),
                                 context,
                             );
+                            #[cfg(debug_assertions)]
+                            {
+                                log::trace!("Updated existing relation from context: {}", func);
+                            }
                         } else {
                             f.update(agent, &*func, None);
+                            #[cfg(debug_assertions)]
+                            {
+                                log::trace!("Updated existing relation w/o context: {}", func);
+                            }
                         }
                         found_rel = true;
                         break;
@@ -952,6 +960,10 @@ impl Entity {
                     &Grounded::Function(Arc::downgrade(&func.clone())),
                     context,
                 );
+            }
+            #[cfg(debug_assertions)]
+            {
+                log::trace!("Inserting new relation: {}", func);
             }
             self.relations.insert(name.to_string(), vec![func.clone()]);
             true

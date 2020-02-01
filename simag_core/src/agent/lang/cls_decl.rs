@@ -338,6 +338,10 @@ impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
             let t = time_data.clone();
             t.replace_value(grfact.get_value(), ReplaceMode::Substitute);
             grfact.overwrite_time_data(&t);
+            #[cfg(debug_assertions)]
+            {
+                log::trace!("Correct substitution found, updating: {:?}", grfact);
+            }
             context.push_grounded_cls(grfact.clone(), grfact.bms.as_ref().unwrap().get_last_date());
             agent.up_membership(&Arc::new(grfact), Some(context))
         }

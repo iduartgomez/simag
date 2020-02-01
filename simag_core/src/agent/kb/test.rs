@@ -205,23 +205,23 @@ fn repr_inference_ask_func() {
 
 #[test]
 fn repr_inference_time_calc_1() {
-    // Test 01
-    /*
-    let test_01 = "
-        (( let x, y, t1:time, t2:time=\"now\" )
-            (( dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x] && fn::time_calc(t1<t2) )
-            := fat(time=t2)[x,u=1] ))
-        ( dog[$Pancho,u=1] )
-        ( meat[$M1,u=1] )
-        ( fn::eat(time=\"2014-07-05T10:25:00Z\")[$M1,u=1;$Pancho] )
-    ";
-    let q01_01 = "(fat(time='now')[$Pancho,u=1])";
-    let rep = Representation::default();
-    rep.tell(test_01).unwrap();
-    assert_eq!(rep.ask(q01_01).unwrap().get_results_single(), Some(true));
-    */
+    // // Test 01
+    // // facts imply class, w/ t1 time arg set by antecedents & t2 set dynamically at resolution
+    // let test_01 = "
+    //     (( let x, y, t1:time, t2:time=\"now\" )
+    //         (( dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x] && fn::time_calc(t1<t2) )
+    //         := fat(time=t2)[x,u=1] ))
+    //     ( dog[$Pancho,u=1] )
+    //     ( meat[$M1,u=1] )
+    //     ( fn::eat(time=\"2014-07-05T10:25:00Z\")[$M1,u=1;$Pancho] )
+    // ";
+    // let q01_01 = "(fat(time='now')[$Pancho,u=1])";
+    // let rep = Representation::default();
+    // rep.tell(test_01).unwrap();
+    // assert_eq!(rep.ask(q01_01).unwrap().get_results_single(), Some(true));
 
     // Test 02
+    // facts imply func, w/ t1 time arg set statically & t2 set statically by antecedent
     let test_02 = "
         (( let x, y, t1: time=\"2014-07-05T10:25:00Z\", t2: time)
             ( ( dog[x,u=1] && meat[y,u=1] && fat(t2=time)[x,u=1] && fn::time_calc(t1<t2) )

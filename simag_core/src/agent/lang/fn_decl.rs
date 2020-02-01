@@ -496,6 +496,10 @@ impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
         context: &mut T,
     ) {
         if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, time_assign) {
+            #[cfg(debug_assertions)]
+            {
+                log::trace!("Correct substitution found, updating: {:?}", grfunc);
+            }
             context.push_grounded_func(grfunc.clone(), grfunc.bms.get_last_date());
             agent.up_relation(&Arc::new(grfunc), Some(context));
         }

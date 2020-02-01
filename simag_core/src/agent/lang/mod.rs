@@ -14,7 +14,7 @@ use std::collections::VecDeque;
 
 pub(super) use self::cls_decl::ClassDecl;
 pub(super) use self::common::{
-    Assert, FreeClassMembership, FreeClsMemb, Grounded, GroundedRef, Predicate,
+    Assert, FreeClassMembership, FreeClsMemb, Grounded, GroundedRef, OpArg, Predicate,
 };
 pub(super) use self::errors::ParseErrF;
 pub(super) use self::fn_decl::FuncDecl;
@@ -50,6 +50,10 @@ fn reserved(s: &str) -> bool {
         }
         _ => false,
     }
+}
+
+pub(super) trait OpArgsOps {
+    fn get_op_args(&self) -> Option<&[common::OpArg]>;
 }
 
 mod errors {

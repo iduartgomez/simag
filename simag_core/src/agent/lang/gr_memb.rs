@@ -17,7 +17,6 @@ use crate::FLOAT_EQ_ULPS;
 ///
 /// Not meant to be instantiated directly, but asserted from logic
 /// sentences or processed from `ClassDecl` on `tell` mode.
-#[derive(Debug)]
 pub(in crate::agent) struct GroundedMemb {
     pub(in crate::agent::lang) term: GrTerminalKind<String>,
     pub(in crate::agent::lang) value: RwLock<Option<f32>>,
@@ -328,6 +327,12 @@ impl std::clone::Clone for GroundedMemb {
     }
 }
 
+impl std::fmt::Debug for GroundedMemb {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
 impl std::fmt::Display for GroundedMemb {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let comp_op = if let Some(op) = self.operator {
@@ -335,13 +340,18 @@ impl std::fmt::Display for GroundedMemb {
         } else {
             "".to_owned()
         };
+        let (value, time) = if let Some(ref bms) = self.bms {
+            (
+                bms.get_last_value(),
+                format!(" @ `{}` ", bms.get_last_date()),
+            )
+        } else {
+            (self.get_value(), "".to_string())
+        };
         write!(
             f,
-            "{}[{},u{}{:?}]",
-            self.parent,
-            self.term,
-            comp_op,
-            self.get_value()
+            "GrMemb {{ {}[{},u{}{:?}{}] }}",
+            self.parent, self.term, comp_op, value, time
         )
     }
 }
