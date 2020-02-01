@@ -1,7 +1,6 @@
 pub(self) mod conf;
 mod kb;
 mod lang;
-pub(self) mod time_semantics;
 
 pub(crate) use self::kb::repr::Representation;
 pub use self::kb::{

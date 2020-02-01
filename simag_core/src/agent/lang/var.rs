@@ -2,6 +2,7 @@ use super::{
     common::OpArg,
     logsent::ParseContext,
     parser::{TerminalBorrowed, VarBorrowed},
+    time_semantics::TimeArg,
     ParseErrF,
 };
 use crate::agent::kb::bms::BmsWrapper;
@@ -70,8 +71,13 @@ impl Var {
     }
 
     pub fn get_times(&self) -> BmsWrapper {
+        use std::convert::TryFrom;
         let h = HashMap::new();
-        self.op_arg.as_ref().unwrap().get_time_payload(&h, None)
+        self.op_arg
+            .as_ref()
+            .map(|arg| TimeArg::try_from(arg).unwrap())
+            .unwrap()
+            .get_time_payload(&h, None)
     }
 
     pub fn is_time_var(&self) -> bool {

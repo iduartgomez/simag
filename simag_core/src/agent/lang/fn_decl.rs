@@ -1,10 +1,12 @@
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::sync::{atomic::AtomicBool, Arc};
 
 use super::{
     common::*,
     logsent::{LogSentResolution, ParseContext},
     parser::{FuncDeclBorrowed, FuncVariants},
+    time_semantics::{TimeArg, TimeFn, TimeFnErr, TimeOps},
     var::Var,
     *,
 };
@@ -174,6 +176,7 @@ impl<'a> FuncDecl {
         for arg in self.op_args.as_ref().unwrap() {
             match *arg {
                 OpArg::TimeDecl(_) | OpArg::TimeVarAssign(_) => {
+                    let arg = TimeArg::try_from(arg).unwrap();
                     v = Some(arg.get_time_payload(assignments, value));
                 }
                 OpArg::OverWrite => {
@@ -190,50 +193,6 @@ impl<'a> FuncDecl {
             let bms = BmsWrapper::new(ow);
             bms.new_record(None, value, None);
             bms
-        }
-    }
-
-    pub(in crate::agent::lang) fn get_time_decl(&self, var0: &Var) -> bool {
-        if self.op_args.is_none() {
-            return false;
-        }
-        for arg in self.op_args.as_ref().unwrap() {
-            if let OpArg::TimeVarFrom(ref var1) = *arg {
-                return var1.as_ref() == var0;
-            }
-        }
-        false
-    }
-
-    pub(in crate::agent::lang) fn get_times(
-        &self,
-        agent: &Representation,
-        var_assign: Option<&HashMap<&Var, &VarAssignment>>,
-    ) -> Option<Arc<BmsWrapper>> {
-        if self.is_grounded() {
-            let sbj = self.args.as_ref().unwrap();
-            let grfunc = self.clone().into_grounded();
-            if let Some(relation) = agent.get_relationship(&grfunc, sbj[0].get_name()) {
-                Some(relation.bms.clone())
-            } else {
-                None
-            }
-        } else {
-            var_assign?;
-            let f = HashMap::new();
-            if let Ok(grfunc) = GroundedFunc::from_free(self, var_assign, &f) {
-                for arg in self.get_args() {
-                    if let Predicate::FreeClsMemb(ref arg) = *arg {
-                        let assignments = var_assign.as_ref().unwrap();
-                        if let Some(entity) = assignments.get(&*arg.term) {
-                            if let Some(current) = entity.get_relationship(&grfunc) {
-                                return Some(current.bms.clone());
-                            }
-                        }
-                    }
-                }
-            }
-            None
         }
     }
 
@@ -411,6 +370,7 @@ impl<'a> FuncDecl {
 
     fn time_resolution(&self, assignments: &HashMap<&Var, Arc<BmsWrapper>>) -> Option<bool> {
         for arg in self.op_args.as_ref().unwrap() {
+            let arg = TimeArg::try_from(arg).unwrap();
             let not_time_eq = !arg.compare_time_args(assignments);
             if not_time_eq {
                 return Some(false);
@@ -426,6 +386,46 @@ impl<'a> FuncDecl {
             }
         }
         Ok(())
+    }
+}
+
+impl OpArgsOps for FuncDecl {
+    fn get_op_args(&self) -> Option<&[common::OpArg]> {
+        self.op_args.as_ref().map(|r| r.as_slice())
+    }
+}
+
+impl TimeOps for FuncDecl {
+    fn get_times(
+        &self,
+        agent: &Representation,
+        var_assign: Option<&HashMap<&Var, &VarAssignment>>,
+    ) -> Option<Arc<BmsWrapper>> {
+        if self.is_grounded() {
+            let sbj = self.args.as_ref().unwrap();
+            let grfunc = self.clone().into_grounded();
+            if let Some(relation) = agent.get_relationship(&grfunc, sbj[0].get_name()) {
+                Some(relation.bms.clone())
+            } else {
+                None
+            }
+        } else {
+            var_assign?;
+            let f = HashMap::new();
+            if let Ok(grfunc) = GroundedFunc::from_free(self, var_assign, &f) {
+                for arg in self.get_args() {
+                    if let Predicate::FreeClsMemb(ref arg) = *arg {
+                        let assignments = var_assign.as_ref().unwrap();
+                        if let Some(entity) = assignments.get(&*arg.term) {
+                            if let Some(current) = entity.get_relationship(&grfunc) {
+                                return Some(current.bms.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            None
+        }
     }
 }
 

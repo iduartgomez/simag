@@ -7,6 +7,7 @@ mod logsent;
 mod parser;
 mod skolem;
 mod terminal;
+pub(self) mod time_semantics;
 mod var;
 
 use chrono::{DateTime, Utc};
@@ -14,7 +15,7 @@ use std::collections::VecDeque;
 
 pub(super) use self::cls_decl::ClassDecl;
 pub(super) use self::common::{
-    Assert, FreeClassMembership, FreeClsMemb, Grounded, GroundedRef, OpArg, Predicate,
+    Assert, FreeClassMembership, FreeClsMemb, Grounded, GroundedRef, Predicate,
 };
 pub(super) use self::errors::ParseErrF;
 pub(super) use self::fn_decl::FuncDecl;
@@ -52,14 +53,14 @@ fn reserved(s: &str) -> bool {
     }
 }
 
-pub(super) trait OpArgsOps {
+pub(in crate::agent) trait OpArgsOps {
     fn get_op_args(&self) -> Option<&[common::OpArg]>;
 }
 
 mod errors {
-    use super::common::TimeFnErr;
     use super::logsent::LogSentErr;
     use super::parser::ParseErrB;
+    use super::time_semantics::TimeFnErr;
     use crate::agent::kb::bms::BmsError;
 
     use std::fmt;
