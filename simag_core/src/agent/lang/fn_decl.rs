@@ -60,7 +60,7 @@ impl<'a> FuncDecl {
         } = self;
         let name = match name {
             Terminal::GroundedTerm(name) => name,
-            Terminal::FreeTerm(_) | Terminal::Keyword(_) => panic!(),
+            Terminal::FreeTerm(_) | Terminal::Keyword(_) => unreachable!(),
         };
         let mut first = None;
         let mut second = None;
@@ -70,7 +70,7 @@ impl<'a> FuncDecl {
         for (i, a) in args.drain(..).enumerate() {
             let mut n_a = match a {
                 Predicate::GroundedMemb(term) => term,
-                Predicate::FreeClsMemb(_) | Predicate::FreeClassMembership(_) => panic!(),
+                Predicate::FreeClsMemb(_) | Predicate::FreeClassMembership(_) => unreachable!(),
             };
             n_a.bms = None;
             if i == 0 {

@@ -149,7 +149,7 @@ impl GroundedFunc {
                 if let Some(ref arg) = self.third {
                     arg.get_name().into()
                 } else {
-                    panic!()
+                    unreachable!()
                 }
             }
         }

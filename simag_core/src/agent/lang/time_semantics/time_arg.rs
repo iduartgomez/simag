@@ -164,7 +164,7 @@ impl TimeFn {
             TimeFn::Now => {
                 bms.new_record(None, value, None);
             }
-            _ => panic!(),
+            _ => unreachable!(),
         }
         bms
     }

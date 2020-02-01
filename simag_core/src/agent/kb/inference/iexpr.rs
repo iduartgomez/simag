@@ -299,7 +299,7 @@ impl ActiveQuery {
     fn get_func(&self) -> &GroundedFunc {
         match *self {
             ActiveQuery::Func(_, ref gf) => &*gf,
-            ActiveQuery::Class(_) => panic!(),
+            ActiveQuery::Class(_) => unreachable!(),
         }
     }
 
@@ -307,7 +307,7 @@ impl ActiveQuery {
     fn get_cls(&self) -> &GroundedMemb {
         match *self {
             ActiveQuery::Class(ref gt) => &*gt,
-            ActiveQuery::Func(_, _) => panic!(),
+            ActiveQuery::Func(_, _) => unreachable!(),
         }
     }
 }

@@ -262,7 +262,7 @@ impl FreeClsMemb {
                 CompOperator::Less
                 | CompOperator::More
                 | CompOperator::MoreEqual
-                | CompOperator::LessEqual => panic!(),
+                | CompOperator::LessEqual => unreachable!(),
                 _ => unreachable!(),
             }
         } else {
@@ -456,7 +456,7 @@ impl Assert {
     pub fn unwrap_fn(self) -> FuncDecl {
         match self {
             Assert::FuncDecl(f) => f,
-            Assert::ClassDecl(_) => panic!(),
+            Assert::ClassDecl(_) => unreachable!(),
         }
     }
 
@@ -464,14 +464,14 @@ impl Assert {
     pub fn unwrap_fn_as_ref(&self) -> &FuncDecl {
         match *self {
             Assert::FuncDecl(ref f) => f,
-            Assert::ClassDecl(_) => panic!(),
+            Assert::ClassDecl(_) => unreachable!(),
         }
     }
 
     #[inline]
     pub fn unwrap_cls(self) -> ClassDecl {
         match self {
-            Assert::FuncDecl(_) => panic!(),
+            Assert::FuncDecl(_) => unreachable!(),
             Assert::ClassDecl(c) => c,
         }
     }
@@ -479,7 +479,7 @@ impl Assert {
     #[inline]
     pub fn unwrap_cls_as_ref(&self) -> &ClassDecl {
         match *self {
-            Assert::FuncDecl(_) => panic!(),
+            Assert::FuncDecl(_) => unreachable!(),
             Assert::ClassDecl(ref c) => c,
         }
     }
@@ -709,7 +709,7 @@ impl<'a> OpArgTerm {
     fn get_var(&self) -> Arc<Var> {
         match *self {
             OpArgTerm::Terminal(ref term) => term.get_var(),
-            _ => panic!(),
+            _ => unreachable!(),
         }
     }
 
@@ -717,7 +717,7 @@ impl<'a> OpArgTerm {
     pub(in crate::agent::lang) fn get_var_ref(&self) -> &Var {
         match *self {
             OpArgTerm::Terminal(ref term) => term.get_var_ref(),
-            _ => panic!(),
+            _ => unreachable!(),
         }
     }
 }
