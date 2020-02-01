@@ -4,7 +4,7 @@ mod time_ops;
 use super::ParseErrF;
 pub(super) use errors::TimeFnErr;
 pub(super) use time_arg::{TimeArg, TimeFn};
-pub(super) use time_ops::TimeOps;
+pub(in crate::agent) use time_ops::TimeOps;
 
 mod errors {
     use super::*;

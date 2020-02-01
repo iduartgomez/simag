@@ -1,12 +1,11 @@
 use std::collections::HashMap;
-use std::convert::TryFrom;
-use std::sync::{atomic::AtomicBool, Arc};
+use std::sync::Arc;
 
 use super::{
     common::*,
     logsent::{LogSentResolution, ParseContext},
     parser::ClassDeclBorrowed,
-    time_semantics::{TimeArg, TimeOps},
+    time_semantics::TimeOps,
     *,
 };
 use crate::agent::kb::{bms::BmsWrapper, repr::Representation, VarAssignment};
@@ -74,42 +73,6 @@ impl<'a> ClassDecl {
     #[inline]
     pub fn get_parent(&self) -> &Terminal {
         &self.name
-    }
-
-    /// If the class declaration has an overwrite flag then if there are any previous records
-    /// those will be dropped.
-    pub fn get_own_time_data(
-        &self,
-        assignments: &HashMap<&Var, Arc<BmsWrapper>>,
-        value: Option<f32>,
-    ) -> BmsWrapper {
-        if self.op_args.is_none() {
-            let bms = BmsWrapper::new(false);
-            bms.new_record(None, value, None);
-            return bms;
-        }
-        let mut v = None;
-        let mut ow = false;
-        for arg in self.op_args.as_ref().unwrap() {
-            match *arg {
-                OpArg::TimeDecl(_) | OpArg::TimeVarAssign(_) => {
-                    let arg = TimeArg::try_from(arg).unwrap();
-                    v = Some(arg.get_time_payload(assignments, value));
-                }
-                OpArg::OverWrite => {
-                    ow = true;
-                }
-                _ => {}
-            }
-        }
-        if let Some(mut bms) = v {
-            bms.overwrite = AtomicBool::new(ow);
-            bms
-        } else {
-            let bms = BmsWrapper::new(ow);
-            bms.new_record(None, value, None);
-            bms
-        }
     }
 
     pub fn get_time_payload(&self, value: Option<f32>) -> Option<BmsWrapper> {

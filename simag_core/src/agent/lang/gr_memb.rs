@@ -208,7 +208,9 @@ impl GroundedMemb {
         self.bms.as_ref().unwrap().overwrite_data(data);
     }
 
-    /// An statement is a time interval if there are only
+    /// An statement is a time interval if there are only two time records and the
+    /// last one is none.
+    // FIXME: this is error prone, encode at the type level when the bms is first created?
     pub fn is_time_interval(&self) -> bool {
         let bms = self.bms.as_ref().unwrap();
         bms.record_len() == 2 && bms.get_last_value().is_none()

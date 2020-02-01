@@ -7,6 +7,8 @@ use crate::agent::kb::{bms::BmsWrapper, repr::Representation, VarAssignment};
 use crate::agent::lang::{common::OpArg, OpArgsOps, Var};
 
 pub(in crate::agent) trait TimeOps: OpArgsOps {
+    /// If the class declaration has an overwrite flag then if there are any previous records
+    /// those will be dropped
     fn get_own_time_data(
         &self,
         assignments: &HashMap<&Var, Arc<BmsWrapper>>,

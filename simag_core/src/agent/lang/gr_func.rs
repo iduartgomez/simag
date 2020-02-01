@@ -7,7 +7,7 @@ use super::{
     common::{GroundedRef, Predicate},
     fn_decl::FuncDecl,
     logsent::SentID,
-    Terminal, Var,
+    Terminal, TimeOps, Var,
 };
 use crate::agent::{
     kb::bms::BmsWrapper,
@@ -205,6 +205,10 @@ impl GroundedFunc {
     pub fn update_value(&self, val: Option<f32>) {
         let mut value_lock = self.args[0].value.write();
         *value_lock = val;
+    }
+
+    pub fn overwrite_time_data(&self, data: &BmsWrapper) {
+        self.bms.overwrite_data(data);
     }
 }
 

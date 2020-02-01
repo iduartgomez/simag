@@ -25,6 +25,7 @@ pub(super) use self::logsent::{LogSentence, ProofResContext, SentID};
 pub(super) use self::parser::{CompOperator, ParseTree};
 pub(super) use self::skolem::Skolem;
 pub(super) use self::terminal::{GrTerminalKind, Terminal};
+pub(super) use self::time_semantics::TimeOps;
 pub(super) use self::var::{Var, VarKind};
 
 /// Takes an owned String and returns the corresponding structure representing
@@ -77,6 +78,7 @@ mod errors {
         RFuncWrongArgs,
         WrongArgNumb,
         WrongDef,
+        FailedConversion(&'static str),
         LogSentErr(LogSentErr),
         TimeFnErr(TimeFnErr),
         SyntaxErr(String),

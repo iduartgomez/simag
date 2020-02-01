@@ -20,7 +20,7 @@ use crate::agent::lang::{
     logic_parser, Assert, ClassDecl, CompOperator, FreeClassMembership, FuncDecl, GrTerminalKind,
     GrTerminalKind::{Class as ClassTerm, Entity as EntityTerm},
     Grounded, GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ParseErrF, ParseTree,
-    Predicate, ProofResContext, Var,
+    Predicate, ProofResContext, TimeOps, Var,
 };
 use crate::FLOAT_EQ_ULPS;
 

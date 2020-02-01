@@ -161,41 +161,6 @@ impl<'a> FuncDecl {
         self.args.as_ref().unwrap()
     }
 
-    pub fn get_own_time_data(
-        &self,
-        assignments: &HashMap<&Var, Arc<BmsWrapper>>,
-        value: Option<f32>,
-    ) -> BmsWrapper {
-        if self.op_args.is_none() {
-            let t_bms = BmsWrapper::new(false);
-            t_bms.new_record(None, value, None);
-            return t_bms;
-        }
-        let mut v = None;
-        let mut ow = false;
-        for arg in self.op_args.as_ref().unwrap() {
-            match *arg {
-                OpArg::TimeDecl(_) | OpArg::TimeVarAssign(_) => {
-                    let arg = TimeArg::try_from(arg).unwrap();
-                    v = Some(arg.get_time_payload(assignments, value));
-                }
-                OpArg::OverWrite => {
-                    ow = true;
-                }
-                _ => {}
-            }
-        }
-
-        if let Some(mut bms) = v {
-            bms.overwrite = AtomicBool::new(ow);
-            bms
-        } else {
-            let bms = BmsWrapper::new(ow);
-            bms.new_record(None, value, None);
-            bms
-        }
-    }
-
     pub(in crate::agent::lang) fn generate_uid(&self) -> Vec<u8> {
         let mut id = vec![];
         id.append(&mut self.name.generate_uid());
@@ -370,10 +335,11 @@ impl<'a> FuncDecl {
 
     fn time_resolution(&self, assignments: &HashMap<&Var, Arc<BmsWrapper>>) -> Option<bool> {
         for arg in self.op_args.as_ref().unwrap() {
-            let arg = TimeArg::try_from(arg).unwrap();
-            let not_time_eq = !arg.compare_time_args(assignments);
-            if not_time_eq {
-                return Some(false);
+            if let Ok(arg) = TimeArg::try_from(arg) {
+                let not_time_eq = !arg.compare_time_args(assignments);
+                if not_time_eq {
+                    return Some(false);
+                }
             }
         }
         Some(true)
@@ -495,7 +461,12 @@ impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
         time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
         context: &mut T,
     ) {
+        use crate::agent::kb::bms::ReplaceMode;
+
         if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, time_assign) {
+            let time_data = self.get_own_time_data(time_assign, None);
+            time_data.replace_value(grfunc.get_value(), ReplaceMode::Substitute);
+            grfunc.overwrite_time_data(&time_data);
             #[cfg(debug_assertions)]
             {
                 log::trace!("Correct substitution found, updating: {:?}", grfunc);

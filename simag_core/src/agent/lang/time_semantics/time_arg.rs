@@ -108,7 +108,7 @@ impl<'a> TimeArg<'a> {
 }
 
 impl<'a> TryFrom<&'a OpArg> for TimeArg<'a> {
-    type Error = &'static str;
+    type Error = ParseErrF;
 
     fn try_from(op_arg: &'a OpArg) -> Result<Self, Self::Error> {
         match op_arg {
@@ -118,7 +118,7 @@ impl<'a> TryFrom<&'a OpArg> for TimeArg<'a> {
             OpArg::TimeVarFrom(_) |
             // TimeVarUntil(_),
             OpArg::TimeVarFromUntil(_, _) => Ok(TimeArg(op_arg)),
-            _ => Err("not valid")
+            _ => Err(ParseErrF::FailedConversion("Time OpArg"))
         }
     }
 }
