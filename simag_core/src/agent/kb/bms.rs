@@ -25,6 +25,12 @@ pub(in crate::agent) struct BmsWrapper {
     records: RwLock<Vec<BmsRecord>>,
     /// set if it's a predicate with the time of query execution
     pred: Option<Time>,
+    /// When this flag is set, it means that if this wrapper is received as an updating wrapper
+    /// it will replace all the existing records of the wrapper being updated.
+    ///
+    /// When this is done all the previous records will be re-examined with any new knowledge
+    /// being checked, which could produce new facts or update existing facts rolling back
+    /// previous knowledge that no longer applies.
     pub overwrite: AtomicBool,
 }
 

@@ -301,7 +301,7 @@ impl<'a> FuncDecl {
         if self.args.is_some() {
             for a in self.args.as_ref().unwrap() {
                 if let Predicate::FreeClsMemb(ref term) = *a {
-                    if &*term.term as *const Var == &*var as *const Var {
+                    if &*term.term == var {
                         return true;
                     }
                 } else {
@@ -466,7 +466,7 @@ impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
         if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, time_assign) {
             let time_data = self.get_own_time_data(time_assign, None);
             time_data.replace_value(grfunc.get_value(), ReplaceMode::Substitute);
-            grfunc.overwrite_time_data(&time_data);
+            grfunc.bms.overwrite_data(&time_data);
             #[cfg(debug_assertions)]
             {
                 log::trace!("Correct substitution found, updating: {:?}", grfunc);

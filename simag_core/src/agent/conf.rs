@@ -8,14 +8,8 @@ static CONF: Lazy<ConfigVars> = Lazy::new(|| {
     let log_level = std::env::var("SIMAG_LOG_LEVEL")
         .or_else::<std::env::VarError, _>(|_| Ok("trace".to_owned()))
         .ok()
-        .map(|l| {
-            LevelFilter::from_str(&l)
-                .or_else::<std::env::VarError, _>(|_| Ok(LevelFilter::Debug))
-                .ok()
-        })
-        .flatten()
-        .or_else(|| Some(LevelFilter::Debug))
-        .unwrap();
+        .map(|l| LevelFilter::from_str(&l).unwrap_or_else(|_| LevelFilter::Debug))
+        .unwrap_or_else(|| LevelFilter::Debug);
 
     ConfigVars { log_level }
 });

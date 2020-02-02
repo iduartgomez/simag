@@ -206,10 +206,6 @@ impl GroundedFunc {
         let mut value_lock = self.args[0].value.write();
         *value_lock = val;
     }
-
-    pub fn overwrite_time_data(&self, data: &BmsWrapper) {
-        self.bms.overwrite_data(data);
-    }
 }
 
 impl std::clone::Clone for GroundedFunc {

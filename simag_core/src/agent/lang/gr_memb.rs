@@ -204,10 +204,6 @@ impl GroundedMemb {
         true
     }
 
-    pub fn overwrite_time_data(&self, data: &BmsWrapper) {
-        self.bms.as_ref().unwrap().overwrite_data(data);
-    }
-
     /// An statement is a time interval if there are only two time records and the
     /// last one is none.
     // FIXME: this is error prone, encode at the type level when the bms is first created?

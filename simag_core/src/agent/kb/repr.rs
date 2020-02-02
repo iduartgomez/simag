@@ -103,7 +103,9 @@ impl Representation {
                                 for a in cls_decl {
                                     let t = time_data.clone();
                                     t.replace_value(a.get_value(), ReplaceMode::Tell);
-                                    a.overwrite_time_data(&t);
+                                    if let Some(bms) = a.bms.as_ref() {
+                                        bms.overwrite_data(&t)
+                                    };
                                     if a.is_time_interval() {
                                         a.update_value(None);
                                     }

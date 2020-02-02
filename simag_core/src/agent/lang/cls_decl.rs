@@ -75,16 +75,6 @@ impl<'a> ClassDecl {
         &self.name
     }
 
-    pub fn get_time_payload(&self, value: Option<f32>) -> Option<BmsWrapper> {
-        self.op_args.as_ref()?;
-        for arg in self.op_args.as_ref().unwrap() {
-            if let OpArg::TimeDecl(ref decl) = *arg {
-                return Some(decl.get_time_payload(value));
-            }
-        }
-        None
-    }
-
     pub(in crate::agent::lang) fn generate_uid(&self) -> Vec<u8> {
         let mut id = vec![];
         id.append(&mut self.name.generate_uid());
@@ -104,11 +94,7 @@ impl<'a> ClassDecl {
     pub(in crate::agent::lang) fn contains_var(&self, var: &Var) -> bool {
         for a in &self.args {
             match *a {
-                Predicate::FreeClsMemb(ref term)
-                    if &*term.term as *const Var == &*var as *const Var =>
-                {
-                    return true
-                }
+                Predicate::FreeClsMemb(ref term) if &*term.term == var => return true,
                 _ => continue,
             }
         }
@@ -180,6 +166,16 @@ impl TimeOps for ClassDecl {
                 }
             }
             _ => return None, // this path won't be taken in any program
+        }
+        None
+    }
+
+    fn get_time_payload(&self, value: Option<f32>) -> Option<BmsWrapper> {
+        self.op_args.as_ref()?;
+        for arg in self.op_args.as_ref().unwrap() {
+            if let OpArg::TimeDecl(ref decl) = *arg {
+                return Some(decl.get_time_payload(value));
+            }
         }
         None
     }
@@ -299,7 +295,9 @@ impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
             };
             let t = time_data.clone();
             t.replace_value(grfact.get_value(), ReplaceMode::Substitute);
-            grfact.overwrite_time_data(&t);
+            if let Some(bms) = grfact.bms.as_ref() {
+                bms.overwrite_data(&t)
+            };
             #[cfg(debug_assertions)]
             {
                 log::trace!("Correct substitution found, updating: {:?}", grfact);

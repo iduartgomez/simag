@@ -62,4 +62,8 @@ pub(in crate::agent) trait TimeOps: OpArgsOps {
             false
         }
     }
+
+    fn get_time_payload(&self, value: Option<f32>) -> Option<BmsWrapper> {
+        unreachable!()
+    }
 }

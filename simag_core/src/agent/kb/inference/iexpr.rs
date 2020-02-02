@@ -13,15 +13,8 @@ use std::iter::FromIterator;
 use std::mem;
 use std::sync::Arc;
 
-use chrono::Utc;
-use dashmap::DashMap;
-use parking_lot::RwLock;
-use rayon;
-use rayon::prelude::*;
-
 #[cfg(debug_assertions)]
 use crate::agent::conf::tracing::tracing_info;
-
 use crate::agent::kb::{
     inference::results::{GroundedResults, InfResults},
     repr::{Answer, Representation},
@@ -29,9 +22,14 @@ use crate::agent::kb::{
 };
 use crate::agent::lang::{
     Assert, ClassDecl, FreeClassMembership, FreeClsMemb, FuncDecl, Grounded, GroundedFunc,
-    GroundedMemb, LogSentence, ParseTree, Predicate, ProofResContext, SentID, Terminal, Time, Var,
-    VarKind,
+    GroundedMemb, LogSentence, ParseTree, Predicate, ProofResContext, SentID, Terminal, Time,
+    TimeOps, Var, VarKind,
 };
+use chrono::Utc;
+use dashmap::DashMap;
+use parking_lot::RwLock;
+use rayon;
+use rayon::prelude::*;
 
 pub(in crate::agent::kb) struct Inference<'rep> {
     query: Arc<QueryProcessed>,
@@ -1076,7 +1074,9 @@ impl QueryProcessed {
                             }
                             Predicate::GroundedMemb(t) => {
                                 if let Some(times) = cdecl.get_time_payload(t.get_value()) {
-                                    t.overwrite_time_data(&times);
+                                    if let Some(bms) = t.bms.as_ref() {
+                                        bms.overwrite_data(&times)
+                                    };
                                 }
                                 let cls: &str = t.get_name().into();
                                 query
