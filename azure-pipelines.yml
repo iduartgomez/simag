@@ -1,10 +1,10 @@
 jobs:
-    - template: default.yml@templates
-   
-   resources:
-     repositories:
-       - repository: templates
-         type: github
-         name: crate-ci/azure-pipelines
-         ref: refs/heads/v0.3
-         endpoint: iduartgomez
+  - template: default.yml@templates
+
+resources:
+  repositories:
+    - repository: templates
+      type: github
+      name: crate-ci/azure-pipelines
+      ref: refs/heads/v0.3
+      endpoint: iduartgomez
