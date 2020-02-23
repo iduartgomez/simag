@@ -1,5 +1,5 @@
-use RGSLRng;
 use err::ErrMsg;
+use RGSLRng;
 
 #[derive(Debug, Clone)]
 pub struct Exponential {

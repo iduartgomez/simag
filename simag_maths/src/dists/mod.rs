@@ -1,5 +1,4 @@
 /// Continuous and discrete probability distributions.
-
 mod categorical;
 
 mod beta;
@@ -18,8 +17,8 @@ mod transforms;
 
 use RGSLRng;
 
-pub use self::categorical::{Bernoulli, RelaxedBernoulli};
 pub use self::categorical::Categorical;
+pub use self::categorical::{Bernoulli, RelaxedBernoulli};
 
 pub use self::beta::Beta;
 pub use self::cauchy::Cauchy;
@@ -33,7 +32,7 @@ pub use self::normal::Normal;
 pub use self::pareto::Pareto;
 pub use self::tdist::TDist;
 
-pub use self::transforms::{AsContinuous, Normalization, GumbelSoftmax, GSRelaxation};
+pub use self::transforms::{AsContinuous, GSRelaxation, GumbelSoftmax, Normalization};
 
 /// Draw a random variate from a (continuous) distribution.
 pub trait Sample {

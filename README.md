@@ -1,6 +1,6 @@
 # simAG #
 
-[![Build Status]()]()
+[![Build Status](https://dev.azure.com/iduartgomez/iduartgomez/_apis/build/status/simag-CI?branchName=master)](https://dev.azure.com/iduartgomez/iduartgomez/_build/latest?definitionId=1&branchName=master)
 
 An experimental, agent-based, AI framework with sensory, pattern recognition, learning, inference and reasoning features and capabilities. Work in progress.
 

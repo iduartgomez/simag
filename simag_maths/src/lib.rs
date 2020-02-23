@@ -3,17 +3,17 @@
 extern crate float_cmp;
 extern crate itertools;
 extern crate rand;
-extern crate uuid;
 extern crate rgsl;
+extern crate uuid;
 //extern crate statrs;
 //extern crate ndarray;
 
+pub mod dists;
 pub mod model;
 pub mod sampling;
-pub mod dists;
 
-mod rng;
 mod err;
+mod rng;
 
 const FLOAT_EQ_ULPS: i64 = 2;
 #[allow(dead_code)]

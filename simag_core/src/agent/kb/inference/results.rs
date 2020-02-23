@@ -48,7 +48,7 @@ impl<'rep> InfResults<'rep> {
     pub fn add_relationships(&self, var: Arc<Var>, rel: &[Arc<GroundedFunc>]) {
         for func in rel {
             for obj in func.get_args_names() {
-                // Safety: guaranteed this lives as long as Self<'rep> where 'rep is the lifetime of the owning Rep 
+                // Safety: guaranteed this lives as long as Self<'rep> where 'rep is the lifetime of the owning Rep
                 let obj = unsafe { std::mem::transmute::<&str, &'rep str>(obj) };
                 self.relationships
                     .entry(var.clone())
@@ -61,7 +61,7 @@ impl<'rep> InfResults<'rep> {
     }
 
     pub fn add_grounded(&self, obj: &str, pred: &str, res: Option<(bool, Option<Time>)>) {
-        // Safety: guaranteed this lives as long as Self<'rep> where 'rep is the lifetime of the owning Rep 
+        // Safety: guaranteed this lives as long as Self<'rep> where 'rep is the lifetime of the owning Rep
         let obj = unsafe { std::mem::transmute::<&str, &'rep str>(obj) };
         self.grounded_queries
             .entry(pred.to_string())
@@ -104,7 +104,7 @@ impl<'rep> InfResults<'rep> {
         for preds in self.membership.iter() {
             for members in preds.values() {
                 for gr in members {
-                    // Safety: guaranteed this lives as long as Self<'rep> where 'rep is the lifetime of the owning Rep 
+                    // Safety: guaranteed this lives as long as Self<'rep> where 'rep is the lifetime of the owning Rep
                     let gr = unsafe { &*(&**gr as *const GroundedMemb) };
                     let gr_name: &str = gr.get_name().into();
                     res.entry(gr_name).or_insert_with(Vec::new).push(gr);
@@ -121,7 +121,7 @@ impl<'rep> InfResults<'rep> {
                 for grfunc in relation_ls {
                     for name in grfunc.get_args_names() {
                         unsafe {
-                            // Safety: guaranteed this lives as long as Self<'rep> where 'rep is the lifetime of the owning Rep 
+                            // Safety: guaranteed this lives as long as Self<'rep> where 'rep is the lifetime of the owning Rep
                             let name = mem::transmute::<&str, &'rep str>(name);
                             if res.contains_key(name) {
                                 let prev = res.get_mut(name).unwrap();
@@ -140,10 +140,10 @@ impl<'rep> InfResults<'rep> {
             (
                 k,
                 l.into_iter()
-                    .map(|v| 
-                        // Safety: guaranteed this lives as long as Self<'rep> where 'rep is the lifetime of the owning Rep 
-                        unsafe { std::mem::transmute::<&GroundedFunc, &'rep GroundedFunc>(&*v) }
-                )
+                    .map(
+                        |v| // Safety: guaranteed this lives as long as Self<'rep> where 'rep is the lifetime of the owning Rep 
+                        unsafe { std::mem::transmute::<&GroundedFunc, &'rep GroundedFunc>(&*v) },
+                    )
                     .collect::<Vec<_>>(),
             )
         }))

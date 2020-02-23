@@ -3,12 +3,14 @@
 use std::hash::Hash;
 use std::sync::Arc;
 
-pub use self::discrete::{DiscreteModel, DefDiscreteModel, DefDiscreteNode, DefDiscreteVar, CPT};
-pub use self::discrete::{DiscreteNode, DiscreteVar};
 pub use self::continuous::{ContModel, DefContModel, DefContNode, DefContVar};
 pub use self::continuous::{ContNode, ContVar};
-pub use self::hybrid::{HybridModel, DefHybridModel, DefHybridNode, MarkovRndField, DefMarkovRndField};
+pub use self::discrete::{DefDiscreteModel, DefDiscreteNode, DefDiscreteVar, DiscreteModel, CPT};
+pub use self::discrete::{DiscreteNode, DiscreteVar};
 pub use self::hybrid::HybridNode;
+pub use self::hybrid::{
+    DefHybridModel, DefHybridNode, DefMarkovRndField, HybridModel, MarkovRndField,
+};
 
 macro_rules! dag_impl {
     ($name:ident, $node:ident; [$($var_type:tt)+]) =>  {
@@ -51,9 +53,9 @@ macro_rules! dag_impl {
             #[inline]
             fn get_node(&self, pos: usize) -> Arc<N> {
                 self.nodes[pos].clone()
-            }         
+            }
         }
-        
+
         dag_impl!(ITER: $name, $node; [$($var_type)+,]);
     };
 
@@ -237,7 +239,6 @@ macro_rules! node_impl {
                 *self.pos.write().unwrap() = pos;
             }
 
-            
             fn get_neighbours(&self) -> Vec<usize> {
                 let mut p = self.get_parents_positions();
                 let mut c = self.get_childs_positions();
@@ -245,7 +246,7 @@ macro_rules! node_impl {
                 p
             }
         }
-    }
+    };
 }
 
 macro_rules! var_impl {
@@ -306,11 +307,11 @@ macro_rules! var_impl {
                 Self::new()
             }
         }
-    }
+    };
 }
 
-mod discrete;
 mod continuous;
+mod discrete;
 mod hybrid;
 
 // public traits for models:
@@ -389,7 +390,6 @@ pub type Discrete = u8;
 pub type Continuous = f64;
 pub type Boolean = bool;
 
-
 #[derive(Debug, Clone, Copy)]
 pub enum HybridRes {
     Continuous(Continuous),
@@ -446,7 +446,6 @@ pub enum DType {
     Multinomial,
     UnknownDisc,
 }
-
 
 /// A helper type for computing properties of a model composed of several submodels.
 ///

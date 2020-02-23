@@ -30,18 +30,23 @@
 //! string = regex: ".*?"|'.*?' ;
 //! ```
 
+use nom;
+use nom::{is_alphanumeric, is_digit};
+use nom::{ErrorKind, IResult};
+use rayon;
+use rayon::prelude::*;
 use std::collections::VecDeque;
 use std::fmt;
 use std::str;
 use std::str::FromStr;
-use nom;
-use nom::{is_alphanumeric, is_digit};
-use nom::{ErrorKind, IResult};
-use rayon::prelude::*;
-use rayon;
 
 use super::ParseErrF;
-use super::{logsent::{LogSentence, ParseContext, SentKind}, common::Assert, cls_decl::ClassDecl, fn_decl::FuncDecl};
+use super::{
+    cls_decl::ClassDecl,
+    common::Assert,
+    fn_decl::FuncDecl,
+    logsent::{LogSentence, ParseContext, SentKind},
+};
 
 const ICOND_OP: &[u8] = b":=";
 const AND_OP: &[u8] = b"&&";
@@ -88,7 +93,7 @@ impl Parser {
         p2: &'b mut Vec<u8>,
     ) -> Result<Vec<ASTNode<'b>>, ParseErrB<'b>> {
         // clean up every comment to facilitate further parsing
-        
+
         //TODO: clean up or ignore comments without having to collect over the initial slice
         let p1 = match remove_comments(input) {
             IResult::Done(_, done) => done,
@@ -135,40 +140,38 @@ pub(in crate::agent) enum ParseErrB<'a> {
 
 impl<'a> fmt::Display for ParseErrB<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let msg = 
-            match *self {
-                ParseErrB::SyntaxErrorU => "syntax error".to_string(),
-                //ParseErrB::SyntaxError(Box<ParseErrB<'a>>) => {}
-                ParseErrB::SyntaxErrorPos(arr) => {
-                    format!("syntax error at:\n{}", str::from_utf8(arr).unwrap())
-                }
-                ParseErrB::NotScope(arr) => format!(
-                    "syntax error, scope is invalid or not found:\n{}",
-                    str::from_utf8(arr).unwrap()
-                ),
-                ParseErrB::ImbalDelim(arr) => format!(
-                    "syntax error, 
-                             open delimiters:\n{}",
-                    str::from_utf8(arr).unwrap()
-                ),
-                ParseErrB::IllegalChain(arr) => format!(
-                    "syntax error,
-                             incomplete operator chain:\n{}",
-                    str::from_utf8(arr).unwrap()
-                ),
-                ParseErrB::NonTerminal(arr) => format!(
-                    "syntax error,
-                             illegal character in terminal position:\n{}",
-                    str::from_utf8(arr).unwrap()
-                ),
-                ParseErrB::NonNumber(arr) => format!(
-                    "syntax error,
-                             illegal character found when parsing a number:v{}",
-                    str::from_utf8(arr).unwrap()
-                ),
-                ParseErrB::UnclosedComment => "syntax error, open comment delimiter".to_string(),
+        let msg = match *self {
+            ParseErrB::SyntaxErrorU => "syntax error".to_string(),
+            //ParseErrB::SyntaxError(Box<ParseErrB<'a>>) => {}
+            ParseErrB::SyntaxErrorPos(arr) => {
+                format!("syntax error at:\n{}", str::from_utf8(arr).unwrap())
             }
-        ;
+            ParseErrB::NotScope(arr) => format!(
+                "syntax error, scope is invalid or not found:\n{}",
+                str::from_utf8(arr).unwrap()
+            ),
+            ParseErrB::ImbalDelim(arr) => format!(
+                "syntax error, 
+                             open delimiters:\n{}",
+                str::from_utf8(arr).unwrap()
+            ),
+            ParseErrB::IllegalChain(arr) => format!(
+                "syntax error,
+                             incomplete operator chain:\n{}",
+                str::from_utf8(arr).unwrap()
+            ),
+            ParseErrB::NonTerminal(arr) => format!(
+                "syntax error,
+                             illegal character in terminal position:\n{}",
+                str::from_utf8(arr).unwrap()
+            ),
+            ParseErrB::NonNumber(arr) => format!(
+                "syntax error,
+                             illegal character found when parsing a number:v{}",
+                str::from_utf8(arr).unwrap()
+            ),
+            ParseErrB::UnclosedComment => "syntax error, open comment delimiter".to_string(),
+        };
         write!(f, "{}", msg)
     }
 }
@@ -288,7 +291,7 @@ impl<'a> ASTNode<'a> {
                     }
                     _ => Ok(None),
                 }
-            },
+            }
             ASTNode::None => Ok(None),
         };
         context.depth -= 1;
@@ -310,7 +313,10 @@ impl<'a> Scope<'a> {
             _ => return Ok(None),
         }
         if context.depth == 1 && self.vars.is_some() {
-            self.vars.as_ref().unwrap().iter()
+            self.vars
+                .as_ref()
+                .unwrap()
+                .iter()
                 .map(|x| context.push_var(x))
                 .collect::<Result<Vec<_>, _>>()?;
             self.next.is_assertion(context)
@@ -524,9 +530,7 @@ fn empty_scope<'a>(
         match next {
             Some(IResult::Done(rest, next)) => IResult::Done(rest, next),
             Some(IResult::Error(err)) => IResult::Error(err),
-            Some(IResult::Incomplete(_)) => {
-                IResult::Error(nom::Err::Code(ErrorKind::Custom(11)))
-            }
+            Some(IResult::Incomplete(_)) => IResult::Error(nom::Err::Code(ErrorKind::Custom(11))),
             None => IResult::Done(EMPTY, ASTNode::None),
         }
     } else {
@@ -816,12 +820,8 @@ named!(
     arg<ArgBorrowed>,
     ws!(do_parse!(
         term: map!(terminal, TerminalBorrowed::from_slice)
-            >> u0: opt!(do_parse!(char!(',') >> u1: uval >> (u1))) >> ({
-            ArgBorrowed {
-                term,
-                uval: u0,
-            }
-        })
+            >> u0: opt!(do_parse!(char!(',') >> u1: uval >> (u1)))
+            >> ({ ArgBorrowed { term, uval: u0 } })
     ))
 );
 
@@ -850,30 +850,26 @@ named!(
         do_parse!(
             term: alt!(
                 map!(string, OpArgTermBorrowed::is_string)
-                | map!(terminal, OpArgTermBorrowed::is_terminal)) >> 
-            c1: opt!(do_parse!(
+                    | map!(terminal, OpArgTermBorrowed::is_terminal)
+            ) >> c1: opt!(do_parse!(
                 c2: map!(
                     alt!(tag!(">=") | tag!("<=") | tag!("=") | tag!(">") | tag!("<")),
-                    CompOperator::from_chars) >> 
-                term: alt!(
+                    CompOperator::from_chars
+                ) >> term: alt!(
                     map!(string, OpArgTermBorrowed::is_string)
-                    | map!(terminal, OpArgTermBorrowed::is_terminal)) >> 
-                (c2, term))) >>
-            (OpArgBorrowed {
-                term,
-                comp: c1,
-            })) |
-        do_parse!(
-            tag!("@") >>
-            from: map!(terminal, OpArgTermBorrowed::is_terminal) >>
-            to: opt!(do_parse!(
-                tag!("->") >>
-                term: map!(terminal, OpArgTermBorrowed::is_terminal) >>
-                (term))) >> 
-            (OpArgBorrowed {
-                term: from,
-                comp: CompOperator::from_time_op(to),
-            })   
+                        | map!(terminal, OpArgTermBorrowed::is_terminal)
+                ) >> (c2, term)
+            )) >> (OpArgBorrowed { term, comp: c1 })
+        ) | do_parse!(
+            tag!("@")
+                >> from: map!(terminal, OpArgTermBorrowed::is_terminal)
+                >> to: opt!(do_parse!(
+                    tag!("->") >> term: map!(terminal, OpArgTermBorrowed::is_terminal) >> (term)
+                ))
+                >> (OpArgBorrowed {
+                    term: from,
+                    comp: CompOperator::from_time_op(to),
+                })
         )
     ))
 );
@@ -895,8 +891,10 @@ pub(in crate::agent) enum OpArgTermBorrowed<'a> {
 impl<'a> std::fmt::Debug for OpArgTermBorrowed<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            OpArgTermBorrowed::Terminal(r) => write!(f, "OpArg::Term({})",str::from_utf8(r).unwrap()),
-            OpArgTermBorrowed::String(r) => write!(f, "OpArg::Str({})",str::from_utf8(r).unwrap()),
+            OpArgTermBorrowed::Terminal(r) => {
+                write!(f, "OpArg::Term({})", str::from_utf8(r).unwrap())
+            }
+            OpArgTermBorrowed::String(r) => write!(f, "OpArg::Str({})", str::from_utf8(r).unwrap()),
         }
     }
 }
@@ -925,7 +923,9 @@ named!(
             >> op: map!(
                 alt!(tag!(">=") | tag!("<=") | tag!("=") | tag!(">") | tag!("<")),
                 CompOperator::from_chars
-            ) >> val: number >> (UVal { op, val })
+            )
+            >> val: number
+            >> (UVal { op, val })
     ))
 );
 
@@ -961,9 +961,7 @@ fn number(input: &[u8]) -> IResult<&[u8], Number> {
     if float && (input[0] == b'-') {
         IResult::Done(
             &input[idx + 1..],
-            Number::SignedFloat(
-                <f32>::from_str(str::from_utf8(&input[0..=idx]).unwrap()).unwrap(),
-            ),
+            Number::SignedFloat(<f32>::from_str(str::from_utf8(&input[0..=idx]).unwrap()).unwrap()),
         )
     } else if !float && (input[0] == b'-') {
         IResult::Done(
@@ -1114,7 +1112,9 @@ impl CompOperator {
     #[inline]
     pub fn is_time_assignment(self) -> bool {
         match self {
-            CompOperator::Equal | CompOperator::Until | CompOperator::At 
+            CompOperator::Equal
+            | CompOperator::Until
+            | CompOperator::At
             | CompOperator::FromUntil => true,
             _ => false,
         }
@@ -1420,10 +1420,7 @@ mod test {
             &s5_res.op_args.as_ref().unwrap()[0],
             &OpArgBorrowed {
                 term: OpArgTermBorrowed::Terminal(b"time"),
-                comp: Some((
-                    CompOperator::Equal,
-                    OpArgTermBorrowed::Terminal(b"t1"),
-                )),
+                comp: Some((CompOperator::Equal, OpArgTermBorrowed::Terminal(b"t1"),)),
             }
         );
         assert_eq!(
@@ -1433,7 +1430,7 @@ mod test {
                 comp: Some((CompOperator::At, OpArgTermBorrowed::String(b""))),
             }
         );
-        
+
         let s6 = b"happy(time=t1, @t1->t2, ow)[x,u<=0.5]";
         let s6_res = class_decl(s6);
         assert_done_or_err!(s6_res);
@@ -1443,10 +1440,7 @@ mod test {
             &s6_res.op_args.as_ref().unwrap()[1],
             &OpArgBorrowed {
                 term: OpArgTermBorrowed::Terminal(b"t1"),
-                comp: Some((
-                    CompOperator::FromUntil,
-                    OpArgTermBorrowed::Terminal(b"t2"),
-                )),
+                comp: Some((CompOperator::FromUntil, OpArgTermBorrowed::Terminal(b"t2"),)),
             }
         );
     }
