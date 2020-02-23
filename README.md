@@ -1,5 +1,9 @@
 # simAG #
+
+[![Build Status]()]()
+
 An experimental, agent-based, AI framework with sensory, pattern recognition, learning, inference and reasoning features and capabilities. Work in progress.
+
 
 ## License
 
