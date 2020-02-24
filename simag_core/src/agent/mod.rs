@@ -27,17 +27,22 @@ impl Agent {
         }
     }
 
-    pub fn ask(&mut self, source: &str) -> Result<kb::repr::Answer, kb::repr::QueryErr> {
+    pub fn ask(&self, source: &str) -> Result<kb::repr::Answer, kb::repr::QueryErr> {
         self.representation.ask(source)
     }
 
-    pub fn tell(&mut self, source: &str) -> Result<(), Vec<ParseErrF>> {
+    pub fn tell(&self, source: &str) -> Result<(), Vec<ParseErrF>> {
         self.representation.tell(source)
     }
 
     pub fn set_thread_pool(&mut self, threads: usize) {
         self.thread_manager.threads = threads;
         self.representation.set_threads(threads);
+    }
+
+    /// Clean up all the knowledge of the agent.
+    pub fn clear(&mut self) {
+        self.representation.clear()
     }
 }
 

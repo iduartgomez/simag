@@ -24,6 +24,9 @@ env_logger = "0.7.1"
 # bin deps
 ansi_term = { version = "0.12.1", optional = true }
 
+[dev-dependencies]
+criterion = "0.3"
+
 [features]
 binaries = ["ansi_term"]
 
@@ -36,3 +39,7 @@ path = "src/bin/manager.rs"
 name = "repl"
 required-features = ["binaries"]
 path = "src/bin/repl.rs"
+
+[[bench]]
+name = "repr"
+harness = false

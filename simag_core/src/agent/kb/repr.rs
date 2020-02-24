@@ -41,7 +41,7 @@ use crate::FLOAT_EQ_ULPS;
 ///     | Entities are denoted with a $ symbol followed by an alphanumeric literal.
 ///     classes -> Sets of objects (entities or subclasses) that share a common property.
 ///     | This includes 'classes of relationships' and other 'functions'.
-pub struct Representation {
+pub(crate) struct Representation {
     pub(in crate::agent) entities: DashMap<String, Entity>,
     pub(in crate::agent) classes: DashMap<String, Class>,
     threads: rayon::ThreadPool,
@@ -618,6 +618,11 @@ impl Representation {
             .num_threads(threads)
             .build()
             .unwrap();
+    }
+
+    pub fn clear(&mut self) {
+        self.entities.clear();
+        self.classes.clear();
     }
 }
 
