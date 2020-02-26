@@ -1,5 +1,7 @@
 **/.vscode/**
 simag.code-workspace
-
 target
+
 Cargo.lock
+perf.data*
+flamegraph.svg
