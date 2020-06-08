@@ -207,7 +207,7 @@ impl CDF for RelaxedBernoulli {
     #[inline]
     fn inverse_cdf(&self, p: f64) -> f64 {
         let f = -(1.0 / p - 1.0).ln();
-        (1.0 / (1.0 + (-self.t * f - self.l.ln()).exp()))
+        1.0 / (1.0 + (-self.t * f - self.l.ln()).exp())
     }
 }
 

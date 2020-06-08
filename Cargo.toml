@@ -18,3 +18,6 @@ simag_terminal = { path = "simag_terminal" }
 
 [workspace]
 members = ["simag_core", "simag_maths", "simag_networking", "simag_terminal"]
+
+[profile.release]
+debug = true

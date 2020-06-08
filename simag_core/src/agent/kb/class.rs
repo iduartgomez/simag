@@ -72,8 +72,9 @@ impl Class {
             .collect::<Vec<_>>()
     }
 
-    /// Set a superclass of this class
-    pub(in crate::agent::kb) fn add_class_membership<T: ProofResContext>(
+    /// Set or update a superclass of this class. Returns whether this was a new superclass
+    /// or already existed.
+    pub(in crate::agent::kb) fn add_or_update_class_membership<T: ProofResContext>(
         &self,
         agent: &Representation,
         grounded: &Arc<GroundedMemb>,

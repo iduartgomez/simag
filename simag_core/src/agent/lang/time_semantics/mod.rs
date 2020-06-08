@@ -1,9 +1,11 @@
 mod time_arg;
+mod time_calc;
 mod time_ops;
 
 use super::ParseErrF;
 pub(super) use errors::TimeFnErr;
 pub(super) use time_arg::{TimeArg, TimeFn};
+pub(in crate::agent) use time_calc::TimeCalc;
 pub(in crate::agent) use time_ops::TimeOps;
 
 mod errors {

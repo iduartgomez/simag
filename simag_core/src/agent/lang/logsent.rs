@@ -273,6 +273,7 @@ impl<'a> LogSentence {
                         }
                     }
                 }
+                Assert::SpecialFunc(f) => todo!(),
             }
         }
         // check validity of optional arguments for predicates in the RHS:
@@ -302,6 +303,7 @@ impl<'a> LogSentence {
                         }
                     }
                 }
+                Assert::SpecialFunc(func) => todo!(),
             }
         }
         Ok(())

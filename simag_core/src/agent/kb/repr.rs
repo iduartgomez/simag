@@ -176,13 +176,13 @@ impl Representation {
                 let class_exists = self.classes.contains_key(class_name);
                 if class_exists {
                     let class = self.classes.get(class_name).unwrap();
-                    is_new = class.add_class_membership(self, assert, context);
+                    is_new = class.add_or_update_class_membership(self, assert, context);
                     decl = ClassMember::Class(assert.clone());
                 } else {
                     let class = Class::new(class_name.to_owned(), ClassKind::Membership);
                     self.classes.insert(class.name.clone(), class);
                     let class = self.classes.get(class_name).unwrap();
-                    is_new = class.add_class_membership(self, assert, context);
+                    is_new = class.add_or_update_class_membership(self, assert, context);
                     decl = ClassMember::Class(assert.clone());
                 }
             }
@@ -190,13 +190,13 @@ impl Representation {
                 let entity_exists = self.entities.contains_key(subject);
                 if entity_exists {
                     let entity = self.entities.get(subject).unwrap();
-                    is_new = entity.add_class_membership(self, assert, context);
+                    is_new = entity.add_or_updated_class_membership(self, assert, context);
                     decl = ClassMember::Entity(assert.clone());
                 } else {
                     let entity = Entity::new(subject.to_string());
                     self.entities.insert(entity.name.clone(), entity);
                     let entity = self.entities.get(subject).unwrap();
-                    is_new = entity.add_class_membership(self, assert, context);
+                    is_new = entity.add_or_updated_class_membership(self, assert, context);
                     decl = ClassMember::Entity(assert.clone());
                 }
             }
@@ -329,6 +329,7 @@ impl Representation {
                         }
                     }
                 }
+                Assert::SpecialFunc(_) => {}
             }
         }
 
@@ -381,6 +382,7 @@ impl Representation {
                             Assert::FuncDecl(ref func_decl) => {
                                 iter_func_candidates(func_decl, &candidates)
                             }
+                            Assert::SpecialFunc(_) => {}
                         }
                     }
                 }
@@ -398,6 +400,7 @@ impl Representation {
                 let nc = match *p {
                     Assert::ClassDecl(_) => Class::new(name.to_string(), ClassKind::Membership),
                     Assert::FuncDecl(_) => Class::new(name.to_string(), ClassKind::Relationship),
+                    Assert::SpecialFunc(_) => unreachable!(),
                 };
                 nc.add_rule(rule.clone());
                 self.classes.insert(name.to_string(), nc);
@@ -761,7 +764,8 @@ impl Entity {
             .collect::<Vec<_>>()
     }
 
-    fn add_class_membership<T: ProofResContext>(
+    /// Add a new class membership for this class. Returns whether this was added or updated.
+    fn add_or_updated_class_membership<T: ProofResContext>(
         &self,
         agent: &Representation,
         grounded: &Arc<GroundedMemb>,

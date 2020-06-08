@@ -801,6 +801,7 @@ pub(in crate::agent::kb) fn meet_sent_requirements<'rep>(
                 Assert::ClassDecl(ref c) => {
                     cl.push(c.get_name());
                 }
+                _ => unreachable!(),
             }
         }
         let (class_list, funcs_list) = unsafe {
@@ -1147,6 +1148,7 @@ impl QueryProcessed {
                                         let fdecl = Arc::new(fdecl);
                                         assert_rel(&mut self, fdecl)?;
                                     }
+                                    _ => unreachable!(),
                                 }
                             }
                         }
@@ -1162,6 +1164,7 @@ impl QueryProcessed {
                                         let fdecl = Arc::new(fdecl);
                                         assert_rel(&mut self, fdecl)?;
                                     }
+                                    _ => unreachable!(),
                                 }
                             }
                         }

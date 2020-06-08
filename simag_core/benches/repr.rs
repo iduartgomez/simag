@@ -21,7 +21,7 @@ fn tell_insert(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(num), test, |b, &t| {
             let mut rep = Agent::default();
             b.iter(|| {
-                rep.tell(t);
+                rep.tell(t).unwrap();
                 rep.clear();
             });
         });
@@ -35,7 +35,7 @@ fn tell_upsert(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(num), test, |b, &t| {
             let rep = Agent::default();
             b.iter(|| {
-                rep.tell(t);
+                rep.tell(t).unwrap();
             });
         });
     }
@@ -81,13 +81,16 @@ fn ask_once(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(num), test, |b, &t| {
             b.iter_custom(|iters| {
                 let mut rep = Agent::default();
-                let start = std::time::Instant::now();
+                let mut total = std::time::Duration::new(0, 0);
                 for _ in 0..iters {
+                    let start = std::time::Instant::now();
                     rep.tell(ASK_SETUP[num]).unwrap();
                     black_box(rep.ask(t).unwrap());
+                    let t = start.elapsed();
+                    total += t;
                     rep.clear();
                 }
-                start.elapsed()
+                total
             });
         });
     }

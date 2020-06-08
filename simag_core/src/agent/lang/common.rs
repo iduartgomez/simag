@@ -12,7 +12,7 @@ use super::{
     parser::{ArgBorrowed, CompOperator, Number, OpArgBorrowed, OpArgTermBorrowed, UVal},
     time_semantics::{TimeArg, TimeFn, TimeFnErr, TimeOps},
     var::Var,
-    GroundedFunc, GroundedMemb, Terminal,
+    BuiltIns, GroundedFunc, GroundedMemb, Terminal,
 };
 use crate::agent::{
     kb::bms::BmsWrapper,
@@ -389,6 +389,7 @@ fn match_uval(uval: Option<UVal>) -> Result<UValDestruct, ParseErrF> {
 pub(in crate::agent) enum Assert {
     FuncDecl(FuncDecl),
     ClassDecl(ClassDecl),
+    SpecialFunc(BuiltIns),
 }
 
 impl Assert {
@@ -397,6 +398,7 @@ impl Assert {
         match *self {
             Assert::FuncDecl(ref f) => f.get_name(),
             Assert::ClassDecl(ref c) => c.get_name(),
+            Assert::SpecialFunc(ref f) => todo!(),
         }
     }
 
@@ -405,6 +407,7 @@ impl Assert {
         match *self {
             Assert::FuncDecl(ref f) => f.get_time_decl(var),
             Assert::ClassDecl(ref c) => c.get_time_decl(var),
+            Assert::SpecialFunc(_) => false,
         }
     }
 
@@ -417,22 +420,26 @@ impl Assert {
         match *self {
             Assert::FuncDecl(ref f) => f.get_times(agent, var_assign),
             Assert::ClassDecl(ref c) => c.get_times(agent, var_assign),
+            Assert::SpecialFunc(_) => None,
         }
     }
 
     #[inline]
     pub fn is_class(&self) -> bool {
         match *self {
-            Assert::FuncDecl(_) => false,
+            Assert::FuncDecl(_) | Assert::SpecialFunc(_) => false,
             Assert::ClassDecl(_) => true,
         }
     }
 
     #[inline]
     pub fn contains(&self, var: &Var) -> bool {
-        match *self {
-            Assert::FuncDecl(ref f) => f.contains_var(var),
-            Assert::ClassDecl(ref c) => c.contains_var(var),
+        match self {
+            Assert::FuncDecl(f) => f.contains_var(var),
+            Assert::ClassDecl(c) => c.contains_var(var),
+            Assert::SpecialFunc(builtins) => match builtins {
+                BuiltIns::TimeCalculus(f) => f.contains_var(var),
+            },
         }
     }
 
@@ -441,14 +448,16 @@ impl Assert {
         match *self {
             Assert::FuncDecl(ref f) => f.parent_is_grounded(),
             Assert::ClassDecl(ref c) => c.parent_is_grounded(),
+            Assert::SpecialFunc(_) => false,
         }
     }
 
     #[inline]
     pub fn parent_is_kw(&self) -> bool {
-        match *self {
-            Assert::FuncDecl(ref f) => f.parent_is_kw(),
+        match self {
             Assert::ClassDecl(_) => false,
+            Assert::FuncDecl(f) => f.parent_is_kw(),
+            Assert::SpecialFunc(_) => true,
         }
     }
 
@@ -457,6 +466,7 @@ impl Assert {
         match self {
             Assert::FuncDecl(f) => f,
             Assert::ClassDecl(_) => unreachable!(),
+            Assert::SpecialFunc(_) => unreachable!(),
         }
     }
 
@@ -465,6 +475,7 @@ impl Assert {
         match *self {
             Assert::FuncDecl(ref f) => f,
             Assert::ClassDecl(_) => unreachable!(),
+            Assert::SpecialFunc(_) => unreachable!(),
         }
     }
 
@@ -473,6 +484,7 @@ impl Assert {
         match self {
             Assert::FuncDecl(_) => unreachable!(),
             Assert::ClassDecl(c) => c,
+            Assert::SpecialFunc(_) => unreachable!(),
         }
     }
 
@@ -481,6 +493,7 @@ impl Assert {
         match *self {
             Assert::FuncDecl(_) => unreachable!(),
             Assert::ClassDecl(ref c) => c,
+            Assert::SpecialFunc(_) => unreachable!(),
         }
     }
 
@@ -495,6 +508,7 @@ impl Assert {
         match *self {
             Assert::FuncDecl(ref f) => f.grounded_eq(agent, assignments, time_assign, context),
             Assert::ClassDecl(ref c) => c.grounded_eq(agent, assignments, time_assign, context),
+            Assert::SpecialFunc(_) => unreachable!(),
         }
     }
 
@@ -509,6 +523,7 @@ impl Assert {
         match *self {
             Assert::FuncDecl(ref f) => f.substitute(agent, assignments, time_assign, context),
             Assert::ClassDecl(ref c) => c.substitute(agent, assignments, time_assign, context),
+            Assert::SpecialFunc(_) => todo!(),
         }
     }
 
@@ -517,6 +532,7 @@ impl Assert {
         match *self {
             Assert::FuncDecl(ref f) => f.generate_uid(),
             Assert::ClassDecl(ref c) => c.generate_uid(),
+            Assert::SpecialFunc(_) => todo!(),
         }
     }
 }
