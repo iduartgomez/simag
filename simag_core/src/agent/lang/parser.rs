@@ -403,7 +403,7 @@ named!(scope0(&[u8]) -> IResult<&[u8], ASTNode>, ws!(
                 tag!(")") >>
                 (vars, decl, op, next, true)
             ), expr0
-        ) | 
+        ) |
         map!(
             do_parse!(
                 tag!("(") >>
@@ -419,12 +419,12 @@ named!(scope0(&[u8]) -> IResult<&[u8], ASTNode>, ws!(
             do_parse!(
                 tag!("(") >>
                 vars: opt!(scope_var_decl) >>
-                lhs: alt!(assertions | scope0) >> 
-                op: map!(logic_operator, LogicOperator::from_bytes) >> 
+                lhs: alt!(assertions | scope0) >>
+                op: map!(logic_operator, LogicOperator::from_bytes) >>
                 rhs: alt!(assertions | scope0) >>
                 tag!(")") >>
                 (vars, lhs, op, rhs)
-            ), expr1 
+            ), expr1
         ) |
         map!(
             do_parse!(
@@ -433,16 +433,16 @@ named!(scope0(&[u8]) -> IResult<&[u8], ASTNode>, ws!(
                 next: opt!(alt!(assertions | scope0)) >>
                 tag!(")") >>
                 (vars, next)
-            ), empty_scope 
+            ), empty_scope
         ) |
         map!(
-            map!(decl_alt, ASTNode::from_assert), 
+            map!(decl_alt, ASTNode::from_assert),
             |decl| {
                 IResult::Done(EMPTY, decl)
             }
         ) |
         do_parse!(expr: assertions >> (expr))
-    ) 
+    )
 ));
 
 type ScopeOutA<'a> = (
@@ -546,7 +546,7 @@ named!(assertions(&[u8]) -> IResult<&[u8], ASTNode>,
             decl: many0!(
                 map!(
                     do_parse!(
-                        decl: decl_alt >> 
+                        decl: decl_alt >>
                         op: map!(logic_operator, LogicOperator::from_bytes) >>
                         (op, decl)
                     ),  assert_one
@@ -637,7 +637,7 @@ fn decl_alt(input: &[u8]) -> IResult<&[u8], AssertBorrowed> {
 type DeclVars<'a> = Vec<Vec<VarDeclBorrowed<'a>>>;
 
 #[inline]
-named!(scope_var_decl(&[u8]) -> DeclVars, 
+named!(scope_var_decl(&[u8]) -> DeclVars,
     ws!(many1!(alt!(variable | skolem)))
 );
 
@@ -662,17 +662,17 @@ pub(in crate::agent) struct SkolemBorrowed<'a> {
 }
 
 named!(skolem(&[u8]) -> Vec<VarDeclBorrowed>, do_parse!(
-    tag!("(") >> 
+    tag!("(") >>
     opt!(take_while!(is_multispace)) >>
-    tag!("exists ") >> 
+    tag!("exists ") >>
     vars: fold_many1!(
         do_parse!(
             opt!(take_while!(is_multispace)) >>
             name: terminal >>
             oa: opt!(do_parse!(
-                tag!(":") >> 
+                tag!(":") >>
                 oa: op_arg >>
-                (oa) 
+                (oa)
             )) >>
             opt!(take_while!(is_multispace)) >>
             opt!(tag!(",")) >>
@@ -687,7 +687,7 @@ named!(skolem(&[u8]) -> Vec<VarDeclBorrowed>, do_parse!(
         }
     ) >>
     opt!(take_while!(is_multispace)) >>
-    tag!(")") >> 
+    tag!(")") >>
     (vars)
 ));
 
@@ -699,7 +699,7 @@ pub(in crate::agent) struct VarBorrowed<'a> {
 }
 
 named!(variable(&[u8]) -> Vec<VarDeclBorrowed>, do_parse!(
-    tag!("(") >> 
+    tag!("(") >>
     opt!(take_while!(is_multispace)) >>
     tag!("let ") >>
     vars: fold_many1!(
@@ -707,9 +707,9 @@ named!(variable(&[u8]) -> Vec<VarDeclBorrowed>, do_parse!(
             opt!(take_while!(is_multispace)) >>
             name: terminal >>
             oa: opt!(do_parse!(
-                tag!(":") >> 
+                tag!(":") >>
                 oa: op_arg >>
-                (oa) 
+                (oa)
             )) >>
             opt!(take_while!(is_multispace)) >>
             opt!(tag!(",")) >>
@@ -722,7 +722,7 @@ named!(variable(&[u8]) -> Vec<VarDeclBorrowed>, do_parse!(
             vec.push(VarDeclBorrowed::Var(v));
             vec
         }
-    ) >> 
+    ) >>
     opt!(take_while!(is_multispace)) >>
     tag!(")") >>
     (vars)
@@ -748,7 +748,6 @@ impl<'a> FuncDeclBorrowed<'a> {
 pub(in crate::agent) enum FuncVariants {
     Relational,
     NonRelational,
-    TimeCalc,
 }
 
 impl FuncVariants {
@@ -763,7 +762,7 @@ impl FuncVariants {
 named!(func_decl(&[u8]) -> FuncDeclBorrowed,
     ws!(alt_complete!(
         do_parse!(
-            tag!("fn::") >> 
+            tag!("fn::") >>
             name: map!(terminal, TerminalBorrowed::from_slice) >>
             op1: opt!(op_args) >>
             a1: args >>
@@ -775,7 +774,7 @@ named!(func_decl(&[u8]) -> FuncDeclBorrowed,
             })
         ) |
         do_parse!(
-            tag!("fn::") >> 
+            tag!("fn::") >>
             name: map!(terminal, TerminalBorrowed::from_slice) >>
             op1: op_args >>
             (FuncDeclBorrowed {
@@ -803,7 +802,7 @@ impl<'a> ClassDeclBorrowed<'a> {
 }
 
 named!(class_decl(&[u8]) -> ClassDeclBorrowed, ws!(do_parse!(
-    name: map!(terminal, TerminalBorrowed::from_slice) >> 
+    name: map!(terminal, TerminalBorrowed::from_slice) >>
     op1: opt!(op_args) >>
     a1: args >>
     (ClassDeclBorrowed{name, op_args: op1, args: a1})

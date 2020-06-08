@@ -14,7 +14,7 @@ mod var;
 use chrono::{DateTime, Utc};
 use std::collections::VecDeque;
 
-pub(super) use self::built_ins::BuiltIns;
+pub(self) use self::built_ins::BuiltIns;
 pub(super) use self::cls_decl::ClassDecl;
 pub(super) use self::common::{
     Assert, FreeClassMembership, FreeClsMemb, Grounded, GroundedRef, Predicate,

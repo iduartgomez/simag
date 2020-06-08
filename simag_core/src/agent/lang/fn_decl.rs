@@ -1,12 +1,11 @@
 use std::collections::HashMap;
-use std::convert::TryFrom;
 use std::sync::{atomic::AtomicBool, Arc};
 
 use super::{
     common::*,
     logsent::{LogSentResolution, ParseContext},
     parser::{FuncDeclBorrowed, FuncVariants},
-    time_semantics::{TimeArg, TimeFn, TimeFnErr, TimeOps},
+    time_semantics::{TimeFn, TimeOps},
     var::Var,
     *,
 };
@@ -28,21 +27,8 @@ impl<'a> FuncDecl {
         other: &FuncDeclBorrowed<'a>,
         context: &mut ParseContext,
     ) -> Result<FuncDecl, ParseErrF> {
-        let mut variant = other.variant;
-        let func_name = match Terminal::from(&other.name, context) {
-            Err(ParseErrF::ReservedKW(val)) => {
-                if &val == "time_calc" {
-                    variant = FuncVariants::TimeCalc;
-                    Terminal::Keyword("time_calc")
-                } else {
-                    return Err(ParseErrF::ReservedKW(val));
-                }
-            }
-            Err(err) => return Err(err),
-            Ok(val) => val,
-        };
-        match variant {
-            FuncVariants::TimeCalc => FuncDecl::decl_timecalc_fn(other, context),
+        let func_name = Terminal::from(&other.name, context)?;
+        match other.variant {
             FuncVariants::Relational => FuncDecl::decl_relational_fn(other, context, func_name),
             FuncVariants::NonRelational => {
                 FuncDecl::decl_nonrelational_fn(other, context, func_name)
@@ -60,7 +46,7 @@ impl<'a> FuncDecl {
         } = self;
         let name = match name {
             Terminal::GroundedTerm(name) => name,
-            Terminal::FreeTerm(_) | Terminal::Keyword(_) => unreachable!(),
+            Terminal::FreeTerm(_) => unreachable!(),
         };
         let mut first = None;
         let mut second = None;
@@ -142,7 +128,6 @@ impl<'a> FuncDecl {
         match self.name {
             Terminal::FreeTerm(ref var) => &var.name,
             Terminal::GroundedTerm(ref name) => name,
-            Terminal::Keyword(kw) => kw,
         }
     }
 
@@ -177,50 +162,6 @@ impl<'a> FuncDecl {
             }
         }
         id
-    }
-
-    fn decl_timecalc_fn(
-        other: &FuncDeclBorrowed<'a>,
-        context: &mut ParseContext,
-    ) -> Result<FuncDecl, ParseErrF> {
-        if other.args.is_some() || other.op_args.is_none() {
-            return Err(ParseErrF::WrongDef);
-        }
-        let op_args = match other.op_args {
-            Some(ref oargs) => {
-                let mut v0 = Vec::with_capacity(oargs.len());
-                for e in oargs {
-                    let arg = match OpArg::from(e, context) {
-                        Err(err) => return Err(err),
-                        Ok(a) => a,
-                    };
-                    match arg {
-                        // Generic(OpArgTerm, Option<(CompOperator, OpArgTerm)>)
-                        OpArg::Generic(ref v0, Some((_, ref v1))) => {
-                            if (!v0.is_var() | !v1.is_var())
-                                || (!v0.get_var_ref().is_time_var()
-                                    | !v1.get_var_ref().is_time_var())
-                            {
-                                return Err(TimeFnErr::IsNotVar.into());
-                            }
-                        }
-                        _ => return Err(TimeFnErr::InsufArgs.into()),
-                    }
-                    v0.push(arg);
-                }
-                Some(v0)
-            }
-            None => return Err(ParseErrF::WrongDef),
-        };
-        if op_args.as_ref().unwrap().is_empty() {
-            return Err(TimeFnErr::InsufArgs.into());
-        }
-        Ok(FuncDecl {
-            name: Terminal::Keyword("time_calc"),
-            args: None,
-            op_args,
-            variant: FuncVariants::TimeCalc,
-        })
     }
 
     fn decl_relational_fn(
@@ -326,25 +267,6 @@ impl<'a> FuncDecl {
         }
     }
 
-    pub(in crate::agent::lang) fn parent_is_kw(&self) -> bool {
-        match self.name {
-            Terminal::Keyword(_) => true,
-            _ => false,
-        }
-    }
-
-    fn time_resolution(&self, assignments: &HashMap<&Var, Arc<BmsWrapper>>) -> Option<bool> {
-        for arg in self.op_args.as_ref().unwrap() {
-            if let Ok(arg) = TimeArg::try_from(arg) {
-                let not_time_eq = !arg.compare_time_args(assignments);
-                if not_time_eq {
-                    return Some(false);
-                }
-            }
-        }
-        Some(true)
-    }
-
     pub fn var_substitution(&mut self) -> Result<(), ParseErrF> {
         if let Some(op_args) = &mut self.op_args {
             for op_arg in op_args {
@@ -405,9 +327,6 @@ impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
         time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
         context: &mut T,
     ) -> Option<bool> {
-        if let FuncVariants::TimeCalc = self.variant {
-            return self.time_resolution(time_assign);
-        }
         if self.is_grounded() {
             let sbj = self.args.as_ref().unwrap();
             let grfunc = self.clone().into_grounded();

@@ -66,7 +66,6 @@ impl<'a> ClassDecl {
         match self.name {
             Terminal::FreeTerm(ref var) => &var.name,
             Terminal::GroundedTerm(ref name) => name,
-            Terminal::Keyword(_) => unreachable!(),
         }
     }
 

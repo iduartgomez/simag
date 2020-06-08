@@ -52,7 +52,6 @@ impl<'a> Predicate {
                     )?;
                     Ok(Predicate::GroundedMemb(t))
                 }
-                Ok(Terminal::Keyword(kw)) => Err(ParseErrF::ReservedKW(String::from(kw))),
                 Err(err) => Err(err),
             }
         } else {
@@ -69,7 +68,6 @@ impl<'a> Predicate {
                     let t = FreeClassMembership::try_new(gt, arg.uval, name)?;
                     Ok(Predicate::FreeClassMembership(t))
                 }
-                Ok(Terminal::Keyword(kw)) => Err(ParseErrF::ReservedKW(String::from(kw))),
                 Err(err) => Err(err),
             }
         }
@@ -395,10 +393,10 @@ pub(in crate::agent) enum Assert {
 impl Assert {
     #[inline]
     pub fn get_name(&self) -> &str {
-        match *self {
-            Assert::FuncDecl(ref f) => f.get_name(),
-            Assert::ClassDecl(ref c) => c.get_name(),
-            Assert::SpecialFunc(ref f) => todo!(),
+        match self {
+            Assert::FuncDecl(f) => f.get_name(),
+            Assert::ClassDecl(c) => c.get_name(),
+            Assert::SpecialFunc(f) => f.get_name(),
         }
     }
 
@@ -455,8 +453,7 @@ impl Assert {
     #[inline]
     pub fn parent_is_kw(&self) -> bool {
         match self {
-            Assert::ClassDecl(_) => false,
-            Assert::FuncDecl(f) => f.parent_is_kw(),
+            Assert::ClassDecl(_) | Assert::FuncDecl(_) => false,
             Assert::SpecialFunc(_) => true,
         }
     }
@@ -505,10 +502,10 @@ impl Assert {
         time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
         context: &mut T,
     ) -> Option<bool> {
-        match *self {
-            Assert::FuncDecl(ref f) => f.grounded_eq(agent, assignments, time_assign, context),
-            Assert::ClassDecl(ref c) => c.grounded_eq(agent, assignments, time_assign, context),
-            Assert::SpecialFunc(_) => unreachable!(),
+        match self {
+            Assert::FuncDecl(f) => f.grounded_eq(agent, assignments, time_assign, context),
+            Assert::ClassDecl(c) => c.grounded_eq(agent, assignments, time_assign, context),
+            Assert::SpecialFunc(f) => f.grounded_eq(time_assign),
         }
     }
 
@@ -529,10 +526,10 @@ impl Assert {
 
     #[inline]
     pub fn generate_uid(&self) -> Vec<u8> {
-        match *self {
-            Assert::FuncDecl(ref f) => f.generate_uid(),
-            Assert::ClassDecl(ref c) => c.generate_uid(),
-            Assert::SpecialFunc(_) => todo!(),
+        match self {
+            Assert::FuncDecl(f) => f.generate_uid(),
+            Assert::ClassDecl(c) => c.generate_uid(),
+            Assert::SpecialFunc(f) => f.generate_uid(),
         }
     }
 }

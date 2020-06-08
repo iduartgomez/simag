@@ -8,7 +8,6 @@ use super::{errors::ParseErrF, logsent::ParseContext, parser::TerminalBorrowed, 
 pub(in crate::agent) enum Terminal {
     FreeTerm(Arc<Var>),
     GroundedTerm(String),
-    Keyword(&'static str),
 }
 
 impl<'a> Terminal {
@@ -46,7 +45,6 @@ impl<'a> Terminal {
         match *self {
             Terminal::FreeTerm(ref var) => format!("{:?}", &**var as *const Var).into_bytes(),
             Terminal::GroundedTerm(ref name) => Vec::from_iter(name.as_bytes().iter().cloned()),
-            Terminal::Keyword(name) => Vec::from_iter(name.as_bytes().iter().cloned()),
         }
     }
 

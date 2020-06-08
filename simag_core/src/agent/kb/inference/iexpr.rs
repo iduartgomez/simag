@@ -1100,7 +1100,6 @@ impl QueryProcessed {
                         }
                     }
                 }
-                _ => return Err(()),
             }
             Ok(())
         }
@@ -1121,7 +1120,6 @@ impl QueryProcessed {
                     }
                 }
                 Terminal::FreeTerm(_) => query.ask_relationships(fdecl),
-                _ => return Err(()), // keyword: incomprenhensible
             }
             Ok(())
         }

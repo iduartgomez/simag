@@ -8,6 +8,7 @@
 //! when called and perform any subtitution in the knowledge base if pertinent.
 
 use std::collections::{HashMap, HashSet};
+use std::convert::TryFrom;
 use std::fmt;
 use std::iter::FromIterator;
 use std::sync::Arc;
@@ -273,7 +274,7 @@ impl<'a> LogSentence {
                         }
                     }
                 }
-                Assert::SpecialFunc(f) => todo!(),
+                _ => {}
             }
         }
         // check validity of optional arguments for predicates in the RHS:
@@ -303,7 +304,7 @@ impl<'a> LogSentence {
                         }
                     }
                 }
-                Assert::SpecialFunc(func) => todo!(),
+                _ => {}
             }
         }
         Ok(())
@@ -1409,6 +1410,7 @@ impl ParseContext {
 
 mod ast_walker {
     use super::*;
+    use crate::agent::lang::BuiltIns;
 
     #[derive(Debug)]
     pub(super) struct PIntermediate {
@@ -1518,11 +1520,15 @@ mod ast_walker {
                         PIntermediate::from(Assert::ClassDecl(cls))
                     }
                     AssertBorrowed::FuncDecl(ref decl) => {
-                        let func = match FuncDecl::from(decl, context) {
-                            Err(err) => return Err(LogSentErr::Boxed(Box::new(err))),
-                            Ok(func) => func,
-                        };
-                        PIntermediate::from(Assert::FuncDecl(func))
+                        // try to convert to a special function:
+                        if let Ok(special_func) = BuiltIns::try_from((decl, &mut *context)) {
+                            PIntermediate::from(Assert::SpecialFunc(special_func))
+                        } else {
+                            match FuncDecl::from(decl, context) {
+                                Err(err) => return Err(LogSentErr::Boxed(Box::new(err))),
+                                Ok(func) => PIntermediate::from(Assert::FuncDecl(func)),
+                            }
+                        }
                     }
                 };
                 add_particle(particle, &mut parent, context);
