@@ -88,7 +88,7 @@ impl<'rep> InfResults<'rep> {
     //pub type GroundedResult = Option<(bool, Option<Time>)>;
     pub fn get_results_multiple(self) -> HashMap<QueryPred, HashMap<String, GroundedResult>> {
         // TODO: change collection of results to iterator over owned values when dashmap exposes a method
-        // Safety WARNING: ObjName<'a> may (truly) outlive the content, own the &str first
+        // Safety WARNING: ObjName<'rep> may (truly) outlive the content, own the &str first
         let mut res = HashMap::new();
         for entry in self.grounded_queries.iter() {
             let qpred = entry.key().to_owned();
