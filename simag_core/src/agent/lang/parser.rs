@@ -34,10 +34,10 @@ use nom;
 use nom::{
     branch::alt,
     bytes::complete::tag,
-    character::{complete::multispace0, is_alphanumeric, is_digit},
+    character::{complete::multispace0, is_alphabetic, is_alphanumeric, is_digit},
     combinator::opt,
     error::{ErrorKind, ParseError},
-    multi::many1,
+    sequence::tuple,
 };
 use rayon;
 use rayon::prelude::*;
@@ -56,6 +56,7 @@ use super::{
 
 type IResult<'a, I, O, E = I> = nom::IResult<I, O, ParseErrB<'a, E>>;
 
+// Symbols
 const ICOND_OP: &[u8] = b":=";
 const AND_OP: &[u8] = b"&&";
 const OR_OP: &[u8] = b"||";
@@ -492,7 +493,7 @@ fn empty_scope<'a>(
     input: &'a [u8],
 ) -> IResult<'a, &'a [u8], ASTNode<'a>> {
     let (rest, next) = opt(alt((multi_asserts, parse_scope)))(input)?;
-    if let Some(vars) = flat_vars(vars) {
+    if let Some(vars) = vars {
         if let Some(next) = next {
             Ok((
                 rest,
@@ -531,7 +532,7 @@ fn declaration<'a>(
     };
     let curr = Scope {
         next: chained,
-        vars: flat_vars(vars),
+        vars,
         logic_op: op,
     };
     let curr = ASTNode::Scope(Box::new(curr));
@@ -547,7 +548,7 @@ fn logic_cond<'a>(
 ) -> IResult<'a, &'static [u8], ASTNode<'a>> {
     // let (vars, lhs, op, rhs) = input;
     let next = Scope {
-        vars: flat_vars(vars),
+        vars,
         logic_op: Some(op),
         next: ASTNode::Chain(vec![lhs, rhs]),
     };
@@ -625,7 +626,7 @@ fn assert_many(input: AssertMany) -> IResult<&[u8], ASTNode> {
 
     if !fd.is_empty() {
         fd.push(last);
-        let f = if let Some(vars) = flat_vars(vars) {
+        let f = if let Some(vars) = vars {
             ASTNode::Scope(Box::new(Scope {
                 vars: Some(vars),
                 logic_op: None,
@@ -636,7 +637,7 @@ fn assert_many(input: AssertMany) -> IResult<&[u8], ASTNode> {
         };
         Ok((EMPTY, f))
     } else {
-        let f = if let Some(vars) = flat_vars(vars) {
+        let f = if let Some(vars) = vars {
             ASTNode::Scope(Box::new(Scope {
                 vars: Some(vars),
                 logic_op: None,
@@ -658,25 +659,83 @@ fn decl_knowledge(input: &[u8]) -> IResult<&[u8], AssertBorrowed> {
     )
 }
 
-type DeclVars<'a> = Vec<Vec<VarDeclBorrowed<'a>>>;
+type DeclVars<'a> = Vec<VarDeclBorrowed<'a>>;
 
+/// only var: let a, b in
+/// only existential: exist c, d in
+/// both: let a, b and exist c, d in
 #[inline]
-fn scope_var_decl(input: &[u8]) -> IResult<&[u8], DeclVars> {
-    let mut var_or_skolem = many1(alt((variable, skolem)));
-    var_or_skolem(input)
-}
+fn scope_var_decl(i: &[u8]) -> IResult<&[u8], DeclVars> {
+    fn get_vars(mut input: &[u8], var: bool) -> IResult<&[u8], Vec<VarDeclBorrowed>> {
+        let mut vars = vec![];
+        let mut seps = 0;
+        loop {
+            let (i, _) = multispace0(input)?;
+            let (i, name) = terminal(i)?;
+            if name == b"in" || name == b"and" {
+                input = i;
+                break;
+            }
+            let (i, oa) = {
+                match opt(tuple((tag(":"), multispace0, op_arg)))(i)? {
+                    (rest, Some((.., oa))) => (rest, Some(oa)),
+                    (rest, None) => (rest, None),
+                }
+            };
+            let (i, s) = opt(tag(","))(i)?;
+            if s.is_some() {
+                seps += 1;
+            }
+            if var {
+                vars.push(VarDeclBorrowed::Var(VarBorrowed {
+                    name: TerminalBorrowed::from_slice(name),
+                    op_arg: oa,
+                }));
+            } else {
+                vars.push(VarDeclBorrowed::Skolem(SkolemBorrowed {
+                    name: TerminalBorrowed::from_slice(name),
+                    op_arg: oa,
+                }));
+            }
+            input = i;
+        }
 
-#[inline]
-fn flat_vars(input: Option<DeclVars>) -> Option<Vec<VarDeclBorrowed>> {
-    if let Some(vars) = input {
-        Some(
-            vars.into_iter()
-                .flat_map(|x| x.into_iter())
-                .collect::<Vec<_>>(),
-        )
-    } else {
-        None
+        if vars.len() - 1 == seps {
+            Ok((input, vars))
+        } else {
+            Err(nom::Err::Error(ParseErrB::SyntaxError))
+        }
     }
+
+    let mut scope_vars = vec![];
+    let (i, _) = multispace0(i)?;
+
+    let (mut i, let_kw) = opt(tag("let "))(i)?;
+    if let_kw.is_some() {
+        let (rest, vars) = get_vars(i, true)?;
+        i = rest;
+        scope_vars.extend(vars);
+    }
+    let (i, _) = multispace0(i)?;
+    let (i, and_kw) = opt(tag("and"))(i)?;
+    let (i, _) = multispace0(i)?;
+
+    let (mut i, exists_kw) = opt(tag("exists "))(i)?;
+    // check that the combination of keywords is correct:
+    match (let_kw, and_kw, exists_kw) {
+        (Some(_), None, None) => {}
+        (None, None, Some(_)) => {}
+        (Some(_), Some(_), Some(_)) => {}
+        _ => return Err(nom::Err::Error(ParseErrB::SyntaxError)),
+    };
+
+    if exists_kw.is_some() {
+        let (rest, vars) = get_vars(i, false)?;
+        i = rest;
+        scope_vars.extend(vars);
+    }
+
+    Ok((i, scope_vars))
 }
 
 // skol_decl = '(' 'exists' $(term[':'op_arg]),+ ')' ;
@@ -686,77 +745,11 @@ pub(in crate::agent) struct SkolemBorrowed<'a> {
     pub op_arg: Option<OpArgBorrowed<'a>>,
 }
 
-fn skolem(input: &[u8]) -> IResult<&[u8], Vec<VarDeclBorrowed>, &[u8]> {
-    do_parse!(
-        input,
-        multispace0
-            >> tag!("(")
-            >> multispace0
-            >> tag!("exists ")
-            >> vars: fold_many1!(
-                do_parse!(
-                    multispace0
-                        >> name: terminal
-                        >> oa: opt!(do_parse!(tag!(":") >> oa: op_arg >> (oa)))
-                        >> multispace0
-                        >> opt!(tag!(","))
-                        >> (name, oa)
-                ),
-                Vec::new(),
-                |mut vec: Vec<_>, (name, oa)| {
-                    let v = SkolemBorrowed {
-                        name: TerminalBorrowed::from_slice(name),
-                        op_arg: oa,
-                    };
-                    vec.push(VarDeclBorrowed::Skolem(v));
-                    vec
-                }
-            )
-            >> multispace0
-            >> tag!(")")
-            >> multispace0
-            >> (vars)
-    )
-}
-
 // var_decl = '(' 'let' $(term[':'op_arg]),+ ')' ;
 #[derive(Debug, PartialEq, Clone)]
 pub(in crate::agent) struct VarBorrowed<'a> {
     pub name: TerminalBorrowed<'a>,
     pub op_arg: Option<OpArgBorrowed<'a>>,
-}
-
-fn variable(input: &[u8]) -> IResult<&[u8], Vec<VarDeclBorrowed>, &[u8]> {
-    do_parse!(
-        input,
-        multispace0
-            >> tag!("(")
-            >> multispace0
-            >> tag!("let ")
-            >> vars: fold_many1!(
-                do_parse!(
-                    multispace0
-                        >> name: terminal
-                        >> oa: opt!(do_parse!(tag!(":") >> oa: op_arg >> (oa)))
-                        >> multispace0
-                        >> opt!(tag!(","))
-                        >> (name, oa)
-                ),
-                Vec::new(),
-                |mut vec: Vec<_>, (name, oa)| {
-                    let v = VarBorrowed {
-                        name: TerminalBorrowed::from_slice(name),
-                        op_arg: oa,
-                    };
-                    vec.push(VarDeclBorrowed::Var(v));
-                    vec
-                }
-            )
-            >> multispace0
-            >> tag!(")")
-            >> multispace0
-            >> (vars)
-    )
 }
 
 // func_decl = 'fn::' term ['(' op_args ')'] args
@@ -1092,9 +1085,13 @@ fn terminal(input: &[u8]) -> IResult<&[u8], &[u8]> {
     }
 
     let mut idx = 0_usize;
-    for (x, c) in input.iter().enumerate() {
-        if is_alphanumeric(*c) | (*c == b'_') | ((*c == b'$') & (x == 0)) {
-            idx = x + 1;
+    for (i, c) in input.iter().enumerate() {
+        if (is_alphabetic(*c) & (i == 0))
+            | (is_alphanumeric(*c) & (i != 0))
+            | (*c == b'_')
+            | ((*c == b'$') & (i == 0))
+        {
+            idx = i + 1;
         } else if idx > 0 {
             break;
         } else {
@@ -1287,7 +1284,7 @@ mod test {
             # one line comment
             ( # first scope
                 ( # second scope
-                    (let x, y)
+                    let x, y in
                     professor[$Lucy, u=1]
                 )
             )
@@ -1298,7 +1295,7 @@ mod test {
         ";
         let clean = Parser::remove_comments(source)?;
 
-        let expected = "(((letx,y)professor[$Lucy,u=1]))";
+        let expected = "((letx,yinprofessor[$Lucy,u=1]))";
         assert_eq!(
             str::from_utf8(&clean.1)
                 .unwrap()
@@ -1314,7 +1311,26 @@ mod test {
         let source = b"
             ( american[x,u=1] )
         ";
-        single_statement(source)?;
+        multi_asserts(source)?;
+        Ok(())
+    }
+
+    #[test]
+    fn parse_variables() -> Result<(), nom::Err<ParseErrB<'static>>> {
+        let source = b"let a, b in";
+        scope_var_decl(source)?;
+        let source = b"exists a, b in";
+        scope_var_decl(source)?;
+        let source = b"let a, b and exist c, d in";
+        scope_var_decl(source)?;
+
+        let source = b"let a, b";
+        assert!(scope_var_decl(source).is_err());
+        let source = b"let a b in";
+        assert!(scope_var_decl(source).is_err());
+        let source = b"let a, b exist c, d in";
+        assert!(scope_var_decl(source).is_err());
+
         Ok(())
     }
 
@@ -1355,9 +1371,9 @@ mod test {
         assert!(scanned.is_err());
 
         let source = b"
-        ((let x y) (american[x,u=1] && hostile[z,u=1]) := criminal[x,u=1])
-        ((let x y) ((american[x,u=1] && hostile[z,u=1]) := criminal[x,u=1]))
-        ((let x y) (american[x,u=1] && hostile[z,u=1]) := criminal[x,u=1])
+        (let x, y in (american[x,u=1] && hostile[z,u=1]) := criminal[x,u=1])
+        (let x, y in ((american[x,u=1] && hostile[z,u=1]) := criminal[x,u=1]))
+        (let x, y in (american[x,u=1] && hostile[z,u=1]) := criminal[x,u=1])
         ";
         let (_, clean) = Parser::remove_comments(source)?;
         let scanned = Parser::get_blocks(&clean).unwrap();

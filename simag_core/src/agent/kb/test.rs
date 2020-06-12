@@ -17,8 +17,8 @@ fn repr_inference_ask_pred() {
     let test_02 = "
         ( professor[$Lucy,u=1] )
         ( dean[$John,u=1] )
-        ( ( let x ) ( dean[x,u=1] := professor[x,u=1] ) )
-        ( ( let x ) ( professor[x,u=1] := person[x,u=1] ) )
+        ( let x in ( dean[x,u=1] := professor[x,u=1] ) )
+        ( let x in ( professor[x,u=1] := person[x,u=1] ) )
     ";
     let q02_01 = "(professor[$Lucy,u>0] && person[$Lucy,u<1])";
     let q02_02 = "(person[$John,u=1])";
@@ -32,13 +32,13 @@ fn repr_inference_ask_pred() {
         ( missile[$M1,u=1] )
         ( american[$West,u=1] )
         ( fn::enemy[$Nono,u=1;$America] )
-        (( let x, y, z )
+        ( let x, y, z in
             (( american[x,u=1] && weapon[y,u=1] && fn::sells[y,u=1;x;z] && hostile[z,u=1]  )
                 := criminal[x,u=1] ))
-        (( let x )
+        ( let x in
             (( fn::owns[x,u=1;$Nono] && missile[x,u=1] ) := fn::sells[x,u=1;$West;$Nono] ))
-        (( let x ) ( missile[x,u=1] := weapon[x,u=1] ) )
-        (( let x ) ( fn::enemy[x,u=1;$America] := hostile[x,u=1] ) )
+        ( let x in ( missile[x,u=1] := weapon[x,u=1] ) )
+        ( let x in ( fn::enemy[x,u=1;$America] := hostile[x,u=1] ) )
     ";
     let q03_01 = "(criminal[$West,u=1]) && hostile[$Nono,u=1] && weapon[$M1,u=1]";
     let rep = Representation::default();
@@ -50,9 +50,9 @@ fn repr_inference_ask_pred() {
         # query for all 'professor'
         ( professor[$Lucy,u=1] )
         ( dean[$John,u=1] )
-        ((let x) (dean[x,u=1] := professor[x,u=1]))
+        ( let x in (dean[x,u=1] := professor[x,u=1]))
     ";
-    let q04_01 = "((let x) (professor[x,u=1]))";
+    let q04_01 = "(let x in (professor[x,u=1]))";
     let rep = Representation::default();
     rep.tell(test_04).unwrap();
     let answ = rep.ask(q04_01);
@@ -63,10 +63,10 @@ fn repr_inference_ask_pred() {
     let test_05 = "
         # query for all classes '$Lucy' is member of
         (professor[$Lucy,u=1])
-        ((let x) (professor[x,u=1] := person[x,u=1]))
+        ( let x in (professor[x,u=1] := person[x,u=1]))
         (ugly[$Lucy,u=0.2])
     ";
-    let q05_01 = "((let x) (x[$Lucy,u>0.5]))";
+    let q05_01 = "(let x in (x[$Lucy,u>0.5]))";
     let rep = Representation::default();
     rep.tell(test_05).unwrap();
     let mut results = HashSet::new();
@@ -96,7 +96,7 @@ fn repr_inference_ask_func() {
     let test_02 = "
         ( animal[cow,u=1] )
         ( female[cow,u=1] )
-        ( (let x) (animal[x,u=1] && female[x,u=1]) := fn::produce[milk,u=1;x] )
+        ( let x in (animal[x,u=1] && female[x,u=1]) := fn::produce[milk,u=1;x] )
     ";
     let q02_01 = "(fn::produce[milk,u=1;cow])";
     let rep = Representation::default();
@@ -107,9 +107,9 @@ fn repr_inference_ask_func() {
         ( professor[$Lucy,u=1] )
         ( dean[$John,u=1] )
         ( fn::criticize[$John,u=1;$Lucy] )
-        ( (let x) ( dean[x,u=1] := professor[x,u=1] ) )
-        ( (let x) ( professor[x,u=1] := person[x,u=1] ) )
-        ( (let x, y)
+        ( let x in ( dean[x,u=1] := professor[x,u=1] ) )
+        ( let x in ( professor[x,u=1] := person[x,u=1] ) )
+        ( let x, y in
             (( person[x,u=1] && person[y,u=1] && dean[y,u=1] && fn::criticize[y,u=1;x] )
                 := fn::friend[x,u=0;y] ))
     ";
@@ -125,10 +125,10 @@ fn repr_inference_ask_func() {
         (fn::produce[milk,u=1;$Lulu])
         (cow[$Lucy,u=1])
         (goat[$Vicky,u=1])
-        ((let x) ((cow[x,u=1] || goat[x,u=1]) := (female[x,u=1] && animal[x,u=1])))
-        ((let x) ((female[x,u>0] && animal[x,u>0]) := fn::produce[milk,u=1;x]))
+        (let x in ((cow[x,u=1] || goat[x,u=1]) := (female[x,u=1] && animal[x,u=1])))
+        (let x in ((female[x,u>0] && animal[x,u>0]) := fn::produce[milk,u=1;x]))
     ";
-    let q04_01 = "((let x) (fn::produce[milk,u>0;x]))";
+    let q04_01 = "(let x in (fn::produce[milk,u>0;x]))";
     let rep = Representation::default();
     rep.tell(test_04).unwrap();
     let answ = rep.ask(q04_01);
@@ -143,7 +143,7 @@ fn repr_inference_ask_func() {
         (fn::worships[$Vicky,u=1;cats])
         (fn::hates[$Vicky,u=0;dogs])
     ";
-    let q05_01 = "((let x) (fn::x[$Vicky,u>0;$Lucy]))";
+    let q05_01 = "(let x in (fn::x[$Vicky,u>0;$Lucy]))";
     let rep = Representation::default();
     rep.tell(test_05).unwrap();
     let mut results = HashSet::new();
@@ -159,7 +159,7 @@ fn repr_inference_ask_func() {
     }
     assert_eq!(cnt, 2);
 
-    let q05_02 = "((let x, y) (fn::x[$Vicky,u=0;y]))";
+    let q05_02 = "(let x, y in (fn::x[$Vicky,u=0;y]))";
     let answ = rep.ask(q05_02);
     let a05_02 = answ.unwrap().get_relationships();
     let mut cnt = 0;
@@ -175,7 +175,7 @@ fn repr_inference_time_calc_1() {
     // Test 01
     // facts imply class, w/ t1 time arg set by antecedents & t2 set dynamically at resolution
     let test_01 = "
-        (( let x, y, t1:time, t2:time=\"now\" )
+        ( let x, y, t1:time, t2:time=\"now\" in
             (( dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x] && fn::time_calc(t1<t2) )
             := fat(time=t2)[x,u=1] ))
         ( dog[$Pancho,u=1] )
@@ -190,7 +190,7 @@ fn repr_inference_time_calc_1() {
     // Test 02
     // facts imply func, w/ t1 time arg set statically & t2 set statically by antecedent
     let test_02 = "
-        (( let x, y, t1: time=\"2014-07-05T10:25:00Z\", t2: time)
+        ( let x, y, t1:time=\"2014-07-05T10:25:00Z\", t2:time in
             ( ( dog[x,u=1] && meat[y,u=1] && fat(t2=time)[x,u=1] && fn::time_calc(t1<t2) )
             := fn::eat(time=t1)[y,u=1;x]
             )
@@ -216,7 +216,7 @@ fn repr_inference_time_calc_1() {
     // if fn(a) then cls(b=1) @ t1
     let test_03_01 = "
         (fn::eat(time='2015-01-01T00:00:00Z')[$M1,u=1;$Pancho])
-        ((let x, y)
+        (let x, y in
             ((dog[x,u=1] && meat[y,u=1] && fn::eat[y,u=1;x])
             := fat[x,u=1]))
     ";
@@ -227,7 +227,7 @@ fn repr_inference_time_calc_1() {
     // if fn(b) then cls(b=0) @ t1 -- supercedes last statement
     let test_03_02 = "
         (run(time='2015-01-01T00:00:00Z')[$Pancho,u=1])
-        ((let x) (( dog[x,u=1] && run[x,u=1] ) := fat[x,u=0]))
+        (let x in (( dog[x,u=1] && run[x,u=1] ) := fat[x,u=0]))
     ";
     rep.tell(test_03_02).unwrap();
     let q03_02 = "(fat[$Pancho,u=0])";
@@ -239,7 +239,7 @@ fn repr_inference_time_calc_1() {
     let test_03_03 = "
         (run(time='2015-01-01T00:00:00Z')[$Pancho,u=1])
         (fn::eat(time='2015-02-01T00:00:00Z')[$M1,u=1;$Pancho])
-        ((let x, y, t1:time, t2:time)
+        (let x, y, t1:time, t2:time in
             (run(t1=time)[x,u=1] && fn::eat(t2=time)[y,u=1;x]
             && dog[x,u=1] && meat[y,u=1] && fn::time_calc(t1<t2))
             := (fat[x,u=1] || fat[x,u=0]))
@@ -264,7 +264,7 @@ fn repr_inference_time_calc_2() {
     // Test if a statement is true between time intervals
     let rep = Representation::default();
     let test_04_01 = "
-        ((let t1:time='2018-03-01T00:00:00Z', t2:time='2018-06-01T00:00:00Z')
+        (let t1:time='2018-03-01T00:00:00Z', t2:time='2018-06-01T00:00:00Z' in
          (fat(@t1->t2)[$Pancho,u=1]))
     ";
     rep.tell(test_04_01).unwrap();
@@ -279,7 +279,7 @@ fn repr_inference_time_calc_2() {
     let test_04_02 = "
         ( professor[$Lucy,u=1] )
         ( dean[$John,u=1] )
-        ((let t1:time='2018-03-01T00:00:00Z', t2:time='2018-06-01T00:00:00Z')
+        (let t1:time='2018-03-01T00:00:00Z', t2:time='2018-06-01T00:00:00Z' in
          (fn::criticize(@t1->t2)[$John,u=1;$Lucy]))
     ";
     let rep = Representation::default();

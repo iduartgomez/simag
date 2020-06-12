@@ -1774,12 +1774,12 @@ mod test {
         let source = String::from(
             "
                 # Err:
-                ((let x y z)
+                (let x, y, z in
                  ( ( cde[x,u=1] := fn::fgh[y,u>0.5;x;z] ) := hij[y,u=1] )
                 )
 
                 # Err:
-                ((let x y z)
+                (let x, y, z in
                  ( abc[x,u=1]  := (( cde[x,u=1] := fn::fgh[y,u>0.5;x;z] ) && hij[y,u=1] ))
                 )
             ",
@@ -1795,7 +1795,7 @@ mod test {
         let source = String::from(
             "
             # Ok:
-            (( let x y z )
+            ( let x, y, z in
               (( cde[x,u=1] && hij[y,u=1] && fn::fgh[y,u>0.5;x;z] ) := abc[x,u=1])
             )
             ",
@@ -1850,7 +1850,7 @@ mod test {
         let source = String::from(
             "
             # Ok:
-            ((let x y z)
+            (let x, y, z in
              ( abc[x,u=1]  := (
                  ( cde[x,u=1] && fn::fgh[y,u>0.5;x;z] ) := hij[y,u=1]
              ))
