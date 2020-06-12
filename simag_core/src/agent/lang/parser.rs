@@ -399,12 +399,8 @@ pub(in crate::agent) enum VarDeclBorrowed<'a> {
 fn parse_scope(input: &[u8]) -> IResult<&[u8], ASTNode> {
     if let Ok((rest, sentence)) = parse_sentence(input) {
         return Ok((rest, sentence));
-    }
-
-    if let Ok((rest, stmn)) = single_statement(input) {
-        return Ok((rest, stmn));
     } else {
-        do_parse!(input, expr: multi_asserts >> (expr))
+        multi_asserts(input)
     }
 }
 
@@ -556,22 +552,6 @@ fn logic_cond<'a>(
         next: ASTNode::Chain(vec![lhs, rhs]),
     };
     Ok((EMPTY, ASTNode::Scope(Box::new(next))))
-}
-
-#[inline]
-fn single_statement(input: &[u8]) -> IResult<&[u8], ASTNode> {
-    let res = do_parse!(
-        input,
-        multispace0
-            >> tag!("(")
-            >> multispace0
-            >> decl: decl_knowledge
-            >> multispace0
-            >> tag!(")")
-            >> multispace0
-            >> (decl)
-    )?;
-    Ok((res.0, ASTNode::from_assert(res.1)))
 }
 
 /// One or multiple concatenated assertions, e.g.: (let x, y in abc[x=1] && def[x=2] && ...)
