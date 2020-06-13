@@ -35,7 +35,7 @@ use nom::{
     branch::alt,
     bytes::complete::tag,
     character::{complete::multispace0, is_alphabetic, is_alphanumeric, is_digit},
-    combinator::opt,
+    combinator::{map, opt},
     error::{ErrorKind, ParseError},
     sequence::tuple,
 };
@@ -888,48 +888,72 @@ pub(in crate::agent) struct OpArgBorrowed<'a> {
     pub comp: Option<(CompOperator, OpArgTermBorrowed<'a>)>,
 }
 
-fn op_arg(input: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
-    alt!(
-        input,
-        do_parse!(
-            multispace0
-                >> term: alt!(
-                    map!(string, OpArgTermBorrowed::is_string)
-                        | map!(terminal, OpArgTermBorrowed::is_terminal)
-                )
-                >> multispace0
-                >> c1: opt!(do_parse!(
-                    c2: map!(
-                        alt!(tag!(">=") | tag!("<=") | tag!("=") | tag!(">") | tag!("<")),
-                        CompOperator::from_chars
-                    ) >> multispace0
-                        >> term: alt!(
-                            map!(string, OpArgTermBorrowed::is_string)
-                                | map!(terminal, OpArgTermBorrowed::is_terminal)
-                        )
-                        >> multispace0
-                        >> (c2, term)
-                ))
-                >> (OpArgBorrowed { term, comp: c1 })
-        ) | do_parse!(
-            multispace0
-                >> tag!("@")
-                >> multispace0
-                >> from: map!(terminal, OpArgTermBorrowed::is_terminal)
-                >> multispace0
-                >> to: opt!(do_parse!(
-                    tag!("->")
-                        >> multispace0
-                        >> term: map!(terminal, OpArgTermBorrowed::is_terminal)
-                        >> multispace0
-                        >> (term)
-                ))
-                >> (OpArgBorrowed {
-                    term: from,
-                    comp: CompOperator::from_time_op(to),
-                })
-        )
-    )
+fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
+    #[inline(always)]
+    fn get_op_term(i: &[u8]) -> IResult<&[u8], OpArgTermBorrowed> {
+        alt((
+            map(string, OpArgTermBorrowed::is_string),
+            map(terminal, OpArgTermBorrowed::is_terminal),
+        ))(i)
+    }
+
+    fn normal_op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
+        let (i, term) = get_op_term(i)?;
+        let (i, _) = multispace0(i)?;
+        let (i, op) = opt(alt((tag(">="), tag("<="), tag("="), tag(">"), tag("<"))))(i)?;
+        if let Some(op) = op {
+            let comp = CompOperator::from_chars(op);
+            let (i, _) = multispace0(i)?;
+            let (i, term2) = get_op_term(i)?;
+            let (i, _) = multispace0(i)?;
+            Ok((
+                i,
+                OpArgBorrowed {
+                    term,
+                    comp: Some((comp, term2)),
+                },
+            ))
+        } else {
+            Ok((i, OpArgBorrowed { term, comp: None }))
+        }
+    }
+
+    fn time_op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
+        let (i, _) = tag("@")(i)?;
+        let (i, _) = multispace0(i)?;
+        let (i, since) = map(terminal, OpArgTermBorrowed::is_terminal)(i)?;
+        let (i, _) = multispace0(i)?;
+        let (i, until) = opt(tuple((
+            tag("->"),
+            multispace0,
+            map(terminal, OpArgTermBorrowed::is_terminal),
+            multispace0,
+        )))(i)?;
+
+        let term = if let Some((.., term, _)) = until {
+            Some(term)
+        } else {
+            None
+        };
+
+        Ok((
+            i,
+            OpArgBorrowed {
+                term: since,
+                comp: CompOperator::from_time_op(term),
+            },
+        ))
+    }
+
+    let (i, _) = multispace0(i)?;
+    if let Ok((rest, arg)) = normal_op_arg(i) {
+        return Ok((rest, arg));
+    }
+
+    match time_op_arg(i) {
+        Ok((rest, arg)) => Ok((rest, arg)),
+        Err(err) => Err(err),
+    }
 }
 
 // op_args = $(op_arg),* ;
@@ -1473,7 +1497,7 @@ mod test {
         );
 
         // all valid forms:
-        // happy(where this.time is t1, from t1 to t2, ow)[$John]
+        // happy(where this.time is t1, happens since t1 until t2, ow)[$John]
         // happy(where t1 is this.time)[$John]
         // happy(from t1)[$John]
         // happy(at t1)[$John]
