@@ -1775,12 +1775,12 @@ mod test {
             "
                 # Err:
                 (let x, y, z in
-                 ( ( cde[x,u=1] := fn::fgh[y,u>0.5;x;z] ) := hij[y,u=1] )
+                 ( ( cde[x=1] := fn::fgh[y>0.5,x,z] ) := hij[y=1] )
                 )
 
                 # Err:
                 (let x, y, z in
-                 ( abc[x,u=1]  := (( cde[x,u=1] := fn::fgh[y,u>0.5;x;z] ) && hij[y,u=1] ))
+                 ( abc[x=1]  := (( cde[x=1] := fn::fgh[y>0.5,x,z] ) && hij[y=1] ))
                 )
             ",
         );
@@ -1796,7 +1796,7 @@ mod test {
             "
             # Ok:
             ( let x, y, z in
-              (( cde[x,u=1] && hij[y,u=1] && fn::fgh[y,u>0.5;x;z] ) := abc[x,u=1])
+              (( cde[x=1] && hij[y=1] && fn::fgh[y>0.5,x,z] ) := abc[x=1])
             )
             ",
         );
@@ -1851,8 +1851,8 @@ mod test {
             "
             # Ok:
             (let x, y, z in
-             ( abc[x,u=1]  := (
-                 ( cde[x,u=1] && fn::fgh[y,u>0.5;x;z] ) := hij[y,u=1]
+             ( abc[x=1]  := (
+                 ( cde[x=1] && fn::fgh[y>0.5,x,z] ) := hij[y=1]
              ))
             )
             ",

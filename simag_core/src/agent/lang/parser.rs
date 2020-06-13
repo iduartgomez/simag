@@ -862,10 +862,8 @@ fn arg(input: &[u8]) -> IResult<&[u8], ArgBorrowed> {
         multispace0
             >> term: map!(terminal, TerminalBorrowed::from_slice)
             >> multispace0
-            >> u0: opt!(do_parse!(
-                char!(',') >> multispace0 >> u1: uval >> multispace0 >> (u1)
-            ))
-            >> ({ ArgBorrowed { term, uval: u0 } })
+            >> u0: opt!(uval)
+            >> (ArgBorrowed { term, uval: u0 })
     )
 }
 
@@ -874,7 +872,7 @@ fn args(input: &[u8]) -> IResult<&[u8], Vec<ArgBorrowed>> {
     delimited!(
         input,
         char!('['),
-        alt!(separated_list1!(char!(';'), arg) | map!(arg, to_arg_vec)),
+        alt!(separated_list1!(char!(','), arg) | map!(arg, to_arg_vec)),
         char!(']')
     )
 }
@@ -982,7 +980,7 @@ fn uval(input: &[u8]) -> IResult<&[u8], UVal> {
     do_parse!(
         input,
         multispace0
-            >> char!('u')
+            //>> opt!(tuple((char(','), multispace0, char('u'))))
             >> multispace0
             >> op: map!(
                 alt!(tag!(">=") | tag!("<=") | tag!("=") | tag!(">") | tag!("<")),
@@ -1285,7 +1283,7 @@ mod test {
             ( # first scope
                 ( # second scope
                     let x, y in
-                    professor[$Lucy, u=1]
+                    professor[$Lucy=1]
                 )
             )
             /*
@@ -1295,7 +1293,7 @@ mod test {
         ";
         let clean = Parser::remove_comments(source)?;
 
-        let expected = "((letx,yinprofessor[$Lucy,u=1]))";
+        let expected = "((letx,yinprofessor[$Lucy=1]))";
         assert_eq!(
             str::from_utf8(&clean.1)
                 .unwrap()
@@ -1309,7 +1307,7 @@ mod test {
     #[test]
     fn parse_statements() -> Result<(), nom::Err<ParseErrB<'static>>> {
         let source = b"
-            ( american[x,u=1] )
+            ( american[x=1] )
         ";
         multi_asserts(source)?;
         Ok(())
@@ -1337,43 +1335,43 @@ mod test {
     #[test]
     fn parse_sentences() -> Result<(), nom::Err<ParseErrB<'static>>> {
         let source = b"
-            ( american[x,u=1] && ( weapon[y,u=1] && hostile[z,u=1] ) )
+            ( american[x=1] && ( weapon[y=1] && hostile[z=1] ) )
         ";
         parse_sentence(source)?;
 
         let source = b"
-            ( ( american[x,u=1] && hostile[z,u=1] ) && hostile[z,u=1] )
+            ( ( american[x=1] && hostile[z=1] ) && hostile[z=1] )
         ";
         parse_sentence(source)?;
 
         let source = b"
-            ( american[x,u=1] && hostile[z,u=1] && ( weapon[y,u=1]) )
+            ( american[x=1] && hostile[z=1] && ( weapon[y=1]) )
         ";
         let scanned = parse_sentence(source);
         assert!(scanned.is_err());
 
         let source = b"
-            ( ( american[x,u=1] ) && hostile[z,u=1] && weapon[y,u=1] )
+            ( ( american[x=1] ) && hostile[z=1] && weapon[y=1] )
         ";
         let scanned = parse_sentence(source);
         assert!(scanned.is_err());
 
         let source = b"
-            ( ( ( american[x,u=1] ) ) && hostile[z,u=1] && ( ( weapon[y,u=1] ) ) )
+            ( ( ( american[x=1] ) ) && hostile[z=1] && ( ( weapon[y=1] ) ) )
         ";
         let scanned = parse_sentence(source);
         assert!(scanned.is_err());
 
         let source = b"
-            ( american[x,u=1] && ( ( hostile[z,u=1] ) ) && weapon[y,u=1] )
+            ( american[x=1] && ( ( hostile[z=1] ) ) && weapon[y=1] )
         ";
         let scanned = parse_sentence(source);
         assert!(scanned.is_err());
 
         let source = b"
-        (let x, y in (american[x,u=1] && hostile[z,u=1]) := criminal[x,u=1])
-        (let x, y in ((american[x,u=1] && hostile[z,u=1]) := criminal[x,u=1]))
-        (let x, y in (american[x,u=1] && hostile[z,u=1]) := criminal[x,u=1])
+        (let x, y in (american[x=1] && hostile[z=1]) := criminal[x=1])
+        (let x, y in ((american[x=1] && hostile[z=1]) := criminal[x=1]))
+        (let x, y in (american[x=1] && hostile[z=1]) := criminal[x=1])
         ";
         let (_, clean) = Parser::remove_comments(source)?;
         let scanned = Parser::get_blocks(&clean).unwrap();
@@ -1391,7 +1389,7 @@ mod test {
     #[test]
     #[allow(clippy::cognitive_complexity)]
     fn parser_predicate() {
-        let s1 = b"professor[$Lucy,u=1]";
+        let s1 = b"professor[$Lucy=1]";
         let s1_res = class_decl(s1);
         assert_done_or_err!(s1_res);
         let s1_res = s1_res.unwrap().1;
@@ -1399,7 +1397,7 @@ mod test {
         assert_eq!(s1_res.args[0].term, TerminalBorrowed(b"$Lucy"));
         assert!(s1_res.args[0].uval.is_some());
 
-        let s2 = b"missile[$M1,u>-1.5]";
+        let s2 = b"missile[$M1 > -1.5]";
         let s2_res = class_decl(s2);
         assert_done_or_err!(s2_res);
         let s2_res = s2_res.unwrap().1;
@@ -1409,7 +1407,11 @@ mod test {
         assert_eq!(s2_uval.op, CompOperator::More);
         assert_eq!(s2_uval.val, Number::SignedFloat(-1.5_f32));
 
-        let s3 = b"dean(t1=\"now\",t2=t1)[$John,u=0]";
+        // non-sensical, but can parse:
+        // let s3 = b"dean(where t1 is 'now', t2 is t1)[$John=0]";
+        // sensical, also parses:
+        // let s3 = b"dean(where t1 is this.time)[$John=0]";
+        let s3 = b"dean(t1=\"now\",t2=t1)[$John=0]";
         let s3_res = class_decl(s3);
         assert_done_or_err!(s3_res);
         let s3_res = s3_res.unwrap().1;
@@ -1430,7 +1432,9 @@ mod test {
             ]
         );
 
-        let s4 = b"animal(t=\"2015.07.05.11.28\")[cow, u=1; brown, u=0.5]";
+        // non-sensical, but can parse:
+        // animal(where t1 is '2018-02-01T00:00:00Z')[cow; brown=0.5])
+        let s4 = b"animal(t1='2015.07.05.11.28')[cow, brown=0.5]";
         let s4_res = class_decl(s4);
         assert_done_or_err!(s4_res);
         let s4_res = s4_res.unwrap().1;
@@ -1439,7 +1443,7 @@ mod test {
         assert_eq!(
             s4_res.op_args.as_ref().unwrap(),
             &vec![OpArgBorrowed {
-                term: OpArgTermBorrowed::Terminal(b"t"),
+                term: OpArgTermBorrowed::Terminal(b"t1"),
                 comp: Some((
                     CompOperator::Equal,
                     OpArgTermBorrowed::String(b"2015.07.05.11.28"),
@@ -1447,7 +1451,8 @@ mod test {
             }]
         );
 
-        let s5 = b"happy(time=t1, @t1, ow)[x,u>=0.5]";
+        // happy(where this.time is "now", at t1, ow)[x>=0.5]
+        let s5 = b"happy(time='now', @t1, ow)[x>=0.5]";
         let s5_res = class_decl(s5);
         assert_done_or_err!(s5_res);
         let s5_res = s5_res.unwrap().1;
@@ -1456,7 +1461,7 @@ mod test {
             &s5_res.op_args.as_ref().unwrap()[0],
             &OpArgBorrowed {
                 term: OpArgTermBorrowed::Terminal(b"time"),
-                comp: Some((CompOperator::Equal, OpArgTermBorrowed::Terminal(b"t1"),)),
+                comp: Some((CompOperator::Equal, OpArgTermBorrowed::String(b"now"),)),
             }
         );
         assert_eq!(
@@ -1467,7 +1472,12 @@ mod test {
             }
         );
 
-        let s6 = b"happy(time=t1, @t1->t2, ow)[x,u<=0.5]";
+        // all valid forms:
+        // happy(where this.time is t1, from t1 to t2, ow)[$John]
+        // happy(where t1 is this.time)[$John]
+        // happy(from t1)[$John]
+        // happy(at t1)[$John]
+        let s6 = b"happy(time=t1, @t1->t2, ow)[x<=0.5]";
         let s6_res = class_decl(s6);
         assert_done_or_err!(s6_res);
         let s6_res = s6_res.unwrap().1;
@@ -1479,23 +1489,38 @@ mod test {
                 comp: Some((CompOperator::FromUntil, OpArgTermBorrowed::Terminal(b"t2"),)),
             }
         );
+
+        /*
+        //TODO: add a way to define a 'record', conversedly can be used for querying
+        //this is an entity and all the classes memberships in one go, e.g.:
+        $john = {
+            fast=0,
+            slow=0.5,
+            dog, // ellided =1
+            from "now",
+        }
+        // defining more than one entity with similar values:
+        [$john, $mary] = {
+            ...
+        }
+        */
     }
 
     #[test]
     fn parser_function() {
-        let s1 = b"fn::criticize(t=\"now\")[$John,u=1;$Lucy]";
+        let s1 = b"fn::criticize(t='now')[$John=1,$Lucy]";
         let s1_res = func_decl(s1);
         assert_done_or_err!(s1_res);
         assert_eq!(s1_res.unwrap().1.variant, FuncVariants::Relational);
 
-        let s2 = b"fn::takes[$analysis,u>0;$Bill]";
+        let s2 = b"fn::takes[$analysis>0,$Bill]";
         let s2_res = func_decl(s2);
         assert_done_or_err!(s2_res);
         let s2_res = s2_res.unwrap().1;
         assert_eq!(s2_res.name, TerminalBorrowed(b"takes"));
         assert_eq!(s2_res.variant, FuncVariants::Relational);
 
-        let s3 = b"fn::loves[cow, u=1; bull ]";
+        let s3 = b"fn::loves[cow=1,bull]";
         let s3_res = func_decl(s3);
         assert_done_or_err!(s3_res);
         assert_eq!(s3_res.unwrap().1.variant, FuncVariants::Relational);

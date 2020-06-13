@@ -49,8 +49,8 @@ pub type Time = DateTime<Utc>;
 #[inline]
 fn reserved(s: &str) -> bool {
     match s {
-        "let" | "exists" | "fn" | "time" | "time_calc" | "overwrite" | "ow" | "self" | "none"
-        | "and" => true,
+        "let" | "exists" | "fn" | "time" | "time_calc" | "overwrite" | "ow" | "this" | "none"
+        | "in" | "and" | "where" | "from" | "to" | "is" | "as" => true,
         _ => false,
     }
 }

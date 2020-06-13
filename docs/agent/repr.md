@@ -43,8 +43,8 @@ This idiom provides an abstract, yet efficient, way of translating any type of i
 to the internal representation.
 
 There are four ways facts enter the KB. The first is through predicate assertions:
-* `professor[$Lucy,u=1]`
-* `white[cows,u=0.7]`
+* `professor[$Lucy=1]`
+* `white[cows=0.7]`
   
 Predicate assertions declare an object or a class as a member of an other 
 class. In the first example, the individual `Lucy` is declared as a member 
@@ -54,9 +54,9 @@ partial (0.7). You can still use declaration only in classical binary style
 by using the values 0 (negation) or 1 (assertion).
 
 The second way is through function assertions:
-* `fn::love[$Lucy,u=1;$John]`
-* `fn::steal[peasant,u=1;king]`
-* `fn::steal[$John,u=1;king]`
+* `fn::love[$Lucy=1;$John]`
+* `fn::steal[peasant=1;king]`
+* `fn::steal[$John=1;king]`
 
 In the first example, it's stated that the entity `John` has a relation of the
 'love' type with the entity `Lucy` (note this does not mean that the object 'Lucy'

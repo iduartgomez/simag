@@ -1,7 +1,6 @@
 //! Terminal that controls the main application flow, includes the main event loop.
 
 use std::collections::VecDeque;
-use std::error::Error;
 use std::io::{stdout, Bytes, Read, Stdout, StdoutLock, Write};
 use std::iter::Iterator;
 use std::time::Duration;
@@ -101,7 +100,7 @@ where
                             Err(err) => {
                                 self.report_error(&format!(
                                     "Error reading input: {}",
-                                    err.description()
+                                    err.to_string()
                                 ));
                             }
                         }

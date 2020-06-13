@@ -19,6 +19,7 @@ use crate::agent::{
     kb::{repr::Representation, VarAssignment},
 };
 use crate::FLOAT_EQ_ULPS;
+use parking_lot::RwLock;
 
 // Predicate types:
 
@@ -111,6 +112,14 @@ impl<'a> Predicate {
                     (None, None)
                 }
             }
+        }
+    }
+
+    pub(in crate::agent::lang) fn replace_uval(&mut self, val: f32) {
+        match self {
+            Predicate::FreeClsMemb(ref mut t) => t.value = Some(val),
+            Predicate::GroundedMemb(ref mut t) => t.value = RwLock::new(Some(val)),
+            Predicate::FreeClassMembership(ref mut t) => t.value = Some(val),
         }
     }
 
@@ -273,7 +282,7 @@ impl FreeClsMemb {
 #[derive(Debug, Clone)]
 pub(in crate::agent) struct FreeClassMembership {
     term: String,
-    value: Option<f32>,
+    pub(in crate::agent::lang) value: Option<f32>,
     operator: Option<CompOperator>,
     parent: Arc<Var>,
     pub times: BmsWrapper,

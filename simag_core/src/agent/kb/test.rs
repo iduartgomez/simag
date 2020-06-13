@@ -5,42 +5,42 @@ use std::collections::HashSet;
 #[test]
 fn repr_inference_ask_pred() {
     let test_01 = "
-        ( professor[$Lucy,u=1] )
+        ( professor[$Lucy=1] )
     ";
-    let q01_01 = "(professor[$Lucy,u=1] && person[$Lucy,u=1])";
-    let q01_02 = "(professor[$Lucy,u=1])";
+    let q01_01 = "(professor[$Lucy=1] && person[$Lucy=1])";
+    let q01_02 = "(professor[$Lucy=1])";
     let rep = Representation::default();
     rep.tell(test_01).unwrap();
     assert_eq!(rep.ask(q01_01).unwrap().get_results_single(), None);
     assert_eq!(rep.ask(q01_02).unwrap().get_results_single(), Some(true));
 
     let test_02 = "
-        ( professor[$Lucy,u=1] )
-        ( dean[$John,u=1] )
-        ( let x in ( dean[x,u=1] := professor[x,u=1] ) )
-        ( let x in ( professor[x,u=1] := person[x,u=1] ) )
+        ( professor[$Lucy=1] )
+        ( dean[$John=1] )
+        ( let x in ( dean[x=1] := professor[x=1] ) )
+        ( let x in ( professor[x=1] := person[x=1] ) )
     ";
-    let q02_01 = "(professor[$Lucy,u>0] && person[$Lucy,u<1])";
-    let q02_02 = "(person[$John,u=1])";
+    let q02_01 = "(professor[$Lucy>0] && person[$Lucy<1])";
+    let q02_02 = "(person[$John=1])";
     let rep = Representation::default();
     rep.tell(test_02).unwrap();
     assert_eq!(rep.ask(q02_01).unwrap().get_results_single(), Some(false));
     assert_eq!(rep.ask(q02_02).unwrap().get_results_single(), Some(true));
 
     let test_03 = "
-        ( fn::owns[$M1,u=1;$Nono] )
-        ( missile[$M1,u=1] )
-        ( american[$West,u=1] )
-        ( fn::enemy[$Nono,u=1;$America] )
+        ( fn::owns[$M1=1,$Nono] )
+        ( missile[$M1=1] )
+        ( american[$West=1] )
+        ( fn::enemy[$Nono=1,$America] )
         ( let x, y, z in
-            (( american[x,u=1] && weapon[y,u=1] && fn::sells[y,u=1;x;z] && hostile[z,u=1]  )
-                := criminal[x,u=1] ))
+            (( american[x=1] && weapon[y=1] && fn::sells[y=1,x,z] && hostile[z=1]  )
+                := criminal[x=1] ))
         ( let x in
-            (( fn::owns[x,u=1;$Nono] && missile[x,u=1] ) := fn::sells[x,u=1;$West;$Nono] ))
-        ( let x in ( missile[x,u=1] := weapon[x,u=1] ) )
-        ( let x in ( fn::enemy[x,u=1;$America] := hostile[x,u=1] ) )
+            (( fn::owns[x=1,$Nono] && missile[x=1] ) := fn::sells[x=1,$West,$Nono] ))
+        ( let x in ( missile[x=1] := weapon[x=1] ) )
+        ( let x in ( fn::enemy[x=1,$America] := hostile[x=1] ) )
     ";
-    let q03_01 = "(criminal[$West,u=1]) && hostile[$Nono,u=1] && weapon[$M1,u=1]";
+    let q03_01 = "(criminal[$West=1]) && hostile[$Nono=1] && weapon[$M1=1]";
     let rep = Representation::default();
     rep.tell(test_03).unwrap();
     let answ = rep.ask(q03_01);
@@ -48,11 +48,11 @@ fn repr_inference_ask_pred() {
 
     let test_04 = "
         # query for all 'professor'
-        ( professor[$Lucy,u=1] )
-        ( dean[$John,u=1] )
-        ( let x in (dean[x,u=1] := professor[x,u=1]))
+        ( professor[$Lucy=1] )
+        ( dean[$John=1] )
+        ( let x in (dean[x=1] := professor[x=1]))
     ";
-    let q04_01 = "(let x in (professor[x,u=1]))";
+    let q04_01 = "(let x in (professor[x=1]))";
     let rep = Representation::default();
     rep.tell(test_04).unwrap();
     let answ = rep.ask(q04_01);
@@ -62,11 +62,11 @@ fn repr_inference_ask_pred() {
 
     let test_05 = "
         # query for all classes '$Lucy' is member of
-        (professor[$Lucy,u=1])
-        ( let x in (professor[x,u=1] := person[x,u=1]))
-        (ugly[$Lucy,u=0.2])
+        (professor[$Lucy=1])
+        (let x in (professor[x=1] := person[x=1]))
+        (ugly[$Lucy=0.2])
     ";
-    let q05_01 = "(let x in (x[$Lucy,u>0.5]))";
+    let q05_01 = "(let x in (x[$Lucy>0.5]))";
     let rep = Representation::default();
     rep.tell(test_05).unwrap();
     let mut results = HashSet::new();
@@ -84,37 +84,37 @@ fn repr_inference_ask_pred() {
 #[test]
 fn repr_inference_ask_func() {
     let test_01 = "
-        ( professor[$Lucy,u=1] )
-        ( dean[$John,u=1] )
-        ( fn::criticize[$John,u=1;$Lucy] )
+        ( professor[$Lucy=1] )
+        ( dean[$John=1] )
+        ( fn::criticize[$John=1,$Lucy] )
     ";
-    let q01_01 = "(fn::criticize[$John,u=1;$Lucy])";
+    let q01_01 = "(fn::criticize[$John=1,$Lucy])";
     let rep = Representation::default();
     rep.tell(test_01).unwrap();
     assert_eq!(rep.ask(q01_01).unwrap().get_results_single(), Some(true));
 
     let test_02 = "
-        ( animal[cow,u=1] )
-        ( female[cow,u=1] )
-        ( let x in (animal[x,u=1] && female[x,u=1]) := fn::produce[milk,u=1;x] )
+        ( animal[cow=1] )
+        ( female[cow=1] )
+        ( let x in (animal[x=1] && female[x=1]) := fn::produce[milk=1,x] )
     ";
-    let q02_01 = "(fn::produce[milk,u=1;cow])";
+    let q02_01 = "(fn::produce[milk=1,cow])";
     let rep = Representation::default();
     rep.tell(test_02).unwrap();
     assert_eq!(rep.ask(q02_01).unwrap().get_results_single(), Some(true));
 
     let test_03 = "
-        ( professor[$Lucy,u=1] )
-        ( dean[$John,u=1] )
-        ( fn::criticize[$John,u=1;$Lucy] )
-        ( let x in ( dean[x,u=1] := professor[x,u=1] ) )
-        ( let x in ( professor[x,u=1] := person[x,u=1] ) )
+        ( professor[$Lucy=1] )
+        ( dean[$John=1] )
+        ( fn::criticize[$John=1,$Lucy] )
+        ( let x in ( dean[x=1] := professor[x=1] ) )
+        ( let x in ( professor[x=1] := person[x=1] ) )
         ( let x, y in
-            (( person[x,u=1] && person[y,u=1] && dean[y,u=1] && fn::criticize[y,u=1;x] )
-                := fn::friend[x,u=0;y] ))
+            (( person[x=1] && person[y=1] && dean[y=1] && fn::criticize[y=1,x] )
+                := fn::friend[x=0,y] ))
     ";
-    let q03_01 = "(fn::friend[$Lucy,u=0;$John])";
-    let q03_02 = "(fn::friend[$Lucy,u<1;$John])";
+    let q03_01 = "(fn::friend[$Lucy=0,$John])";
+    let q03_02 = "(fn::friend[$Lucy<1,$John])";
     let rep = Representation::default();
     rep.tell(test_03).unwrap();
     assert_eq!(rep.ask(q03_01).unwrap().get_results_single(), Some(true));
@@ -122,13 +122,13 @@ fn repr_inference_ask_func() {
 
     let test_04 = "
         # retrieve all objs which fit to a criteria
-        (fn::produce[milk,u=1;$Lulu])
-        (cow[$Lucy,u=1])
-        (goat[$Vicky,u=1])
-        (let x in ((cow[x,u=1] || goat[x,u=1]) := (female[x,u=1] && animal[x,u=1])))
-        (let x in ((female[x,u>0] && animal[x,u>0]) := fn::produce[milk,u=1;x]))
+        (fn::produce[milk=1,$Lulu])
+        (cow[$Lucy=1])
+        (goat[$Vicky=1])
+        (let x in ((cow[x=1] || goat[x=1]) := (female[x=1] && animal[x=1])))
+        (let x in ((female[x>0] && animal[x>0]) := fn::produce[milk=1,x]))
     ";
-    let q04_01 = "(let x in (fn::produce[milk,u>0;x]))";
+    let q04_01 = "(let x in (fn::produce[milk>0,x]))";
     let rep = Representation::default();
     rep.tell(test_04).unwrap();
     let answ = rep.ask(q04_01);
@@ -139,11 +139,11 @@ fn repr_inference_ask_func() {
 
     let test_05 = "
         # retrieve all relations between objects
-        (fn::loves[$Vicky,u=1;$Lucy])
-        (fn::worships[$Vicky,u=1;cats])
-        (fn::hates[$Vicky,u=0;dogs])
+        (fn::loves[$Vicky=1,$Lucy])
+        (fn::worships[$Vicky=1,cats])
+        (fn::hates[$Vicky=0,dogs])
     ";
-    let q05_01 = "(let x in (fn::x[$Vicky,u>0;$Lucy]))";
+    let q05_01 = "(let x in (fn::x[$Vicky>0,$Lucy]))";
     let rep = Representation::default();
     rep.tell(test_05).unwrap();
     let mut results = HashSet::new();
@@ -159,7 +159,7 @@ fn repr_inference_ask_func() {
     }
     assert_eq!(cnt, 2);
 
-    let q05_02 = "(let x, y in (fn::x[$Vicky,u=0;y]))";
+    let q05_02 = "(let x, y in (fn::x[$Vicky=0,y]))";
     let answ = rep.ask(q05_02);
     let a05_02 = answ.unwrap().get_relationships();
     let mut cnt = 0;
@@ -176,13 +176,13 @@ fn repr_inference_time_calc_1() {
     // facts imply class, w/ t1 time arg set by antecedents & t2 set dynamically at resolution
     let test_01 = "
         ( let x, y, t1:time, t2:time=\"now\" in
-            (( dog[x,u=1] && meat[y,u=1] && fn::eat(t1=time)[y,u=1;x] && fn::time_calc(t1<t2) )
-            := fat(time=t2)[x,u=1] ))
-        ( dog[$Pancho,u=1] )
-        ( meat[$M1,u=1] )
-        ( fn::eat(time=\"2014-07-05T10:25:00Z\")[$M1,u=1;$Pancho] )
+            (( dog[x=1] && meat[y=1] && fn::eat(t1=time)[y=1,x] && fn::time_calc(t1<t2) )
+            := fat(time=t2)[x=1] ))
+        ( dog[$Pancho=1] )
+        ( meat[$M1=1] )
+        ( fn::eat(time=\"2014-07-05T10:25:00Z\")[$M1=1,$Pancho] )
     ";
-    let q01_01 = "(fat(time='now')[$Pancho,u=1])";
+    let q01_01 = "(fat(time='now')[$Pancho=1])";
     let rep = Representation::default();
     rep.tell(test_01).unwrap();
     assert_eq!(rep.ask(q01_01).unwrap().get_results_single(), Some(true));
@@ -191,71 +191,71 @@ fn repr_inference_time_calc_1() {
     // facts imply func, w/ t1 time arg set statically & t2 set statically by antecedent
     let test_02 = "
         ( let x, y, t1:time=\"2014-07-05T10:25:00Z\", t2:time in
-            ( ( dog[x,u=1] && meat[y,u=1] && fat(t2=time)[x,u=1] && fn::time_calc(t1<t2) )
-            := fn::eat(time=t1)[y,u=1;x]
+            ( ( dog[x=1] && meat[y=1] && fat(t2=time)[x=1] && fn::time_calc(t1<t2) )
+            := fn::eat(time=t1)[y=1,x]
             )
         )
-        ( dog[$Pancho,u=1] )
-        ( meat[$M1,u=1] )
-        ( fat(time=\"2015-07-05T10:25:00Z\")[$Pancho,u=1] )
+        ( dog[$Pancho=1] )
+        ( meat[$M1=1] )
+        ( fat(time=\"2015-07-05T10:25:00Z\")[$Pancho=1] )
     ";
     let rep = Representation::default();
     rep.tell(test_02).unwrap();
-    let q02_01 = "(fn::eat(time='now')[$M1,u=1;$Pancho])";
+    let q02_01 = "(fn::eat(time='now')[$M1=1,$Pancho])";
     let result = rep.ask(q02_01).unwrap().get_results_single();
     assert_eq!(result, Some(true));
 
     // Test 03
     let rep = Representation::default();
     let test_03_00 = "
-        (meat[$M1,u=1])
-        (dog[$Pancho,u=1])
+        (meat[$M1=1])
+        (dog[$Pancho=1])
     ";
     rep.tell(test_03_00).unwrap();
 
     // if fn(a) then cls(b=1) @ t1
     let test_03_01 = "
-        (fn::eat(time='2015-01-01T00:00:00Z')[$M1,u=1;$Pancho])
+        (fn::eat(time='2015-01-01T00:00:00Z')[$M1=1,$Pancho])
         (let x, y in
-            ((dog[x,u=1] && meat[y,u=1] && fn::eat[y,u=1;x])
-            := fat[x,u=1]))
+            ((dog[x=1] && meat[y=1] && fn::eat[y=1,x])
+            := fat[x=1]))
     ";
     rep.tell(test_03_01).unwrap();
-    let q03_01 = "(fat[$Pancho,u=1])";
+    let q03_01 = "(fat[$Pancho=1])";
     assert_eq!(rep.ask(q03_01).unwrap().get_results_single(), Some(true));
 
     // if fn(b) then cls(b=0) @ t1 -- supercedes last statement
     let test_03_02 = "
-        (run(time='2015-01-01T00:00:00Z')[$Pancho,u=1])
-        (let x in (( dog[x,u=1] && run[x,u=1] ) := fat[x,u=0]))
+        (run(time='2015-01-01T00:00:00Z')[$Pancho=1])
+        (let x in (( dog[x=1] && run[x=1] ) := fat[x=0]))
     ";
     rep.tell(test_03_02).unwrap();
-    let q03_02 = "(fat[$Pancho,u=0])";
+    let q03_02 = "(fat[$Pancho=0])";
     assert_eq!(rep.ask(q03_02).unwrap().get_results_single(), Some(true));
 
     // statement 1: fn(b) then cls(b=0) @ t1
     // statement 2: fn(a) then cls(b=1) @ t2
     // sta1=true if t1 > t2 else sta2=true
     let test_03_03 = "
-        (run(time='2015-01-01T00:00:00Z')[$Pancho,u=1])
-        (fn::eat(time='2015-02-01T00:00:00Z')[$M1,u=1;$Pancho])
+        (run(time='2015-01-01T00:00:00Z')[$Pancho=1])
+        (fn::eat(time='2015-02-01T00:00:00Z')[$M1=1,$Pancho])
         (let x, y, t1:time, t2:time in
-            (run(t1=time)[x,u=1] && fn::eat(t2=time)[y,u=1;x]
-            && dog[x,u=1] && meat[y,u=1] && fn::time_calc(t1<t2))
-            := (fat[x,u=1] || fat[x,u=0]))
+            (run(t1=time)[x=1] && fn::eat(t2=time)[y=1,x]
+            && dog[x=1] && meat[y=1] && fn::time_calc(t1<t2))
+            := (fat[x=1] || fat[x=0]))
     ";
     rep.tell(test_03_03).unwrap();
-    let q03_03 = "(fat[$Pancho,u=1])";
+    let q03_03 = "(fat[$Pancho=1])";
     assert_eq!(rep.ask(q03_03).unwrap().get_results_single(), Some(true));
 
     // both statements are told again and must override any previous statement
     // this should rollback
     let test_03_04 = "
-        #(fn::eat(time='2015-01-02T00:00:00Z', ow)[$M1,u=1;$Pancho])
-        (run(time='2015-02-02T00:00:00Z', ow)[$Pancho,u=1])
+        #(fn::eat(time='2015-01-02T00:00:00Z', ow)[$M1=1,$Pancho])
+        (run(time='2015-02-02T00:00:00Z', ow)[$Pancho=1])
     ";
     rep.tell(test_03_04).unwrap();
-    let q03_04 = "(fat[$Pancho,u=0])";
+    let q03_04 = "(fat[$Pancho=0])";
     // assert_eq!(rep.ask(q03_04).unwrap().get_results_single(), Some(true));
 }
 
@@ -265,30 +265,30 @@ fn repr_inference_time_calc_2() {
     let rep = Representation::default();
     let test_04_01 = "
         (let t1:time='2018-03-01T00:00:00Z', t2:time='2018-06-01T00:00:00Z' in
-         (fat(@t1->t2)[$Pancho,u=1]))
+         (fat(@t1->t2)[$Pancho=1]))
     ";
     rep.tell(test_04_01).unwrap();
-    let q04_1_01 = "(fat(time='2018-04-01T00:00:00Z')[$Pancho,u=1])";
+    let q04_1_01 = "(fat(time='2018-04-01T00:00:00Z')[$Pancho=1])";
     assert_eq!(rep.ask(q04_1_01).unwrap().get_results_single(), Some(true));
-    let q04_1_02 = "(fat(time='2018-07-01T00:00:00Z')[$Pancho,u=1])";
+    let q04_1_02 = "(fat(time='2018-07-01T00:00:00Z')[$Pancho=1])";
     assert_eq!(rep.ask(q04_1_02).unwrap().get_results_single(), None);
-    let q04_1_03 = "(fat(time='2018-02-01T00:00:00Z')[$Pancho,u=1])";
+    let q04_1_03 = "(fat(time='2018-02-01T00:00:00Z')[$Pancho=1])";
     assert_eq!(rep.ask(q04_1_03).unwrap().get_results_single(), None);
 
     // Test if a fn is true between time intervals
     let test_04_02 = "
-        ( professor[$Lucy,u=1] )
-        ( dean[$John,u=1] )
+        ( professor[$Lucy=1] )
+        ( dean[$John=1] )
         (let t1:time='2018-03-01T00:00:00Z', t2:time='2018-06-01T00:00:00Z' in
-         (fn::criticize(@t1->t2)[$John,u=1;$Lucy]))
+         (fn::criticize(@t1->t2)[$John=1,$Lucy]))
     ";
     let rep = Representation::default();
     rep.tell(test_04_02).unwrap();
-    let q04_2_01 = "(fn::criticize(time='2018-04-01T00:00:00Z')[$John,u=1;$Lucy])";
+    let q04_2_01 = "(fn::criticize(time='2018-04-01T00:00:00Z')[$John=1,$Lucy])";
     assert_eq!(rep.ask(q04_2_01).unwrap().get_results_single(), Some(true));
-    let q04_2_02 = "(fn::criticize(time='2018-07-01T00:00:00Z')[$John,u=1;$Lucy])";
+    let q04_2_02 = "(fn::criticize(time='2018-07-01T00:00:00Z')[$John=1,$Lucy])";
     assert_eq!(rep.ask(q04_2_02).unwrap().get_results_single(), None);
-    let q04_2_03 = "(fn::criticize(time='2018-02-01T00:00:00Z')[$John,u=1;$Lucy])";
+    let q04_2_03 = "(fn::criticize(time='2018-02-01T00:00:00Z')[$John=1,$Lucy])";
     assert_eq!(rep.ask(q04_2_03).unwrap().get_results_single(), None);
 }
 
@@ -298,20 +298,20 @@ fn repr_eval_fol() {
     // (true := true)
     let rep = Representation::default();
     let fol = "
-        ( drugDealer[$West,u=1] := ( scum[$West,u=1] && good[$West,u=0] ) )
-        ( drugDealer[$West,u=1] )
+        ( drugDealer[$West=1] := ( scum[$West=1] && good[$West=0] ) )
+        ( drugDealer[$West=1] )
     ";
-    let query = "( scum[$West,u=1] && good[$West,u=0] )";
+    let query = "( scum[$West=1] && good[$West=0] )";
     rep.tell(fol).unwrap();
     assert_eq!(rep.ask(query).unwrap().get_results_single(), Some(true));
 
     // (false := none)
     let rep = Representation::default();
     let fol = "
-        ( drugDealer[$West,u=1] := ( scum[$West,u=1] && good[$West,u=0] ) )
-        ( drugDealer[$West,u=0] )
+        ( drugDealer[$West=1] := ( scum[$West=1] && good[$West=0] ) )
+        ( drugDealer[$West=0] )
     ";
-    let query = "( scum[$West,u=1] && good[$West,u=0] )";
+    let query = "( scum[$West=1] && good[$West=0] )";
     rep.tell(fol).unwrap();
     assert_eq!(rep.ask(query).unwrap().get_results_single(), None);
 
@@ -319,31 +319,31 @@ fn repr_eval_fol() {
     // true (true => true)
     let rep = Representation::default();
     let fol = "
-        ( drugDealer[$West,u=1] => ( scum[$West,u=1] && good[$West,u=0] ) )
-        ( drugDealer[$West,u=1] && scum[$West,u=1] && good[$West,u=0] )
+        ( drugDealer[$West=1] => ( scum[$West=1] && good[$West=0] ) )
+        ( drugDealer[$West=1] && scum[$West=1] && good[$West=0] )
     ";
-    let query = "( drugDealer[$West,u=1] && scum[$West,u=1] && good[$West,u=0] )";
+    let query = "( drugDealer[$West=1] && scum[$West=1] && good[$West=0] )";
     rep.tell(fol).unwrap();
     assert_eq!(rep.ask(query).unwrap().get_results_single(), Some(true));
 
     // true (false => true)
     let rep = Representation::default();
     let fol = "
-        ( drugDealer[$West,u=1] => ( scum[$West,u=1] && good[$West,u=0] ) )
-        ( drugDealer[$West,u=0] && scum[$West,u=1] && good[$West,u=0] )
+        ( drugDealer[$West=1] => ( scum[$West=1] && good[$West=0] ) )
+        ( drugDealer[$West=0] && scum[$West=1] && good[$West=0] )
     ";
-    let query = "( drugDealer[$West,u=0] && scum[$West,u=1] && good[$West,u=0] )";
+    let query = "( drugDealer[$West=0] && scum[$West=1] && good[$West=0] )";
     rep.tell(fol).unwrap();
     assert_eq!(rep.ask(query).unwrap().get_results_single(), Some(true));
 
     // false (true => false)
     let rep = Representation::default();
     let fol = "
-        ( drugDealer[$West,u=1] => ( scum[$West,u=1] && good[$West,u=0] ) )
-        ( drugDealer[$West,u=1] && scum[$West,u=0] && good[$West,u=1] )
+        ( drugDealer[$West=1] => ( scum[$West=1] && good[$West=0] ) )
+        ( drugDealer[$West=1] && scum[$West=0] && good[$West=1] )
     ";
-    let query0 = "( drugDealer[$West,u=1] )";
-    let query1 = "( scum[$West,u=0] && good[$West,u=1] )";
+    let query0 = "( drugDealer[$West=1] )";
+    let query1 = "( scum[$West=0] && good[$West=1] )";
     rep.tell(fol).unwrap();
     assert_eq!(rep.ask(query0).unwrap().get_results_single(), Some(true));
     assert_eq!(rep.ask(query1).unwrap().get_results_single(), None);
@@ -351,11 +351,11 @@ fn repr_eval_fol() {
     // true (false => false)
     let rep = Representation::default();
     let fol = "
-        ( drugDealer[$West,u=1] => ( scum[$West,u=1] && good[$West,u=0] ) )
-        ( drugDealer[$West,u=0] && scum[$West,u=0] && good[$West,u=1] )
+        ( drugDealer[$West=1] => ( scum[$West=1] && good[$West=0] ) )
+        ( drugDealer[$West=0] && scum[$West=0] && good[$West=1] )
     ";
-    let query0 = "( drugDealer[$West,u=0] )";
-    let query1 = "( scum[$West,u=0] && good[$West,u=1] )";
+    let query0 = "( drugDealer[$West=0] )";
+    let query1 = "( scum[$West=0] && good[$West=1] )";
     rep.tell(fol).unwrap();
     assert_eq!(rep.ask(query0).unwrap().get_results_single(), Some(true));
     assert_eq!(rep.ask(query1).unwrap().get_results_single(), Some(true));
@@ -364,48 +364,48 @@ fn repr_eval_fol() {
     // is false (false <=> true )
     let rep = Representation::default();
     let fol = "
-        ( drugDealer[$West,u=1] <=> ( scum[$West,u=1] && good[$West,u=0] ) )
-        ( scum[$West,u=1] )
-        ( good[$West,u=0] )
-        ( drugDealer[$West,u=0] )
+        ( drugDealer[$West=1] <=> ( scum[$West=1] && good[$West=0] ) )
+        ( scum[$West=1] )
+        ( good[$West=0] )
+        ( drugDealer[$West=0] )
     ";
-    let query = "( drugDealer[$West,u=0] )";
+    let query = "( drugDealer[$West=0] )";
     rep.tell(fol).unwrap();
     assert_eq!(rep.ask(query).unwrap().get_results_single(), None);
 
     // is false (true <=> false )
     let rep = Representation::default();
     let fol = "
-        ( drugDealer[$West,u=1] <=> ( scum[$West,u=1] && good[$West,u=0] ) )
-        ( drugDealer[$West,u=1] )
-        ( scum[$West,u=0] )
-        ( good[$West,u=1] )
+        ( drugDealer[$West=1] <=> ( scum[$West=1] && good[$West=0] ) )
+        ( drugDealer[$West=1] )
+        ( scum[$West=0] )
+        ( good[$West=1] )
     ";
-    let query = "( scum[$West,u=1] && good[$West,u=0] )";
+    let query = "( scum[$West=1] && good[$West=0] )";
     rep.tell(fol).unwrap();
     assert_eq!(rep.ask(query).unwrap().get_results_single(), None);
 
     // is true ( true <=> true )
     let rep = Representation::default();
     let fol = "
-        ( drugDealer[$West,u=1] <=> ( scum[$West,u=1] && good[$West,u=0] ) )
-        ( scum[$West,u=1] )
-        ( good[$West,u=0] )
-        ( drugDealer[$West,u=1] )
+        ( drugDealer[$West=1] <=> ( scum[$West=1] && good[$West=0] ) )
+        ( scum[$West=1] )
+        ( good[$West=0] )
+        ( drugDealer[$West=1] )
     ";
-    let query = "( drugDealer[$West,u=1] && scum[$West,u=1] && good[$West,u=0] )";
+    let query = "( drugDealer[$West=1] && scum[$West=1] && good[$West=0] )";
     rep.tell(fol).unwrap();
     assert_eq!(rep.ask(query).unwrap().get_results_single(), Some(true));
 
     // is true ( false <=> false )
     let rep = Representation::default();
     let fol = "
-        ( drugDealer[$West,u=1] <=> ( scum[$West,u=1] && good[$West,u=0] ) )
-        ( scum[$West,u=0] )
-        ( good[$West,u=1] )
-        ( drugDealer[$West,u=0] )
+        ( drugDealer[$West=1] <=> ( scum[$West=1] && good[$West=0] ) )
+        ( scum[$West=0] )
+        ( good[$West=1] )
+        ( drugDealer[$West=0] )
     ";
-    let query = "( drugDealer[$West,u=0] && scum[$West,u=0] && good[$West,u=1] )";
+    let query = "( drugDealer[$West=0] && scum[$West=0] && good[$West=1] )";
     rep.tell(fol).unwrap();
     assert_eq!(rep.ask(query).unwrap().get_results_single(), Some(true));
 }

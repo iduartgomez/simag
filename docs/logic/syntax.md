@@ -47,8 +47,8 @@ clarity. An example of a complex sentence:
 ```
 (
     let x, y in 
-    ( fn::takes[$analysis,u=1;x] && fn::takes[y,u=1;x] && course[y,u=1] && student[x,u=1] 
-      := silly[x,u=1] )
+    ( fn::takes[$analysis=1,x] && fn::takes[y=1,x] && course[y=1] && student[x=1] 
+      := silly[x=1] )
 )
 ```
 

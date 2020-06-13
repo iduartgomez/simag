@@ -37,10 +37,11 @@ impl<'a> ClassDecl {
         let args = {
             let mut v0 = Vec::with_capacity(other.args.len());
             for arg in &other.args {
-                if arg.uval.is_none() {
-                    return Err(ParseErrF::IUValNone);
+                let mut pred = Predicate::from(arg, context, &class_name, false)?;
+                // if truth value was ellided, default to 1
+                if !pred.has_uval() {
+                    pred.replace_uval(1.0)
                 }
-                let pred = Predicate::from(arg, context, &class_name, false)?;
                 v0.push(pred);
             }
             v0
