@@ -212,8 +212,8 @@ impl Class {
                             }
                         }
                         Some(CompOperator::Until)
-                        | Some(CompOperator::At)
-                        | Some(CompOperator::FromUntil) => unreachable!(),
+                        | Some(CompOperator::Since)
+                        | Some(CompOperator::SinceUntil) => unreachable!(),
                     }
                 }
             }
@@ -266,8 +266,8 @@ impl Class {
                             }
                         }
                         (CompOperator::Until, _)
-                        | (CompOperator::At, _)
-                        | (CompOperator::FromUntil, _) => unreachable!(),
+                        | (CompOperator::Since, _)
+                        | (CompOperator::SinceUntil, _) => unreachable!(),
                     }
                 }
             }

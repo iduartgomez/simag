@@ -897,8 +897,14 @@ fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
         ))(i)
     }
 
-    fn normal_op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
-        let (i, term) = get_op_term(i)?;
+    fn normal_op_arg(orig: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
+        let (i, term) = get_op_term(orig)?;
+        match term {
+            OpArgTermBorrowed::Terminal(b"since") => {
+                return Err(nom::Err::Error(ParseErrB::NonTerminal(orig)))
+            }
+            _ => {}
+        }
         let (i, _) = multispace0(i)?;
         let (i, op) = opt(alt((tag(">="), tag("<="), tag("="), tag(">"), tag("<"))))(i)?;
         if let Some(op) = op {
@@ -919,12 +925,12 @@ fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
     }
 
     fn time_op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
-        let (i, _) = tag("@")(i)?;
+        let (i, _) = tag("since")(i)?;
         let (i, _) = multispace0(i)?;
         let (i, since) = map(terminal, OpArgTermBorrowed::is_terminal)(i)?;
         let (i, _) = multispace0(i)?;
         let (i, until) = opt(tuple((
-            tag("->"),
+            tag("until"),
             multispace0,
             map(terminal, OpArgTermBorrowed::is_terminal),
             multispace0,
@@ -1137,9 +1143,9 @@ pub(in crate::agent) enum CompOperator {
     MoreEqual,
     LessEqual,
     // time operators:
+    Since,
     Until,
-    FromUntil,
-    At,
+    SinceUntil,
 }
 
 impl CompOperator {
@@ -1159,9 +1165,9 @@ impl CompOperator {
 
     fn from_time_op(t: Option<OpArgTermBorrowed>) -> Option<(CompOperator, OpArgTermBorrowed)> {
         if let Some(term) = t {
-            Some((CompOperator::FromUntil, term))
+            Some((CompOperator::SinceUntil, term))
         } else {
-            Some((CompOperator::At, OpArgTermBorrowed::String(b"")))
+            Some((CompOperator::Since, OpArgTermBorrowed::String(b"")))
         }
     }
 
@@ -1210,8 +1216,8 @@ impl CompOperator {
         match self {
             CompOperator::Equal
             | CompOperator::Until
-            | CompOperator::At
-            | CompOperator::FromUntil => true,
+            | CompOperator::Since
+            | CompOperator::SinceUntil => true,
             _ => false,
         }
     }
@@ -1224,8 +1230,8 @@ impl CompOperator {
             CompOperator::MoreEqual => id.push(4),
             CompOperator::LessEqual => id.push(5),
             CompOperator::Until => id.push(6),
-            CompOperator::At => id.push(7),
-            CompOperator::FromUntil => id.push(8),
+            CompOperator::Since => id.push(7),
+            CompOperator::SinceUntil => id.push(8),
         }
     }
 }
@@ -1239,8 +1245,8 @@ impl std::fmt::Display for CompOperator {
             CompOperator::MoreEqual => write!(f, ">="),
             CompOperator::LessEqual => write!(f, "<="),
             CompOperator::Until => write!(f, "->"),
-            CompOperator::At => write!(f, "@"),
-            CompOperator::FromUntil => write!(f, "<->"),
+            CompOperator::Since => write!(f, "@"),
+            CompOperator::SinceUntil => write!(f, "<->"),
         }
     }
 }
@@ -1476,7 +1482,7 @@ mod test {
         );
 
         // happy(where this.time is "now", at t1, ow)[x>=0.5]
-        let s5 = b"happy(time='now', @t1, ow)[x>=0.5]";
+        let s5 = b"happy(time='now', since t1, ow)[x>=0.5]";
         let s5_res = class_decl(s5);
         assert_done_or_err!(s5_res);
         let s5_res = s5_res.unwrap().1;
@@ -1492,7 +1498,7 @@ mod test {
             &s5_res.op_args.as_ref().unwrap()[1],
             &OpArgBorrowed {
                 term: OpArgTermBorrowed::Terminal(b"t1"),
-                comp: Some((CompOperator::At, OpArgTermBorrowed::String(b""))),
+                comp: Some((CompOperator::Since, OpArgTermBorrowed::String(b""))),
             }
         );
 
@@ -1500,8 +1506,8 @@ mod test {
         // happy(where this.time is t1, happens since t1 until t2, ow)[$John]
         // happy(where t1 is this.time)[$John]
         // happy(from t1)[$John]
-        // happy(at t1)[$John]
-        let s6 = b"happy(time=t1, @t1->t2, ow)[x<=0.5]";
+        // happy(since t1)[$John]
+        let s6 = b"happy(time=t1, since t1 until t2, ow)[x<=0.5]";
         let s6_res = class_decl(s6);
         assert_done_or_err!(s6_res);
         let s6_res = s6_res.unwrap().1;
@@ -1510,7 +1516,7 @@ mod test {
             &s6_res.op_args.as_ref().unwrap()[1],
             &OpArgBorrowed {
                 term: OpArgTermBorrowed::Terminal(b"t1"),
-                comp: Some((CompOperator::FromUntil, OpArgTermBorrowed::Terminal(b"t2"),)),
+                comp: Some((CompOperator::SinceUntil, OpArgTermBorrowed::Terminal(b"t2"),)),
             }
         );
 

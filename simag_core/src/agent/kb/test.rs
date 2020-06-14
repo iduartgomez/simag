@@ -265,7 +265,7 @@ fn repr_inference_time_calc_2() {
     let rep = Representation::default();
     let test_04_01 = "
         (let t1:time='2018-03-01T00:00:00Z', t2:time='2018-06-01T00:00:00Z' in
-         (fat(@t1->t2)[$Pancho=1]))
+         (fat(since t1 until t2)[$Pancho=1]))
     ";
     rep.tell(test_04_01).unwrap();
     let q04_1_01 = "(fat(time='2018-04-01T00:00:00Z')[$Pancho=1])";
@@ -280,7 +280,7 @@ fn repr_inference_time_calc_2() {
         ( professor[$Lucy=1] )
         ( dean[$John=1] )
         (let t1:time='2018-03-01T00:00:00Z', t2:time='2018-06-01T00:00:00Z' in
-         (fn::criticize(@t1->t2)[$John=1,$Lucy]))
+         (fn::criticize(since t1 until t2)[$John=1,$Lucy]))
     ";
     let rep = Representation::default();
     rep.tell(test_04_02).unwrap();

@@ -206,7 +206,7 @@ impl GroundedMemb {
 
     /// An statement is a time interval if there are only two time records and the
     /// last one is none.
-    // FIXME: this is error prone, encode at the type level when the bms is first created?
+    // FIXME: this is error prone, encode if is a time interval at the type level when the bms is first created?
     pub fn is_time_interval(&self) -> bool {
         let bms = self.bms.as_ref().unwrap();
         bms.record_len() == 2 && bms.get_last_value().is_none()
@@ -255,7 +255,7 @@ impl GroundedMemb {
             CompOperator::Less => val_lhs > val_rhs,
             CompOperator::MoreEqual => val_lhs <= val_rhs,
             CompOperator::LessEqual => val_lhs >= val_rhs,
-            CompOperator::Until | CompOperator::At | CompOperator::FromUntil => unreachable!(),
+            CompOperator::Until | CompOperator::Since | CompOperator::SinceUntil => unreachable!(),
         }
     }
 

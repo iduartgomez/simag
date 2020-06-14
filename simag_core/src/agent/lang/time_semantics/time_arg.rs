@@ -48,7 +48,7 @@ impl<'a> TimeArg<'a> {
                 let upper_bound = arg0 + comp_diff;
                 !((arg1 < lower_bound) || (arg1 > upper_bound)) || arg0 < arg1
             }
-            CompOperator::Until | CompOperator::At | CompOperator::FromUntil => unreachable!(),
+            CompOperator::Until | CompOperator::Since | CompOperator::SinceUntil => unreachable!(),
         }
     }
 

@@ -339,7 +339,9 @@ impl FreeClassMembership {
                 CompOperator::LessEqual => {
                     val.approx_eq_ulps(&o_val, FLOAT_EQ_ULPS) || o_val < *val
                 }
-                CompOperator::Until | CompOperator::At | CompOperator::FromUntil => unreachable!(),
+                CompOperator::Until | CompOperator::Since | CompOperator::SinceUntil => {
+                    unreachable!()
+                }
             }
         } else {
             true
@@ -585,10 +587,10 @@ impl<'a> OpArg {
             None => None,
         };
         match comp {
-            Some((CompOperator::At, _)) | Some((CompOperator::Until, _)) => {
+            Some((CompOperator::Since, _)) | Some((CompOperator::Until, _)) => {
                 OpArg::ignore_kw(other, "time", context)
             }
-            Some((CompOperator::FromUntil, _)) => {
+            Some((CompOperator::SinceUntil, _)) => {
                 let load0 = if t0.is_var() {
                     t0.get_var()
                 } else {

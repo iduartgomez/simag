@@ -887,8 +887,8 @@ impl Entity {
                             }
                         }
                         Some(CompOperator::Until)
-                        | Some(CompOperator::At)
-                        | Some(CompOperator::FromUntil) => unreachable!(),
+                        | Some(CompOperator::Since)
+                        | Some(CompOperator::SinceUntil) => unreachable!(),
                     }
                 }
             }
