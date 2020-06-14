@@ -255,7 +255,10 @@ impl GroundedMemb {
             CompOperator::Less => val_lhs > val_rhs,
             CompOperator::MoreEqual => val_lhs <= val_rhs,
             CompOperator::LessEqual => val_lhs >= val_rhs,
-            CompOperator::Until | CompOperator::Since | CompOperator::SinceUntil => unreachable!(),
+            CompOperator::Until
+            | CompOperator::Since
+            | CompOperator::SinceUntil
+            | CompOperator::Assignment => unreachable!(),
         }
     }
 

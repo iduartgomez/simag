@@ -897,26 +897,33 @@ fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
         ))(i)
     }
 
-    fn normal_op_arg(orig: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
+    fn normal_arg(orig: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
         let (i, term) = get_op_term(orig)?;
-        match term {
-            OpArgTermBorrowed::Terminal(b"since") => {
-                return Err(nom::Err::Error(ParseErrB::NonTerminal(orig)))
-            }
-            _ => {}
+        if term.is_reserved() && term != b"ow" {
+            return Err(nom::Err::Error(ParseErrB::NonTerminal(orig)));
         }
         let (i, _) = multispace0(i)?;
-        let (i, op) = opt(alt((tag(">="), tag("<="), tag("="), tag(">"), tag("<"))))(i)?;
+        let (i, op) = opt(alt((
+            tag(">="),
+            tag("<="),
+            tag("="),
+            tag(">"),
+            tag("<"),
+            tag("is"),
+        )))(i)?;
         if let Some(op) = op {
             let comp = CompOperator::from_chars(op);
             let (i, _) = multispace0(i)?;
             let (i, term2) = get_op_term(i)?;
+            if term2.is_reserved() && term2 != b"ow" {
+                return Err(nom::Err::Error(ParseErrB::NonTerminal(orig)));
+            }
             let (i, _) = multispace0(i)?;
             Ok((
                 i,
                 OpArgBorrowed {
                     term,
-                    comp: Some((comp, term2)),
+                    comp: Some((comp?.1, term2)),
                 },
             ))
         } else {
@@ -924,7 +931,7 @@ fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
         }
     }
 
-    fn time_op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
+    fn time_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
         let (i, _) = tag("since")(i)?;
         let (i, _) = multispace0(i)?;
         let (i, since) = map(terminal, OpArgTermBorrowed::is_terminal)(i)?;
@@ -951,12 +958,53 @@ fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
         ))
     }
 
+    fn var_assignment(orig: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
+        // let s3 = b"dean(where t1 is \"now\", t2 is t1)[$John=0]";
+        // let s5 = b"happy(where this.time is 'now', since t1, ow)[x>=0.5]";
+        let (i, _) = tag("where")(orig)?;
+        let (i, _) = multispace0(i)?;
+
+        let (i, this0) = {
+            let r = opt(tag("this."))(i)?;
+            (r.0, r.1.is_some())
+        };
+        let (i, v0) = get_op_term(i)?;
+        if v0 == OpArgTermBorrowed::ThisTime && !this0 {
+            return Err(nom::Err::Error(ParseErrB::SyntaxError));
+        }
+
+        let (i, _) = multispace0(i)?;
+        let (i, _) = tag("is")(i)?;
+        let (i, _) = multispace0(i)?;
+
+        let (i, this1) = {
+            let r = opt(tag("this."))(i)?;
+            (r.0, r.1.is_some())
+        };
+        let (i, v1) = get_op_term(i)?;
+        if v1 == OpArgTermBorrowed::ThisTime && !this1 {
+            return Err(nom::Err::Error(ParseErrB::SyntaxError));
+        }
+        Ok((
+            i,
+            OpArgBorrowed {
+                term: v0,
+                comp: Some((CompOperator::Assignment, v1)),
+            },
+        ))
+    }
+
     let (i, _) = multispace0(i)?;
-    if let Ok((rest, arg)) = normal_op_arg(i) {
+
+    if let Ok((rest, arg)) = var_assignment(i) {
         return Ok((rest, arg));
     }
 
-    match time_op_arg(i) {
+    if let Ok((rest, arg)) = normal_arg(i) {
+        return Ok((rest, arg));
+    }
+
+    match time_arg(i) {
         Ok((rest, arg)) => Ok((rest, arg)),
         Err(err) => Err(err),
     }
@@ -976,6 +1024,21 @@ fn op_args(input: &[u8]) -> IResult<&[u8], Vec<OpArgBorrowed>> {
 pub(in crate::agent) enum OpArgTermBorrowed<'a> {
     Terminal(&'a [u8]),
     String(&'a [u8]),
+    ThisTime,
+}
+
+impl<'a, T> PartialEq<T> for OpArgTermBorrowed<'a>
+where
+    T: AsRef<[u8]>,
+{
+    fn eq(&self, other: &T) -> bool {
+        let other: &[u8] = other.as_ref();
+        match self {
+            OpArgTermBorrowed::Terminal(r) => *r == other,
+            OpArgTermBorrowed::String(r) => *r == other,
+            OpArgTermBorrowed::ThisTime => false,
+        }
+    }
 }
 
 impl<'a> std::fmt::Debug for OpArgTermBorrowed<'a> {
@@ -985,6 +1048,7 @@ impl<'a> std::fmt::Debug for OpArgTermBorrowed<'a> {
                 write!(f, "OpArg::Term({})", str::from_utf8(r).unwrap())
             }
             OpArgTermBorrowed::String(r) => write!(f, "OpArg::Str({})", str::from_utf8(r).unwrap()),
+            OpArgTermBorrowed::ThisTime => write!(f, "OpArg::ThisTime"),
         }
     }
 }
@@ -995,7 +1059,18 @@ impl<'a> OpArgTermBorrowed<'a> {
     }
 
     fn is_terminal(i: &'a [u8]) -> OpArgTermBorrowed {
-        OpArgTermBorrowed::Terminal(i)
+        match i {
+            b"time" => OpArgTermBorrowed::ThisTime,
+            _ => OpArgTermBorrowed::Terminal(i),
+        }
+    }
+
+    fn is_reserved(&self) -> bool {
+        match self {
+            OpArgTermBorrowed::Terminal(r) => super::reserved(r),
+            OpArgTermBorrowed::ThisTime => true,
+            OpArgTermBorrowed::String(_) => false,
+        }
     }
 }
 
@@ -1018,7 +1093,7 @@ fn uval(input: &[u8]) -> IResult<&[u8], UVal> {
             )
             >> multispace0
             >> val: number
-            >> (UVal { op, val })
+            >> (UVal { op: op?.1, val })
     )
 }
 
@@ -1134,7 +1209,6 @@ fn terminal(input: &[u8]) -> IResult<&[u8], &[u8]> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-#[allow(dead_code)]
 pub(in crate::agent) enum CompOperator {
     // equality operators:
     Equal,
@@ -1146,20 +1220,26 @@ pub(in crate::agent) enum CompOperator {
     Since,
     Until,
     SinceUntil,
+    // other:
+    Assignment,
 }
 
 impl CompOperator {
-    fn from_chars(c: &[u8]) -> CompOperator {
+    fn from_chars(c: &[u8]) -> IResult<&[u8], CompOperator> {
         if c == b"<" {
-            CompOperator::Less
+            Ok((EMPTY, CompOperator::Less))
         } else if c == b">" {
-            CompOperator::More
+            Ok((EMPTY, CompOperator::More))
         } else if c == b"=" {
-            CompOperator::Equal
+            Ok((EMPTY, CompOperator::Equal))
         } else if c == b"<=" {
-            CompOperator::LessEqual
+            Ok((EMPTY, CompOperator::LessEqual))
+        } else if c == b">=" {
+            Ok((EMPTY, CompOperator::MoreEqual))
+        } else if c == b"is" {
+            Ok((EMPTY, CompOperator::Assignment))
         } else {
-            CompOperator::MoreEqual
+            Err(nom::Err::Error(ParseErrB::IsNotOperator(c)))
         }
     }
 
@@ -1232,6 +1312,7 @@ impl CompOperator {
             CompOperator::Until => id.push(6),
             CompOperator::Since => id.push(7),
             CompOperator::SinceUntil => id.push(8),
+            CompOperator::Assignment => id.push(9),
         }
     }
 }
@@ -1247,6 +1328,7 @@ impl std::fmt::Display for CompOperator {
             CompOperator::Until => write!(f, "->"),
             CompOperator::Since => write!(f, "@"),
             CompOperator::SinceUntil => write!(f, "<->"),
+            CompOperator::Assignment => write!(f, "=>"),
         }
     }
 }
@@ -1438,10 +1520,7 @@ mod test {
         assert_eq!(s2_uval.val, Number::SignedFloat(-1.5_f32));
 
         // non-sensical, but can parse:
-        // let s3 = b"dean(where t1 is 'now', t2 is t1)[$John=0]";
-        // sensical, also parses:
-        // let s3 = b"dean(where t1 is this.time)[$John=0]";
-        let s3 = b"dean(t1=\"now\",t2=t1)[$John=0]";
+        let s3 = b"dean(where t1 is \"now\", t2 is t1)[$John=0]";
         let s3_res = class_decl(s3);
         assert_done_or_err!(s3_res);
         let s3_res = s3_res.unwrap().1;
@@ -1453,18 +1532,17 @@ mod test {
             &vec![
                 OpArgBorrowed {
                     term: OpArgTermBorrowed::Terminal(b"t1"),
-                    comp: Some((CompOperator::Equal, OpArgTermBorrowed::String(b"now"))),
+                    comp: Some((CompOperator::Assignment, OpArgTermBorrowed::String(b"now"))),
                 },
                 OpArgBorrowed {
                     term: OpArgTermBorrowed::Terminal(b"t2"),
-                    comp: Some((CompOperator::Equal, OpArgTermBorrowed::Terminal(b"t1"))),
+                    comp: Some((CompOperator::Assignment, OpArgTermBorrowed::Terminal(b"t1"))),
                 },
             ]
         );
 
         // non-sensical, but can parse:
-        // animal(where t1 is '2018-02-01T00:00:00Z')[cow; brown=0.5])
-        let s4 = b"animal(t1='2015.07.05.11.28')[cow, brown=0.5]";
+        let s4 = b"animal(where t1 is '2015.07.05.11.28')[cow, brown=0.5]";
         let s4_res = class_decl(s4);
         assert_done_or_err!(s4_res);
         let s4_res = s4_res.unwrap().1;
@@ -1475,14 +1553,13 @@ mod test {
             &vec![OpArgBorrowed {
                 term: OpArgTermBorrowed::Terminal(b"t1"),
                 comp: Some((
-                    CompOperator::Equal,
+                    CompOperator::Assignment,
                     OpArgTermBorrowed::String(b"2015.07.05.11.28"),
                 )),
             }]
         );
 
-        // happy(where this.time is "now", at t1, ow)[x>=0.5]
-        let s5 = b"happy(time='now', since t1, ow)[x>=0.5]";
+        let s5 = b"happy(where this.time is 'now', since t1, ow)[x>=0.5]";
         let s5_res = class_decl(s5);
         assert_done_or_err!(s5_res);
         let s5_res = s5_res.unwrap().1;
@@ -1490,8 +1567,8 @@ mod test {
         assert_eq!(
             &s5_res.op_args.as_ref().unwrap()[0],
             &OpArgBorrowed {
-                term: OpArgTermBorrowed::Terminal(b"time"),
-                comp: Some((CompOperator::Equal, OpArgTermBorrowed::String(b"now"),)),
+                term: OpArgTermBorrowed::ThisTime,
+                comp: Some((CompOperator::Assignment, OpArgTermBorrowed::String(b"now"),)),
             }
         );
         assert_eq!(
@@ -1505,9 +1582,8 @@ mod test {
         // all valid forms:
         // happy(where this.time is t1, happens since t1 until t2, ow)[$John]
         // happy(where t1 is this.time)[$John]
-        // happy(from t1)[$John]
         // happy(since t1)[$John]
-        let s6 = b"happy(time=t1, since t1 until t2, ow)[x<=0.5]";
+        let s6 = b"happy(where this.time is t1, since t1 until t2, ow)[x<=0.5]";
         let s6_res = class_decl(s6);
         assert_done_or_err!(s6_res);
         let s6_res = s6_res.unwrap().1;
@@ -1538,7 +1614,11 @@ mod test {
 
     #[test]
     fn parser_function() {
-        let s1 = b"fn::criticize(t='now')[$John=1,$Lucy]";
+        let s5 = b"fn::criticize(time='2018-04-01T00:00:00Z')[$John=1,$Lucy]";
+        let s5_res = func_decl(s5);
+        assert!(s5_res.is_err());
+
+        let s1 = b"fn::criticize(t1 is 'now')[$John=1,$Lucy]";
         let s1_res = func_decl(s1);
         assert_done_or_err!(s1_res);
         assert_eq!(s1_res.unwrap().1.variant, FuncVariants::Relational);

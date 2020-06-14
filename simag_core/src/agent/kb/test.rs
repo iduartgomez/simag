@@ -175,14 +175,14 @@ fn repr_inference_time_calc_1() {
     // Test 01
     // facts imply class, w/ t1 time arg set by antecedents & t2 set dynamically at resolution
     let test_01 = "
-        ( let x, y, t1:time, t2:time=\"now\" in
-            (( dog[x=1] && meat[y=1] && fn::eat(t1=time)[y=1,x] && fn::time_calc(t1<t2) )
-            := fat(time=t2)[x=1] ))
+        ( let x, y, t1:time, t2:time='now' in
+            (( dog[x=1] && meat[y=1] && fn::eat(where t1 is this.time)[y=1,x] && fn::time_calc(t1<t2) )
+            := fat(where this.time is t2)[x=1] ))
         ( dog[$Pancho=1] )
         ( meat[$M1=1] )
-        ( fn::eat(time=\"2014-07-05T10:25:00Z\")[$M1=1,$Pancho] )
+        ( fn::eat(where this.time is '2014-07-05T10:25:00Z')[$M1=1,$Pancho] )
     ";
-    let q01_01 = "(fat(time='now')[$Pancho=1])";
+    let q01_01 = "(fat(where this.time is 'now')[$Pancho=1])";
     let rep = Representation::default();
     rep.tell(test_01).unwrap();
     assert_eq!(rep.ask(q01_01).unwrap().get_results_single(), Some(true));
@@ -190,14 +190,14 @@ fn repr_inference_time_calc_1() {
     // Test 02
     // facts imply func, w/ t1 time arg set statically & t2 set statically by antecedent
     let test_02 = "
-        ( let x, y, t1:time=\"2014-07-05T10:25:00Z\", t2:time in
-            ( ( dog[x=1] && meat[y=1] && fat(t2=time)[x=1] && fn::time_calc(t1<t2) )
-            := fn::eat(time=t1)[y=1,x]
+        ( let x, y, t1:time='2014-07-05T10:25:00Z', t2:time in
+            ( ( dog[x=1] && meat[y=1] && fat(where t2 is this.time)[x=1] && fn::time_calc(t1<t2) )
+            := fn::eat(where this.time is t1)[y=1,x]
             )
         )
         ( dog[$Pancho=1] )
         ( meat[$M1=1] )
-        ( fat(time=\"2015-07-05T10:25:00Z\")[$Pancho=1] )
+        ( fat(time='2015-07-05T10:25:00Z')[$Pancho=1] )
     ";
     let rep = Representation::default();
     rep.tell(test_02).unwrap();
@@ -237,10 +237,10 @@ fn repr_inference_time_calc_1() {
     // statement 2: fn(a) then cls(b=1) @ t2
     // sta1=true if t1 > t2 else sta2=true
     let test_03_03 = "
-        (run(time='2015-01-01T00:00:00Z')[$Pancho=1])
-        (fn::eat(time='2015-02-01T00:00:00Z')[$M1=1,$Pancho])
+        (run(where this.time is '2015-01-01T00:00:00Z')[$Pancho=1])
+        (fn::eat(where this.time is '2015-02-01T00:00:00Z')[$M1=1,$Pancho])
         (let x, y, t1:time, t2:time in
-            (run(t1=time)[x=1] && fn::eat(t2=time)[y=1,x]
+            (run(where t1 is this.time)[x=1] && fn::eat(where t2 is this.time)[y=1,x]
             && dog[x=1] && meat[y=1] && fn::time_calc(t1<t2))
             := (fat[x=1] || fat[x=0]))
     ";
@@ -251,8 +251,8 @@ fn repr_inference_time_calc_1() {
     // both statements are told again and must override any previous statement
     // this should rollback
     let test_03_04 = "
-        #(fn::eat(time='2015-01-02T00:00:00Z', ow)[$M1=1,$Pancho])
-        (run(time='2015-02-02T00:00:00Z', ow)[$Pancho=1])
+        #(fn::eat(where this.time is '2015-01-02T00:00:00Z', ow)[$M1=1,$Pancho])
+        (run(where this.time is '2015-02-02T00:00:00Z', ow)[$Pancho=1])
     ";
     rep.tell(test_03_04).unwrap();
     let q03_04 = "(fat[$Pancho=0])";
@@ -284,11 +284,11 @@ fn repr_inference_time_calc_2() {
     ";
     let rep = Representation::default();
     rep.tell(test_04_02).unwrap();
-    let q04_2_01 = "(fn::criticize(time='2018-04-01T00:00:00Z')[$John=1,$Lucy])";
+    let q04_2_01 = "(fn::criticize(where this.time is '2018-04-01T00:00:00Z')[$John=1,$Lucy])";
     assert_eq!(rep.ask(q04_2_01).unwrap().get_results_single(), Some(true));
-    let q04_2_02 = "(fn::criticize(time='2018-07-01T00:00:00Z')[$John=1,$Lucy])";
+    let q04_2_02 = "(fn::criticize(where this.time is '2018-07-01T00:00:00Z')[$John=1,$Lucy])";
     assert_eq!(rep.ask(q04_2_02).unwrap().get_results_single(), None);
-    let q04_2_03 = "(fn::criticize(time='2018-02-01T00:00:00Z')[$John=1,$Lucy])";
+    let q04_2_03 = "(fn::criticize(where this.time is '2018-02-01T00:00:00Z')[$John=1,$Lucy])";
     assert_eq!(rep.ask(q04_2_03).unwrap().get_results_single(), None);
 }
 

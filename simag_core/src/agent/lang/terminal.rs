@@ -17,7 +17,7 @@ impl<'a> Terminal {
     ) -> Result<Terminal, ParseErrF> {
         let &TerminalBorrowed(slice) = other;
         let name = str::from_utf8(slice).unwrap().to_owned();
-        if super::reserved(&name) {
+        if super::reserved(name.as_bytes()) {
             return Err(ParseErrF::ReservedKW(name));
         }
         for v in &context.vars {
@@ -30,7 +30,7 @@ impl<'a> Terminal {
 
     pub(super) fn from_slice(slice: &[u8], context: &ParseContext) -> Result<Terminal, ParseErrF> {
         let name = str::from_utf8(slice).unwrap().to_owned();
-        if super::reserved(&name) {
+        if super::reserved(slice) {
             return Err(ParseErrF::ReservedKW(name));
         }
         for v in &context.vars {

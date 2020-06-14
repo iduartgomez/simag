@@ -339,9 +339,10 @@ impl FreeClassMembership {
                 CompOperator::LessEqual => {
                     val.approx_eq_ulps(&o_val, FLOAT_EQ_ULPS) || o_val < *val
                 }
-                CompOperator::Until | CompOperator::Since | CompOperator::SinceUntil => {
-                    unreachable!()
-                }
+                CompOperator::Until
+                | CompOperator::Since
+                | CompOperator::SinceUntil
+                | CompOperator::Assignment => unreachable!(),
             }
         } else {
             true
@@ -560,13 +561,13 @@ pub(in crate::agent) enum OpArg {
 impl<'a> OpArg {
     pub fn from(other: &OpArgBorrowed<'a>, context: &ParseContext) -> Result<OpArg, ParseErrF> {
         let t0 = match OpArgTerm::from(&other.term, context) {
+            Ok(OpArgTerm::ThisTime) => return OpArg::build_time_arg(other, context),
+            Ok(arg) => arg,
             Err(ParseErrF::ReservedKW(kw)) => match &*kw {
-                "time" => return OpArg::ignore_kw(other, "time", context),
                 "overwrite" | "ow" => return Ok(OpArg::OverWrite),
                 _ => return Err(ParseErrF::ReservedKW(kw)),
             },
             Err(err) => return Err(err),
-            Ok(arg) => arg,
         };
         let comp = match other.comp {
             Some((op, ref tors)) => match OpArgTerm::from(tors, context) {
@@ -588,7 +589,7 @@ impl<'a> OpArg {
         };
         match comp {
             Some((CompOperator::Since, _)) | Some((CompOperator::Until, _)) => {
-                OpArg::ignore_kw(other, "time", context)
+                OpArg::build_time_arg(other, context)
             }
             Some((CompOperator::SinceUntil, _)) => {
                 let load0 = if t0.is_var() {
@@ -608,25 +609,19 @@ impl<'a> OpArg {
         }
     }
 
-    fn ignore_kw(
+    fn build_time_arg(
         other: &OpArgBorrowed<'a>,
-        kw: &str,
         context: &ParseContext,
     ) -> Result<OpArg, ParseErrF> {
-        match kw {
-            "time" => {
-                let load = TimeArg::time_payload(other.comp.as_ref(), context)?;
-                if load.1.is_var() {
-                    Ok(OpArg::TimeVarAssign(load.1.get_var()))
-                } else {
-                    match load.1 {
-                        OpArgTerm::TimePayload(TimeFn::IsVar) => Ok(OpArg::TimeVar),
-                        OpArgTerm::TimePayload(load) => Ok(OpArg::TimeDecl(load)),
-                        _ => Err(ParseErrF::WrongDef),
-                    }
-                }
+        let load = TimeArg::time_payload(other.comp.as_ref(), context)?;
+        if load.1.is_var() {
+            Ok(OpArg::TimeVarAssign(load.1.get_var()))
+        } else {
+            match load.1 {
+                OpArgTerm::TimePayload(TimeFn::IsVar) => Ok(OpArg::TimeVar),
+                OpArgTerm::TimePayload(load) => Ok(OpArg::TimeDecl(load)),
+                _ => Err(ParseErrF::WrongDef),
             }
-            val => Err(ParseErrF::ReservedKW(val.to_string())),
         }
     }
 
@@ -691,6 +686,7 @@ pub(in crate::agent) enum OpArgTerm {
     Terminal(Terminal),
     String(String),
     TimePayload(TimeFn),
+    ThisTime,
 }
 
 pub(in crate::agent) fn op_arg_term_from_borrowed<'a>(
@@ -702,7 +698,7 @@ pub(in crate::agent) fn op_arg_term_from_borrowed<'a>(
 
 impl<'a> OpArgTerm {
     fn from(other: &OpArgTermBorrowed<'a>, context: &ParseContext) -> Result<OpArgTerm, ParseErrF> {
-        match *other {
+        match other {
             OpArgTermBorrowed::Terminal(slice) => {
                 let t = Terminal::from_slice(slice, context)?;
                 Ok(OpArgTerm::Terminal(t))
@@ -710,14 +706,16 @@ impl<'a> OpArgTerm {
             OpArgTermBorrowed::String(slice) => Ok(OpArgTerm::String(
                 String::from_utf8_lossy(slice).into_owned(),
             )),
+            OpArgTermBorrowed::ThisTime => Ok(OpArgTerm::ThisTime),
         }
     }
 
     fn generate_uid(&self) -> Vec<u8> {
-        match *self {
+        match self {
             OpArgTerm::Terminal(ref t) => t.generate_uid(),
             OpArgTerm::String(ref s) => Vec::from_iter(s.as_bytes().iter().cloned()),
             OpArgTerm::TimePayload(ref t) => t.generate_uid(),
+            OpArgTerm::ThisTime => vec![3],
         }
     }
 

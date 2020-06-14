@@ -64,7 +64,7 @@ impl Var {
             None => None,
         };
         let name = std::str::from_utf8(name).unwrap().to_owned();
-        if super::reserved(&name) {
+        if super::reserved(name.as_bytes()) {
             return Err(ParseErrF::ReservedKW(name));
         }
         Ok(Var { name, op_arg, kind })

@@ -47,10 +47,10 @@ pub(in crate::agent) fn logic_parser(
 pub type Time = DateTime<Utc>;
 
 #[inline]
-fn reserved(s: &str) -> bool {
+fn reserved(s: &[u8]) -> bool {
     match s {
-        "let" | "exists" | "fn" | "time" | "time_calc" | "overwrite" | "ow" | "this" | "none"
-        | "in" | "and" | "where" | "from" | "to" | "is" | "as" => true,
+        b"let" | b"exists" | b"fn" | b"time" | b"time_calc" | b"ow" | b"this" | b"none" | b"in"
+        | b"and" | b"where" | b"from" | b"to" | b"is" | b"as" | b"at" | b"since" | b"until" => true,
         _ => false,
     }
 }

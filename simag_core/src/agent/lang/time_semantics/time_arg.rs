@@ -48,7 +48,10 @@ impl<'a> TimeArg<'a> {
                 let upper_bound = arg0 + comp_diff;
                 !((arg1 < lower_bound) || (arg1 > upper_bound)) || arg0 < arg1
             }
-            CompOperator::Until | CompOperator::Since | CompOperator::SinceUntil => unreachable!(),
+            CompOperator::Until
+            | CompOperator::Since
+            | CompOperator::SinceUntil
+            | CompOperator::Assignment => unreachable!(),
         }
     }
 
@@ -88,7 +91,7 @@ impl<'a> TimeArg<'a> {
                 if !op.is_time_assignment() {
                     return Err(TimeFnErr::NotAssignment.into());
                 }
-                match *term {
+                match term {
                     OpArgTermBorrowed::String(slice) => {
                         let time = TimeFn::from_str(slice)?;
                         Ok((CompOperator::Equal, OpArgTerm::TimePayload(time)))
@@ -101,6 +104,7 @@ impl<'a> TimeArg<'a> {
                             Err(TimeFnErr::IsNotVar.into())
                         }
                     }
+                    OpArgTermBorrowed::ThisTime => Err(TimeFnErr::IsNotVar.into()),
                 }
             }
         }
