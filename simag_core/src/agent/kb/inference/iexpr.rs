@@ -1222,23 +1222,11 @@ impl QueryProcessed {
 
 #[test]
 fn args_iterator() {
-    let x = Var {
-        name: "x".to_owned(),
-        op_arg: None,
-        kind: VarKind::Normal,
-    };
+    let x = Var::from("x");
 
-    let y = Var {
-        name: "y".to_owned(),
-        op_arg: None,
-        kind: VarKind::Normal,
-    };
+    let y = Var::from("y");
 
-    let z = Var {
-        name: "z".to_owned(),
-        op_arg: None,
-        kind: VarKind::Normal,
-    };
+    let z = Var::from("z");
 
     let a = Arc::new(VarAssignment {
         name: "A",

@@ -9,6 +9,7 @@ mod parser;
 mod skolem;
 mod terminal;
 pub(self) mod time_semantics;
+pub(self) mod typedef;
 mod var;
 
 use chrono::{DateTime, Utc};
@@ -79,6 +80,7 @@ mod errors {
         RFuncWrongArgs,
         WrongArgNumb,
         WrongDef,
+        TypeUnsupported,
         FailedConversion(&'static str),
         LogSentErr(LogSentErr),
         TimeFnErr(TimeFnErr),

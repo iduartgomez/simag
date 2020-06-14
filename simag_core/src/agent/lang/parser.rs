@@ -661,6 +661,9 @@ fn decl_knowledge(input: &[u8]) -> IResult<&[u8], AssertBorrowed> {
 
 type DeclVars<'a> = Vec<VarDeclBorrowed<'a>>;
 
+#[derive(Debug, Clone, PartialEq)]
+pub(in crate::agent) struct TypeDefBorrowed<'a>(pub &'a [u8]);
+
 /// only var: let a, b in
 /// only existential: exist c, d in
 /// both: let a, b and exist c, d in
@@ -676,10 +679,19 @@ fn scope_var_decl(i: &[u8]) -> IResult<&[u8], DeclVars> {
                 input = i;
                 break;
             }
-            let (i, oa) = {
-                match opt(tuple((tag(":"), multispace0, op_arg)))(i)? {
-                    (rest, Some((.., oa))) => (rest, Some(oa)),
-                    (rest, None) => (rest, None),
+            let (i, ty, val) = {
+                match opt(tuple((
+                    tag(":"),
+                    multispace0,
+                    terminal,
+                    multispace0,
+                    tag("="),
+                    multispace0,
+                    OpArgTermBorrowed::get,
+                )))(i)?
+                {
+                    (rest, Some((.., ty, _, _, _, val))) => (rest, TypeDefBorrowed(ty), Some(val)),
+                    (rest, None) => (rest, TypeDefBorrowed(b""), None),
                 }
             };
             let (i, s) = opt(tag(","))(i)?;
@@ -689,12 +701,14 @@ fn scope_var_decl(i: &[u8]) -> IResult<&[u8], DeclVars> {
             if var {
                 vars.push(VarDeclBorrowed::Var(VarBorrowed {
                     name: TerminalBorrowed::from_slice(name),
-                    op_arg: oa,
+                    ty,
+                    val,
                 }));
             } else {
                 vars.push(VarDeclBorrowed::Skolem(SkolemBorrowed {
                     name: TerminalBorrowed::from_slice(name),
-                    op_arg: oa,
+                    ty,
+                    val,
                 }));
             }
             input = i;
@@ -742,14 +756,16 @@ fn scope_var_decl(i: &[u8]) -> IResult<&[u8], DeclVars> {
 #[derive(Debug, Clone)]
 pub(in crate::agent) struct SkolemBorrowed<'a> {
     pub name: TerminalBorrowed<'a>,
-    pub op_arg: Option<OpArgBorrowed<'a>>,
+    pub ty: TypeDefBorrowed<'a>,
+    pub val: Option<OpArgTermBorrowed<'a>>,
 }
 
 // var_decl = '(' 'let' $(term[':'op_arg]),+ ')' ;
 #[derive(Debug, PartialEq, Clone)]
 pub(in crate::agent) struct VarBorrowed<'a> {
     pub name: TerminalBorrowed<'a>,
-    pub op_arg: Option<OpArgBorrowed<'a>>,
+    pub ty: TypeDefBorrowed<'a>,
+    pub val: Option<OpArgTermBorrowed<'a>>,
 }
 
 // func_decl = 'fn::' term ['(' op_args ')'] args
@@ -889,16 +905,8 @@ pub(in crate::agent) struct OpArgBorrowed<'a> {
 }
 
 fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
-    #[inline(always)]
-    fn get_op_term(i: &[u8]) -> IResult<&[u8], OpArgTermBorrowed> {
-        alt((
-            map(string, OpArgTermBorrowed::is_string),
-            map(terminal, OpArgTermBorrowed::is_terminal),
-        ))(i)
-    }
-
     fn normal_arg(orig: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
-        let (i, term) = get_op_term(orig)?;
+        let (i, term) = OpArgTermBorrowed::get(orig)?;
         if term.is_reserved() && term != b"ow" {
             return Err(nom::Err::Error(ParseErrB::NonTerminal(orig)));
         }
@@ -914,7 +922,7 @@ fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
         if let Some(op) = op {
             let comp = CompOperator::from_chars(op);
             let (i, _) = multispace0(i)?;
-            let (i, term2) = get_op_term(i)?;
+            let (i, term2) = OpArgTermBorrowed::get(i)?;
             if term2.is_reserved() && term2 != b"ow" {
                 return Err(nom::Err::Error(ParseErrB::NonTerminal(orig)));
             }
@@ -968,7 +976,7 @@ fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
             let r = opt(tag("this."))(i)?;
             (r.0, r.1.is_some())
         };
-        let (i, v0) = get_op_term(i)?;
+        let (i, v0) = OpArgTermBorrowed::get(i)?;
         if v0 == OpArgTermBorrowed::ThisTime && !this0 {
             return Err(nom::Err::Error(ParseErrB::SyntaxError));
         }
@@ -981,7 +989,7 @@ fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
             let r = opt(tag("this."))(i)?;
             (r.0, r.1.is_some())
         };
-        let (i, v1) = get_op_term(i)?;
+        let (i, v1) = OpArgTermBorrowed::get(i)?;
         if v1 == OpArgTermBorrowed::ThisTime && !this1 {
             return Err(nom::Err::Error(ParseErrB::SyntaxError));
         }
@@ -1054,6 +1062,13 @@ impl<'a> std::fmt::Debug for OpArgTermBorrowed<'a> {
 }
 
 impl<'a> OpArgTermBorrowed<'a> {
+    fn get(i: &[u8]) -> IResult<&[u8], OpArgTermBorrowed> {
+        alt((
+            map(string, OpArgTermBorrowed::is_string),
+            map(terminal, OpArgTermBorrowed::is_terminal),
+        ))(i)
+    }
+
     fn is_string(i: &'a [u8]) -> OpArgTermBorrowed {
         OpArgTermBorrowed::String(i)
     }
@@ -1294,10 +1309,10 @@ impl CompOperator {
     #[inline]
     pub fn is_time_assignment(self) -> bool {
         match self {
-            CompOperator::Equal
-            | CompOperator::Until
+            CompOperator::Until
             | CompOperator::Since
-            | CompOperator::SinceUntil => true,
+            | CompOperator::SinceUntil
+            | CompOperator::Assignment => true,
             _ => false,
         }
     }

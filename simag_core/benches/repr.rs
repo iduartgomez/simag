@@ -6,7 +6,7 @@ const TELL_TEST: &[&str] = &[
     "( fn::owns[$M1=1,$Nono] )",
     "(let x in (dean[x=1] := professor[x=1]))",
     "(let x, y, t1:time, t2:time in
-        (run(t1=time)[x=1] && fn::eat(t2=time)[y=1,x]
+        (run(where t1 is this.time)[x=1] && fn::eat(where t2 is this.time)[y=1,x]
         && dog[x=1] && meat[y=1] && fn::time_calc(t1<t2))
         := (fat[x=1] || fat[x=0]))",
 ];
@@ -58,10 +58,10 @@ const ASK_SETUP: &[&str] = &[
     ( let x in ( missile[x=1] := weapon[x=1] ) )
     ( let x in ( fn::enemy[x=1,$America] := hostile[x=1] ) )",
     // 2
-    "(run(time='2015-01-01T00:00:00Z')[$Pancho=1])
-    (fn::eat(time='2015-02-01T00:00:00Z')[$M1=1,$Pancho])
+    "(run(where this.time is '2015-01-01T00:00:00Z')[$Pancho=1])
+    (fn::eat(where this.time is '2015-02-01T00:00:00Z')[$M1=1,$Pancho])
     (let x, y, t1:time, t2:time in
-        (run(t1=time)[x=1] && fn::eat(t2=time)[y=1,x]
+        (run(where t1 is this.time)[x=1] && fn::eat(where t2 is this.time)[y=1,x]
         && dog[x=1] && meat[y=1] && fn::time_calc(t1<t2))
         := (fat[x=1] || fat[x=0]))",
 ];

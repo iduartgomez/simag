@@ -549,7 +549,9 @@ impl Assert {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(in crate::agent) enum OpArg {
     Generic(OpArgTerm, Option<(CompOperator, OpArgTerm)>),
+    /// deprecate: used in var declaration to indicate is a time var
     TimeVar,
+    /// deprecate: used in var decl. to assign a time value to a variable, making it a constant
     TimeDecl(TimeFn),
     TimeVarAssign(Arc<Var>),
     TimeVarFrom(Arc<Var>),

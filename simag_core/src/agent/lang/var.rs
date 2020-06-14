@@ -1,8 +1,9 @@
 use super::{
-    common::OpArg,
+    common::OpArgTerm,
     logsent::ParseContext,
-    parser::{TerminalBorrowed, VarBorrowed},
-    time_semantics::TimeArg,
+    parser::{OpArgTermBorrowed, TerminalBorrowed, VarBorrowed},
+    time_semantics::{TimeArg, TimeFn, TimeFnErr},
+    typedef::TypeDef,
     ParseErrF,
 };
 use crate::agent::kb::bms::BmsWrapper;
@@ -13,8 +14,20 @@ use std::collections::HashMap;
 #[derive(Clone)]
 pub(in crate::agent) struct Var {
     pub name: String,
-    pub op_arg: Option<OpArg>,
     pub kind: VarKind,
+    ty: TypeDef,
+    assigned_val: Option<OpArgTerm>,
+}
+
+impl<'a> From<&'a str> for Var {
+    fn from(name: &'a str) -> Self {
+        Var {
+            name: name.to_owned(),
+            kind: VarKind::Normal,
+            ty: TypeDef::Erased,
+            assigned_val: None,
+        }
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -40,40 +53,52 @@ impl std::fmt::Display for VarKind {
     }
 }
 
-impl Var {
-    pub fn from<'a>(input: &VarBorrowed<'a>, context: &ParseContext) -> Result<Var, ParseErrF> {
-        let &VarBorrowed {
+impl<'a> std::convert::TryFrom<(&'a VarBorrowed<'a>, &'a ParseContext)> for Var {
+    type Error = ParseErrF;
+
+    fn try_from(input: (&'a VarBorrowed<'a>, &'a ParseContext)) -> Result<Var, ParseErrF> {
+        let VarBorrowed {
             name: TerminalBorrowed(name),
-            ref op_arg,
-        } = input;
+            ref ty,
+            ref val,
+        } = input.0;
+
         let mut kind = VarKind::Normal;
-        let op_arg = match *op_arg {
-            Some(ref op_arg) => {
-                let t = OpArg::from(op_arg, context)?;
-                match t {
-                    OpArg::TimeDecl(_) => {
-                        kind = VarKind::TimeDecl;
-                    }
-                    OpArg::TimeVar => {
-                        kind = VarKind::Time;
-                    }
-                    _ => return Err(ParseErrF::WrongDef),
+        let (ty, assigned_val) = match (ty, val) {
+            (def, Some(val)) if def.0 == b"time" => match val {
+                OpArgTermBorrowed::String(slice) => {
+                    let time = TimeFn::from_str(slice)?;
+                    kind = VarKind::TimeDecl;
+                    (TypeDef::Time, Some(OpArgTerm::TimePayload(time)))
                 }
-                Some(t)
+                _ => return Err(TimeFnErr::InsufArgs.into()),
+            },
+            (def, None) if def.0 == b"time" => {
+                kind = VarKind::Time;
+                (TypeDef::Time, Some(OpArgTerm::TimePayload(TimeFn::IsVar)))
             }
-            None => None,
+            (_, None) => (TypeDef::Erased, None),
+            _ => return Err(ParseErrF::TypeUnsupported),
         };
+
         let name = std::str::from_utf8(name).unwrap().to_owned();
         if super::reserved(name.as_bytes()) {
             return Err(ParseErrF::ReservedKW(name));
         }
-        Ok(Var { name, op_arg, kind })
+        Ok(Var {
+            name,
+            kind,
+            ty,
+            assigned_val,
+        })
     }
+}
 
+impl Var {
     pub fn get_times(&self) -> BmsWrapper {
         use std::convert::TryFrom;
         let h = HashMap::new();
-        self.op_arg
+        self.assigned_val
             .as_ref()
             .map(|arg| TimeArg::try_from(arg).unwrap())
             .unwrap()
@@ -115,7 +140,7 @@ impl std::fmt::Debug for Var {
 
 impl std::fmt::Display for Var {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        if let Some(a) = &self.op_arg {
+        if let Some(a) = &self.assigned_val {
             let a = format!("{:?}", a);
             write!(f, "{}: {} = {}", self.name, self.kind, a)
         } else {

@@ -129,10 +129,13 @@ impl<'a> TryFrom<&'a OpArg> for TimeArg<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(in crate::agent) enum TimeFn {
+    /// Instantiate to current value
     Now,
+    /// A declared instant
     Time(Time),
     /// Time interval for value decl, in the form of [t0,t1)
     Interval(Time, Time),
+    /// Used whenever a variable is qualified as a time type variable,
     IsVar,
 }
 

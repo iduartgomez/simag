@@ -1372,7 +1372,7 @@ impl ParseContext {
     pub fn push_var(&mut self, decl: &VarDeclBorrowed) -> Result<(), ParseErrF> {
         match decl {
             VarDeclBorrowed::Var(ref var) => {
-                let var = Arc::new(Var::from(var, self)?);
+                let var = Arc::new(Var::try_from((var, &*self))?);
                 self.vars.push(var.clone());
                 self.all_vars.push(var);
                 Ok(())
@@ -1390,7 +1390,7 @@ impl ParseContext {
     pub fn var_in_context(&self, decl: &VarDeclBorrowed) -> Result<bool, ParseErrF> {
         match decl {
             VarDeclBorrowed::Var(ref var) => {
-                let var = &Var::from(var, self)?;
+                let var = &Var::try_from((var, self))?;
                 Ok(self.vars.iter().any(|x| var.name_eq(x.as_ref())))
             }
             VarDeclBorrowed::Skolem(ref var) => {
@@ -1677,7 +1677,7 @@ mod ast_walker {
             match *v {
                 // if there is a var in context with the current name, shadow it
                 VarDeclBorrowed::Var(ref v) => {
-                    let var = match Var::from(v, context) {
+                    let var = match Var::try_from((v, &*context)) {
                         Err(err) => return Err(LogSentErr::Boxed(Box::new(err))),
                         Ok(val) => Arc::new(val),
                     };

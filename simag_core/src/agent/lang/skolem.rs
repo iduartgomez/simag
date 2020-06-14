@@ -1,14 +1,17 @@
 use super::{
-    common::OpArg,
+    common::{op_arg_term_from_borrowed, OpArgTerm},
     logsent::ParseContext,
-    parser::{SkolemBorrowed, TerminalBorrowed},
+    parser::{OpArgTermBorrowed, SkolemBorrowed, TerminalBorrowed},
+    time_semantics::{TimeFn, TimeFnErr},
+    typedef::TypeDef,
     ParseErrF,
 };
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub(in crate::agent) struct Skolem {
     pub name: String,
-    op_arg: Option<OpArg>,
+    ty: TypeDef,
+    assigned_val: Option<OpArgTerm>,
 }
 
 impl Skolem {
@@ -18,20 +21,34 @@ impl Skolem {
     ) -> Result<Skolem, ParseErrF> {
         let &SkolemBorrowed {
             name: TerminalBorrowed(name),
-            ref op_arg,
+            ref ty,
+            ref val,
         } = input;
-        let op_arg = match *op_arg {
-            Some(ref op_arg) => {
-                let t = OpArg::from(op_arg, context)?;
-                Some(t)
+
+        let (ty, assigned_val) = match (ty, val) {
+            (def, Some(val)) if def.0 == b"time" => match val {
+                OpArgTermBorrowed::String(slice) => {
+                    let time = TimeFn::from_str(slice)?;
+                    (TypeDef::Time, Some(OpArgTerm::TimePayload(time)))
+                }
+                _ => return Err(TimeFnErr::InsufArgs.into()),
+            },
+            (def, None) if def.0 == b"time" => {
+                (TypeDef::Time, Some(OpArgTerm::TimePayload(TimeFn::IsVar)))
             }
-            None => None,
+            (def, None) => (TypeDef::Erased, None),
+            _ => return Err(ParseErrF::TypeUnsupported),
         };
+
         let name = std::str::from_utf8(name).unwrap().to_owned();
         if super::reserved(name.as_bytes()) {
             return Err(ParseErrF::ReservedKW(name));
         }
-        Ok(Skolem { name, op_arg })
+        Ok(Skolem {
+            name,
+            ty,
+            assigned_val,
+        })
     }
 
     pub fn name_eq(&self, other: &Skolem) -> bool {
