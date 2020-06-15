@@ -1,5 +1,6 @@
 use float_cmp::ApproxEqUlps;
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::iter::FromIterator;
 use std::str;
 use std::sync::{Arc, Weak};
@@ -9,7 +10,7 @@ use super::{
     errors::ParseErrF,
     fn_decl::FuncDecl,
     logsent::{LogSentResolution, ParseContext, ProofResContext},
-    parser::{ArgBorrowed, CompOperator, Number, OpArgBorrowed, OpArgTermBorrowed, UVal},
+    parser::{ArgBorrowed, CompOperator, Number, OpArgBorrowed, UVal, UnconstraintArg},
     time_semantics::{TimeArg, TimeFn, TimeFnErr, TimeOps},
     var::Var,
     BuiltIns, GroundedFunc, GroundedMemb, Terminal,
@@ -548,22 +549,17 @@ impl Assert {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(in crate::agent) enum OpArg {
-    Generic(OpArgTerm, Option<(CompOperator, OpArgTerm)>),
-    /// deprecate: used in var declaration to indicate is a time var
-    TimeVar,
-    /// deprecate: used in var decl. to assign a time value to a variable, making it a constant
-    TimeDecl(TimeFn),
-    TimeVarAssign(Arc<Var>),
-    TimeVarFrom(Arc<Var>),
-    // TimeVarUntil(Arc<Var>),
-    TimeVarFromUntil(Arc<Var>, Arc<Var>),
+    Generic(ConstraintValue, Option<(CompOperator, ConstraintValue)>),
+    Time(TimeArg),
     OverWrite,
 }
 
 impl<'a> OpArg {
     pub fn from(other: &OpArgBorrowed<'a>, context: &ParseContext) -> Result<OpArg, ParseErrF> {
-        let t0 = match OpArgTerm::from(&other.term, context) {
-            Ok(OpArgTerm::ThisTime) => return OpArg::build_time_arg(other, context),
+        let t0 = match ConstraintValue::try_from((&other.term, context)) {
+            Ok(ConstraintValue::ThisTime) => {
+                return Ok(OpArg::Time(TimeArg::try_from((other, context))?))
+            }
             Ok(arg) => arg,
             Err(ParseErrF::ReservedKW(kw)) => match &*kw {
                 "overwrite" | "ow" => return Ok(OpArg::OverWrite),
@@ -572,26 +568,21 @@ impl<'a> OpArg {
             Err(err) => return Err(err),
         };
         let comp = match other.comp {
-            Some((op, ref tors)) => match OpArgTerm::from(tors, context) {
-                Ok(t) => Some((op, t)),
-                Err(ParseErrF::ReservedKW(kw)) => {
-                    if &kw == "time" {
-                        if t0.is_var() {
-                            return Ok(OpArg::TimeVarFrom(t0.get_var()));
-                        } else {
-                            return Err(ParseErrF::WrongDef);
-                        }
-                    } else {
-                        return Err(ParseErrF::ReservedKW(kw));
-                    }
+            Some((op, ref tors)) => match ConstraintValue::try_from((tors, context)) {
+                Ok(ConstraintValue::ThisTime) => {
+                    return Ok(OpArg::Time(TimeArg::from(t0.get_var())))
                 }
+                Ok(t) => Some((op, t)),
+                Err(ParseErrF::ReservedKW(kw)) => return Err(ParseErrF::ReservedKW(kw)),
+
                 Err(err) => return Err(err),
             },
             None => None,
         };
+
         match comp {
             Some((CompOperator::Since, _)) | Some((CompOperator::Until, _)) => {
-                OpArg::build_time_arg(other, context)
+                Ok(OpArg::Time(TimeArg::try_from((other, context))?))
             }
             Some((CompOperator::SinceUntil, _)) => {
                 let load0 = if t0.is_var() {
@@ -599,39 +590,22 @@ impl<'a> OpArg {
                 } else {
                     return Err(ParseErrF::TimeFnErr(TimeFnErr::IsNotVar));
                 };
-                let load1 = TimeArg::time_payload(other.comp.as_ref(), context)?;
-                let load1 = if load1.1.is_var() {
-                    load1.1.get_var()
+                let load1 = TimeArg::time_payload_value(other.comp.as_ref(), context)?;
+                let load1 = if load1.is_var() {
+                    load1.get_var()
                 } else {
                     return Err(ParseErrF::TimeFnErr(TimeFnErr::IsNotVar));
                 };
-                Ok(OpArg::TimeVarFromUntil(load0, load1))
+                Ok(OpArg::Time(TimeArg::from((load0, load1))))
             }
             _ => Ok(OpArg::Generic(t0, comp)),
         }
     }
 
-    fn build_time_arg(
-        other: &OpArgBorrowed<'a>,
-        context: &ParseContext,
-    ) -> Result<OpArg, ParseErrF> {
-        let load = TimeArg::time_payload(other.comp.as_ref(), context)?;
-        if load.1.is_var() {
-            Ok(OpArg::TimeVarAssign(load.1.get_var()))
-        } else {
-            match load.1 {
-                OpArgTerm::TimePayload(TimeFn::IsVar) => Ok(OpArg::TimeVar),
-                OpArgTerm::TimePayload(load) => Ok(OpArg::TimeDecl(load)),
-                _ => Err(ParseErrF::WrongDef),
-            }
-        }
-    }
-
     #[inline]
-    pub(in crate::agent::lang) fn contains_var(&self, var1: &Var) -> bool {
+    pub(in crate::agent::lang) fn contains_var(&self, var: &Var) -> bool {
         match self {
-            OpArg::TimeVarAssign(var0) | OpArg::TimeVarFrom(var0) => var0.as_ref() == var1,
-            OpArg::TimeVarFromUntil(v0_0, v0_1) => v0_0.as_ref() == var1 || v0_1.as_ref() == var1,
+            OpArg::Time(this_val) => this_val.contains_var(var),
             _ => false,
         }
     }
@@ -647,16 +621,7 @@ impl<'a> OpArg {
                 }
                 id
             }
-            OpArg::TimeDecl(decl) => decl.generate_uid(),
-            OpArg::TimeVarAssign(var) | OpArg::TimeVarFrom(var) => {
-                format!("{:?}", var.as_ref() as *const Var).into_bytes()
-            }
-            OpArg::TimeVarFromUntil(v0, v1) => {
-                let mut id = format!("{:?}", v0.as_ref() as *const Var).into_bytes();
-                id.append(&mut format!("{:?}", v1.as_ref() as *const Var).into_bytes());
-                id
-            }
-            OpArg::TimeVar => vec![2],
+            OpArg::Time(time_arg) => time_arg.generate_uid(),
             OpArg::OverWrite => vec![5],
         }
     }
@@ -665,18 +630,7 @@ impl<'a> OpArg {
     /// substitution whenever is possible, variables must be declared.
     pub(in crate::agent::lang) fn var_substitution(&mut self) -> Result<(), ParseErrF> {
         match self {
-            OpArg::TimeVarFromUntil(var0, var1) => {
-                let mut var0_time = var0.get_times();
-                let var1_time = var1.get_times();
-                var0_time.merge_from_until(&var1_time)?;
-                let mut assignment = OpArg::TimeDecl(TimeFn::from_bms(&var0_time)?);
-                std::mem::swap(&mut assignment, self);
-            }
-            OpArg::TimeVarFrom(var0) => {
-                let var0_time = var0.get_times();
-                let mut assignment = OpArg::TimeDecl(TimeFn::from_bms(&var0_time)?);
-                std::mem::swap(&mut assignment, self);
-            }
+            OpArg::Time(time) => time.var_substitution()?,
             _ => {}
         }
         Ok(())
@@ -684,63 +638,70 @@ impl<'a> OpArg {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(in crate::agent) enum OpArgTerm {
+pub(in crate::agent) enum ConstraintValue {
     Terminal(Terminal),
     String(String),
     TimePayload(TimeFn),
     ThisTime,
 }
 
-pub(in crate::agent) fn op_arg_term_from_borrowed<'a>(
-    other: &OpArgTermBorrowed<'a>,
-    context: &ParseContext,
-) -> Result<OpArgTerm, ParseErrF> {
-    OpArgTerm::from(other, context)
-}
-
-impl<'a> OpArgTerm {
-    fn from(other: &OpArgTermBorrowed<'a>, context: &ParseContext) -> Result<OpArgTerm, ParseErrF> {
+impl<'a> TryFrom<(&'a UnconstraintArg<'a>, &'a ParseContext)> for ConstraintValue {
+    type Error = ParseErrF;
+    fn try_from(input: (&'a UnconstraintArg<'a>, &'a ParseContext)) -> Result<Self, Self::Error> {
+        let (other, context) = input;
         match other {
-            OpArgTermBorrowed::Terminal(slice) => {
+            UnconstraintArg::Terminal(slice) => {
                 let t = Terminal::from_slice(slice, context)?;
-                Ok(OpArgTerm::Terminal(t))
+                Ok(ConstraintValue::Terminal(t))
             }
-            OpArgTermBorrowed::String(slice) => Ok(OpArgTerm::String(
+            UnconstraintArg::String(slice) => Ok(ConstraintValue::String(
                 String::from_utf8_lossy(slice).into_owned(),
             )),
-            OpArgTermBorrowed::ThisTime => Ok(OpArgTerm::ThisTime),
+            UnconstraintArg::ThisTime => Ok(ConstraintValue::ThisTime),
         }
     }
+}
 
-    fn generate_uid(&self) -> Vec<u8> {
+impl<'a> ConstraintValue {
+    pub fn generate_uid(&self) -> Vec<u8> {
         match self {
-            OpArgTerm::Terminal(ref t) => t.generate_uid(),
-            OpArgTerm::String(ref s) => Vec::from_iter(s.as_bytes().iter().cloned()),
-            OpArgTerm::TimePayload(ref t) => t.generate_uid(),
-            OpArgTerm::ThisTime => vec![3],
+            ConstraintValue::Terminal(t) => t.generate_uid(),
+            ConstraintValue::String(s) => Vec::from_iter(s.as_bytes().iter().cloned()),
+            ConstraintValue::TimePayload(t) => t.generate_uid(),
+            ConstraintValue::ThisTime => vec![3],
         }
     }
 
     #[inline]
     pub(in crate::agent::lang) fn is_var(&self) -> bool {
-        match *self {
-            OpArgTerm::Terminal(ref t) => t.is_var(),
+        match self {
+            ConstraintValue::Terminal(t) => t.is_var(),
             _ => false,
         }
     }
 
     #[inline]
-    fn get_var(&self) -> Arc<Var> {
-        match *self {
-            OpArgTerm::Terminal(ref term) => term.get_var(),
+    pub fn get_var(&self) -> Arc<Var> {
+        match self {
+            ConstraintValue::Terminal(term) => term.get_var(),
             _ => unreachable!(),
         }
     }
 
     #[inline]
     pub(in crate::agent::lang) fn get_var_ref(&self) -> &Var {
-        match *self {
-            OpArgTerm::Terminal(ref term) => term.get_var_ref(),
+        match self {
+            ConstraintValue::Terminal(term) => term.get_var_ref(),
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn contains_var(&self, var: &Var) -> bool {
+        match self {
+            ConstraintValue::Terminal(term) => {
+                let this_var = term.get_var_ref();
+                this_var == var
+            }
             _ => unreachable!(),
         }
     }

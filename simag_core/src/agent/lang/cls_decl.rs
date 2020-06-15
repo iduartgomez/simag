@@ -5,7 +5,7 @@ use super::{
     common::*,
     logsent::{LogSentResolution, ParseContext},
     parser::ClassDeclBorrowed,
-    time_semantics::TimeOps,
+    time_semantics::{TimeArg, TimeOps},
     *,
 };
 use crate::agent::kb::{bms::BmsWrapper, repr::Representation, VarAssignment};
@@ -173,7 +173,7 @@ impl TimeOps for ClassDecl {
     fn get_time_payload(&self, value: Option<f32>) -> Option<BmsWrapper> {
         self.op_args.as_ref()?;
         for arg in self.op_args.as_ref().unwrap() {
-            if let OpArg::TimeDecl(ref decl) = *arg {
+            if let OpArg::Time(TimeArg::TimeDecl(ref decl)) = *arg {
                 return Some(decl.get_time_payload(value));
             }
         }

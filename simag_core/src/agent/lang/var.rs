@@ -1,13 +1,14 @@
 use super::{
-    common::OpArgTerm,
+    common::ConstraintValue,
     logsent::ParseContext,
-    parser::{OpArgTermBorrowed, TerminalBorrowed, VarBorrowed},
+    parser::{TerminalBorrowed, UnconstraintArg, VarBorrowed},
     time_semantics::{TimeArg, TimeFn, TimeFnErr},
     typedef::TypeDef,
     ParseErrF,
 };
 use crate::agent::kb::bms::BmsWrapper;
 use std::collections::HashMap;
+use std::convert::TryFrom;
 
 /// Variable equality is bassed on physical address, to compare term equality use the
 /// `name_eq` method.
@@ -16,7 +17,7 @@ pub(in crate::agent) struct Var {
     pub name: String,
     pub kind: VarKind,
     ty: TypeDef,
-    assigned_val: Option<OpArgTerm>,
+    assigned_val: Option<ConstraintValue>,
 }
 
 impl<'a> From<&'a str> for Var {
@@ -66,16 +67,19 @@ impl<'a> std::convert::TryFrom<(&'a VarBorrowed<'a>, &'a ParseContext)> for Var 
         let mut kind = VarKind::Normal;
         let (ty, assigned_val) = match (ty, val) {
             (def, Some(val)) if def.0 == b"time" => match val {
-                OpArgTermBorrowed::String(slice) => {
+                UnconstraintArg::String(slice) => {
                     let time = TimeFn::from_str(slice)?;
                     kind = VarKind::TimeDecl;
-                    (TypeDef::Time, Some(OpArgTerm::TimePayload(time)))
+                    (TypeDef::Time, Some(ConstraintValue::TimePayload(time)))
                 }
                 _ => return Err(TimeFnErr::InsufArgs.into()),
             },
             (def, None) if def.0 == b"time" => {
                 kind = VarKind::Time;
-                (TypeDef::Time, Some(OpArgTerm::TimePayload(TimeFn::IsVar)))
+                (
+                    TypeDef::Time,
+                    Some(ConstraintValue::TimePayload(TimeFn::IsVar)),
+                )
             }
             (_, None) => (TypeDef::Erased, None),
             _ => return Err(ParseErrF::TypeUnsupported),
@@ -96,13 +100,11 @@ impl<'a> std::convert::TryFrom<(&'a VarBorrowed<'a>, &'a ParseContext)> for Var 
 
 impl Var {
     pub fn get_times(&self) -> BmsWrapper {
-        use std::convert::TryFrom;
-        let h = HashMap::new();
         self.assigned_val
             .as_ref()
-            .map(|arg| TimeArg::try_from(arg).unwrap())
+            .map(|arg| TimeFn::try_from(arg).unwrap())
             .unwrap()
-            .get_time_payload(&h, None)
+            .get_time_payload(None)
     }
 
     pub fn is_time_var(&self) -> bool {

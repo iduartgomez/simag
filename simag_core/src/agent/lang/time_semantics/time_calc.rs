@@ -6,18 +6,22 @@ use super::{TimeArg, TimeFnErr};
 use crate::agent::{
     kb::bms::BmsWrapper,
     lang::{
-        common::OpArg,
+        common::{ConstraintValue, OpArg},
         logsent::ParseContext,
         parser::{FuncDeclBorrowed, TerminalBorrowed},
-        Var,
+        CompOperator, Var,
     },
     ParseErrF,
 };
+use crate::TIME_EQ_DIFF;
+use chrono::Duration;
 
 /// Special built-in function for time calculus.
 #[derive(Debug, Clone)]
 pub(in crate::agent) struct TimeCalc {
-    pub op_args: Vec<OpArg>,
+    var0: ConstraintValue,
+    var1: ConstraintValue,
+    op: CompOperator,
 }
 
 impl TimeCalc {
@@ -28,34 +32,31 @@ impl TimeCalc {
         }
         match other.op_args {
             Some(ref oargs) => {
-                let mut v0 = Vec::with_capacity(oargs.len());
-                for e in oargs {
-                    let arg = match OpArg::from(e, context) {
-                        Err(err) => return Err(err),
-                        Ok(a) => a,
-                    };
-                    match arg {
-                        // Generic(OpArgTerm, Option<(CompOperator, OpArgTerm)>)
-                        OpArg::Generic(ref v0, Some((_, ref v1))) => {
-                            if (!v0.is_var() | !v1.is_var())
-                                || (!v0.get_var_ref().is_time_var()
-                                    | !v1.get_var_ref().is_time_var())
-                            {
-                                return Err(TimeFnErr::IsNotVar.into());
-                            }
+                // a time_calc func can only be formed from a comparison arguments formed by two vars
+                // e.g.: (v0 = v1)
+                let oa = &oargs[0];
+                let arg = OpArg::from(oa, context)?;
+                let (var0, op, var1) = match arg {
+                    OpArg::Generic(v0, Some((op, v1))) => {
+                        if (!v0.is_var() | !v1.is_var())
+                            || (!v0.get_var_ref().is_time_var() | !v1.get_var_ref().is_time_var())
+                        {
+                            return Err(TimeFnErr::IsNotVar.into());
+                        } else {
+                            (v0, op, v1)
                         }
-                        _ => return Err(TimeFnErr::InsufArgs.into()),
                     }
-                    v0.push(arg);
-                }
-                Ok(TimeCalc { op_args: v0 })
+                    _ => return Err(TimeFnErr::InsufArgs.into()),
+                };
+
+                Ok(TimeCalc { var0, var1, op })
             }
             None => Err(TimeFnErr::InsufArgs.into()),
         }
     }
 
     pub fn contains_var(&self, var: &Var) -> bool {
-        for arg in &self.op_args {
+        for arg in &[&self.var0, &self.var1] {
             if arg.contains_var(var) {
                 return true;
             }
@@ -65,22 +66,44 @@ impl TimeCalc {
 
     pub fn generate_uid(&self) -> Vec<u8> {
         let mut uid = b"time_calc".to_vec();
-        for arg in &self.op_args {
-            uid.extend(arg.generate_uid());
-        }
+        uid.extend(self.var0.generate_uid());
+        self.op.generate_uid(&mut uid);
+        uid.extend(self.var1.generate_uid());
         uid
     }
 
-    pub fn time_resolution(&self, assignments: &HashMap<&Var, Arc<BmsWrapper>>) -> Option<bool> {
-        for arg in &self.op_args {
-            if let Ok(arg) = TimeArg::try_from(arg) {
-                let not_time_eq = !arg.compare_time_args(assignments);
-                if not_time_eq {
-                    return Some(false);
-                }
+    pub fn time_resolution(&self, assignments: &HashMap<&Var, Arc<BmsWrapper>>) -> bool {
+        let var0 = self.var0.get_var_ref();
+        let var1 = self.var1.get_var_ref();
+        let arg0 = assignments.get(&*var0).unwrap().get_last_date();
+        let arg1 = assignments.get(&*var1).unwrap().get_last_date();
+
+        match self.op {
+            CompOperator::Equal => {
+                let comp_diff = Duration::seconds(TIME_EQ_DIFF);
+                let lower_bound = arg0 - comp_diff;
+                let upper_bound = arg0 + comp_diff;
+                !((arg1 < lower_bound) || (arg1 > upper_bound))
             }
+            CompOperator::More => arg0 > arg1,
+            CompOperator::Less => arg0 < arg1,
+            CompOperator::MoreEqual => {
+                let comp_diff = Duration::seconds(TIME_EQ_DIFF);
+                let lower_bound = arg0 - comp_diff;
+                let upper_bound = arg0 + comp_diff;
+                !((arg1 < lower_bound) || (arg1 > upper_bound)) || arg0 > arg1
+            }
+            CompOperator::LessEqual => {
+                let comp_diff = Duration::seconds(TIME_EQ_DIFF);
+                let lower_bound = arg0 - comp_diff;
+                let upper_bound = arg0 + comp_diff;
+                !((arg1 < lower_bound) || (arg1 > upper_bound)) || arg0 < arg1
+            }
+            CompOperator::Until
+            | CompOperator::Since
+            | CompOperator::SinceUntil
+            | CompOperator::Assignment => unreachable!(),
         }
-        Some(true)
     }
 }
 

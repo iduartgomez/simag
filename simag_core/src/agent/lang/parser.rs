@@ -687,7 +687,7 @@ fn scope_var_decl(i: &[u8]) -> IResult<&[u8], DeclVars> {
                     multispace0,
                     tag("="),
                     multispace0,
-                    OpArgTermBorrowed::get,
+                    UnconstraintArg::get,
                 )))(i)?
                 {
                     (rest, Some((.., ty, _, _, _, val))) => (rest, TypeDefBorrowed(ty), Some(val)),
@@ -757,7 +757,7 @@ fn scope_var_decl(i: &[u8]) -> IResult<&[u8], DeclVars> {
 pub(in crate::agent) struct SkolemBorrowed<'a> {
     pub name: TerminalBorrowed<'a>,
     pub ty: TypeDefBorrowed<'a>,
-    pub val: Option<OpArgTermBorrowed<'a>>,
+    pub val: Option<UnconstraintArg<'a>>,
 }
 
 // var_decl = '(' 'let' $(term[':'op_arg]),+ ')' ;
@@ -765,7 +765,7 @@ pub(in crate::agent) struct SkolemBorrowed<'a> {
 pub(in crate::agent) struct VarBorrowed<'a> {
     pub name: TerminalBorrowed<'a>,
     pub ty: TypeDefBorrowed<'a>,
-    pub val: Option<OpArgTermBorrowed<'a>>,
+    pub val: Option<UnconstraintArg<'a>>,
 }
 
 // func_decl = 'fn::' term ['(' op_args ')'] args
@@ -900,13 +900,13 @@ fn to_arg_vec(arg: ArgBorrowed) -> Vec<ArgBorrowed> {
 // op_arg =	(string|term) [comp_op (string|term)] ;
 #[derive(Debug, PartialEq, Clone)]
 pub(in crate::agent) struct OpArgBorrowed<'a> {
-    pub term: OpArgTermBorrowed<'a>,
-    pub comp: Option<(CompOperator, OpArgTermBorrowed<'a>)>,
+    pub term: UnconstraintArg<'a>,
+    pub comp: Option<(CompOperator, UnconstraintArg<'a>)>,
 }
 
 fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
     fn normal_arg(orig: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
-        let (i, term) = OpArgTermBorrowed::get(orig)?;
+        let (i, term) = UnconstraintArg::get(orig)?;
         if term.is_reserved() && term != b"ow" {
             return Err(nom::Err::Error(ParseErrB::NonTerminal(orig)));
         }
@@ -922,7 +922,7 @@ fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
         if let Some(op) = op {
             let comp = CompOperator::from_chars(op);
             let (i, _) = multispace0(i)?;
-            let (i, term2) = OpArgTermBorrowed::get(i)?;
+            let (i, term2) = UnconstraintArg::get(i)?;
             if term2.is_reserved() && term2 != b"ow" {
                 return Err(nom::Err::Error(ParseErrB::NonTerminal(orig)));
             }
@@ -942,12 +942,12 @@ fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
     fn time_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
         let (i, _) = tag("since")(i)?;
         let (i, _) = multispace0(i)?;
-        let (i, since) = map(terminal, OpArgTermBorrowed::is_terminal)(i)?;
+        let (i, since) = map(terminal, UnconstraintArg::is_terminal)(i)?;
         let (i, _) = multispace0(i)?;
         let (i, until) = opt(tuple((
             tag("until"),
             multispace0,
-            map(terminal, OpArgTermBorrowed::is_terminal),
+            map(terminal, UnconstraintArg::is_terminal),
             multispace0,
         )))(i)?;
 
@@ -976,8 +976,8 @@ fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
             let r = opt(tag("this."))(i)?;
             (r.0, r.1.is_some())
         };
-        let (i, v0) = OpArgTermBorrowed::get(i)?;
-        if v0 == OpArgTermBorrowed::ThisTime && !this0 {
+        let (i, v0) = UnconstraintArg::get(i)?;
+        if v0 == UnconstraintArg::ThisTime && !this0 {
             return Err(nom::Err::Error(ParseErrB::SyntaxError));
         }
 
@@ -989,8 +989,8 @@ fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
             let r = opt(tag("this."))(i)?;
             (r.0, r.1.is_some())
         };
-        let (i, v1) = OpArgTermBorrowed::get(i)?;
-        if v1 == OpArgTermBorrowed::ThisTime && !this1 {
+        let (i, v1) = UnconstraintArg::get(i)?;
+        if v1 == UnconstraintArg::ThisTime && !this1 {
             return Err(nom::Err::Error(ParseErrB::SyntaxError));
         }
         Ok((
@@ -1029,62 +1029,62 @@ fn op_args(input: &[u8]) -> IResult<&[u8], Vec<OpArgBorrowed>> {
 }
 
 #[derive(PartialEq, Clone)]
-pub(in crate::agent) enum OpArgTermBorrowed<'a> {
+pub(in crate::agent) enum UnconstraintArg<'a> {
     Terminal(&'a [u8]),
     String(&'a [u8]),
     ThisTime,
 }
 
-impl<'a, T> PartialEq<T> for OpArgTermBorrowed<'a>
+impl<'a, T> PartialEq<T> for UnconstraintArg<'a>
 where
     T: AsRef<[u8]>,
 {
     fn eq(&self, other: &T) -> bool {
         let other: &[u8] = other.as_ref();
         match self {
-            OpArgTermBorrowed::Terminal(r) => *r == other,
-            OpArgTermBorrowed::String(r) => *r == other,
-            OpArgTermBorrowed::ThisTime => false,
+            UnconstraintArg::Terminal(r) => *r == other,
+            UnconstraintArg::String(r) => *r == other,
+            UnconstraintArg::ThisTime => false,
         }
     }
 }
 
-impl<'a> std::fmt::Debug for OpArgTermBorrowed<'a> {
+impl<'a> std::fmt::Debug for UnconstraintArg<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            OpArgTermBorrowed::Terminal(r) => {
+            UnconstraintArg::Terminal(r) => {
                 write!(f, "OpArg::Term({})", str::from_utf8(r).unwrap())
             }
-            OpArgTermBorrowed::String(r) => write!(f, "OpArg::Str({})", str::from_utf8(r).unwrap()),
-            OpArgTermBorrowed::ThisTime => write!(f, "OpArg::ThisTime"),
+            UnconstraintArg::String(r) => write!(f, "OpArg::Str({})", str::from_utf8(r).unwrap()),
+            UnconstraintArg::ThisTime => write!(f, "OpArg::ThisTime"),
         }
     }
 }
 
-impl<'a> OpArgTermBorrowed<'a> {
-    fn get(i: &[u8]) -> IResult<&[u8], OpArgTermBorrowed> {
+impl<'a> UnconstraintArg<'a> {
+    fn get(i: &[u8]) -> IResult<&[u8], UnconstraintArg> {
         alt((
-            map(string, OpArgTermBorrowed::is_string),
-            map(terminal, OpArgTermBorrowed::is_terminal),
+            map(string, UnconstraintArg::is_string),
+            map(terminal, UnconstraintArg::is_terminal),
         ))(i)
     }
 
-    fn is_string(i: &'a [u8]) -> OpArgTermBorrowed {
-        OpArgTermBorrowed::String(i)
+    fn is_string(i: &'a [u8]) -> UnconstraintArg {
+        UnconstraintArg::String(i)
     }
 
-    fn is_terminal(i: &'a [u8]) -> OpArgTermBorrowed {
+    fn is_terminal(i: &'a [u8]) -> UnconstraintArg {
         match i {
-            b"time" => OpArgTermBorrowed::ThisTime,
-            _ => OpArgTermBorrowed::Terminal(i),
+            b"time" => UnconstraintArg::ThisTime,
+            _ => UnconstraintArg::Terminal(i),
         }
     }
 
     fn is_reserved(&self) -> bool {
         match self {
-            OpArgTermBorrowed::Terminal(r) => super::reserved(r),
-            OpArgTermBorrowed::ThisTime => true,
-            OpArgTermBorrowed::String(_) => false,
+            UnconstraintArg::Terminal(r) => super::reserved(r),
+            UnconstraintArg::ThisTime => true,
+            UnconstraintArg::String(_) => false,
         }
     }
 }
@@ -1258,11 +1258,11 @@ impl CompOperator {
         }
     }
 
-    fn from_time_op(t: Option<OpArgTermBorrowed>) -> Option<(CompOperator, OpArgTermBorrowed)> {
+    fn from_time_op(t: Option<UnconstraintArg>) -> Option<(CompOperator, UnconstraintArg)> {
         if let Some(term) = t {
             Some((CompOperator::SinceUntil, term))
         } else {
-            Some((CompOperator::Since, OpArgTermBorrowed::String(b"")))
+            Some((CompOperator::Since, UnconstraintArg::String(b"")))
         }
     }
 
@@ -1546,12 +1546,12 @@ mod test {
             s3_res.op_args.as_ref().unwrap(),
             &vec![
                 OpArgBorrowed {
-                    term: OpArgTermBorrowed::Terminal(b"t1"),
-                    comp: Some((CompOperator::Assignment, OpArgTermBorrowed::String(b"now"))),
+                    term: UnconstraintArg::Terminal(b"t1"),
+                    comp: Some((CompOperator::Assignment, UnconstraintArg::String(b"now"))),
                 },
                 OpArgBorrowed {
-                    term: OpArgTermBorrowed::Terminal(b"t2"),
-                    comp: Some((CompOperator::Assignment, OpArgTermBorrowed::Terminal(b"t1"))),
+                    term: UnconstraintArg::Terminal(b"t2"),
+                    comp: Some((CompOperator::Assignment, UnconstraintArg::Terminal(b"t1"))),
                 },
             ]
         );
@@ -1566,10 +1566,10 @@ mod test {
         assert_eq!(
             s4_res.op_args.as_ref().unwrap(),
             &vec![OpArgBorrowed {
-                term: OpArgTermBorrowed::Terminal(b"t1"),
+                term: UnconstraintArg::Terminal(b"t1"),
                 comp: Some((
                     CompOperator::Assignment,
-                    OpArgTermBorrowed::String(b"2015.07.05.11.28"),
+                    UnconstraintArg::String(b"2015.07.05.11.28"),
                 )),
             }]
         );
@@ -1582,15 +1582,15 @@ mod test {
         assert_eq!(
             &s5_res.op_args.as_ref().unwrap()[0],
             &OpArgBorrowed {
-                term: OpArgTermBorrowed::ThisTime,
-                comp: Some((CompOperator::Assignment, OpArgTermBorrowed::String(b"now"),)),
+                term: UnconstraintArg::ThisTime,
+                comp: Some((CompOperator::Assignment, UnconstraintArg::String(b"now"),)),
             }
         );
         assert_eq!(
             &s5_res.op_args.as_ref().unwrap()[1],
             &OpArgBorrowed {
-                term: OpArgTermBorrowed::Terminal(b"t1"),
-                comp: Some((CompOperator::Since, OpArgTermBorrowed::String(b""))),
+                term: UnconstraintArg::Terminal(b"t1"),
+                comp: Some((CompOperator::Since, UnconstraintArg::String(b""))),
             }
         );
 
@@ -1606,8 +1606,8 @@ mod test {
         assert_eq!(
             &s6_res.op_args.as_ref().unwrap()[1],
             &OpArgBorrowed {
-                term: OpArgTermBorrowed::Terminal(b"t1"),
-                comp: Some((CompOperator::SinceUntil, OpArgTermBorrowed::Terminal(b"t2"),)),
+                term: UnconstraintArg::Terminal(b"t1"),
+                comp: Some((CompOperator::SinceUntil, UnconstraintArg::Terminal(b"t2"),)),
             }
         );
 

@@ -5,74 +5,45 @@ use std::sync::Arc;
 use super::*;
 use crate::agent::kb::bms::BmsWrapper;
 use crate::agent::lang::{
-    common::{OpArg, OpArgTerm},
+    common::{ConstraintValue, OpArg},
     logsent::ParseContext,
-    parser::{CompOperator, OpArgTermBorrowed},
+    parser::{CompOperator, UnconstraintArg},
     *,
 };
-use crate::TIME_EQ_DIFF;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
+use parser::OpArgBorrowed;
 
-pub(in crate::agent::lang) struct TimeArg<'a>(&'a OpArg);
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(in crate::agent) enum TimeArg {
+    TimeVar,
+    /// is a time declaration
+    TimeDecl(TimeFn),
+    TimeVarAssign(Arc<Var>),
+    TimeVarFrom(Arc<Var>),
+    // TimeVarUntil(Arc<Var>),
+    TimeVarFromUntil(Arc<Var>, Arc<Var>),
+}
+use TimeArg::*;
 
-impl<'a> TimeArg<'a> {
-    pub fn compare_time_args(&self, assignments: &HashMap<&Var, Arc<BmsWrapper>>) -> bool {
-        let (term, op, comp) = match *self.0 {
-            OpArg::Generic(ref term, Some((ref op, ref comp))) => (term, op, comp),
-            _ => return false,
-        };
-
-        let var0 = term.get_var_ref();
-        let var1 = comp.get_var_ref();
-        let arg0 = assignments.get(&*var0).unwrap().get_last_date();
-        let arg1 = assignments.get(&*var1).unwrap().get_last_date();
-
-        match *op {
-            CompOperator::Equal => {
-                let comp_diff = Duration::seconds(TIME_EQ_DIFF);
-                let lower_bound = arg0 - comp_diff;
-                let upper_bound = arg0 + comp_diff;
-                !((arg1 < lower_bound) || (arg1 > upper_bound))
-            }
-            CompOperator::More => arg0 > arg1,
-            CompOperator::Less => arg0 < arg1,
-            CompOperator::MoreEqual => {
-                let comp_diff = Duration::seconds(TIME_EQ_DIFF);
-                let lower_bound = arg0 - comp_diff;
-                let upper_bound = arg0 + comp_diff;
-                !((arg1 < lower_bound) || (arg1 > upper_bound)) || arg0 > arg1
-            }
-            CompOperator::LessEqual => {
-                let comp_diff = Duration::seconds(TIME_EQ_DIFF);
-                let lower_bound = arg0 - comp_diff;
-                let upper_bound = arg0 + comp_diff;
-                !((arg1 < lower_bound) || (arg1 > upper_bound)) || arg0 < arg1
-            }
-            CompOperator::Until
-            | CompOperator::Since
-            | CompOperator::SinceUntil
-            | CompOperator::Assignment => unreachable!(),
-        }
-    }
-
+impl TimeArg {
     pub fn get_time_payload(
         &self,
         assignments: &HashMap<&Var, Arc<BmsWrapper>>,
         value: Option<f32>,
     ) -> BmsWrapper {
         let bms = BmsWrapper::new(false);
-        match self.0 {
-            OpArg::TimeDecl(TimeFn::Time(payload)) => {
+        match self {
+            TimeDecl(TimeFn::Time(payload)) => {
                 bms.new_record(Some(*payload), value, None);
             }
-            OpArg::TimeDecl(TimeFn::Now) => {
+            TimeDecl(TimeFn::Now) => {
                 bms.new_record(None, value, None);
             }
-            OpArg::TimeDecl(TimeFn::Interval(time0, time1)) => {
+            TimeDecl(TimeFn::Interval(time0, time1)) => {
                 bms.new_record(Some(*time0), value, None);
                 bms.new_record(Some(*time1), None, None);
             }
-            OpArg::TimeVarAssign(var) => {
+            TimeVarAssign(var) => {
                 let assignment = &**(assignments.get(&**var).unwrap());
                 return assignment.clone();
             }
@@ -81,61 +52,120 @@ impl<'a> TimeArg<'a> {
         bms
     }
 
-    pub fn time_payload(
-        other: Option<&(CompOperator, OpArgTermBorrowed<'a>)>,
+    pub fn time_payload_value(
+        other: Option<&(CompOperator, UnconstraintArg)>,
         context: &ParseContext,
-    ) -> Result<(CompOperator, OpArgTerm), ParseErrF> {
+    ) -> Result<ConstraintValue, ParseErrF> {
         match other {
-            None => Ok((CompOperator::Equal, OpArgTerm::TimePayload(TimeFn::IsVar))),
+            None => Ok(ConstraintValue::TimePayload(TimeFn::IsVar)),
             Some(&(ref op, ref term)) => {
                 if !op.is_time_assignment() {
                     return Err(TimeFnErr::NotAssignment.into());
                 }
                 match term {
-                    OpArgTermBorrowed::String(slice) => {
+                    UnconstraintArg::String(slice) => {
                         let time = TimeFn::from_str(slice)?;
-                        Ok((CompOperator::Equal, OpArgTerm::TimePayload(time)))
+                        Ok(ConstraintValue::TimePayload(time))
                     }
-                    OpArgTermBorrowed::Terminal(_) => {
-                        let var = common::op_arg_term_from_borrowed(&term, context)?;
+                    UnconstraintArg::Terminal(_) => {
+                        let var = ConstraintValue::try_from((term, context))?;
                         if var.is_var() {
-                            Ok((CompOperator::Equal, var))
+                            Ok(var)
                         } else {
                             Err(TimeFnErr::IsNotVar.into())
                         }
                     }
-                    OpArgTermBorrowed::ThisTime => Err(TimeFnErr::IsNotVar.into()),
+                    UnconstraintArg::ThisTime => Err(TimeFnErr::IsNotVar.into()),
                 }
             }
         }
     }
+
+    pub fn contains_var(&self, var: &Var) -> bool {
+        todo!()
+    }
+
+    pub fn generate_uid(&self) -> Vec<u8> {
+        match self {
+            TimeDecl(decl) => decl.generate_uid(),
+            TimeVarAssign(var) | TimeVarFrom(var) => {
+                format!("{:?}", var.as_ref() as *const Var).into_bytes()
+            }
+            TimeVarFromUntil(v0, v1) => {
+                let mut id = format!("{:?}", v0.as_ref() as *const Var).into_bytes();
+                id.append(&mut format!("{:?}", v1.as_ref() as *const Var).into_bytes());
+                id
+            }
+            TimeVar => vec![2],
+        }
+    }
+
+    pub fn var_substitution(&mut self) -> Result<(), ParseErrF> {
+        match self {
+            TimeVarFromUntil(var0, var1) => {
+                let mut var0_time = var0.get_times();
+                let var1_time = var1.get_times();
+                var0_time.merge_from_until(&var1_time)?;
+                let mut assignment = TimeDecl(TimeFn::from_bms(&var0_time)?);
+                std::mem::swap(&mut assignment, self);
+            }
+            TimeVarFrom(var0) => {
+                let var0_time = var0.get_times();
+                let mut assignment = TimeDecl(TimeFn::from_bms(&var0_time)?);
+                std::mem::swap(&mut assignment, self);
+            }
+            _ => {}
+        }
+        Ok(())
+    }
 }
 
-impl<'a> TryFrom<&'a OpArg> for TimeArg<'a> {
+impl From<Arc<Var>> for TimeArg {
+    fn from(var: Arc<Var>) -> Self {
+        TimeArg::TimeVarFrom(var)
+    }
+}
+
+impl From<(Arc<Var>, Arc<Var>)> for TimeArg {
+    fn from(vars: (Arc<Var>, Arc<Var>)) -> Self {
+        TimeArg::TimeVarFromUntil(vars.0, vars.1)
+    }
+}
+impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for TimeArg {
     type Error = ParseErrF;
 
-    fn try_from(op_arg: &'a OpArg) -> Result<Self, Self::Error> {
-        match op_arg {
-            OpArg::TimeVar |
-            OpArg::TimeDecl(_) |
-            OpArg::TimeVarAssign(_) |
-            OpArg::TimeVarFrom(_) |
-            // TimeVarUntil(_),
-            OpArg::TimeVarFromUntil(_, _) => Ok(TimeArg(op_arg)),
-            _ => Err(ParseErrF::FailedConversion("Time OpArg"))
+    fn try_from(input: (&'a OpArgBorrowed<'a>, &'a ParseContext)) -> Result<Self, Self::Error> {
+        let (other, context) = input;
+        match ConstraintValue::try_from((&other.term, context)) {
+            Ok(ConstraintValue::ThisTime) => {
+                let val = TimeArg::time_payload_value(other.comp.as_ref(), context)?;
+                if val.is_var() {
+                    Ok(TimeArg::TimeVarAssign(val.get_var()))
+                } else {
+                    match val {
+                        ConstraintValue::TimePayload(TimeFn::IsVar) => Ok(TimeArg::TimeVar),
+                        ConstraintValue::TimePayload(load) => Ok(TimeArg::TimeDecl(load)),
+                        _ => Err(ParseErrF::WrongDef),
+                    }
+                }
+            }
+            Ok(val) => Err(TimeFnErr::IsNotVar.into()),
+            Err(err) => Err(err),
         }
     }
 }
 
+/// Used for instantiating time values during runtime.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(in crate::agent) enum TimeFn {
-    /// Instantiate to current value
+    /// Instantiate to current value.
     Now,
-    /// A declared instant
+    /// A declared instant in time, used for `since` or `until` clauses.
     Time(Time),
-    /// Time interval for value decl, in the form of [t0,t1)
+    /// Time interval for value decl, in the form of [t0,t1).
     Interval(Time, Time),
-    /// Used whenever a variable is qualified as a time type variable,
+    /// Used whenever a variable is qualified as a time type variable. This variable will be replaced
+    /// by a value during rule evaluation according to the definition of the rule.
     IsVar,
 }
 
@@ -192,5 +222,16 @@ impl TimeFn {
             TimeFn::IsVar => id.push(3),
         }
         id
+    }
+}
+
+impl<'a> TryFrom<&'a ConstraintValue> for TimeFn {
+    type Error = ParseErrF;
+
+    fn try_from(val: &'a ConstraintValue) -> Result<Self, Self::Error> {
+        match val {
+            ConstraintValue::TimePayload(val) => Ok(val.clone()),
+            _ => Err(ParseErrF::FailedConversion("Time OpArg")),
+        }
     }
 }

@@ -5,7 +5,7 @@ use super::{
     common::*,
     logsent::{LogSentResolution, ParseContext},
     parser::{FuncDeclBorrowed, FuncVariants},
-    time_semantics::{TimeFn, TimeOps},
+    time_semantics::{TimeArg::*, TimeFn, TimeOps},
     var::Var,
     *,
 };
@@ -73,14 +73,14 @@ impl<'a> FuncDecl {
         if let Some(mut oargs) = op_args {
             for arg in oargs.drain(..) {
                 match arg {
-                    OpArg::TimeDecl(TimeFn::Time(time)) => {
+                    OpArg::Time(TimeDecl(TimeFn::Time(time))) => {
                         time_data.new_record(Some(time), val, None);
                     }
-                    OpArg::TimeDecl(TimeFn::Interval(t0, t1)) => {
+                    OpArg::Time(TimeDecl(TimeFn::Interval(t0, t1))) => {
                         time_data.new_record(Some(t0), val, None);
                         time_data.new_record(Some(t1), None, None);
                     }
-                    OpArg::TimeDecl(TimeFn::Now) => {
+                    OpArg::Time(TimeDecl(TimeFn::Now)) => {
                         time_data.new_record(Some(Utc::now()), val, None);
                     }
                     OpArg::OverWrite => {

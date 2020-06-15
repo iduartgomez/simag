@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::sync::{atomic::AtomicBool, Arc};
 
-use super::TimeArg;
+use super::{TimeArg, TimeArg::*};
 use crate::agent::kb::{bms::BmsWrapper, repr::Representation, VarAssignment};
 use crate::agent::lang::{common::OpArg, OpArgsOps, Var};
 
@@ -22,9 +22,8 @@ pub(in crate::agent) trait TimeOps: OpArgsOps {
         let mut v = None;
         let mut ow = false;
         for arg in self.get_op_args().unwrap() {
-            match *arg {
-                OpArg::TimeDecl(_) | OpArg::TimeVarAssign(_) => {
-                    let arg = TimeArg::try_from(arg).unwrap();
+            match arg {
+                OpArg::Time(arg) => {
                     v = Some(arg.get_time_payload(assignments, value));
                 }
                 OpArg::OverWrite => {
@@ -53,7 +52,7 @@ pub(in crate::agent) trait TimeOps: OpArgsOps {
     fn get_time_decl(&self, var0: &Var) -> bool {
         if let Some(args) = self.get_op_args() {
             for arg in args {
-                if let OpArg::TimeVarFrom(ref var1) = *arg {
+                if let OpArg::Time(TimeVarFrom(ref var1)) = *arg {
                     return var1.as_ref() == var0;
                 }
             }

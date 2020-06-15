@@ -1,7 +1,7 @@
 use super::{
-    common::{op_arg_term_from_borrowed, OpArgTerm},
+    common::ConstraintValue,
     logsent::ParseContext,
-    parser::{OpArgTermBorrowed, SkolemBorrowed, TerminalBorrowed},
+    parser::{SkolemBorrowed, TerminalBorrowed, UnconstraintArg},
     time_semantics::{TimeFn, TimeFnErr},
     typedef::TypeDef,
     ParseErrF,
@@ -11,7 +11,7 @@ use super::{
 pub(in crate::agent) struct Skolem {
     pub name: String,
     ty: TypeDef,
-    assigned_val: Option<OpArgTerm>,
+    assigned_val: Option<ConstraintValue>,
 }
 
 impl Skolem {
@@ -27,15 +27,16 @@ impl Skolem {
 
         let (ty, assigned_val) = match (ty, val) {
             (def, Some(val)) if def.0 == b"time" => match val {
-                OpArgTermBorrowed::String(slice) => {
+                UnconstraintArg::String(slice) => {
                     let time = TimeFn::from_str(slice)?;
-                    (TypeDef::Time, Some(OpArgTerm::TimePayload(time)))
+                    (TypeDef::Time, Some(ConstraintValue::TimePayload(time)))
                 }
                 _ => return Err(TimeFnErr::InsufArgs.into()),
             },
-            (def, None) if def.0 == b"time" => {
-                (TypeDef::Time, Some(OpArgTerm::TimePayload(TimeFn::IsVar)))
-            }
+            (def, None) if def.0 == b"time" => (
+                TypeDef::Time,
+                Some(ConstraintValue::TimePayload(TimeFn::IsVar)),
+            ),
             (def, None) => (TypeDef::Erased, None),
             _ => return Err(ParseErrF::TypeUnsupported),
         };

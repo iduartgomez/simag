@@ -25,7 +25,7 @@ impl BuiltIns {
     #[inline]
     pub fn grounded_eq(&self, time_assign: &HashMap<&Var, Arc<BmsWrapper>>) -> Option<bool> {
         match self {
-            BuiltIns::TimeCalculus(f) => f.time_resolution(time_assign),
+            BuiltIns::TimeCalculus(f) => Some(f.time_resolution(time_assign)),
         }
     }
 }

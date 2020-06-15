@@ -23,6 +23,7 @@ use super::{
     gr_func::GroundedFunc,
     gr_memb::GroundedMemb,
     parser::{ASTNode, AssertBorrowed, LogicOperator, Scope, VarDeclBorrowed},
+    time_semantics::TimeArg::*,
     ParseErrF, Skolem, Time, Var, VarKind,
 };
 use crate::agent::{kb::bms::BmsWrapper, kb::repr::Representation, kb::VarAssignment};
@@ -254,7 +255,9 @@ impl<'a> LogSentence {
                     if let Some(ref opargs) = func.op_args {
                         for arg in opargs {
                             match *arg {
-                                OpArg::TimeDecl(_) | OpArg::TimeVar | OpArg::TimeVarAssign(_) => {
+                                OpArg::Time(TimeDecl(_))
+                                | OpArg::Time(TimeVar)
+                                | OpArg::Time(TimeVarAssign(_)) => {
                                     return Err(LogSentErr::InvalidOpArg);
                                 }
                                 _ => {}
@@ -266,7 +269,9 @@ impl<'a> LogSentence {
                     if let Some(ref opargs) = cls.op_args {
                         for arg in opargs {
                             match *arg {
-                                OpArg::TimeDecl(_) | OpArg::TimeVar | OpArg::TimeVarAssign(_) => {
+                                OpArg::Time(TimeDecl(_))
+                                | OpArg::Time(TimeVar)
+                                | OpArg::Time(TimeVarAssign(_)) => {
                                     return Err(LogSentErr::InvalidOpArg);
                                 }
                                 _ => {}
@@ -277,6 +282,7 @@ impl<'a> LogSentence {
                 _ => {}
             }
         }
+
         // check validity of optional arguments for predicates in the RHS:
         for decl in &self.predicates.1 {
             match self.particles[*decl].pred_ref() {
@@ -284,7 +290,9 @@ impl<'a> LogSentence {
                     if let Some(ref opargs) = func.op_args {
                         for arg in opargs {
                             match *arg {
-                                OpArg::TimeDecl(_) | OpArg::TimeVar | OpArg::TimeVarFrom(_) => {
+                                OpArg::Time(TimeDecl(_))
+                                | OpArg::Time(TimeVar)
+                                | OpArg::Time(TimeVarFrom(_)) => {
                                     return Err(LogSentErr::InvalidOpArg);
                                 }
                                 _ => {}
@@ -296,7 +304,9 @@ impl<'a> LogSentence {
                     if let Some(ref opargs) = cls.op_args {
                         for arg in opargs {
                             match *arg {
-                                OpArg::TimeDecl(_) | OpArg::TimeVar | OpArg::TimeVarFrom(_) => {
+                                OpArg::Time(TimeDecl(_))
+                                | OpArg::Time(TimeVar)
+                                | OpArg::Time(TimeVarFrom(_)) => {
                                     return Err(LogSentErr::InvalidOpArg);
                                 }
                                 _ => {}
