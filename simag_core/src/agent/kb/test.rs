@@ -197,11 +197,11 @@ fn repr_inference_time_calc_1() {
         )
         ( dog[$Pancho=1] )
         ( meat[$M1=1] )
-        ( fat(time='2015-07-05T10:25:00Z')[$Pancho=1] )
+        ( fat(where this.time is '2015-07-05T10:25:00Z')[$Pancho=1] )
     ";
     let rep = Representation::default();
     rep.tell(test_02).unwrap();
-    let q02_01 = "(fn::eat(time='now')[$M1=1,$Pancho])";
+    let q02_01 = "(fn::eat(where this.time is 'now')[$M1=1,$Pancho])";
     let result = rep.ask(q02_01).unwrap().get_results_single();
     assert_eq!(result, Some(true));
 
@@ -215,7 +215,7 @@ fn repr_inference_time_calc_1() {
 
     // if fn(a) then cls(b=1) @ t1
     let test_03_01 = "
-        (fn::eat(time='2015-01-01T00:00:00Z')[$M1=1,$Pancho])
+        (fn::eat(where this.time is '2015-01-01T00:00:00Z')[$M1=1,$Pancho])
         (let x, y in
             ((dog[x=1] && meat[y=1] && fn::eat[y=1,x])
             := fat[x=1]))
@@ -226,7 +226,7 @@ fn repr_inference_time_calc_1() {
 
     // if fn(b) then cls(b=0) @ t1 -- supercedes last statement
     let test_03_02 = "
-        (run(time='2015-01-01T00:00:00Z')[$Pancho=1])
+        (run(where this.time is '2015-01-01T00:00:00Z')[$Pancho=1])
         (let x in (( dog[x=1] && run[x=1] ) := fat[x=0]))
     ";
     rep.tell(test_03_02).unwrap();

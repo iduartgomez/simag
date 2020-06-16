@@ -22,7 +22,7 @@ pub(in crate::agent) trait TimeOps: OpArgsOps {
         let mut ow = false;
         for arg in self.get_op_args().unwrap() {
             match arg {
-                OpArg::Time(arg) => {
+                OpArg::Time(arg) if arg.contains_payload() => {
                     v = Some(arg.get_time_payload(assignments, value));
                 }
                 OpArg::OverWrite => {

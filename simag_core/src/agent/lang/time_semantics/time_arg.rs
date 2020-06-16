@@ -26,6 +26,14 @@ pub(in crate::agent) enum TimeArg {
 use TimeArg::*;
 
 impl TimeArg {
+    #[inline]
+    pub fn contains_payload(&self) -> bool {
+        match self {
+            TimeDecl(_) | TimeVarAssign(_) => true,
+            _ => false,
+        }
+    }
+
     pub fn get_time_payload(
         &self,
         assignments: &HashMap<&Var, Arc<BmsWrapper>>,
@@ -47,8 +55,7 @@ impl TimeArg {
                 let assignment = &**(assignments.get(&**var).unwrap());
                 return assignment.clone();
             }
-            TimeVarFromUntil(from, until) => unimplemented!(),
-            TimeVar | TimeDecl(TimeFn::IsVar) => unreachable!(format!(
+            _ => unreachable!(format!(
                 "SIMAG - {}:{} - unreachable: can't get time payload from a free variable",
                 file!(),
                 line!()
