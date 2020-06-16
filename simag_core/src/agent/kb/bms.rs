@@ -575,22 +575,22 @@ mod test {
             (fn::eat[$M1=1,$Pancho])
             
             (let x, y in
-             ((dog[x=1] && meat[y=1] && fn::eat[y=1,x]) 
+             ((dog[x=1] and meat[y=1] and fn::eat[y=1,x]) 
               := fat[x=1]))
             
             (let x in
-             ((fat[x=1] && dog[x=1]) := (ugly[x=1] && sad[x=1])))
+             ((fat[x=1] and dog[x=1]) := (ugly[x=1] and sad[x=1])))
         ";
         rep.tell(fol).unwrap();
         {
-            let answ = rep.ask("(fat[$Pancho=1] && sad[$Pancho=1])");
+            let answ = rep.ask("(fat[$Pancho=1] and sad[$Pancho=1])");
             assert_eq!(answ.unwrap().get_results_single(), Some(true));
         }
 
         let fol = "
             (run[$Pancho=1])
             (let x in 
-             ((run[x=1] && dog[x=1]) := fat[x=0]))
+             ((run[x=1] and dog[x=1]) := fat[x=0]))
         ";
         rep.tell(fol).unwrap();
         let answ0 = rep.ask("(fat[$Pancho=0])");
@@ -616,7 +616,7 @@ mod test {
             ( dog[$Pancho=1] )
             ( fn::eat[$M1=1,$Pancho] )
             ( let x, y in
-              ( ( dog[x=1] && meat[y=1] && fn::eat[y=1,x] ) 
+              ( ( dog[x=1] and meat[y=1] and fn::eat[y=1,x] ) 
                 := fat[x=1] ) )
         ";
         rep.tell(fol).unwrap();
@@ -627,7 +627,7 @@ mod test {
 
         let fol = "
             ( run[$Pancho=1] )
-            ( let x in (( dog[x=1] && run[x=1] ) := fat[x=0] ))
+            ( let x in (( dog[x=1] and run[x=1] ) := fat[x=0] ))
         ";
         rep.tell(fol).unwrap();
         {

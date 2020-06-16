@@ -20,7 +20,7 @@ use crate::agent::lang::{
     logic_parser, Assert, ClassDecl, CompOperator, FreeClassMembership, FuncDecl, GrTerminalKind,
     GrTerminalKind::{Class as ClassTerm, Entity as EntityTerm},
     Grounded, GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ParseErrF, ParseTree,
-    Predicate, ProofResContext, TimeOps, Var,
+    Predicate, ProofResContext, SentVarReq, TimeOps, Var,
 };
 use crate::FLOAT_EQ_ULPS;
 
@@ -370,7 +370,8 @@ impl Representation {
                 }
             };
 
-        for var_req in belief.get_lhs_predicates().into_sent_req() {
+        let sent_req: SentVarReq = belief.get_lhs_predicates().into();
+        for var_req in sent_req {
             if let Some(candidates) = meet_sent_requirements(self, &var_req) {
                 for var in candidates.keys() {
                     let it = belief.get_rhs_predicates();

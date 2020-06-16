@@ -547,10 +547,10 @@ impl<'a> LhsPreds<'a> {
             curr.push(prev.pred_ref())
         }
     }
+}
 
-    /// Iterates the permutations of the sentence variable requeriments.
-    /// This just takes into consideration the LHS variables.
-    pub fn into_sent_req(self) -> SentVarReq<'a> {
+impl<'a> Into<SentVarReq<'a>> for LhsPreds<'a> {
+    fn into(self) -> SentVarReq<'a> {
         SentVarReq { iter: self }
     }
 }
@@ -605,14 +605,15 @@ impl<'a> std::iter::Iterator for LhsPreds<'a> {
     }
 }
 
+/// Iterates the permutations of the sentence variable requeriments.
+/// This just takes into consideration the LHS variables.
 pub(in crate::agent) struct SentVarReq<'a> {
     iter: LhsPreds<'a>,
 }
 
 impl<'a> std::iter::Iterator for SentVarReq<'a> {
     type Item = HashMap<&'a Var, Vec<&'a Assert>>;
-    /// Iterates the permutations of the sentence variable requeriments.
-    /// This just takes into consideration the LHS variables.
+
     fn next(&mut self) -> Option<HashMap<&'a Var, Vec<&'a Assert>>> {
         if let Some(picks) = self.iter.next() {
             if self.iter.sent.vars.is_empty() {
@@ -1790,7 +1791,7 @@ mod test {
 
                 # Err:
                 (let x, y, z in
-                 ( abc[x=1]  := (( cde[x=1] := fn::fgh[y>0.5,x,z] ) && hij[y=1] ))
+                 ( abc[x=1] := (( cde[x=1] := fn::fgh[y>0.5,x,z] ) and hij[y=1] ))
                 )
             ",
         );
@@ -1806,7 +1807,7 @@ mod test {
             "
             # Ok:
             ( let x, y, z in
-              (( cde[x=1] && hij[y=1] && fn::fgh[y>0.5,x,z] ) := abc[x=1])
+              (( cde[x=1] and hij[y=1] and fn::fgh[y>0.5,x,z] ) := abc[x=1])
             )
             ",
         );
@@ -1862,7 +1863,7 @@ mod test {
             # Ok:
             (let x, y, z in
              ( abc[x=1]  := (
-                 ( cde[x=1] && fn::fgh[y>0.5,x,z] ) := hij[y=1]
+                 ( cde[x=1] and fn::fgh[y>0.5,x,z] ) := hij[y=1]
              ))
             )
             ",

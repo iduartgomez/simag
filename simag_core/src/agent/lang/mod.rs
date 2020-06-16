@@ -24,7 +24,7 @@ pub(super) use self::errors::ParseErrF;
 pub(super) use self::fn_decl::FuncDecl;
 pub(super) use self::gr_func::GroundedFunc;
 pub(super) use self::gr_memb::GroundedMemb;
-pub(super) use self::logsent::{LogSentence, ProofResContext, SentID};
+pub(super) use self::logsent::{LogSentence, ProofResContext, SentID, SentVarReq};
 pub(super) use self::parser::{CompOperator, ParseTree};
 pub(super) use self::skolem::Skolem;
 pub(super) use self::terminal::{GrTerminalKind, Terminal};

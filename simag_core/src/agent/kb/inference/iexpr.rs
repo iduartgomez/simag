@@ -22,8 +22,8 @@ use crate::agent::kb::{
 };
 use crate::agent::lang::{
     Assert, ClassDecl, FreeClassMembership, FreeClsMemb, FuncDecl, Grounded, GroundedFunc,
-    GroundedMemb, LogSentence, ParseTree, Predicate, ProofResContext, SentID, Terminal, Time,
-    TimeOps, Var, VarKind,
+    GroundedMemb, LogSentence, ParseTree, Predicate, ProofResContext, SentID, SentVarReq, Terminal,
+    Time, TimeOps, Var, VarKind,
 };
 use chrono::Utc;
 use dashmap::DashMap;
@@ -519,7 +519,8 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
                     // recursively try unifying all possible argument with the
                     // operating logic sentence:
                     // get all the entities/classes from the kb that meet the proof requeriments
-                    for var_requirements in node.proof.get_lhs_predicates().into_sent_req() {
+                    let sent_req: SentVarReq = node.proof.get_lhs_predicates().into();
+                    for var_requirements in sent_req {
                         if let Some(assignments) =
                             meet_sent_requirements(self.kb, &var_requirements)
                         {
