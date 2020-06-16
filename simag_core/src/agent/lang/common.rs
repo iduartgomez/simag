@@ -10,7 +10,7 @@ use super::{
     errors::ParseErrF,
     fn_decl::FuncDecl,
     logsent::{LogSentResolution, ParseContext, ProofResContext},
-    parser::{ArgBorrowed, CompOperator, Number, OpArgBorrowed, UVal, UnconstraintArg},
+    parser::{ArgBorrowed, Operator, Number, OpArgBorrowed, UVal, UnconstraintArg},
     time_semantics::{TimeArg, TimeFn, TimeFnErr, TimeOps},
     var::Var,
     BuiltIns, GroundedFunc, GroundedMemb, Terminal,
@@ -84,7 +84,7 @@ impl<'a> Predicate {
     }
 
     #[inline]
-    pub fn get_uval(&self) -> (Option<CompOperator>, Option<f32>) {
+    pub fn get_uval(&self) -> (Option<Operator>, Option<f32>) {
         match *self {
             Predicate::GroundedMemb(ref t) => {
                 let o_val = t.value.read();
@@ -186,7 +186,7 @@ impl<'a> GroundedRef<'a> {
 pub(in crate::agent) struct FreeClsMemb {
     pub(in crate::agent::lang) term: Arc<Var>,
     pub(in crate::agent::lang) value: Option<f32>,
-    pub(in crate::agent::lang) operator: Option<CompOperator>,
+    pub(in crate::agent::lang) operator: Option<Operator>,
     pub(in crate::agent::lang) parent: Terminal,
 }
 
@@ -251,7 +251,7 @@ impl FreeClsMemb {
                 }
             };
             match other.operator.unwrap() {
-                CompOperator::Equal => {
+                Operator::Equal => {
                     let self_op = self.operator.as_ref().unwrap();
                     if self_op.is_equal() {
                         val_free.approx_eq_ulps(&val_grounded, FLOAT_EQ_ULPS)
@@ -267,10 +267,10 @@ impl FreeClsMemb {
                             | val_free.approx_eq_ulps(&val_grounded, FLOAT_EQ_ULPS)
                     }
                 }
-                CompOperator::Less
-                | CompOperator::More
-                | CompOperator::MoreEqual
-                | CompOperator::LessEqual => unreachable!(),
+                Operator::Less
+                | Operator::More
+                | Operator::MoreEqual
+                | Operator::LessEqual => unreachable!(),
                 _ => unreachable!(),
             }
         } else {
@@ -284,7 +284,7 @@ impl FreeClsMemb {
 pub(in crate::agent) struct FreeClassMembership {
     term: String,
     pub(in crate::agent::lang) value: Option<f32>,
-    operator: Option<CompOperator>,
+    operator: Option<Operator>,
     parent: Arc<Var>,
     pub times: BmsWrapper,
 }
@@ -331,19 +331,19 @@ impl FreeClassMembership {
                 return false;
             };
             match *self.operator.as_ref().unwrap() {
-                CompOperator::Equal => val.approx_eq_ulps(&o_val, FLOAT_EQ_ULPS),
-                CompOperator::Less => o_val < *val,
-                CompOperator::More => o_val > *val,
-                CompOperator::MoreEqual => {
+                Operator::Equal => val.approx_eq_ulps(&o_val, FLOAT_EQ_ULPS),
+                Operator::Less => o_val < *val,
+                Operator::More => o_val > *val,
+                Operator::MoreEqual => {
                     val.approx_eq_ulps(&o_val, FLOAT_EQ_ULPS) || o_val > *val
                 }
-                CompOperator::LessEqual => {
+                Operator::LessEqual => {
                     val.approx_eq_ulps(&o_val, FLOAT_EQ_ULPS) || o_val < *val
                 }
-                CompOperator::Until
-                | CompOperator::Since
-                | CompOperator::SinceUntil
-                | CompOperator::Assignment => unreachable!(),
+                Operator::Until
+                | Operator::Since
+                | Operator::SinceUntil
+                | Operator::Assignment => unreachable!(),
             }
         } else {
             true
@@ -365,7 +365,7 @@ impl FreeClassMembership {
     }
 }
 
-type UValDestruct = (Option<f32>, Option<CompOperator>);
+type UValDestruct = (Option<f32>, Option<Operator>);
 
 fn match_uval(uval: Option<UVal>) -> Result<UValDestruct, ParseErrF> {
     if let Some(uval) = uval {
@@ -549,7 +549,7 @@ impl Assert {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(in crate::agent) enum OpArg {
-    Generic(ConstraintValue, Option<(CompOperator, ConstraintValue)>),
+    Generic(ConstraintValue, Option<(Operator, ConstraintValue)>),
     Time(TimeArg),
     OverWrite,
 }
@@ -581,10 +581,10 @@ impl<'a> OpArg {
         };
 
         match comp {
-            Some((CompOperator::Since, _)) | Some((CompOperator::Until, _)) => {
+            Some((Operator::Since, _)) | Some((Operator::Until, _)) => {
                 Ok(OpArg::Time(TimeArg::try_from((other, context))?))
             }
-            Some((CompOperator::SinceUntil, _)) => {
+            Some((Operator::SinceUntil, _)) => {
                 let load0 = if t0.is_var() {
                     t0.get_var()
                 } else {

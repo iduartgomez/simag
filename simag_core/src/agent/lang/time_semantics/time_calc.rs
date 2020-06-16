@@ -8,7 +8,7 @@ use crate::agent::{
         common::{ConstraintValue, OpArg},
         logsent::ParseContext,
         parser::{FuncDeclBorrowed, TerminalBorrowed},
-        CompOperator, Var,
+        Operator, Var,
     },
     ParseErrF,
 };
@@ -20,7 +20,7 @@ use chrono::Duration;
 pub(in crate::agent) struct TimeCalc {
     var0: ConstraintValue,
     var1: ConstraintValue,
-    op: CompOperator,
+    op: Operator,
 }
 
 impl TimeCalc {
@@ -78,30 +78,30 @@ impl TimeCalc {
         let arg1 = assignments.get(&*var1).unwrap().get_last_date();
 
         match self.op {
-            CompOperator::Equal => {
+            Operator::Equal => {
                 let comp_diff = Duration::seconds(TIME_EQ_DIFF);
                 let lower_bound = arg0 - comp_diff;
                 let upper_bound = arg0 + comp_diff;
                 !((arg1 < lower_bound) || (arg1 > upper_bound))
             }
-            CompOperator::More => arg0 > arg1,
-            CompOperator::Less => arg0 < arg1,
-            CompOperator::MoreEqual => {
+            Operator::More => arg0 > arg1,
+            Operator::Less => arg0 < arg1,
+            Operator::MoreEqual => {
                 let comp_diff = Duration::seconds(TIME_EQ_DIFF);
                 let lower_bound = arg0 - comp_diff;
                 let upper_bound = arg0 + comp_diff;
                 !((arg1 < lower_bound) || (arg1 > upper_bound)) || arg0 > arg1
             }
-            CompOperator::LessEqual => {
+            Operator::LessEqual => {
                 let comp_diff = Duration::seconds(TIME_EQ_DIFF);
                 let lower_bound = arg0 - comp_diff;
                 let upper_bound = arg0 + comp_diff;
                 !((arg1 < lower_bound) || (arg1 > upper_bound)) || arg0 < arg1
             }
-            CompOperator::Until
-            | CompOperator::Since
-            | CompOperator::SinceUntil
-            | CompOperator::Assignment => unreachable!(),
+            Operator::Until
+            | Operator::Since
+            | Operator::SinceUntil
+            | Operator::Assignment => unreachable!(),
         }
     }
 }

@@ -1,4 +1,27 @@
+use super::assertion::{class_decl, func_decl, FuncVariants};
+use super::scope::{multiple_asserts, scope_var_decl, sentence};
 use super::*;
+
+#[test]
+fn declare_record() {
+    //this is an entity and all the classes memberships in one go, e.g.:
+    let source = b"
+    $John = {
+        fast=0,
+        slow=0.5,
+        dog, // ellided =1
+        since 'now',
+    }
+    ";
+
+    /*
+    //TODO: add a way to define a 'record', conversedly can be used for querying
+    // defining more than one entity with similar values:
+    [$john, $mary] = {
+        ...
+    }
+    */
+}
 
 #[test]
 fn remove_comments() -> Result<(), nom::Err<ParseErrB<'static>>> {
@@ -128,7 +151,7 @@ fn parser_predicate() {
     assert_eq!(s2_res.name, TerminalBorrowed(b"missile"));
     assert_eq!(s2_res.args[0].term, TerminalBorrowed(b"$M1"));
     let s2_uval = s2_res.args[0].uval.as_ref().unwrap();
-    assert_eq!(s2_uval.op, CompOperator::More);
+    assert_eq!(s2_uval.op, Operator::More);
     assert_eq!(s2_uval.val, Number::SignedFloat(-1.5_f32));
 
     // non-sensical, but can parse:
@@ -144,11 +167,11 @@ fn parser_predicate() {
         &vec![
             OpArgBorrowed {
                 term: UnconstraintArg::Terminal(b"t1"),
-                comp: Some((CompOperator::Assignment, UnconstraintArg::String(b"now"))),
+                comp: Some((Operator::Assignment, UnconstraintArg::String(b"now"))),
             },
             OpArgBorrowed {
                 term: UnconstraintArg::Terminal(b"t2"),
-                comp: Some((CompOperator::Assignment, UnconstraintArg::Terminal(b"t1"))),
+                comp: Some((Operator::Assignment, UnconstraintArg::Terminal(b"t1"))),
             },
         ]
     );
@@ -165,7 +188,7 @@ fn parser_predicate() {
         &vec![OpArgBorrowed {
             term: UnconstraintArg::Terminal(b"t1"),
             comp: Some((
-                CompOperator::Assignment,
+                Operator::Assignment,
                 UnconstraintArg::String(b"2015.07.05.11.28"),
             )),
         }]
@@ -180,14 +203,14 @@ fn parser_predicate() {
         &s5_res.op_args.as_ref().unwrap()[0],
         &OpArgBorrowed {
             term: UnconstraintArg::ThisTime,
-            comp: Some((CompOperator::Assignment, UnconstraintArg::String(b"now"),)),
+            comp: Some((Operator::Assignment, UnconstraintArg::String(b"now"),)),
         }
     );
     assert_eq!(
         &s5_res.op_args.as_ref().unwrap()[1],
         &OpArgBorrowed {
             term: UnconstraintArg::Terminal(b"t1"),
-            comp: Some((CompOperator::Since, UnconstraintArg::String(b""))),
+            comp: Some((Operator::Since, UnconstraintArg::String(b""))),
         }
     );
 
@@ -200,28 +223,13 @@ fn parser_predicate() {
         &s6_res.op_args.as_ref().unwrap()[1],
         &OpArgBorrowed {
             term: UnconstraintArg::Terminal(b"t1"),
-            comp: Some((CompOperator::SinceUntil, UnconstraintArg::Terminal(b"t2"),)),
+            comp: Some((Operator::SinceUntil, UnconstraintArg::Terminal(b"t2"),)),
         }
     );
 
     let s7 = b"happy(where t1 is this.time)[$John]";
     let s7_res = class_decl(s7);
     assert_done_or_err!(s7_res);
-
-    /*
-    //TODO: add a way to define a 'record', conversedly can be used for querying
-    //this is an entity and all the classes memberships in one go, e.g.:
-    $john = {
-        fast=0,
-        slow=0.5,
-        dog, // ellided =1
-        from "now",
-    }
-    // defining more than one entity with similar values:
-    [$john, $mary] = {
-        ...
-    }
-    */
 }
 
 #[test]

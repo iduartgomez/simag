@@ -10,8 +10,8 @@ use crate::agent::kb::{
     repr::{lookahead_rules, Representation},
 };
 use crate::agent::lang::{
-    CompOperator, FreeClassMembership, FreeClsMemb, FuncDecl, Grounded, GroundedFunc, GroundedMemb,
-    GroundedRef, LogSentence, Predicate, ProofResContext,
+    FreeClassMembership, FreeClsMemb, FuncDecl, Grounded, GroundedFunc, GroundedMemb, GroundedRef,
+    LogSentence, Operator, Predicate, ProofResContext,
 };
 use crate::FLOAT_EQ_ULPS;
 
@@ -165,7 +165,7 @@ impl Class {
                             .entry(rel_name)
                             .or_insert_with(|| vec![])
                             .push(f.clone()),
-                        Some(CompOperator::Equal) => {
+                        Some(Operator::Equal) => {
                             if f.get_value()
                                 .unwrap()
                                 .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
@@ -175,21 +175,21 @@ impl Class {
                                     .push(f.clone())
                             }
                         }
-                        Some(CompOperator::More) => {
+                        Some(Operator::More) => {
                             if *val.as_ref().unwrap() < f.get_value().unwrap() {
                                 res.entry(rel_name)
                                     .or_insert_with(|| vec![])
                                     .push(f.clone())
                             }
                         }
-                        Some(CompOperator::Less) => {
+                        Some(Operator::Less) => {
                             if *val.as_ref().unwrap() > f.get_value().unwrap() {
                                 res.entry(rel_name)
                                     .or_insert_with(|| vec![])
                                     .push(f.clone())
                             }
                         }
-                        Some(CompOperator::LessEqual) => {
+                        Some(Operator::LessEqual) => {
                             if *val.as_ref().unwrap() > f.get_value().unwrap()
                                 || f.get_value()
                                     .unwrap()
@@ -200,7 +200,7 @@ impl Class {
                                     .push(f.clone())
                             }
                         }
-                        Some(CompOperator::MoreEqual) => {
+                        Some(Operator::MoreEqual) => {
                             if *val.as_ref().unwrap() < f.get_value().unwrap()
                                 || f.get_value()
                                     .unwrap()
@@ -211,10 +211,10 @@ impl Class {
                                     .push(f.clone())
                             }
                         }
-                        Some(CompOperator::Until)
-                        | Some(CompOperator::Since)
-                        | Some(CompOperator::SinceUntil)
-                        | Some(CompOperator::Assignment) => unreachable!(),
+                        Some(Operator::Until)
+                        | Some(Operator::Since)
+                        | Some(Operator::SinceUntil)
+                        | Some(Operator::Assignment) => unreachable!(),
                     }
                 }
             }
@@ -235,22 +235,22 @@ impl Class {
                 }
                 if i == 0 {
                     match func.get_uval() {
-                        (CompOperator::Equal, val) => {
+                        (Operator::Equal, val) => {
                             if !val.approx_eq_ulps(&curr_func.get_value().unwrap(), FLOAT_EQ_ULPS) {
                                 process = false;
                             }
                         }
-                        (CompOperator::More, val) => {
+                        (Operator::More, val) => {
                             if val > curr_func.get_value().unwrap() {
                                 process = false;
                             }
                         }
-                        (CompOperator::Less, val) => {
+                        (Operator::Less, val) => {
                             if val < curr_func.get_value().unwrap() {
                                 process = false;
                             }
                         }
-                        (CompOperator::LessEqual, val) => {
+                        (Operator::LessEqual, val) => {
                             if val < curr_func.get_value().unwrap()
                                 || !val
                                     .approx_eq_ulps(&curr_func.get_value().unwrap(), FLOAT_EQ_ULPS)
@@ -258,7 +258,7 @@ impl Class {
                                 process = false;
                             }
                         }
-                        (CompOperator::MoreEqual, val) => {
+                        (Operator::MoreEqual, val) => {
                             if val > curr_func.get_value().unwrap()
                                 || !val
                                     .approx_eq_ulps(&curr_func.get_value().unwrap(), FLOAT_EQ_ULPS)
@@ -266,10 +266,10 @@ impl Class {
                                 process = false;
                             }
                         }
-                        (CompOperator::Until, _)
-                        | (CompOperator::Since, _)
-                        | (CompOperator::SinceUntil, _)
-                        | (CompOperator::Assignment, _) => unreachable!(),
+                        (Operator::Until, _)
+                        | (Operator::Since, _)
+                        | (Operator::SinceUntil, _)
+                        | (Operator::Assignment, _) => unreachable!(),
                     }
                 }
             }

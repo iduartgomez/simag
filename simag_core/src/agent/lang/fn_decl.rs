@@ -132,7 +132,7 @@ impl<'a> FuncDecl {
     }
 
     #[inline]
-    pub fn get_uval(&self) -> (CompOperator, f32) {
+    pub fn get_uval(&self) -> (Operator, f32) {
         let (op, val) = self.args.as_ref().unwrap().get(0).unwrap().get_uval();
         (op.unwrap(), val.unwrap())
     }

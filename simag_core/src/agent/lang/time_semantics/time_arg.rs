@@ -7,7 +7,7 @@ use crate::agent::kb::bms::BmsWrapper;
 use crate::agent::lang::{
     common::ConstraintValue,
     logsent::ParseContext,
-    parser::{CompOperator, UnconstraintArg},
+    parser::{Operator, UnconstraintArg},
     *,
 };
 use chrono::{DateTime, Utc};
@@ -65,7 +65,7 @@ impl TimeArg {
     }
 
     pub fn time_payload_value(
-        other: Option<&(CompOperator, UnconstraintArg)>,
+        other: Option<&(Operator, UnconstraintArg)>,
         context: &ParseContext,
     ) -> Result<ConstraintValue, ParseErrF> {
         match other {

@@ -17,9 +17,9 @@ use crate::agent::kb::{
     VarAssignment,
 };
 use crate::agent::lang::{
-    logic_parser, Assert, ClassDecl, CompOperator, FreeClassMembership, FuncDecl, GrTerminalKind,
+    logic_parser, Assert, ClassDecl, FreeClassMembership, FuncDecl, GrTerminalKind,
     GrTerminalKind::{Class as ClassTerm, Entity as EntityTerm},
-    Grounded, GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ParseErrF, ParseTree,
+    Grounded, GroundedFunc, GroundedMemb, GroundedRef, LogSentence, Operator, ParseErrF, ParseTree,
     Predicate, ProofResContext, SentVarReq, TimeOps, Var,
 };
 use crate::FLOAT_EQ_ULPS;
@@ -841,7 +841,7 @@ impl Entity {
                             .entry(rel_name)
                             .or_insert_with(|| vec![])
                             .push(f.clone()),
-                        Some(CompOperator::Equal) => {
+                        Some(Operator::Equal) => {
                             if f.get_value()
                                 .unwrap()
                                 .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
@@ -851,21 +851,21 @@ impl Entity {
                                     .push(f.clone())
                             }
                         }
-                        Some(CompOperator::More) => {
+                        Some(Operator::More) => {
                             if *val.as_ref().unwrap() < f.get_value().unwrap() {
                                 res.entry(rel_name)
                                     .or_insert_with(|| vec![])
                                     .push(f.clone())
                             }
                         }
-                        Some(CompOperator::Less) => {
+                        Some(Operator::Less) => {
                             if *val.as_ref().unwrap() > f.get_value().unwrap() {
                                 res.entry(rel_name)
                                     .or_insert_with(|| vec![])
                                     .push(f.clone())
                             }
                         }
-                        Some(CompOperator::LessEqual) => {
+                        Some(Operator::LessEqual) => {
                             if *val.as_ref().unwrap() > f.get_value().unwrap()
                                 || f.get_value()
                                     .unwrap()
@@ -876,7 +876,7 @@ impl Entity {
                                     .push(f.clone())
                             }
                         }
-                        Some(CompOperator::MoreEqual) => {
+                        Some(Operator::MoreEqual) => {
                             if *val.as_ref().unwrap() < f.get_value().unwrap()
                                 || f.get_value()
                                     .unwrap()
@@ -887,10 +887,10 @@ impl Entity {
                                     .push(f.clone())
                             }
                         }
-                        Some(CompOperator::Until)
-                        | Some(CompOperator::Since)
-                        | Some(CompOperator::SinceUntil)
-                        | Some(CompOperator::Assignment) => unreachable!(),
+                        Some(Operator::Until)
+                        | Some(Operator::Since)
+                        | Some(Operator::SinceUntil)
+                        | Some(Operator::Assignment) => unreachable!(),
                     }
                 }
             }

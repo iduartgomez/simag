@@ -7,7 +7,7 @@ use std::sync::Arc;
 use super::{
     errors::ParseErrF,
     logsent::{ParseContext, SentID},
-    parser::{CompOperator, Number, UVal},
+    parser::{Number, Operator, UVal},
     GrTerminalKind, Time,
 };
 use crate::agent::{kb::bms::BmsWrapper, kb::repr::Representation};
@@ -20,7 +20,7 @@ use crate::FLOAT_EQ_ULPS;
 pub(in crate::agent) struct GroundedMemb {
     pub(in crate::agent::lang) term: GrTerminalKind<String>,
     pub(in crate::agent::lang) value: RwLock<Option<f32>>,
-    pub(in crate::agent::lang) operator: Option<CompOperator>,
+    pub(in crate::agent::lang) operator: Option<Operator>,
     pub(in crate::agent::lang) parent: String,
     pub bms: Option<Arc<BmsWrapper>>,
 }
@@ -80,7 +80,7 @@ impl GroundedMemb {
             });
             if context.in_assertion && context.is_tell {
                 op = match op0 {
-                    CompOperator::Equal => Some(CompOperator::Equal),
+                    Operator::Equal => Some(Operator::Equal),
                     _ => return Err(ParseErrF::IUValComp),
                 };
             } else {
@@ -216,14 +216,14 @@ impl GroundedMemb {
     pub(in crate::agent::lang) fn compare_two_grounded_eq(
         val_lhs: Option<f32>,
         val_rhs: Option<f32>,
-        op_lhs: CompOperator,
-        op_rhs: CompOperator,
+        op_lhs: Operator,
+        op_rhs: Operator,
     ) -> bool {
         if (val_lhs.is_none() && val_rhs.is_some()) || (val_lhs.is_some() && val_rhs.is_none()) {
             return false;
         }
         match op_lhs {
-            CompOperator::Equal => {
+            Operator::Equal => {
                 if op_rhs.is_equal() {
                     if let Some(val_lhs) = val_lhs {
                         let val_rhs = val_rhs.as_ref().unwrap();
@@ -251,14 +251,13 @@ impl GroundedMemb {
                     }
                 }
             }
-            CompOperator::More => val_lhs < val_rhs,
-            CompOperator::Less => val_lhs > val_rhs,
-            CompOperator::MoreEqual => val_lhs <= val_rhs,
-            CompOperator::LessEqual => val_lhs >= val_rhs,
-            CompOperator::Until
-            | CompOperator::Since
-            | CompOperator::SinceUntil
-            | CompOperator::Assignment => unreachable!(),
+            Operator::More => val_lhs < val_rhs,
+            Operator::Less => val_lhs > val_rhs,
+            Operator::MoreEqual => val_lhs <= val_rhs,
+            Operator::LessEqual => val_lhs >= val_rhs,
+            Operator::Until | Operator::Since | Operator::SinceUntil | Operator::Assignment => {
+                unreachable!()
+            }
         }
     }
 
