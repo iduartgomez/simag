@@ -5,7 +5,7 @@ use std::sync::Arc;
 use super::*;
 use crate::agent::kb::bms::BmsWrapper;
 use crate::agent::lang::{
-    common::{ConstraintValue, OpArg},
+    common::ConstraintValue,
     logsent::ParseContext,
     parser::{CompOperator, UnconstraintArg},
     *,
@@ -43,11 +43,16 @@ impl TimeArg {
                 bms.new_record(Some(*time0), value, None);
                 bms.new_record(Some(*time1), None, None);
             }
-            TimeVarAssign(var) => {
+            TimeVarAssign(var) | TimeVarFrom(var) => {
                 let assignment = &**(assignments.get(&**var).unwrap());
                 return assignment.clone();
             }
-            _ => unimplemented!(),
+            TimeVarFromUntil(from, until) => unimplemented!(),
+            TimeVar | TimeDecl(TimeFn::IsVar) => unreachable!(format!(
+                "SIMAG - {}:{} - unreachable: can't get time payload from a free variable",
+                file!(),
+                line!()
+            )),
         }
         bms
     }
@@ -82,7 +87,11 @@ impl TimeArg {
     }
 
     pub fn contains_var(&self, var: &Var) -> bool {
-        todo!()
+        match self {
+            TimeVarAssign(this_var) | TimeVarFrom(this_var) => var == &**this_var,
+            TimeVarFromUntil(v0, v1) => &**v0 == var || &**v1 == var,
+            _ => false,
+        }
     }
 
     pub fn generate_uid(&self) -> Vec<u8> {
@@ -149,7 +158,7 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for TimeArg {
                     }
                 }
             }
-            Ok(val) => Err(TimeFnErr::IsNotVar.into()),
+            Ok(_) => Err(TimeFnErr::IsNotVar.into()),
             Err(err) => Err(err),
         }
     }

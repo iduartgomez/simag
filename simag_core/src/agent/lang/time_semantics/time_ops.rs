@@ -1,8 +1,7 @@
 use std::collections::HashMap;
-use std::convert::TryFrom;
 use std::sync::{atomic::AtomicBool, Arc};
 
-use super::{TimeArg, TimeArg::*};
+use super::TimeArg::*;
 use crate::agent::kb::{bms::BmsWrapper, repr::Representation, VarAssignment};
 use crate::agent::lang::{common::OpArg, OpArgsOps, Var};
 

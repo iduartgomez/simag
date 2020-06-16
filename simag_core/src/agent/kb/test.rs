@@ -268,11 +268,11 @@ fn repr_inference_time_calc_2() {
          (fat(since t1 until t2)[$Pancho=1]))
     ";
     rep.tell(test_04_01).unwrap();
-    let q04_1_01 = "(fat(time='2018-04-01T00:00:00Z')[$Pancho=1])";
+    let q04_1_01 = "(fat(where this.time is '2018-04-01T00:00:00Z')[$Pancho=1])";
     assert_eq!(rep.ask(q04_1_01).unwrap().get_results_single(), Some(true));
-    let q04_1_02 = "(fat(time='2018-07-01T00:00:00Z')[$Pancho=1])";
+    let q04_1_02 = "(fat(where this.time is '2018-07-01T00:00:00Z')[$Pancho=1])";
     assert_eq!(rep.ask(q04_1_02).unwrap().get_results_single(), None);
-    let q04_1_03 = "(fat(time='2018-02-01T00:00:00Z')[$Pancho=1])";
+    let q04_1_03 = "(fat(where this.time is '2018-02-01T00:00:00Z')[$Pancho=1])";
     assert_eq!(rep.ask(q04_1_03).unwrap().get_results_single(), None);
 
     // Test if a fn is true between time intervals

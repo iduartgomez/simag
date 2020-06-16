@@ -1,3 +1,5 @@
+use std::convert::TryFrom;
+
 use super::{
     common::ConstraintValue,
     logsent::ParseContext,
@@ -15,10 +17,16 @@ pub(in crate::agent) struct Skolem {
 }
 
 impl Skolem {
-    pub fn from<'a>(
-        input: &SkolemBorrowed<'a>,
-        context: &ParseContext,
-    ) -> Result<Skolem, ParseErrF> {
+    pub fn name_eq(&self, other: &Skolem) -> bool {
+        self.name == other.name
+    }
+}
+
+impl<'a> TryFrom<(&SkolemBorrowed<'a>, &ParseContext)> for Skolem {
+    type Error = ParseErrF;
+
+    fn try_from(input: (&SkolemBorrowed<'a>, &ParseContext)) -> Result<Skolem, ParseErrF> {
+        let (input, _) = input;
         let &SkolemBorrowed {
             name: TerminalBorrowed(name),
             ref ty,
@@ -37,7 +45,7 @@ impl Skolem {
                 TypeDef::Time,
                 Some(ConstraintValue::TimePayload(TimeFn::IsVar)),
             ),
-            (def, None) => (TypeDef::Erased, None),
+            (_def, None) => (TypeDef::Erased, None),
             _ => return Err(ParseErrF::TypeUnsupported),
         };
 
@@ -50,9 +58,5 @@ impl Skolem {
             ty,
             assigned_val,
         })
-    }
-
-    pub fn name_eq(&self, other: &Skolem) -> bool {
-        self.name == other.name
     }
 }

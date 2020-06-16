@@ -383,7 +383,11 @@ impl BmsWrapper {
         let (sent_id, at_time) = if let Some((sent_id, at_time)) = recordings.was_produced {
             (sent_id, at_time)
         } else {
-            unreachable!("SIMAG - kb/bms.rs: can't rollback records which were not produced")
+            unreachable!(format!(
+                "SIMAG - {}:{} - unreachable: can't rollback records which were not produced",
+                file!(),
+                line!()
+            ))
         };
 
         for (record, _) in &recordings.produced {

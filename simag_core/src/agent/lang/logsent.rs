@@ -1388,7 +1388,7 @@ impl ParseContext {
                 Ok(())
             }
             VarDeclBorrowed::Skolem(ref var) => {
-                let var = Arc::new(Skolem::from(var, self)?);
+                let var = Arc::new(Skolem::try_from((var, &*self))?);
                 self.skols.push(var.clone());
                 self.all_skols.push(var);
                 Ok(())
@@ -1404,7 +1404,7 @@ impl ParseContext {
                 Ok(self.vars.iter().any(|x| var.name_eq(x.as_ref())))
             }
             VarDeclBorrowed::Skolem(ref var) => {
-                let var = &Skolem::from(var, self)?;
+                let var = Skolem::try_from((var, self))?;
                 Ok(self.skols.iter().any(|x| var.name_eq(x.as_ref())))
             }
         }
@@ -1701,7 +1701,7 @@ mod ast_walker {
                     context.all_vars.push(var);
                 }
                 VarDeclBorrowed::Skolem(ref s) => {
-                    let skolem = match Skolem::from(s, context) {
+                    let skolem = match Skolem::try_from((s, &*context)) {
                         Err(err) => return Err(LogSentErr::Boxed(Box::new(err))),
                         Ok(val) => Arc::new(val),
                     };

@@ -685,15 +685,17 @@ fn scope_var_decl(i: &[u8]) -> IResult<&[u8], DeclVars> {
                     multispace0,
                     terminal,
                     multispace0,
-                    tag("="),
-                    multispace0,
-                    UnconstraintArg::get,
+                    opt(tuple((tag("="), multispace0, UnconstraintArg::get))),
                 )))(i)?
                 {
-                    (rest, Some((.., ty, _, _, _, val))) => (rest, TypeDefBorrowed(ty), Some(val)),
-                    (rest, None) => (rest, TypeDefBorrowed(b""), None),
+                    (rest, Some((.., ty, _, Some((.., val))))) => {
+                        (rest, TypeDefBorrowed(ty), Some(val))
+                    }
+                    (rest, Some((_, _, ty, .., None))) => (rest, TypeDefBorrowed(ty), None),
+                    (rest, None) => (rest, TypeDefBorrowed(EMPTY), None),
                 }
             };
+            let (i, _) = multispace0(i)?;
             let (i, s) = opt(tag(","))(i)?;
             if s.is_some() {
                 seps += 1;
@@ -1224,6 +1226,7 @@ fn terminal(input: &[u8]) -> IResult<&[u8], &[u8]> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[allow(unused)]
 pub(in crate::agent) enum CompOperator {
     // equality operators:
     Equal,
@@ -1400,7 +1403,6 @@ fn logic_operator(input: &[u8]) -> IResult<&[u8], &[u8]> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use nom;
 
     #[test]
     fn remove_comments() -> Result<(), nom::Err<ParseErrB<'static>>> {
@@ -1500,8 +1502,7 @@ mod test {
         (let x, y in ((american[x=1] && hostile[z=1]) := criminal[x=1]))
         (let x, y in (american[x=1] && hostile[z=1]) := criminal[x=1])
         ";
-        let (_, clean) = Parser::remove_comments(source)?;
-        let scanned = Parser::get_blocks(&clean).unwrap();
+        let scanned = Parser::get_blocks(source).unwrap();
         assert_eq!(scanned.len(), 3);
 
         Ok(())
@@ -1629,10 +1630,6 @@ mod test {
 
     #[test]
     fn parser_function() {
-        let s5 = b"fn::criticize(time='2018-04-01T00:00:00Z')[$John=1,$Lucy]";
-        let s5_res = func_decl(s5);
-        assert!(s5_res.is_err());
-
         let s1 = b"fn::criticize(t1 is 'now')[$John=1,$Lucy]";
         let s1_res = func_decl(s1);
         assert_done_or_err!(s1_res);

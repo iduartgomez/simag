@@ -2,12 +2,11 @@ use super::{
     common::ConstraintValue,
     logsent::ParseContext,
     parser::{TerminalBorrowed, UnconstraintArg, VarBorrowed},
-    time_semantics::{TimeArg, TimeFn, TimeFnErr},
+    time_semantics::{TimeFn, TimeFnErr},
     typedef::TypeDef,
     ParseErrF,
 };
 use crate::agent::kb::bms::BmsWrapper;
-use std::collections::HashMap;
 use std::convert::TryFrom;
 
 /// Variable equality is bassed on physical address, to compare term equality use the
