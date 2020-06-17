@@ -1,4 +1,7 @@
+use std::str::FromStr;
+
 use super::*;
+use nom::character::is_digit;
 
 // number = -?[0-9\.]+
 #[derive(Debug, PartialEq, Clone, Copy)]

@@ -3,27 +3,6 @@ use super::scope::{multiple_asserts, scope_var_decl, sentence};
 use super::*;
 
 #[test]
-fn declare_record() {
-    //this is an entity and all the classes memberships in one go, e.g.:
-    let source = b"
-    $John = {
-        fast=0,
-        slow=0.5,
-        dog, // ellided =1
-        since 'now',
-    }
-    ";
-
-    /*
-    //TODO: add a way to define a 'record', conversedly can be used for querying
-    // defining more than one entity with similar values:
-    [$john, $mary] = {
-        ...
-    }
-    */
-}
-
-#[test]
 fn remove_comments() -> Result<(), nom::Err<ParseErrB<'static>>> {
     // remove comments:
     let source = b"
@@ -255,4 +234,27 @@ fn parser_function() {
     let s4_res = func_decl(s4);
     assert_done_or_err!(s4_res);
     assert_eq!(s4_res.unwrap().1.variant, FuncVariants::NonRelational);
+}
+
+#[test]
+fn declare_record() {
+    //this is an entity and all the classes memberships in one go, e.g.:
+    let source = b"
+    $John = {
+        fast=0,
+        slow=0.5,
+        dog, 
+        since 'now',
+    }
+    ";
+    let result = record_decl(source);
+    assert!(result.is_ok());
+
+    /*
+    //TODO: add a way to define a 'record', conversedly can be used for querying
+    // defining more than one entity with similar values:
+    [$john, $mary] = {
+        ...
+    }
+    */
 }

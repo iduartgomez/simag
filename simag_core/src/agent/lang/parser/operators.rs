@@ -1,4 +1,5 @@
 use super::*;
+use nom::{branch::alt, bytes::complete::tag};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 #[allow(unused)]
@@ -166,7 +167,6 @@ impl LogicOperator {
     }
 }
 
-#[inline]
 pub(super) fn logic_operator(input: &[u8]) -> IResult<&[u8], &[u8]> {
     alt((
         tag(ICOND_OP),

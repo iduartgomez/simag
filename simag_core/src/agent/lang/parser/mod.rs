@@ -32,16 +32,11 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::str;
-use std::str::FromStr;
 
 use nom;
 use nom::{
-    branch::alt,
-    bytes::complete::tag,
-    character::{complete::multispace0, is_alphabetic, is_alphanumeric, is_digit},
-    combinator::{map, opt},
+    character::{is_alphabetic, is_alphanumeric},
     error::{ErrorKind, ParseError},
-    sequence::tuple,
 };
 use rayon;
 use rayon::prelude::*;
@@ -214,7 +209,7 @@ fn string(input: &[u8]) -> IResult<&[u8], &[u8]> {
 }
 
 // terminal = [a-zA-Z0-9_]+ ;
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Copy)]
 pub(in crate::agent) struct TerminalBorrowed<'a>(pub &'a [u8]);
 
 impl<'a> TerminalBorrowed<'a> {
@@ -248,7 +243,7 @@ fn terminal(input: &[u8]) -> IResult<&[u8], &[u8]> {
             return Err(nom::Err::Error(ParseErrB::NonTerminal(input)));
         }
     }
-    if input[0] == b'$' && input[1..idx].is_empty() {
+    if (input[0] == b'$' && input[1..idx].is_empty()) || super::reserved(&input[..idx]) {
         Err(nom::Err::Error(ParseErrB::NonTerminal(input)))
     } else {
         Ok((&input[idx..], &input[0..idx]))

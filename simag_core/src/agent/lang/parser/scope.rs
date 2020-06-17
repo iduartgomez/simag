@@ -4,18 +4,7 @@ use nom::{
     sequence::tuple,
 };
 
-use super::{
-    args::UnconstraintArg,
-    assertion::{
-        class_decl, func_decl, AssertBorrowed, ClassDeclBorrowed, FuncDeclBorrowed, SkolemBorrowed,
-        VarBorrowed, VarDeclBorrowed,
-    },
-    ast::ASTNode,
-    ast::ParseTree,
-    operators,
-    operators::LogicOperator,
-    terminal, IResult, ParseErrB, ParseErrF, TerminalBorrowed, TypeDefBorrowed, EMPTY,
-};
+use super::*;
 use crate::agent::lang::logsent::ParseContext;
 
 #[derive(Debug)]
@@ -108,7 +97,7 @@ pub(super) fn sentence(input: &[u8]) -> IResult<&[u8], ASTNode> {
 
 #[inline]
 fn lhs(i: &[u8]) -> IResult<&[u8], (AssertBorrowed, Option<LogicOperator>, ASTNode)> {
-    let (i, decl) = decl_knowledge(i)?;
+    let (i, decl) = assert_knowledge(i)?;
     let (i, _) = multispace0(i)?;
     let (i, op) = opt(LogicOperator::from_bytes)(i)?;
     let (i, _) = multispace0(i)?;
@@ -122,7 +111,7 @@ fn rhs(i: &[u8]) -> IResult<&[u8], (AssertBorrowed, Option<LogicOperator>, ASTNo
     let (i, _) = multispace0(i)?;
     let (i, op) = opt(LogicOperator::from_bytes)(i)?;
     let (i, _) = multispace0(i)?;
-    let (rest, decl) = decl_knowledge(i)?;
+    let (rest, decl) = assert_knowledge(i)?;
     Ok((rest, (decl, op, next)))
 }
 
@@ -218,7 +207,7 @@ pub(super) fn multiple_asserts(input: &[u8]) -> IResult<&[u8], ASTNode> {
             >> decl: many0!(map!(
                 do_parse!(
                     multispace0
-                        >> decl: decl_knowledge
+                        >> decl: assert_knowledge
                         >> multispace0
                         >> op: map!(operators::logic_operator, LogicOperator::from_bytes)
                         >> (op?.1, decl)
@@ -226,7 +215,7 @@ pub(super) fn multiple_asserts(input: &[u8]) -> IResult<&[u8], ASTNode> {
                 assert_one
             ))
             >> multispace0
-            >> last: map!(decl_knowledge, ASTNode::from)
+            >> last: map!(assert_knowledge, ASTNode::from)
             >> multispace0
             >> tag!(")")
             >> multispace0
@@ -236,10 +225,9 @@ pub(super) fn multiple_asserts(input: &[u8]) -> IResult<&[u8], ASTNode> {
     Ok((rest, asserts))
 }
 
-type AssertOne<'a> = (LogicOperator, AssertBorrowed<'a>);
+pub(super) type AssertOne<'a> = (LogicOperator, AssertBorrowed<'a>);
 
-#[inline]
-fn assert_one(input: AssertOne) -> IResult<&[u8], ASTNode> {
+pub(super) fn assert_one(input: AssertOne) -> IResult<&[u8], ASTNode> {
     let (op, assertion) = input;
     Ok((
         EMPTY,
@@ -257,8 +245,7 @@ type AssertMany<'a> = (
     ASTNode<'a>,
 );
 
-#[inline]
-fn assert_many(input: AssertMany) -> IResult<&[u8], ASTNode> {
+pub(super) fn assert_many(input: AssertMany) -> IResult<&[u8], ASTNode> {
     let (vars, mut decl, last) = input;
 
     let mut fd = vec![];
@@ -301,28 +288,18 @@ fn assert_many(input: AssertMany) -> IResult<&[u8], ASTNode> {
     }
 }
 
-#[inline]
-fn decl_knowledge(input: &[u8]) -> IResult<&[u8], AssertBorrowed> {
-    alt!(
-        input,
-        map!(class_decl, ClassDeclBorrowed::convert_to_assert)
-            | map!(func_decl, FuncDeclBorrowed::convert_to_assert)
-    )
-}
-
 type DeclVars<'a> = Vec<VarDeclBorrowed<'a>>;
 
 /// only var: let a, b in
 /// only existential: exist c, d in
 /// both: let a, b and exist c, d in
-#[inline]
 pub(super) fn scope_var_decl(i: &[u8]) -> IResult<&[u8], DeclVars> {
     fn get_vars(mut input: &[u8], var: bool) -> IResult<&[u8], Vec<VarDeclBorrowed>> {
         let mut vars = vec![];
         let mut seps = 0;
         loop {
             let (i, _) = multispace0(input)?;
-            let (i, name) = terminal(i)?;
+            let (i, name) = alt((terminal, alt((tag("in"), tag("and")))))(i)?;
             if name == b"in" || name == b"and" {
                 input = i;
                 break;

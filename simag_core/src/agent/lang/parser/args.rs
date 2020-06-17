@@ -1,3 +1,11 @@
+use nom::{
+    branch::alt,
+    bytes::complete::tag,
+    character::complete::multispace0,
+    combinator::{map, opt},
+    sequence::tuple,
+};
+
 use super::numbers::number;
 use super::*;
 use crate::agent::lang::reserved;
@@ -9,15 +17,16 @@ pub(in crate::agent) struct ArgBorrowed<'a> {
     pub uval: Option<UVal>,
 }
 
-fn arg(input: &[u8]) -> IResult<&[u8], ArgBorrowed> {
-    do_parse!(
+pub(super) fn arg(input: &[u8]) -> IResult<&[u8], ArgBorrowed> {
+    let res = do_parse!(
         input,
         multispace0
             >> term: map!(terminal, TerminalBorrowed::from_slice)
             >> multispace0
             >> u0: opt!(uval)
             >> (ArgBorrowed { term, uval: u0 })
-    )
+    );
+    res
 }
 
 // args	= '[' arg $(arg);+ ']';
@@ -41,7 +50,7 @@ pub(in crate::agent) struct OpArgBorrowed<'a> {
     pub comp: Option<(Operator, UnconstraintArg<'a>)>,
 }
 
-fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
+pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
     fn normal_arg(orig: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
         let (i, term) = UnconstraintArg::get(orig)?;
         if term.is_reserved() && term != b"ow" {
@@ -79,12 +88,12 @@ fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
     fn time_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
         let (i, _) = tag("since")(i)?;
         let (i, _) = multispace0(i)?;
-        let (i, since) = map(terminal, UnconstraintArg::is_terminal)(i)?;
+        let (i, since) = UnconstraintArg::get(i)?;
         let (i, _) = multispace0(i)?;
         let (i, until) = opt(tuple((
             tag("until"),
             multispace0,
-            map(terminal, UnconstraintArg::is_terminal),
+            UnconstraintArg::get,
             multispace0,
         )))(i)?;
 
@@ -235,7 +244,6 @@ fn uval(input: &[u8]) -> IResult<&[u8], UVal> {
     do_parse!(
         input,
         multispace0
-            //>> opt!(tuple((char(','), multispace0, char('u'))))
             >> multispace0
             >> op: map!(
                 alt!(tag!(">=") | tag!("<=") | tag!("=") | tag!(">") | tag!("<")),
