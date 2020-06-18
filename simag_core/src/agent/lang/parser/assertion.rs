@@ -1,5 +1,4 @@
 use super::args::{arg, args, op_arg, op_args};
-use super::scope::{assert_many, assert_one};
 use super::*;
 use nom::branch::alt;
 use nom::character::complete::{char, multispace0};
@@ -69,19 +68,15 @@ enum Args<'a> {
 }
 
 pub(super) fn record_decl(input: &[u8]) -> IResult<&[u8], ASTNode> {
-    let (i, _) = multispace0(input)?;
-    let (i, name) = map(terminal, TerminalBorrowed::from_slice)(i)?;
-    let (i, _) = multispace0(i)?;
-    let (i, _) = char('=')(i)?;
-    let (i, _) = multispace0(i)?;
-    let (i, _) = char('{')(i)?;
-
-    let sep = tuple((multispace0, char(','), multispace0)); // optional trailing comma
+    let sep = tuple((multispace0, char(','), multispace0));
     let elements = alt((map(arg, Args::Arg), map(op_arg, Args::OpArg)));
-    let (i, args) = separated_list1(sep, elements)(i)?;
 
-    let (i, _) = tuple((multispace0, opt(char(',')), multispace0))(i)?;
-    let (rest, _) = char('}')(i)?;
+    let (i, _) = tuple((multispace0, char('('), multispace0))(input)?;
+    let (i, name) = map(terminal, TerminalBorrowed::from_slice)(i)?;
+    let (i, _) = tuple((multispace0, char('='), multispace0, char('{')))(i)?;
+    let (i, args) = separated_list1(sep, elements)(i)?;
+    let (i, _) = tuple((multispace0, opt(char(',')), multispace0))(i)?; // opt trailing comma
+    let (rest, _) = tuple((char('}'), multispace0, char(')'), multispace0))(i)?;
 
     let mut normal_args = Vec::with_capacity(args.len());
     let mut op_args = Vec::with_capacity(args.len());
@@ -91,11 +86,23 @@ pub(super) fn record_decl(input: &[u8]) -> IResult<&[u8], ASTNode> {
             Args::OpArg(a) => op_args.push(a),
         }
     }
+    /*
+        // arg	= term [',' uval] ;
+    #[derive(Debug, PartialEq)]
+    pub(in crate::agent) struct ArgBorrowed<'a> {
+        pub term: TerminalBorrowed<'a>,
+        pub uval: Option<UVal>,
+    }
+
+    */
 
     let mut declared = Vec::with_capacity(normal_args.len());
-    for decl in normal_args {
-        let assert = AssertBorrowed::from(ClassDeclBorrowed {
-            name,
+    for mut decl in normal_args {
+        // flip argument and name
+        let class_name = decl.term;
+        decl.term = name;
+        let assert = ASTNode::Assert(AssertBorrowed::from(ClassDeclBorrowed {
+            name: class_name,
             op_args: {
                 if !op_args.is_empty() {
                     Some(op_args.clone())
@@ -104,19 +111,10 @@ pub(super) fn record_decl(input: &[u8]) -> IResult<&[u8], ASTNode> {
                 }
             },
             args: vec![decl],
-        });
-        let (_, assert_scope) = assert_one((LogicOperator::And, assert))?;
-        declared.push(Ok((EMPTY, assert_scope)));
+        }));
+        declared.push(assert);
     }
-    let (_, mut last) = declared.pop().unwrap()?;
-    if let ASTNode::Scope(last_scope) = &mut last {
-        last_scope.logic_op = None;
-    }
-    if declared.len() > 0 {
-        assert_many((None, declared, last))
-    } else {
-        Ok((rest, last))
-    }
+    Ok((rest, ASTNode::Chain(declared)))
 }
 
 #[derive(Debug)]

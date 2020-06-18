@@ -19,6 +19,7 @@ mod errors {
         IsNotVar,
         InsufArgs,
         IllegalSubstitution,
+        OperatorNotValid,
     }
 
     impl Into<ParseErrF> for TimeFnErr {

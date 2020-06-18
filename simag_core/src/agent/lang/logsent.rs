@@ -292,7 +292,7 @@ impl<'a> LogSentence {
                             match *arg {
                                 OpArg::Time(TimeDecl(_))
                                 | OpArg::Time(TimeVar)
-                                | OpArg::Time(TimeVarFrom(_)) => {
+                                | OpArg::Time(TimeVarSince(_)) => {
                                     return Err(LogSentErr::InvalidOpArg);
                                 }
                                 _ => {}
@@ -306,7 +306,7 @@ impl<'a> LogSentence {
                             match *arg {
                                 OpArg::Time(TimeDecl(_))
                                 | OpArg::Time(TimeVar)
-                                | OpArg::Time(TimeVarFrom(_)) => {
+                                | OpArg::Time(TimeVarSince(_)) => {
                                     return Err(LogSentErr::InvalidOpArg);
                                 }
                                 _ => {}

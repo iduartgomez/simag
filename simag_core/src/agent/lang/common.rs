@@ -10,7 +10,7 @@ use super::{
     errors::ParseErrF,
     fn_decl::FuncDecl,
     logsent::{LogSentResolution, ParseContext, ProofResContext},
-    parser::{ArgBorrowed, Operator, Number, OpArgBorrowed, UVal, UnconstraintArg},
+    parser::{ArgBorrowed, Number, OpArgBorrowed, Operator, UVal, UnconstraintArg},
     time_semantics::{TimeArg, TimeFn, TimeFnErr, TimeOps},
     var::Var,
     BuiltIns, GroundedFunc, GroundedMemb, Terminal,
@@ -267,10 +267,9 @@ impl FreeClsMemb {
                             | val_free.approx_eq_ulps(&val_grounded, FLOAT_EQ_ULPS)
                     }
                 }
-                Operator::Less
-                | Operator::More
-                | Operator::MoreEqual
-                | Operator::LessEqual => unreachable!(),
+                Operator::Less | Operator::More | Operator::MoreEqual | Operator::LessEqual => {
+                    unreachable!()
+                }
                 _ => unreachable!(),
             }
         } else {
@@ -334,16 +333,11 @@ impl FreeClassMembership {
                 Operator::Equal => val.approx_eq_ulps(&o_val, FLOAT_EQ_ULPS),
                 Operator::Less => o_val < *val,
                 Operator::More => o_val > *val,
-                Operator::MoreEqual => {
-                    val.approx_eq_ulps(&o_val, FLOAT_EQ_ULPS) || o_val > *val
+                Operator::MoreEqual => val.approx_eq_ulps(&o_val, FLOAT_EQ_ULPS) || o_val > *val,
+                Operator::LessEqual => val.approx_eq_ulps(&o_val, FLOAT_EQ_ULPS) || o_val < *val,
+                Operator::Until | Operator::Since | Operator::SinceUntil | Operator::Assignment => {
+                    unreachable!()
                 }
-                Operator::LessEqual => {
-                    val.approx_eq_ulps(&o_val, FLOAT_EQ_ULPS) || o_val < *val
-                }
-                Operator::Until
-                | Operator::Since
-                | Operator::SinceUntil
-                | Operator::Assignment => unreachable!(),
             }
         } else {
             true
@@ -570,11 +564,11 @@ impl<'a> OpArg {
         let comp = match other.comp {
             Some((op, ref tors)) => match ConstraintValue::try_from((tors, context)) {
                 Ok(ConstraintValue::ThisTime) => {
-                    return Ok(OpArg::Time(TimeArg::from(t0.get_var())))
+                    // case: `where this.time is <variable>
+                    return Ok(OpArg::Time(TimeArg::from(t0.get_var())));
                 }
                 Ok(t) => Some((op, t)),
                 Err(ParseErrF::ReservedKW(kw)) => return Err(ParseErrF::ReservedKW(kw)),
-
                 Err(err) => return Err(err),
             },
             None => None,

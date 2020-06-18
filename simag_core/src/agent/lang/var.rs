@@ -4,7 +4,7 @@ use super::{
     parser::{TerminalBorrowed, UnconstraintArg, VarBorrowed},
     time_semantics::{TimeFn, TimeFnErr},
     typedef::TypeDef,
-    ParseErrF,
+    Operator, ParseErrF,
 };
 use crate::agent::kb::bms::BmsWrapper;
 use std::convert::TryFrom;
@@ -67,7 +67,7 @@ impl<'a> std::convert::TryFrom<(&'a VarBorrowed<'a>, &'a ParseContext)> for Var 
         let (ty, assigned_val) = match (ty, val) {
             (def, Some(val)) if def.0 == b"time" => match val {
                 UnconstraintArg::String(slice) => {
-                    let time = TimeFn::from_str(slice)?;
+                    let time = TimeFn::from_str(slice, Operator::Since)?;
                     kind = VarKind::TimeDecl;
                     (TypeDef::Time, Some(ConstraintValue::TimePayload(time)))
                 }

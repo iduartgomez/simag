@@ -51,7 +51,7 @@ pub(in crate::agent) trait TimeOps: OpArgsOps {
     fn get_time_decl(&self, var0: &Var) -> bool {
         if let Some(args) = self.get_op_args() {
             for arg in args {
-                if let OpArg::Time(TimeVarFrom(ref var1)) = *arg {
+                if let OpArg::Time(TimeVarSince(ref var1)) = *arg {
                     return var1.as_ref() == var0;
                 }
             }

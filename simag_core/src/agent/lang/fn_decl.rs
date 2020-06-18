@@ -73,7 +73,7 @@ impl<'a> FuncDecl {
         if let Some(mut oargs) = op_args {
             for arg in oargs.drain(..) {
                 match arg {
-                    OpArg::Time(TimeDecl(TimeFn::Time(time))) => {
+                    OpArg::Time(TimeDecl(TimeFn::Since(time))) => {
                         time_data.new_record(Some(time), val, None);
                     }
                     OpArg::Time(TimeDecl(TimeFn::Interval(t0, t1))) => {

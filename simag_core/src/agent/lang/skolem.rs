@@ -6,7 +6,7 @@ use super::{
     parser::{SkolemBorrowed, TerminalBorrowed, UnconstraintArg},
     time_semantics::{TimeFn, TimeFnErr},
     typedef::TypeDef,
-    ParseErrF,
+    Operator, ParseErrF,
 };
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -36,7 +36,7 @@ impl<'a> TryFrom<(&SkolemBorrowed<'a>, &ParseContext)> for Skolem {
         let (ty, assigned_val) = match (ty, val) {
             (def, Some(val)) if def.0 == b"time" => match val {
                 UnconstraintArg::String(slice) => {
-                    let time = TimeFn::from_str(slice)?;
+                    let time = TimeFn::from_str(slice, Operator::Since)?;
                     (TypeDef::Time, Some(ConstraintValue::TimePayload(time)))
                 }
                 _ => return Err(TimeFnErr::InsufArgs.into()),

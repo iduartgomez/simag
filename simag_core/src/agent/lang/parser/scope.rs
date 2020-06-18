@@ -16,8 +16,10 @@ pub(in crate::agent) struct Scope<'a> {
 
 impl<'a> Scope<'a> {
     pub(super) fn parse_scope(input: &[u8]) -> IResult<&[u8], ASTNode> {
-        if let Ok((rest, sentence)) = sentence(input) {
-            return Ok((rest, sentence));
+        if let Ok((rest, sentence)) = record_decl(input) {
+            Ok((rest, sentence))
+        } else if let Ok((rest, sentence)) = sentence(input) {
+            Ok((rest, sentence))
         } else {
             multiple_asserts(input)
         }

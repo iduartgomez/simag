@@ -96,26 +96,29 @@ impl Representation {
                 match sentences.pop_front().unwrap() {
                     ParseTree::Assertion(assertions) => {
                         for assertion in assertions {
-                            if assertion.is_class() {
-                                let cls_decl = assertion.unwrap_cls();
-                                let f = HashMap::new();
-                                let time_data = cls_decl.get_own_time_data(&f, None);
-                                for a in cls_decl {
-                                    let t = time_data.clone();
-                                    t.replace_value(a.get_value(), ReplaceMode::Tell);
-                                    if let Some(bms) = a.bms.as_ref() {
-                                        bms.overwrite_data(&t)
-                                    };
-                                    if a.is_time_interval() {
-                                        a.update_value(None);
+                            match assertion {
+                                Assert::ClassDecl(cls_decl) => {
+                                    let f = HashMap::new();
+                                    let time_data = cls_decl.get_own_time_data(&f, None);
+                                    for a in cls_decl {
+                                        let t = time_data.clone();
+                                        t.replace_value(a.get_value(), ReplaceMode::Tell);
+                                        if let Some(bms) = a.bms.as_ref() {
+                                            bms.overwrite_data(&t)
+                                        };
+                                        if a.is_time_interval() {
+                                            a.update_value(None);
+                                        }
+                                        let x: Option<&IExprResult> = None;
+                                        self.up_membership(&Arc::new(a), x)
                                     }
-                                    let x: Option<&IExprResult> = None;
-                                    self.up_membership(&Arc::new(a), x)
                                 }
-                            } else {
-                                let a = Arc::new(assertion.unwrap_fn().into_grounded());
-                                let x: Option<&IExprResult> = None;
-                                self.up_relation(&a, x)
+                                Assert::FuncDecl(func_decl) => {
+                                    let a = Arc::new(func_decl.into_grounded());
+                                    let x: Option<&IExprResult> = None;
+                                    self.up_relation(&a, x)
+                                }
+                                _ => return Err(vec![ParseErrF::WrongDef]),
                             }
                         }
                     }
