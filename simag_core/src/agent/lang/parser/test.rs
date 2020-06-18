@@ -6,6 +6,7 @@ use super::*;
 fn remove_comments() -> Result<(), nom::Err<ParseErrB<'static>>> {
     // remove comments:
     let source = b"
+            /* stuff */
             # one line comment
             ( # first scope
                 ( # second scope
@@ -182,7 +183,7 @@ fn parser_predicate() {
         &s5_res.op_args.as_ref().unwrap()[0],
         &OpArgBorrowed {
             term: UnconstraintArg::Keyword(b"time"),
-            comp: Some((Operator::Assignment, UnconstraintArg::String(b"now"),)),
+            comp: Some((Operator::Since, UnconstraintArg::String(b"now"),)),
         }
     );
     assert_eq!(

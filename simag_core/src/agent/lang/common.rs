@@ -634,7 +634,9 @@ impl<'a> TryFrom<(&'a UnconstraintArg<'a>, &'a ParseContext)> for ConstraintValu
                 String::from_utf8_lossy(slice).into_owned(),
             )),
             UnconstraintArg::Keyword(b"time") => Ok(ConstraintValue::TimePayload(TimeFn::ThisTime)),
-            UnconstraintArg::Keyword(_) => unreachable!(),
+            UnconstraintArg::Keyword(kw) => Err(ParseErrF::ReservedKW(
+                str::from_utf8(kw).unwrap().to_owned(),
+            )),
         }
     }
 }

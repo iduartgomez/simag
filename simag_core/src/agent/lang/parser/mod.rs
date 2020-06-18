@@ -115,7 +115,7 @@ impl Parser {
                     in_comment = false;
                     finished_comment = true;
                 }
-                b'/' if !in_comment => {
+                b'/' if !in_comment && !in_comment_block => {
                     if let Some(next) = input.get(pos + 1) {
                         if next == &b'*' {
                             in_comment_block = true;

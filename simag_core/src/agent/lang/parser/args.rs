@@ -135,11 +135,19 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
         if v1.is_reserved() && !this1 {
             return Err(nom::Err::Error(ParseErrB::SyntaxError));
         }
+
+        let op;
+        if v0 == b"time" || v1 == b"time" {
+            op = Operator::Since;
+        } else {
+            op = Operator::Assignment;
+        }
+
         Ok((
             i,
             OpArgBorrowed {
                 term: v0,
-                comp: Some((Operator::Assignment, v1)),
+                comp: Some((op, v1)),
             },
         ))
     }
@@ -194,12 +202,10 @@ where
 impl<'a> std::fmt::Debug for UnconstraintArg<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            UnconstraintArg::Terminal(r) => {
-                write!(f, "OpArg::Term({})", str::from_utf8(r).unwrap())
-            }
-            UnconstraintArg::String(r) => write!(f, "OpArg::Str({})", str::from_utf8(r).unwrap()),
+            UnconstraintArg::Terminal(r) => write!(f, "Arg::Term({})", str::from_utf8(r).unwrap()),
+            UnconstraintArg::String(r) => write!(f, "Arg::Str({})", str::from_utf8(r).unwrap()),
             UnconstraintArg::Keyword(r) => {
-                write!(f, "OpArg::Keyword({})", str::from_utf8(r).unwrap())
+                write!(f, "Arg::Keyword({})", str::from_utf8(r).unwrap())
             }
         }
     }
