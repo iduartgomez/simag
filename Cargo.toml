@@ -13,11 +13,11 @@ path = "simag/main.rs"
 
 [dependencies]
 simag_core = { path = "simag_core" }
-simag_maths = { path = "simag_maths" }
+# simag_maths = { path = "simag_maths" }
 simag_terminal = { path = "simag_terminal" }
 
 [workspace]
-members = ["simag_core", "simag_maths", "simag_networking", "simag_terminal"]
+members = ["simag_core", "simag_networking", "simag_terminal"]
 
 [profile.release]
 debug = true

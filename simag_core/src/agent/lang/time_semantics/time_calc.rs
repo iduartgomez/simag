@@ -98,10 +98,9 @@ impl TimeCalc {
                 let upper_bound = arg0 + comp_diff;
                 !((arg1 < lower_bound) || (arg1 > upper_bound)) || arg0 < arg1
             }
-            Operator::Until
-            | Operator::Since
-            | Operator::SinceUntil
-            | Operator::Assignment => unreachable!(),
+            Operator::Until | Operator::Since | Operator::SinceUntil | Operator::Assignment => {
+                unreachable!()
+            }
         }
     }
 }

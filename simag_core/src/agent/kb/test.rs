@@ -410,19 +410,19 @@ fn repr_eval_fol() {
     assert_eq!(rep.ask(query).unwrap().get_results_single(), Some(true));
 }
 
-#[test]
-fn tell_record() {
-    let rep = Representation::default();
-    // include dog
-    let source = "(
-        $John = {
-            fast=0,
-            slow=0.5,
-            since '2015-01-02T00:00:00Z',
-        }
-    )";
-    rep.tell(source).unwrap();
-    // rep.ask("($John(where this.time is '2015-01-02T00:00:00Z')[fast=0] and $John[slow=0.5])");
-    let res = rep.ask("($John[fast=0] and $John[slow=0.5])");
-    assert_eq!(res.unwrap().get_results_single(), Some(true));
-}
+// #[test]
+// fn tell_record() {
+//     let rep = Representation::default();
+//     // include dog
+//     let source = "(
+//         $John = {
+//             fast=0,
+//             slow=0.5,
+//             since '2015-01-02T00:00:00Z',
+//         }
+//     )";
+//     rep.tell(source).unwrap();
+//     // rep.ask("($John(where this.time is '2015-01-02T00:00:00Z')[fast=0] and $John[slow=0.5])");
+//     let res = rep.ask("($John[fast=0] and $John[slow=0.5])");
+//     assert_eq!(res.unwrap().get_results_single(), Some(true));
+// }
