@@ -270,6 +270,13 @@ fn is_keyword(input: &[u8]) -> IResult<&[u8], &[u8]> {
     }
 }
 
+fn is_type(input: &[u8]) -> bool {
+    match input {
+        b"time" => true,
+        _ => false,
+    }
+}
+
 #[derive(Debug)]
 pub(in crate::agent) enum ParseErrB<'a, I = &'a [u8]> {
     Nom(I, nom::error::ErrorKind),

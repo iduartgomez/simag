@@ -296,6 +296,20 @@ type DeclVars<'a> = Vec<VarDeclBorrowed<'a>>;
 /// only existential: exist c, d in
 /// both: let a, b and exist c, d in
 pub(super) fn scope_var_decl(i: &[u8]) -> IResult<&[u8], DeclVars> {
+    fn get_ty(ty: UnconstraintArg) -> Result<&[u8], nom::Err<ParseErrB>> {
+        match ty {
+            UnconstraintArg::Keyword(kw) => {
+                if is_type(kw) {
+                    Ok(kw)
+                } else {
+                    Err(nom::Err::Error(ParseErrB::SyntaxError))
+                }
+            }
+            UnconstraintArg::Terminal(def) => Ok(def),
+            UnconstraintArg::String(_) => Err(nom::Err::Error(ParseErrB::SyntaxError)),
+        }
+    }
+
     fn get_vars(mut input: &[u8], var: bool) -> IResult<&[u8], Vec<VarDeclBorrowed>> {
         let mut vars = vec![];
         let mut seps = 0;
@@ -310,15 +324,17 @@ pub(super) fn scope_var_decl(i: &[u8]) -> IResult<&[u8], DeclVars> {
                 match opt(tuple((
                     tag(":"),
                     multispace0,
-                    terminal,
+                    UnconstraintArg::get,
                     multispace0,
                     opt(tuple((tag("="), multispace0, UnconstraintArg::get))),
                 )))(i)?
                 {
                     (rest, Some((.., ty, _, Some((.., val))))) => {
-                        (rest, TypeDefBorrowed(ty), Some(val))
+                        (rest, TypeDefBorrowed(get_ty(ty)?), Some(val))
                     }
-                    (rest, Some((_, _, ty, .., None))) => (rest, TypeDefBorrowed(ty), None),
+                    (rest, Some((_, _, ty, .., None))) => {
+                        (rest, TypeDefBorrowed(get_ty(ty)?), None)
+                    }
                     (rest, None) => (rest, TypeDefBorrowed(EMPTY), None),
                 }
             };
