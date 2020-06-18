@@ -181,7 +181,7 @@ fn parser_predicate() {
     assert_eq!(
         &s5_res.op_args.as_ref().unwrap()[0],
         &OpArgBorrowed {
-            term: UnconstraintArg::ThisTime,
+            term: UnconstraintArg::Keyword(b"time"),
             comp: Some((Operator::Assignment, UnconstraintArg::String(b"now"),)),
         }
     );
@@ -239,14 +239,14 @@ fn parser_function() {
 #[test]
 fn declare_record() {
     //this is an entity and all the classes memberships in one go, e.g.:
-    let source = b"
-    $John = {
-        fast=0,
-        slow=0.5,
-        dog, 
-        since 'now',
-    }
-    ";
+    let source = b"(
+        $John = {
+            fast=0,
+            slow=0.5,
+            dog, 
+            since 'now',
+        }
+    )";
     let result = record_decl(source);
     assert!(result.is_ok());
 

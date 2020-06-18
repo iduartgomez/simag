@@ -87,7 +87,7 @@ impl TimeArg {
                             Err(TimeFnErr::IsNotVar.into())
                         }
                     }
-                    UnconstraintArg::ThisTime => Err(TimeFnErr::IsNotVar.into()),
+                    UnconstraintArg::Keyword(_) => Err(TimeFnErr::IsNotVar.into()),
                 }
             }
         }
@@ -153,7 +153,7 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for TimeArg {
     fn try_from(input: (&'a OpArgBorrowed<'a>, &'a ParseContext)) -> Result<Self, Self::Error> {
         let (other, context) = input;
         match ConstraintValue::try_from((&other.term, context)) {
-            Ok(ConstraintValue::ThisTime) => {
+            Ok(ConstraintValue::TimePayload(TimeFn::ThisTime)) => {
                 let val = TimeArg::time_payload_value(other.comp.as_ref(), context)?;
                 if val.is_var() {
                     Ok(TimeArg::TimeVarAssign(val.get_var()))
@@ -183,6 +183,7 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for TimeArg {
 /// Used for instantiating time values during runtime.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(in crate::agent) enum TimeFn {
+    ThisTime,
     /// Instantiate to current value.
     Now,
     /// Applies since the declared instant in time.
@@ -249,6 +250,7 @@ impl TimeFn {
             }
             TimeFn::Now => id.push(2),
             TimeFn::IsVar => id.push(3),
+            TimeFn::ThisTime => id.push(4),
         }
         id
     }

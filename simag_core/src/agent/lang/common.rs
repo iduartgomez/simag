@@ -466,28 +466,10 @@ impl Assert {
     }
 
     #[inline]
-    pub fn unwrap_fn(self) -> FuncDecl {
-        match self {
-            Assert::FuncDecl(f) => f,
-            Assert::ClassDecl(_) => unreachable!(),
-            Assert::SpecialFunc(_) => unreachable!(),
-        }
-    }
-
-    #[inline]
     pub fn unwrap_fn_as_ref(&self) -> &FuncDecl {
         match *self {
             Assert::FuncDecl(ref f) => f,
             Assert::ClassDecl(_) => unreachable!(),
-            Assert::SpecialFunc(_) => unreachable!(),
-        }
-    }
-
-    #[inline]
-    pub fn unwrap_cls(self) -> ClassDecl {
-        match self {
-            Assert::FuncDecl(_) => unreachable!(),
-            Assert::ClassDecl(c) => c,
             Assert::SpecialFunc(_) => unreachable!(),
         }
     }
@@ -551,7 +533,7 @@ pub(in crate::agent) enum OpArg {
 impl<'a> OpArg {
     pub fn from(other: &OpArgBorrowed<'a>, context: &ParseContext) -> Result<OpArg, ParseErrF> {
         let t0 = match ConstraintValue::try_from((&other.term, context)) {
-            Ok(ConstraintValue::ThisTime) => {
+            Ok(ConstraintValue::TimePayload(TimeFn::ThisTime)) => {
                 return Ok(OpArg::Time(TimeArg::try_from((other, context))?))
             }
             Ok(arg) => arg,
@@ -563,7 +545,7 @@ impl<'a> OpArg {
         };
         let comp = match other.comp {
             Some((op, ref tors)) => match ConstraintValue::try_from((tors, context)) {
-                Ok(ConstraintValue::ThisTime) => {
+                Ok(ConstraintValue::TimePayload(TimeFn::ThisTime)) => {
                     // case: `where this.time is <variable>
                     return Ok(OpArg::Time(TimeArg::from(t0.get_var())));
                 }
@@ -636,7 +618,7 @@ pub(in crate::agent) enum ConstraintValue {
     Terminal(Terminal),
     String(String),
     TimePayload(TimeFn),
-    ThisTime,
+    // ThisTime,
 }
 
 impl<'a> TryFrom<(&'a UnconstraintArg<'a>, &'a ParseContext)> for ConstraintValue {
@@ -651,7 +633,8 @@ impl<'a> TryFrom<(&'a UnconstraintArg<'a>, &'a ParseContext)> for ConstraintValu
             UnconstraintArg::String(slice) => Ok(ConstraintValue::String(
                 String::from_utf8_lossy(slice).into_owned(),
             )),
-            UnconstraintArg::ThisTime => Ok(ConstraintValue::ThisTime),
+            UnconstraintArg::Keyword(b"time") => Ok(ConstraintValue::TimePayload(TimeFn::ThisTime)),
+            UnconstraintArg::Keyword(_) => unreachable!(),
         }
     }
 }
@@ -662,7 +645,6 @@ impl<'a> ConstraintValue {
             ConstraintValue::Terminal(t) => t.generate_uid(),
             ConstraintValue::String(s) => Vec::from_iter(s.as_bytes().iter().cloned()),
             ConstraintValue::TimePayload(t) => t.generate_uid(),
-            ConstraintValue::ThisTime => vec![3],
         }
     }
 

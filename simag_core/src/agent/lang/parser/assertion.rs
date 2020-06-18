@@ -50,7 +50,7 @@ pub(super) fn func_decl(input: &[u8]) -> IResult<&[u8], FuncDeclBorrowed> {
             input,
             multispace0
                 >> tag!("fn::")
-                >> name: map!(terminal, TerminalBorrowed::from_slice)
+                >> name: map!(is_keyword, TerminalBorrowed::from_slice)
                 >> op1: op_args
                 >> (FuncDeclBorrowed {
                     name,

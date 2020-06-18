@@ -226,7 +226,7 @@ impl<'a> std::fmt::Debug for TerminalBorrowed<'a> {
 
 fn terminal(input: &[u8]) -> IResult<&[u8], &[u8]> {
     if input.is_empty() {
-        return Err(nom::Err::Error(ParseErrB::NonTerminal(input)));
+        return Err(nom::Err::Error(ParseErrB::NonTerminal(EMPTY, input)));
     }
 
     let mut idx = 0_usize;
@@ -240,13 +240,33 @@ fn terminal(input: &[u8]) -> IResult<&[u8], &[u8]> {
         } else if idx > 0 {
             break;
         } else {
-            return Err(nom::Err::Error(ParseErrB::NonTerminal(input)));
+            return Err(nom::Err::Error(ParseErrB::NonTerminal(
+                &input[i..],
+                &input[..i],
+            )));
         }
     }
     if (input[0] == b'$' && input[1..idx].is_empty()) || super::reserved(&input[..idx]) {
-        Err(nom::Err::Error(ParseErrB::NonTerminal(input)))
+        Err(nom::Err::Error(ParseErrB::NonTerminal(
+            &input[idx..],
+            &input[..idx],
+        )))
     } else {
         Ok((&input[idx..], &input[0..idx]))
+    }
+}
+
+fn is_keyword(input: &[u8]) -> IResult<&[u8], &[u8]> {
+    match terminal(input) {
+        Err(nom::Err::Error(ParseErrB::NonTerminal(rest, kw))) => {
+            if super::reserved(kw) {
+                Ok((rest, kw))
+            } else {
+                Err(nom::Err::Error(ParseErrB::NonTerminal(rest, kw)))
+            }
+        }
+        Err(err) => Err(err),
+        Ok(_) => Err(nom::Err::Error(ParseErrB::NotSpecialFunc(input))),
     }
 }
 
@@ -256,10 +276,11 @@ pub(in crate::agent) enum ParseErrB<'a, I = &'a [u8]> {
     SyntaxError,
     NotScope(&'a [u8]),
     ImbalDelim(&'a [u8]),
-    NonTerminal(&'a [u8]),
+    NonTerminal(&'a [u8], &'a [u8]),
     IsNotStr(&'a [u8]),
     IsNotNumber(&'a [u8]),
     IsNotOperator(&'a [u8]),
+    NotSpecialFunc(&'a [u8]),
 }
 
 impl<'a, I> ParseError<I> for ParseErrB<'a, I> {
@@ -285,7 +306,7 @@ impl<'a> fmt::Display for ParseErrB<'a> {
                              open delimiters:\n{}",
                 str::from_utf8(arr).unwrap()
             ),
-            ParseErrB::NonTerminal(arr) => format!(
+            ParseErrB::NonTerminal(_, arr) => format!(
                 "syntax error,
                              illegal character in terminal position:\n{}",
                 str::from_utf8(arr).unwrap()

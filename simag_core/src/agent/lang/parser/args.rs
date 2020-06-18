@@ -8,7 +8,6 @@ use nom::{
 
 use super::numbers::number;
 use super::*;
-use crate::agent::lang::reserved;
 
 // arg	= term [',' uval] ;
 #[derive(Debug, PartialEq)]
@@ -18,15 +17,14 @@ pub(in crate::agent) struct ArgBorrowed<'a> {
 }
 
 pub(super) fn arg(input: &[u8]) -> IResult<&[u8], ArgBorrowed> {
-    let res = do_parse!(
+    do_parse!(
         input,
         multispace0
             >> term: map!(terminal, TerminalBorrowed::from_slice)
             >> multispace0
             >> u0: opt!(uval)
             >> (ArgBorrowed { term, uval: u0 })
-    );
-    res
+    )
 }
 
 // args	= '[' arg $(arg);+ ']';
@@ -54,7 +52,7 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
     fn normal_arg(orig: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
         let (i, term) = UnconstraintArg::get(orig)?;
         if term.is_reserved() && term != b"ow" {
-            return Err(nom::Err::Error(ParseErrB::NonTerminal(orig)));
+            return Err(nom::Err::Error(ParseErrB::NonTerminal(EMPTY, orig)));
         }
         let (i, _) = multispace0(i)?;
         let (i, op) = opt(alt((
@@ -70,7 +68,7 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
             let (i, _) = multispace0(i)?;
             let (i, term2) = UnconstraintArg::get(i)?;
             if term2.is_reserved() && term2 != b"ow" {
-                return Err(nom::Err::Error(ParseErrB::NonTerminal(orig)));
+                return Err(nom::Err::Error(ParseErrB::NonTerminal(orig, i)));
             }
             let (i, _) = multispace0(i)?;
             Ok((
@@ -121,7 +119,7 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
             (r.0, r.1.is_some())
         };
         let (i, v0) = UnconstraintArg::get(i)?;
-        if v0 == UnconstraintArg::ThisTime && !this0 {
+        if v0.is_reserved() && !this0 {
             return Err(nom::Err::Error(ParseErrB::SyntaxError));
         }
 
@@ -134,7 +132,7 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
             (r.0, r.1.is_some())
         };
         let (i, v1) = UnconstraintArg::get(i)?;
-        if v1 == UnconstraintArg::ThisTime && !this1 {
+        if v1.is_reserved() && !this1 {
             return Err(nom::Err::Error(ParseErrB::SyntaxError));
         }
         Ok((
@@ -174,9 +172,9 @@ pub(super) fn op_args(input: &[u8]) -> IResult<&[u8], Vec<OpArgBorrowed>> {
 
 #[derive(PartialEq, Clone)]
 pub(in crate::agent) enum UnconstraintArg<'a> {
+    Keyword(&'a [u8]),
     Terminal(&'a [u8]),
     String(&'a [u8]),
-    ThisTime,
 }
 
 impl<'a, T> PartialEq<T> for UnconstraintArg<'a>
@@ -188,7 +186,7 @@ where
         match self {
             UnconstraintArg::Terminal(r) => *r == other,
             UnconstraintArg::String(r) => *r == other,
-            UnconstraintArg::ThisTime => false,
+            UnconstraintArg::Keyword(kw) => *kw == other,
         }
     }
 }
@@ -200,7 +198,9 @@ impl<'a> std::fmt::Debug for UnconstraintArg<'a> {
                 write!(f, "OpArg::Term({})", str::from_utf8(r).unwrap())
             }
             UnconstraintArg::String(r) => write!(f, "OpArg::Str({})", str::from_utf8(r).unwrap()),
-            UnconstraintArg::ThisTime => write!(f, "OpArg::ThisTime"),
+            UnconstraintArg::Keyword(r) => {
+                write!(f, "OpArg::Keyword({})", str::from_utf8(r).unwrap())
+            }
         }
     }
 }
@@ -208,27 +208,16 @@ impl<'a> std::fmt::Debug for UnconstraintArg<'a> {
 impl<'a> UnconstraintArg<'a> {
     pub(super) fn get(i: &[u8]) -> IResult<&[u8], UnconstraintArg> {
         alt((
-            map(string, UnconstraintArg::is_string),
-            map(terminal, UnconstraintArg::is_terminal),
+            map(terminal, UnconstraintArg::Terminal),
+            map(string, UnconstraintArg::String),
+            map(is_keyword, UnconstraintArg::Keyword),
         ))(i)
-    }
-
-    fn is_string(i: &'a [u8]) -> UnconstraintArg {
-        UnconstraintArg::String(i)
-    }
-
-    fn is_terminal(i: &'a [u8]) -> UnconstraintArg {
-        match i {
-            b"time" => UnconstraintArg::ThisTime,
-            _ => UnconstraintArg::Terminal(i),
-        }
     }
 
     fn is_reserved(&self) -> bool {
         match self {
-            UnconstraintArg::Terminal(r) => reserved(r),
-            UnconstraintArg::ThisTime => true,
-            UnconstraintArg::String(_) => false,
+            UnconstraintArg::Keyword(_) => true,
+            UnconstraintArg::String(_) | UnconstraintArg::Terminal(_) => false,
         }
     }
 }
