@@ -86,15 +86,6 @@ pub(super) fn record_decl(input: &[u8]) -> IResult<&[u8], ASTNode> {
             Args::OpArg(a) => op_args.push(a),
         }
     }
-    /*
-        // arg	= term [',' uval] ;
-    #[derive(Debug, PartialEq)]
-    pub(in crate::agent) struct ArgBorrowed<'a> {
-        pub term: TerminalBorrowed<'a>,
-        pub uval: Option<UVal>,
-    }
-
-    */
 
     let mut declared = Vec::with_capacity(normal_args.len());
     for mut decl in normal_args {

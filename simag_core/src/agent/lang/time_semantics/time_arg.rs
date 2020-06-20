@@ -144,6 +144,13 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for TimeArg {
         };
 
         match (t0, var0, op, t1) {
+            // where this.time is <TimeFn>
+            (Some(val), None, Operator::Since, Some(empty)) if val.contains_payload() => {
+                match empty {
+                    ConstraintValue::String(empty) if empty == "" => Ok(val),
+                    _ => Err(TimeFnErr::NotAssignment.into()),
+                }
+            }
             // where this.time is|since <val|var>:
             (None, None, Operator::Since, Some(val)) => {
                 if val.is_var() {

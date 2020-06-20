@@ -418,11 +418,12 @@ fn tell_record() {
         $John = {
             fast=0,
             slow=0.5,
+            dog,
             since '2015-01-02T00:00:00Z',
         }
     )";
     rep.tell(source).unwrap();
-    // rep.ask("($John(where this.time is '2015-01-02T00:00:00Z')[fast=0] and $John[slow=0.5])");
-    let res = rep.ask("($John[fast=0] and $John[slow=0.5])");
+    let res =
+        rep.ask("(fast(where this.time is '2015-01-02T00:00:00Z')[$John=0] and slow[$John=0.5] and dog[$John])");
     assert_eq!(res.unwrap().get_results_single(), Some(true));
 }

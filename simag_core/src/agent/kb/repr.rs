@@ -103,11 +103,11 @@ impl Representation {
                                         let t = time_data.clone();
                                         t.replace_value(a.get_value(), ReplaceMode::Tell);
                                         if let Some(bms) = a.bms.as_ref() {
-                                            bms.overwrite_data(&t)
+                                            bms.overwrite_data(&t);
+                                            if a.is_time_interval() {
+                                                a.update_value(None);
+                                            }
                                         };
-                                        if a.is_time_interval() {
-                                            a.update_value(None);
-                                        }
                                         let x: Option<&IExprResult> = None;
                                         self.up_membership(&Arc::new(a), x)
                                     }

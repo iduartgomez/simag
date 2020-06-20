@@ -208,8 +208,11 @@ impl GroundedMemb {
     /// last one is none.
     // FIXME: this is error prone, encode if is a time interval at the type level when the bms is first created?
     pub fn is_time_interval(&self) -> bool {
-        let bms = self.bms.as_ref().unwrap();
-        bms.record_len() == 2 && bms.get_last_value().is_none()
+        if let Some(bms) = &self.bms {
+            bms.record_len() == 2 && bms.get_last_value().is_none()
+        } else {
+            false
+        }
     }
 
     #[allow(clippy::collapsible_if)]
