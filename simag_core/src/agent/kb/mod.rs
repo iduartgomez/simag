@@ -4,6 +4,7 @@
 //! between them.
 pub(in crate::agent) mod bms;
 pub(self) mod class;
+pub(self) mod entity;
 mod inference;
 #[cfg(feature = "binaries")]
 pub mod repl;
