@@ -30,8 +30,8 @@ pub(in crate::agent) trait TimeOps: OpArgsOps {
                         v = Some((&**val).clone());
                     }
                 }
-                OpArg::Time(SinceVarUntilVar(var0, var1)) => unimplemented!(),
-                OpArg::Time(SinceVarUntilTime(var0, val1)) => unimplemented!(),
+                OpArg::Time(SinceVarUntilVar(_var0, _var1)) => unimplemented!(),
+                OpArg::Time(SinceVarUntilTime(_var0, _val1)) => unimplemented!(),
                 OpArg::OverWrite => {
                     ow = true;
                 }
@@ -58,7 +58,7 @@ pub(in crate::agent) trait TimeOps: OpArgsOps {
     fn get_time_decl(&self, var0: &Var) -> bool {
         if let Some(args) = self.get_op_args() {
             for arg in args {
-                if let OpArg::Time(VarAssign(ref var1)) = *arg {
+                if let OpArg::Time(AssignThisToVar(ref var1)) = *arg {
                     return var1.as_ref() == var0;
                 }
             }

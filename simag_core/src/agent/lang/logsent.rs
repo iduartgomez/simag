@@ -90,7 +90,7 @@ impl<'a> LogSentence {
     /// Classify the kind of sentence and checks that is well formed.
     fn set_sent_kind(&mut self, context: &mut ParseContext) -> Result<(), LogSentErr> {
         if context.iexpr() {
-            // self.iexpr_op_arg_validation()?;
+            self.iexpr_op_arg_validation()?;
             if !self.vars.is_empty() || !self.skolem.is_empty() {
                 for var in &self.vars {
                     match var.kind {
@@ -249,11 +249,22 @@ impl<'a> LogSentence {
 
     fn iexpr_op_arg_validation(&self) -> Result<(), LogSentErr> {
         #[inline(always)]
-        fn validate(arg: &OpArg) -> Result<(), LogSentErr> {
+        fn validate_lhs(arg: &OpArg) -> Result<(), LogSentErr> {
             match arg {
                 OpArg::Time(DeclTime(_))
                 | OpArg::Time(SinceVar(_))
-                | OpArg::Time(SinceVarUntilVar(_, _)) => {
+                | OpArg::Time(SinceVarUntilVar(_, _))
+                | OpArg::Time(SinceVarUntilTime(_, _)) => {
+                    Err(LogSentErr::InvalidOpArg(format!("{:?}", arg)))
+                }
+                _ => Ok(()),
+            }
+        }
+
+        #[inline(always)]
+        fn validate_rhs(arg: &OpArg) -> Result<(), LogSentErr> {
+            match arg {
+                OpArg::Time(AssignThisToVar(_)) => {
                     Err(LogSentErr::InvalidOpArg(format!("{:?}", arg)))
                 }
                 _ => Ok(()),
@@ -266,14 +277,14 @@ impl<'a> LogSentence {
                 Assert::FuncDecl(ref func) => {
                     if let Some(ref opargs) = func.op_args {
                         for arg in opargs {
-                            validate(arg)?
+                            validate_lhs(arg)?
                         }
                     }
                 }
                 Assert::ClassDecl(ref cls) => {
                     if let Some(ref opargs) = cls.op_args {
                         for arg in opargs {
-                            validate(arg)?
+                            validate_lhs(arg)?
                         }
                     }
                 }
@@ -287,14 +298,14 @@ impl<'a> LogSentence {
                 Assert::FuncDecl(ref func) => {
                     if let Some(ref opargs) = func.op_args {
                         for arg in opargs {
-                            validate(arg)?
+                            validate_rhs(arg)?
                         }
                     }
                 }
                 Assert::ClassDecl(ref cls) => {
                     if let Some(ref opargs) = cls.op_args {
                         for arg in opargs {
-                            validate(arg)?
+                            validate_rhs(arg)?
                         }
                     }
                 }

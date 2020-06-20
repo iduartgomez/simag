@@ -10,7 +10,7 @@ use parser::OpArgBorrowed;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(in crate::agent) enum TimeArg {
-    VarAssign(Arc<Var>),
+    AssignThisToVar(Arc<Var>),
     /// is a time declaration
     DeclTime(TimeFn),
     SinceVar(Arc<Var>),
@@ -90,7 +90,7 @@ impl TimeArg {
 
     pub fn generate_uid(&self) -> Vec<u8> {
         match self {
-            VarAssign(var) => format!("{:?}", var.as_ref() as *const Var).into_bytes(),
+            AssignThisToVar(var) => format!("{:?}", var.as_ref() as *const Var).into_bytes(),
             DeclTime(decl) => decl.generate_uid(),
             SinceVar(var) => format!("{:?}", var.as_ref() as *const Var).into_bytes(),
             SinceVarUntilVar(v0, v1) => {
@@ -144,20 +144,21 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for TimeArg {
         };
 
         match (t0, var0, op, t1) {
-            // where this.time is <val|var>:
+            // where this.time is|since <val|var>:
             (None, None, Operator::Since, Some(val)) => {
                 if val.is_var() {
-                    Ok(TimeArg::SinceVar(val.get_var()))
+                    Ok(SinceVar(val.get_var()))
                 } else {
                     match val {
                         ConstraintValue::String(val) => {
                             let val = get_time(val)?;
-                            Ok(TimeArg::DeclTime(TimeFn::Since(val)))
+                            Ok(DeclTime(TimeFn::Since(val)))
                         }
                         _ => Err(TimeFnErr::IsNotVar.into()),
                     }
                 }
             }
+            // where this.time until <val|var>:
             (None, None, Operator::Until, Some(_val)) => unimplemented!(),
             // since var0 until <val|var>:
             (None, Some(var0), Operator::SinceUntil, Some(val)) => {
@@ -176,8 +177,9 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for TimeArg {
             (None, Some(var0), Operator::Since, Some(val)) => {
                 if let ConstraintValue::TimePayload(TimeFn::ThisTime) = val {
                     // where var0 is this.time, declaration of time type variable: `let <var>: time`
-                    Ok(VarAssign(var0))
+                    Ok(AssignThisToVar(var0))
                 } else {
+                    // where var0 is <val|var>
                     unimplemented!()
                 }
             }
