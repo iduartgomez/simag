@@ -41,10 +41,7 @@ impl<'a> TryFrom<(&SkolemBorrowed<'a>, &ParseContext)> for Skolem {
                 }
                 _ => return Err(TimeFnErr::InsufArgs.into()),
             },
-            (def, None) if def.0 == b"time" => (
-                TypeDef::Time,
-                Some(ConstraintValue::TimePayload(TimeFn::IsVar)),
-            ),
+            (def, None) if def.0 == b"time" => (TypeDef::Time, None),
             (_def, None) => (TypeDef::Erased, None),
             _ => return Err(ParseErrF::TypeUnsupported),
         };

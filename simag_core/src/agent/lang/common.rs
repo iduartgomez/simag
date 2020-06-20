@@ -11,7 +11,7 @@ use super::{
     fn_decl::FuncDecl,
     logsent::{LogSentResolution, ParseContext, ProofResContext},
     parser::{ArgBorrowed, Number, OpArgBorrowed, Operator, UVal, UnconstraintArg},
-    time_semantics::{TimeArg, TimeFn, TimeFnErr, TimeOps},
+    time_semantics::{TimeArg, TimeFn, TimeOps},
     var::Var,
     BuiltIns, GroundedFunc, GroundedMemb, Terminal,
 };
@@ -266,9 +266,6 @@ impl FreeClsMemb {
                         (val_grounded > val_free)
                             | val_free.approx_eq_ulps(&val_grounded, FLOAT_EQ_ULPS)
                     }
-                }
-                Operator::Less | Operator::More | Operator::MoreEqual | Operator::LessEqual => {
-                    unreachable!()
                 }
                 _ => unreachable!(),
             }
@@ -530,12 +527,15 @@ pub(in crate::agent) enum OpArg {
     OverWrite,
 }
 
-impl<'a> OpArg {
-    pub fn from(other: &OpArgBorrowed<'a>, context: &ParseContext) -> Result<OpArg, ParseErrF> {
+impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for OpArg {
+    type Error = ParseErrF;
+    fn try_from(input: (&OpArgBorrowed<'a>, &ParseContext)) -> Result<OpArg, ParseErrF> {
+        if let Ok(arg) = TimeArg::try_from(input) {
+            return Ok(OpArg::Time(arg));
+        }
+
+        let (other, context) = input;
         let t0 = match ConstraintValue::try_from((&other.term, context)) {
-            Ok(ConstraintValue::TimePayload(TimeFn::ThisTime)) => {
-                return Ok(OpArg::Time(TimeArg::try_from((other, context))?))
-            }
             Ok(arg) => arg,
             Err(ParseErrF::ReservedKW(kw)) => match &*kw {
                 "overwrite" | "ow" => return Ok(OpArg::OverWrite),
@@ -545,10 +545,6 @@ impl<'a> OpArg {
         };
         let comp = match other.comp {
             Some((op, ref tors)) => match ConstraintValue::try_from((tors, context)) {
-                Ok(ConstraintValue::TimePayload(TimeFn::ThisTime)) => {
-                    // case: `where this.time is <variable>
-                    return Ok(OpArg::Time(TimeArg::from(t0.get_var())));
-                }
                 Ok(t) => Some((op, t)),
                 Err(ParseErrF::ReservedKW(kw)) => return Err(ParseErrF::ReservedKW(kw)),
                 Err(err) => return Err(err),
@@ -556,28 +552,11 @@ impl<'a> OpArg {
             None => None,
         };
 
-        match comp {
-            Some((Operator::Since, _)) | Some((Operator::Until, _)) => {
-                Ok(OpArg::Time(TimeArg::try_from((other, context))?))
-            }
-            Some((Operator::SinceUntil, _)) => {
-                let load0 = if t0.is_var() {
-                    t0.get_var()
-                } else {
-                    return Err(ParseErrF::TimeFnErr(TimeFnErr::IsNotVar));
-                };
-                let load1 = TimeArg::time_payload_value(other.comp.as_ref(), context)?;
-                let load1 = if load1.is_var() {
-                    load1.get_var()
-                } else {
-                    return Err(ParseErrF::TimeFnErr(TimeFnErr::IsNotVar));
-                };
-                Ok(OpArg::Time(TimeArg::from((load0, load1))))
-            }
-            _ => Ok(OpArg::Generic(t0, comp)),
-        }
+        Ok(OpArg::Generic(t0, comp))
     }
+}
 
+impl<'a> OpArg {
     #[inline]
     pub(in crate::agent::lang) fn contains_var(&self, var: &Var) -> bool {
         match self {
@@ -618,7 +597,6 @@ pub(in crate::agent) enum ConstraintValue {
     Terminal(Terminal),
     String(String),
     TimePayload(TimeFn),
-    // ThisTime,
 }
 
 impl<'a> TryFrom<(&'a UnconstraintArg<'a>, &'a ParseContext)> for ConstraintValue {

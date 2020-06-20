@@ -350,7 +350,7 @@ impl std::fmt::Display for GroundedMemb {
         };
         write!(
             f,
-            "GrMemb {{ {}[{},u{}{:?}{}] }}",
+            "GrMemb {{ {}[{}{}{:?}{}] }}",
             self.parent, self.term, comp_op, value, time
         )
     }

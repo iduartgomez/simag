@@ -41,20 +41,4 @@ pub(super) mod tracing {
 
         Logger
     });
-
-    pub fn tracing_info<T: std::fmt::Display, I: std::fmt::Display>(
-        item_to_log: T,
-        log_level: log::Level,
-        extra_info: Option<I>,
-    ) {
-        use log::{log, log_enabled};
-
-        if log_enabled!(log_level) {
-            if let Some(info) = extra_info {
-                log!(log_level, "{}: {}", info, item_to_log);
-            } else {
-                log!(log_level, "{}", item_to_log);
-            }
-        }
-    }
 }

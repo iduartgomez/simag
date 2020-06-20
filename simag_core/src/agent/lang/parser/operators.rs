@@ -85,14 +85,6 @@ impl Operator {
         }
     }
 
-    #[inline]
-    pub fn is_time_assignment(self) -> bool {
-        match self {
-            Operator::Until | Operator::Since | Operator::SinceUntil | Operator::Assignment => true,
-            _ => false,
-        }
-    }
-
     pub fn generate_uid(self, id: &mut Vec<u8>) {
         match self {
             Operator::Equal => id.push(1),

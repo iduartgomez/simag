@@ -787,6 +787,14 @@ impl Entity {
         }
         if let Some(current) = self.classes.get(name) {
             if let Some(context) = context {
+                #[cfg(debug_assertions)]
+                {
+                    log::trace!(
+                        "Updated existing class membership for {} context: {}",
+                        self.name,
+                        grounded
+                    );
+                }
                 current.update(
                     agent,
                     &*grounded,
@@ -797,6 +805,14 @@ impl Entity {
                     context,
                 );
             } else {
+                #[cfg(debug_assertions)]
+                {
+                    log::trace!(
+                        "Updated existing class membership for {} w/o context: {}",
+                        self.name,
+                        grounded
+                    );
+                }
                 current.update(agent, &*grounded, None);
             }
             false
@@ -807,6 +823,14 @@ impl Entity {
                 BmsWrapper::update_producers(
                     &Grounded::Class(Arc::downgrade(&grounded.clone())),
                     context,
+                );
+            }
+            #[cfg(debug_assertions)]
+            {
+                log::trace!(
+                    "Inserting new class membership for {}: {}",
+                    self.name,
+                    grounded
                 );
             }
             self.classes.insert(name.to_string(), grounded.clone());
@@ -937,13 +961,21 @@ impl Entity {
                             );
                             #[cfg(debug_assertions)]
                             {
-                                log::trace!("Updated existing relation from context: {}", func);
+                                log::trace!(
+                                    "Updated existing relation from context for {}: {}",
+                                    self.name,
+                                    func
+                                );
                             }
                         } else {
                             f.update(agent, &*func, None);
                             #[cfg(debug_assertions)]
                             {
-                                log::trace!("Updated existing relation w/o context: {}", func);
+                                log::trace!(
+                                    "Updated existing relation w/o contex for {}: {}",
+                                    self.name,
+                                    func
+                                );
                             }
                         }
                         found_rel = true;
@@ -979,7 +1011,7 @@ impl Entity {
             }
             #[cfg(debug_assertions)]
             {
-                log::trace!("Inserting new relation: {}", func);
+                log::trace!("Inserting new relation for {}: {}", self.name, func);
             }
             self.relations.insert(name.to_string(), vec![func.clone()]);
             true

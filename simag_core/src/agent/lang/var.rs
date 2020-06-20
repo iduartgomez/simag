@@ -75,10 +75,7 @@ impl<'a> std::convert::TryFrom<(&'a VarBorrowed<'a>, &'a ParseContext)> for Var 
             },
             (def, None) if def.0 == b"time" => {
                 kind = VarKind::Time;
-                (
-                    TypeDef::Time,
-                    Some(ConstraintValue::TimePayload(TimeFn::IsVar)),
-                )
+                (TypeDef::Time, None)
             }
             (_, None) => (TypeDef::Erased, None),
             _ => return Err(ParseErrF::TypeUnsupported),

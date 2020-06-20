@@ -73,13 +73,9 @@ impl BmsWrapper {
     /// Look for all the changes that were produced, before an update,
     /// due to this belief previous value and test if they still apply.
     /// If the facts no longer hold true rollback them.
-    ///
-    /// Caveat: this implementation is actually not solid and is potentially racey
-    /// because the inner checks for rollbacks could potentially provoque inconsistencies
-    /// when subsequent checks are recursively performed. This is hard to provoque because
-    /// a Representation is performing one query at the same time and is guaranteed
-    /// to be uniquely hold as both `tell` and `ask` require a unique reference, but
-    /// with the right combination of queries it could happen.
+    // FIXME: improve this so is not potentially racey:
+    // inner checks for rollbacks could potentially provoque inconsistencies
+    // when subsequent checks are recursively performed.
     pub fn update(
         &self,
         owner: &GroundedRef,
@@ -515,6 +511,14 @@ impl std::clone::Clone for BmsWrapper {
             pred: self.pred,
             overwrite: AtomicBool::new(self.overwrite.load(Ordering::Acquire)),
         }
+    }
+}
+
+impl std::fmt::Display for BmsWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let record = self.get_last_date();
+        let val = self.get_last_value();
+        write!(f, "Bms(.., {} = {:?})", record, val)
     }
 }
 

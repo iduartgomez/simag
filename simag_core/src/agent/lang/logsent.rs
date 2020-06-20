@@ -90,7 +90,7 @@ impl<'a> LogSentence {
     /// Classify the kind of sentence and checks that is well formed.
     fn set_sent_kind(&mut self, context: &mut ParseContext) -> Result<(), LogSentErr> {
         if context.iexpr() {
-            self.iexpr_op_arg_validation()?;
+            // self.iexpr_op_arg_validation()?;
             if !self.vars.is_empty() || !self.skolem.is_empty() {
                 for var in &self.vars {
                     match var.kind {
@@ -248,34 +248,32 @@ impl<'a> LogSentence {
     }
 
     fn iexpr_op_arg_validation(&self) -> Result<(), LogSentErr> {
+        #[inline(always)]
+        fn validate(arg: &OpArg) -> Result<(), LogSentErr> {
+            match arg {
+                OpArg::Time(DeclTime(_))
+                | OpArg::Time(SinceVar(_))
+                | OpArg::Time(SinceVarUntilVar(_, _)) => {
+                    Err(LogSentErr::InvalidOpArg(format!("{:?}", arg)))
+                }
+                _ => Ok(()),
+            }
+        }
+
         // check validity of optional arguments for predicates in the LHS:
         for decl in &self.predicates.0 {
             match self.particles[*decl].pred_ref() {
                 Assert::FuncDecl(ref func) => {
                     if let Some(ref opargs) = func.op_args {
                         for arg in opargs {
-                            match *arg {
-                                OpArg::Time(TimeDecl(_))
-                                | OpArg::Time(TimeVar)
-                                | OpArg::Time(TimeVarAssign(_)) => {
-                                    return Err(LogSentErr::InvalidOpArg);
-                                }
-                                _ => {}
-                            }
+                            validate(arg)?
                         }
                     }
                 }
                 Assert::ClassDecl(ref cls) => {
                     if let Some(ref opargs) = cls.op_args {
                         for arg in opargs {
-                            match *arg {
-                                OpArg::Time(TimeDecl(_))
-                                | OpArg::Time(TimeVar)
-                                | OpArg::Time(TimeVarAssign(_)) => {
-                                    return Err(LogSentErr::InvalidOpArg);
-                                }
-                                _ => {}
-                            }
+                            validate(arg)?
                         }
                     }
                 }
@@ -289,28 +287,14 @@ impl<'a> LogSentence {
                 Assert::FuncDecl(ref func) => {
                     if let Some(ref opargs) = func.op_args {
                         for arg in opargs {
-                            match *arg {
-                                OpArg::Time(TimeDecl(_))
-                                | OpArg::Time(TimeVar)
-                                | OpArg::Time(TimeVarSince(_)) => {
-                                    return Err(LogSentErr::InvalidOpArg);
-                                }
-                                _ => {}
-                            }
+                            validate(arg)?
                         }
                     }
                 }
                 Assert::ClassDecl(ref cls) => {
                     if let Some(ref opargs) = cls.op_args {
                         for arg in opargs {
-                            match *arg {
-                                OpArg::Time(TimeDecl(_))
-                                | OpArg::Time(TimeVar)
-                                | OpArg::Time(TimeVarSince(_)) => {
-                                    return Err(LogSentErr::InvalidOpArg);
-                                }
-                                _ => {}
-                            }
+                            validate(arg)?
                         }
                     }
                 }
@@ -334,6 +318,16 @@ impl<'a> LogSentence {
                 HashMap::with_capacity(0)
             }
         };
+        #[cfg(debug_assertions)]
+        {
+            log::trace!(
+                "Time variables assignments: {}",
+                time_assign
+                    .iter()
+                    .map(|(var, assigned)| { format!("{} => {}; ", *var, *assigned) })
+                    .collect::<String>()
+            );
+        }
 
         if self.has_time_vars != time_assign.len() {
             context.set_result(None);
@@ -1762,7 +1756,7 @@ mod errors {
         IConnectInChain,
         IConnectAfterAnd,
         IConnectAfterOr,
-        InvalidOpArg,
+        InvalidOpArg(String),
         WrongDef,
         WrongPredicate,
         Unreachable,

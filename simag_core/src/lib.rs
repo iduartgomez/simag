@@ -12,7 +12,9 @@ extern crate rayon;
 
 mod agent;
 
-pub use self::agent::{Agent, Answer, QueryErr, SimagInterpreter};
+#[cfg(features = "binaries")]
+pub use self::agent::SimagInterpreter;
+pub use self::agent::{Agent, Answer, QueryErr};
 
 const TIME_EQ_DIFF: i64 = 1;
 const FLOAT_EQ_ULPS: i32 = 2;

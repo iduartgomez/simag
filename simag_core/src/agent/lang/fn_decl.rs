@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::sync::{atomic::AtomicBool, Arc};
 
 use super::{
@@ -10,7 +11,7 @@ use super::{
     *,
 };
 use crate::agent::{
-    kb::bms::BmsWrapper,
+    kb::bms::{BmsWrapper, ReplaceMode},
     kb::{repr::Representation, VarAssignment},
 };
 
@@ -73,14 +74,14 @@ impl<'a> FuncDecl {
         if let Some(mut oargs) = op_args {
             for arg in oargs.drain(..) {
                 match arg {
-                    OpArg::Time(TimeDecl(TimeFn::Since(time))) => {
+                    OpArg::Time(DeclTime(TimeFn::Since(time))) => {
                         time_data.new_record(Some(time), val, None);
                     }
-                    OpArg::Time(TimeDecl(TimeFn::Interval(t0, t1))) => {
+                    OpArg::Time(DeclTime(TimeFn::Interval(t0, t1))) => {
                         time_data.new_record(Some(t0), val, None);
                         time_data.new_record(Some(t1), None, None);
                     }
-                    OpArg::Time(TimeDecl(TimeFn::Now)) => {
+                    OpArg::Time(DeclTime(TimeFn::Now)) => {
                         time_data.new_record(Some(Utc::now()), val, None);
                     }
                     OpArg::OverWrite => {
@@ -173,7 +174,7 @@ impl<'a> FuncDecl {
             Some(ref oargs) => {
                 let mut v0 = Vec::with_capacity(oargs.len());
                 for e in oargs {
-                    let a = OpArg::from(e, context)?;
+                    let a = OpArg::try_from((e, &*context))?;
                     v0.push(a);
                 }
                 Some(v0)
@@ -220,7 +221,7 @@ impl<'a> FuncDecl {
             Some(ref oargs) => {
                 let mut v0 = Vec::with_capacity(oargs.len());
                 for e in oargs {
-                    let a = match OpArg::from(e, context) {
+                    let a = match OpArg::try_from((e, &*context)) {
                         Err(err) => return Err(err),
                         Ok(a) => a,
                     };
@@ -380,12 +381,14 @@ impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
         time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
         context: &mut T,
     ) {
-        use crate::agent::kb::bms::ReplaceMode;
-
         if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, time_assign) {
             let time_data = self.get_own_time_data(time_assign, None);
+            log::debug!("before replace: {}", time_data);
+            log::debug!("before replace: {:?}", self);
             time_data.replace_value(grfunc.get_value(), ReplaceMode::Substitute);
+            log::debug!("after replace: {}", time_data);
             grfunc.bms.overwrite_data(&time_data);
+            log::debug!("after ow: {}", grfunc.bms);
             #[cfg(debug_assertions)]
             {
                 log::trace!("Correct substitution found, updating: {:?}", grfunc);

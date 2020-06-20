@@ -11,10 +11,13 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::iter::FromIterator;
 use std::mem;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 
-#[cfg(debug_assertions)]
-use crate::agent::conf::tracing::tracing_info;
+// #[cfg(debug_assertions)]
+// use crate::agent::conf::tracing::tracing_info;
 use crate::agent::kb::{
     inference::results::{GroundedResults, InfResults},
     repr::{Answer, Representation},
@@ -27,7 +30,6 @@ use crate::agent::lang::{
 };
 use chrono::Utc;
 use dashmap::DashMap;
-use parking_lot::RwLock;
 use rayon;
 use rayon::prelude::*;
 
@@ -76,12 +78,29 @@ impl<'rep> Inference<'rep> {
     /// knowledge is produced then it's passed to an other procedure for
     /// addition to the KB.
     pub fn infer_facts(&self) {
-        self.tpool.install(|| self.query_cls_gr());
-        self.tpool.install(|| self.query_func_gr());
-        self.tpool.install(|| self.query_cls_free());
-        self.tpool.install(|| self.query_func_free());
-        self.tpool.install(|| self.query_cls_memb());
-        self.tpool.install(|| self.query_func_memb());
+        if !self.query.cls_queries_grounded.is_empty() {
+            self.tpool.install(|| self.query_cls_gr());
+        }
+
+        if !self.query.func_queries_grounded.is_empty() {
+            self.tpool.install(|| self.query_func_gr());
+        }
+
+        if !self.query.cls_queries_free.is_empty() {
+            self.tpool.install(|| self.query_cls_free());
+        }
+
+        if !self.query.func_queries_free.is_empty() {
+            self.tpool.install(|| self.query_func_free());
+        }
+
+        if !self.query.cls_memb_query.is_empty() {
+            self.tpool.install(|| self.query_cls_memb());
+        }
+
+        if !self.query.func_memb_query.is_empty() {
+            self.tpool.install(|| self.query_func_memb());
+        }
     }
 
     /// Find if a grounded class membership is true, false or unknown.
@@ -135,7 +154,7 @@ impl<'rep> Inference<'rep> {
 
                         #[cfg(debug_assertions)]
                         {
-                            tracing_info(&**pred, log::Level::Trace, Some("Start querying for"));
+                            log::trace!("Start querying for: {}", &**pred);
                         }
 
                         self.queue_query(query, actv_query);
@@ -469,7 +488,7 @@ struct InfTrial<'rep, 'inf> {
     queue: &'inf DashMap<ProofNodeId, HashSet<PArgVal>>,
     results: &'inf InfResults<'rep>,
     depth: usize,
-    depth_cnt: RwLock<usize>,
+    depth_cnt: AtomicUsize,
 }
 
 impl<'rep, 'inf> InfTrial<'rep, 'inf> {
@@ -484,7 +503,7 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
             queue: &inf.queue,
             results: &inf.results,
             depth: inf.depth,
-            depth_cnt: RwLock::new(0_usize),
+            depth_cnt: AtomicUsize::new(0_usize),
         }
     }
 
@@ -508,7 +527,7 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
                 for node in nodes.value().iter() {
                     #[cfg(debug_assertions)]
                     {
-                        tracing_info(&*node.proof, log::Level::Trace, Some("Querying sentence"));
+                        log::trace!("Querying sentence: {}", &*node.proof);
                     }
 
                     // Safety: lifetimes of node fit perfectly fine here because both:
@@ -547,14 +566,13 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
                 return;
             }
 
-            if !chk.is_empty() && (*self.depth_cnt.read() < self.depth) {
+            if !chk.is_empty() && (self.depth_cnt.load(Ordering::Acquire) < self.depth) {
                 done.insert(parent);
                 self.get_rules(chk.iter());
                 let p1 = chk.pop_front().unwrap();
                 parent = p1;
             } else {
-                let mut c = self.depth_cnt.write();
-                *c += 1;
+                self.depth_cnt.fetch_add(1, Ordering::SeqCst);
                 return;
             }
         }
@@ -576,10 +594,10 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
                 #[cfg(debug_assertions)]
                 {
                     let permutation: Vec<_> = args.iter().map(|(v, a)| (v, &*a)).collect();
-                    tracing_info(
-                        format!("{:?}", &*permutation),
-                        log::Level::Trace,
-                        Some(format!("Params (hash: {})", ProofArgs::arg_hash_val(&args))),
+                    log::trace!(
+                        "Params (hash: {}): {:?}",
+                        ProofArgs::arg_hash_val(&args),
+                        &*permutation
                     );
                 }
                 let args: ProofArgs = ProofArgs::new(args);

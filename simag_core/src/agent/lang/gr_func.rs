@@ -241,13 +241,13 @@ impl std::fmt::Display for GroundedFunc {
             "".to_owned()
         };
         let third = if let Some(third) = &self.third {
-            format!(";{}", third.get_name())
+            format!(",{}", third.get_name())
         } else {
             String::from("")
         };
         write!(
             f,
-            "GrFunc {{ {}[{},u{}{:?};{}{}] @ `{}` }}",
+            "GrFunc {{ {}[{}{}{:?},{}{}] @ `{}` }}",
             self.name,
             self.args[0].get_name(),
             comp_op,

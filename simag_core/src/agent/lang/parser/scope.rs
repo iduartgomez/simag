@@ -90,7 +90,6 @@ pub(super) fn sentence(input: &[u8]) -> IResult<&[u8], ASTNode> {
         return Err(nom::Err::Failure(ParseErrB::SyntaxError));
     }
 
-    // eprintln!("input: {}", str::from_utf8(input).unwrap());
     let (i, _) = multispace0(next_input)?;
     let (i, _) = tag(")")(i)?;
     let (rest, _) = multispace0(i)?;

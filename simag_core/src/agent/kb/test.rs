@@ -190,14 +190,14 @@ fn repr_inference_time_calc_1() {
     // Test 02
     // facts imply func, w/ t1 time arg set statically & t2 set statically by antecedent
     let test_02 = "
-        ( let x, y, t1:time='2014-07-05T10:25:00Z', t2:time in
+        ( let x, y, t1:time='2017-07-05T10:25:00Z', t2:time in
             ( ( dog[x=1] and meat[y=1] and fat(where t2 is this.time)[x=1] and fn::time_calc(t1<t2) )
             := fn::eat(where this.time is t1)[y=1,x]
             )
         )
         ( dog[$Pancho=1] )
         ( meat[$M1=1] )
-        ( fat(where this.time is '2015-07-05T10:25:00Z')[$Pancho=1] )
+        ( fat(where this.time is '2018-07-05T10:25:00Z')[$Pancho=1] )
     ";
     let rep = Representation::default();
     rep.tell(test_02).unwrap();
@@ -410,19 +410,19 @@ fn repr_eval_fol() {
     assert_eq!(rep.ask(query).unwrap().get_results_single(), Some(true));
 }
 
-// #[test]
-// fn tell_record() {
-//     let rep = Representation::default();
-//     // include dog
-//     let source = "(
-//         $John = {
-//             fast=0,
-//             slow=0.5,
-//             since '2015-01-02T00:00:00Z',
-//         }
-//     )";
-//     rep.tell(source).unwrap();
-//     // rep.ask("($John(where this.time is '2015-01-02T00:00:00Z')[fast=0] and $John[slow=0.5])");
-//     let res = rep.ask("($John[fast=0] and $John[slow=0.5])");
-//     assert_eq!(res.unwrap().get_results_single(), Some(true));
-// }
+#[test]
+fn tell_record() {
+    let rep = Representation::default();
+    // include dog
+    let source = "(
+        $John = {
+            fast=0,
+            slow=0.5,
+            since '2015-01-02T00:00:00Z',
+        }
+    )";
+    rep.tell(source).unwrap();
+    // rep.ask("($John(where this.time is '2015-01-02T00:00:00Z')[fast=0] and $John[slow=0.5])");
+    let res = rep.ask("($John[fast=0] and $John[slow=0.5])");
+    assert_eq!(res.unwrap().get_results_single(), Some(true));
+}

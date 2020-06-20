@@ -2,11 +2,10 @@ pub(self) mod conf;
 mod kb;
 mod lang;
 
+#[cfg(features = "binaries")]
+pub use self::kb::repl::SimagInterpreter;
 pub(crate) use self::kb::repr::Representation;
-pub use self::kb::{
-    repl::SimagInterpreter,
-    repr::{Answer, QueryErr},
-};
+pub use self::kb::repr::{Answer, QueryErr};
 pub(self) use self::lang::ParseErrF;
 
 /// Represent an alive object which can interact with environment.

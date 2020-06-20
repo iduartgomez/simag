@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::sync::Arc;
 
 use super::{
@@ -27,7 +28,7 @@ impl<'a> ClassDecl {
             Some(ref oargs) => {
                 let mut v0 = Vec::with_capacity(oargs.len());
                 for e in oargs {
-                    let a = OpArg::from(e, context)?;
+                    let a = OpArg::try_from((e, &*context))?;
                     v0.push(a);
                 }
                 Some(v0)
@@ -173,7 +174,7 @@ impl TimeOps for ClassDecl {
     fn get_time_payload(&self, value: Option<f32>) -> Option<BmsWrapper> {
         self.op_args.as_ref()?;
         for arg in self.op_args.as_ref().unwrap() {
-            if let OpArg::Time(TimeArg::TimeDecl(ref decl)) = *arg {
+            if let OpArg::Time(TimeArg::DeclTime(ref decl)) = *arg {
                 return Some(decl.get_time_payload(value));
             }
         }

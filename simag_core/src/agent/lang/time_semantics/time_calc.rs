@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::sync::Arc;
 
 use super::TimeFnErr;
@@ -34,7 +35,7 @@ impl TimeCalc {
                 // a time_calc func can only be formed from a comparison arguments formed by two vars
                 // e.g.: (v0 = v1)
                 let oa = &oargs[0];
-                let arg = OpArg::from(oa, context)?;
+                let arg = OpArg::try_from((oa, &*context))?;
                 let (var0, op, var1) = match arg {
                     OpArg::Generic(v0, Some((op, v1))) => {
                         if (!v0.is_var() | !v1.is_var())

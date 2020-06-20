@@ -5,6 +5,7 @@
 pub(in crate::agent) mod bms;
 pub(self) mod class;
 mod inference;
+#[cfg(feature = "binaries")]
 pub mod repl;
 pub(super) mod repr;
 
