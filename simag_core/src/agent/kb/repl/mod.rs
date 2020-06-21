@@ -1,6 +1,6 @@
 mod interpreter;
 
-pub use interpreter::SimagInterpreter;
+pub use self::interpreter::SimagInterpreter;
 
 const HELP_COMMAND: &str = "\
 Welcome to the interactive Simag 0.0.1 interpreter!

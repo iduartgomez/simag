@@ -1,4 +1,3 @@
-use nom;
 use nom::{
     branch::alt, bytes::complete::tag, character::complete::multispace0, combinator::opt,
     sequence::tuple,

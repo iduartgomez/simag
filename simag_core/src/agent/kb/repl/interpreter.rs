@@ -1,10 +1,8 @@
-use simag_terminal::Action;
 use std::mem;
 
-use crate::agent::{Answer, QueryErr, Representation};
-
 use super::*;
-use simag_terminal::Interpreter;
+use crate::agent::{Answer, QueryErr, Representation};
+use simag_terminal::{Action, ReplInterpreter};
 
 #[derive(Default)]
 pub struct SimagInterpreter<'a> {
@@ -41,7 +39,7 @@ impl<'a> SimagInterpreter<'a> {
     }
 }
 
-impl<'a> Interpreter for SimagInterpreter<'a> {
+impl<'a> ReplInterpreter for SimagInterpreter<'a> {
     fn digest<'b, 'c: 'b>(&'b mut self, input: char) -> Action<'c> {
         match input {
             '\n' => {

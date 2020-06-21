@@ -30,7 +30,6 @@ use crate::agent::lang::{
 };
 use chrono::Utc;
 use dashmap::DashMap;
-use rayon;
 use rayon::prelude::*;
 
 pub(in crate::agent::kb) struct Inference<'rep> {

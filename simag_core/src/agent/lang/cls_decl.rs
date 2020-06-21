@@ -130,7 +130,7 @@ impl<'a> ClassDecl {
 
 impl OpArgsOps for ClassDecl {
     fn get_op_args(&self) -> Option<&[common::OpArg]> {
-        self.op_args.as_ref().map(|r| r.as_slice())
+        self.op_args.as_deref()
     }
 }
 

@@ -16,25 +16,10 @@ parking_lot = "0.10"
 once_cell = "^1.3.0"
 env_logger = "0.7.1"
 
-# bin deps
-simag_terminal = { path = "../simag_terminal", optional = true }
-ansi_term = { version = "0.12.1", optional = true }
+simag_terminal = { path = "../simag_terminal" }
 
 [dev-dependencies]
 criterion = "0.3"
-
-[features]
-binaries = ["ansi_term", "simag_terminal"]
-
-[[bin]]
-name = "manager"
-required-features = ["binaries"]
-path = "src/bin/manager.rs"
-
-[[bin]]
-name = "repl"
-required-features = ["binaries"]
-path = "src/bin/repl.rs"
 
 [[bench]]
 name = "repr"

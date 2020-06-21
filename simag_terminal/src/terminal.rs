@@ -13,7 +13,7 @@ use termion::{async_stdin, AsyncReader};
 
 use crate::{
     cursor::{Cursor, CursorMovement},
-    interpreter::Interpreter,
+    interpreter::ReplInterpreter,
     Action,
 };
 
@@ -42,7 +42,7 @@ Built-in commands:
 
 pub struct Terminal<I>
 where
-    I: Interpreter,
+    I: ReplInterpreter,
 {
     interpreter: I,
     state: TerminalState,
@@ -55,7 +55,7 @@ where
 
 impl<'a, I> Terminal<I>
 where
-    I: Interpreter,
+    I: ReplInterpreter,
 {
     pub fn new(interpreter: I) -> Self {
         let mut stdout = get_raw_stdout();

@@ -4,7 +4,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use num_cpus;
 
 use super::entity::Entity;
 use crate::agent::kb::{

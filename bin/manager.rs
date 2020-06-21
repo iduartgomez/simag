@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use simag_terminal::{Action, Interpreter, Terminal};
+use simag_terminal::{Action, ReplInterpreter, Terminal};
 
 extern crate ansi_term;
 
@@ -87,7 +87,7 @@ impl Manager {
     }
 }
 
-impl Interpreter for Manager {
+impl ReplInterpreter for Manager {
     fn digest<'b, 'a: 'b>(&'b mut self, input: char) -> Action<'a> {
         match input {
             '\n' => self.newline_eval(),

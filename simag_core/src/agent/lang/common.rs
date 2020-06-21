@@ -584,9 +584,8 @@ impl<'a> OpArg {
     /// While constructing an assertion in a tell context performs variable
     /// substitution whenever is possible, variables must be declared.
     pub(in crate::agent::lang) fn var_substitution(&mut self) -> Result<(), ParseErrF> {
-        match self {
-            OpArg::Time(time) => time.var_substitution()?,
-            _ => {}
+        if let OpArg::Time(time) = self {
+            time.var_substitution()?
         }
         Ok(())
     }

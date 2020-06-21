@@ -12,7 +12,6 @@ extern crate rayon;
 
 mod agent;
 
-#[cfg(features = "binaries")]
 pub use self::agent::SimagInterpreter;
 pub use self::agent::{Agent, Answer, QueryErr};
 

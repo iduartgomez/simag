@@ -280,7 +280,7 @@ impl<'a> FuncDecl {
 
 impl OpArgsOps for FuncDecl {
     fn get_op_args(&self) -> Option<&[common::OpArg]> {
-        self.op_args.as_ref().map(|r| r.as_slice())
+        self.op_args.as_deref()
     }
 }
 
@@ -343,11 +343,7 @@ impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
                 agent.has_relationship(&grfunc, sbj[0].get_name())
             }
         } else {
-            let assigned = if let Some(assigned) = assignments {
-                assigned
-            } else {
-                return None;
-            };
+            let assigned = assignments?;
             if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, time_assign) {
                 for arg in self.get_args() {
                     if let Predicate::FreeClsMemb(ref arg) = *arg {

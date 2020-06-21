@@ -33,12 +33,10 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::str;
 
-use nom;
 use nom::{
     character::{is_alphabetic, is_alphanumeric},
     error::{ErrorKind, ParseError},
 };
-use rayon;
 use rayon::prelude::*;
 
 pub(self) mod args;
@@ -108,7 +106,7 @@ impl Parser {
         let mut in_comment = false;
         let mut in_comment_block = false;
         let mut finished_comment = false;
-        for (pos, c) in input.into_iter().enumerate() {
+        for (pos, c) in input.iter().enumerate() {
             match c {
                 b'#' => in_comment = true,
                 b'\n' if in_comment => {

@@ -120,11 +120,11 @@ impl<'rep> InfResults<'rep> {
             for relation_ls in relations.values() {
                 for grfunc in relation_ls {
                     for name in grfunc.get_args_names() {
+                        #[allow(clippy::mutable_key_type)]
                         unsafe {
                             // Safety: guaranteed this lives as long as Self<'rep> where 'rep is the lifetime of the owning Rep
                             let name = mem::transmute::<&str, &'rep str>(name);
-                            if res.contains_key(name) {
-                                let prev = res.get_mut(name).unwrap();
+                            if let Some(prev) = res.get_mut(name) {
                                 prev.insert(&**grfunc as *const GroundedFunc);
                             } else {
                                 let mut new = HashSet::new();

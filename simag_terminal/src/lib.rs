@@ -4,5 +4,5 @@ mod interpreter;
 mod terminal;
 
 pub use action::Action;
-pub use interpreter::Interpreter;
+pub use interpreter::ReplInterpreter;
 pub use terminal::Terminal;

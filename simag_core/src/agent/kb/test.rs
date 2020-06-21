@@ -255,7 +255,7 @@ fn repr_inference_time_calc_1() {
         (run(where this.time is '2015-02-02T00:00:00Z', ow)[$Pancho=1])
     ";
     rep.tell(test_03_04).unwrap();
-    let q03_04 = "(fat[$Pancho=0])";
+    let _q03_04 = "(fat[$Pancho=0])";
     // assert_eq!(rep.ask(q03_04).unwrap().get_results_single(), Some(true));
 }
 

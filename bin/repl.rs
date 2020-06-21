@@ -1,5 +1,5 @@
 //! A REPL (Read-Eval-Print-Loop) terminal interface for the language
-
+// use simag_core::SimagInterpreter;
 use simag_core::SimagInterpreter;
 use simag_terminal::Terminal;
 

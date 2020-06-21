@@ -16,7 +16,7 @@
 
 use crate::Action;
 
-pub trait Interpreter {
+pub trait ReplInterpreter {
     /// Last source code input char that was received by the interpreter.
     fn last_source_input(&self) -> Option<char>;
 
