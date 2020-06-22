@@ -136,17 +136,11 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
             return Err(nom::Err::Error(ParseErrB::SyntaxError));
         }
 
-        let op = if v0 == b"time" || v1 == b"time" {
-            Operator::Since
-        } else {
-            Operator::Assignment
-        };
-
         Ok((
             i,
             OpArgBorrowed {
                 term: v0,
-                comp: Some((op, v1)),
+                comp: Some((Operator::Assignment, v1)),
             },
         ))
     }

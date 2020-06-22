@@ -258,9 +258,7 @@ impl GroundedMemb {
             Operator::Less => val_lhs > val_rhs,
             Operator::MoreEqual => val_lhs <= val_rhs,
             Operator::LessEqual => val_lhs >= val_rhs,
-            Operator::Until | Operator::Since | Operator::SinceUntil | Operator::Assignment => {
-                unreachable!()
-            }
+            _ => unreachable!(),
         }
     }
 

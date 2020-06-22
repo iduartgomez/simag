@@ -211,10 +211,7 @@ impl Class {
                                     .push(f.clone())
                             }
                         }
-                        Some(Operator::Until)
-                        | Some(Operator::Since)
-                        | Some(Operator::SinceUntil)
-                        | Some(Operator::Assignment) => unreachable!(),
+                        _ => unreachable!(),
                     }
                 }
             }
@@ -266,10 +263,7 @@ impl Class {
                                 process = false;
                             }
                         }
-                        (Operator::Until, _)
-                        | (Operator::Since, _)
-                        | (Operator::SinceUntil, _)
-                        | (Operator::Assignment, _) => unreachable!(),
+                        _ => unreachable!(),
                     }
                 }
             }

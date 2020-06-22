@@ -234,10 +234,7 @@ impl Entity {
                                     .push(f.clone())
                             }
                         }
-                        Some(Operator::Until)
-                        | Some(Operator::Since)
-                        | Some(Operator::SinceUntil)
-                        | Some(Operator::Assignment) => unreachable!(),
+                        _ => unreachable!(),
                     }
                 }
             }

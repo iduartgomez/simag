@@ -379,12 +379,8 @@ impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
     ) {
         if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, time_assign) {
             let time_data = self.get_own_time_data(time_assign, None);
-            log::debug!("before replace: {}", time_data);
-            log::debug!("before replace: {:?}", self);
             time_data.replace_value(grfunc.get_value(), ReplaceMode::Substitute);
-            log::debug!("after replace: {}", time_data);
             grfunc.bms.overwrite_data(&time_data);
-            log::debug!("after ow: {}", grfunc.bms);
             #[cfg(debug_assertions)]
             {
                 log::trace!("Correct substitution found, updating: {:?}", grfunc);

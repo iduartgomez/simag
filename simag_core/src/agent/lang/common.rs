@@ -11,7 +11,7 @@ use super::{
     fn_decl::FuncDecl,
     logsent::{LogSentResolution, ParseContext, ProofResContext},
     parser::{ArgBorrowed, Number, OpArgBorrowed, Operator, UVal, UnconstraintArg},
-    time_semantics::{TimeArg, TimeFn, TimeOps},
+    time_semantics::{TimeArg, TimeFn, TimeFnErr, TimeOps},
     var::Var,
     BuiltIns, GroundedFunc, GroundedMemb, Terminal,
 };
@@ -332,9 +332,7 @@ impl FreeClassMembership {
                 Operator::More => o_val > *val,
                 Operator::MoreEqual => val.approx_eq_ulps(&o_val, FLOAT_EQ_ULPS) || o_val > *val,
                 Operator::LessEqual => val.approx_eq_ulps(&o_val, FLOAT_EQ_ULPS) || o_val < *val,
-                Operator::Until | Operator::Since | Operator::SinceUntil | Operator::Assignment => {
-                    unreachable!()
-                }
+                _ => unreachable!(),
             }
         } else {
             true
@@ -530,8 +528,12 @@ pub(in crate::agent) enum OpArg {
 impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for OpArg {
     type Error = ParseErrF;
     fn try_from(input: (&OpArgBorrowed<'a>, &ParseContext)) -> Result<OpArg, ParseErrF> {
-        if let Ok(arg) = TimeArg::try_from(input) {
-            return Ok(OpArg::Time(arg));
+        match TimeArg::try_from(input) {
+            Ok(arg) => return Ok(OpArg::Time(arg)),
+            Err(ParseErrF::TimeFnErr(TimeFnErr::WrongDef)) => {
+                return Err(ParseErrF::TimeFnErr(TimeFnErr::WrongDef))
+            }
+            _ => {}
         }
 
         let (other, context) = input;

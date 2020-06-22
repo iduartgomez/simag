@@ -177,27 +177,33 @@ fn repr_inference_time_calc_1() {
     let test_01 = "
         ( let x, y, t1:time, t2:time='now' in
             (( dog[x=1] and meat[y=1] and fn::eat(where t1 is this.time)[y=1,x] and fn::time_calc(t1<t2) )
-            := fat(where this.time is t2)[x=1] ))
+            := fat(since t2)[x=1] ))
         ( dog[$Pancho=1] )
         ( meat[$M1=1] )
-        ( fn::eat(where this.time is '2014-07-05T10:25:00Z')[$M1=1,$Pancho] )
+        ( fn::eat(since '2014-07-05T10:25:00Z')[$M1=1,$Pancho] )
     ";
     let q01_01 = "(fat(where this.time is 'now')[$Pancho=1])";
     let rep = Representation::default();
     rep.tell(test_01).unwrap();
     assert_eq!(rep.ask(q01_01).unwrap().get_results_single(), Some(true));
+    // assert_eq!(
+    //     rep.ask("(fat(where this.time is '2017-07-05T10:25:00Z')[$Pancho=1])")
+    //         .unwrap()
+    //         .get_results_single(),
+    //     None
+    // );
 
     // Test 02
     // facts imply func, w/ t1 time arg set statically & t2 set statically by antecedent
     let test_02 = "
         ( let x, y, t1:time='2017-07-05T10:25:00Z', t2:time in
             ( ( dog[x=1] and meat[y=1] and fat(where t2 is this.time)[x=1] and fn::time_calc(t1<t2) )
-            := fn::eat(where this.time is t1)[y=1,x]
+            := fn::eat(since t1)[y=1,x]
             )
         )
         ( dog[$Pancho=1] )
         ( meat[$M1=1] )
-        ( fat(where this.time is '2018-07-05T10:25:00Z')[$Pancho=1] )
+        ( fat(since '2018-07-05T10:25:00Z')[$Pancho=1] )
     ";
     let rep = Representation::default();
     rep.tell(test_02).unwrap();
@@ -215,7 +221,7 @@ fn repr_inference_time_calc_1() {
 
     // if fn(a) then cls(b=1) @ t1
     let test_03_01 = "
-        (fn::eat(where this.time is '2015-01-01T00:00:00Z')[$M1=1,$Pancho])
+        (fn::eat(since '2015-01-01T00:00:00Z')[$M1=1,$Pancho])
         (let x, y in
             ((dog[x=1] and meat[y=1] and fn::eat[y=1,x])
             := fat[x=1]))
@@ -226,7 +232,7 @@ fn repr_inference_time_calc_1() {
 
     // if fn(b) then cls(b=0) @ t1 -- supercedes last statement
     let test_03_02 = "
-        (run(where this.time is '2015-01-01T00:00:00Z')[$Pancho=1])
+        (run(since '2015-01-01T00:00:00Z')[$Pancho=1])
         (let x in (( dog[x=1] and run[x=1] ) := fat[x=0]))
     ";
     rep.tell(test_03_02).unwrap();
@@ -237,8 +243,8 @@ fn repr_inference_time_calc_1() {
     // statement 2: fn(a) then cls(b=1) @ t2
     // sta1=true if t1 > t2 else sta2=true
     let test_03_03 = "
-        (run(where this.time is '2015-01-01T00:00:00Z')[$Pancho=1])
-        (fn::eat(where this.time is '2015-02-01T00:00:00Z')[$M1=1,$Pancho])
+        (run(since '2015-01-01T00:00:00Z')[$Pancho=1])
+        (fn::eat(since '2015-02-01T00:00:00Z')[$M1=1,$Pancho])
         (let x, y, t1:time, t2:time in
             (run(where t1 is this.time)[x=1] and fn::eat(where t2 is this.time)[y=1,x]
             and dog[x=1] and meat[y=1] and fn::time_calc(t1<t2))
@@ -251,8 +257,8 @@ fn repr_inference_time_calc_1() {
     // both statements are told again and must override any previous statement
     // this should rollback
     let test_03_04 = "
-        #(fn::eat(where this.time is '2015-01-02T00:00:00Z', ow)[$M1=1,$Pancho])
-        (run(where this.time is '2015-02-02T00:00:00Z', ow)[$Pancho=1])
+        #(fn::eat(since '2015-01-02T00:00:00Z', ow)[$M1=1,$Pancho])
+        (run(since '2015-02-02T00:00:00Z', ow)[$Pancho=1])
     ";
     rep.tell(test_03_04).unwrap();
     let _q03_04 = "(fat[$Pancho=0])";

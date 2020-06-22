@@ -11,29 +11,27 @@ pub(in crate::agent) enum Operator {
     MoreEqual,
     LessEqual,
     // time operators:
+    /// used whenever a time value is assigned in a declaration
+    At,
+    /// used for asserting some time variants holds
     Since,
     Until,
     SinceUntil,
-    // other:
+    // ass
     Assignment,
 }
 
 impl Operator {
     pub(super) fn from_chars(c: &[u8]) -> IResult<&[u8], Operator> {
-        if c == b"<" {
-            Ok((EMPTY, Operator::Less))
-        } else if c == b">" {
-            Ok((EMPTY, Operator::More))
-        } else if c == b"=" {
-            Ok((EMPTY, Operator::Equal))
-        } else if c == b"<=" {
-            Ok((EMPTY, Operator::LessEqual))
-        } else if c == b">=" {
-            Ok((EMPTY, Operator::MoreEqual))
-        } else if c == b"is" {
-            Ok((EMPTY, Operator::Assignment))
-        } else {
-            Err(nom::Err::Error(ParseErrB::IsNotOperator(c)))
+        match c {
+            b"<" => Ok((EMPTY, Operator::Less)),
+            b">" => Ok((EMPTY, Operator::More)),
+            b"=" => Ok((EMPTY, Operator::Equal)),
+            b"<=" => Ok((EMPTY, Operator::LessEqual)),
+            b">=" => Ok((EMPTY, Operator::MoreEqual)),
+            b"is" => Ok((EMPTY, Operator::Assignment)),
+            b"at" => Ok((EMPTY, Operator::At)),
+            _ => Err(nom::Err::Error(ParseErrB::IsNotOperator(c))),
         }
     }
 
@@ -96,6 +94,7 @@ impl Operator {
             Operator::Since => id.push(7),
             Operator::SinceUntil => id.push(8),
             Operator::Assignment => id.push(9),
+            Operator::At => id.push(10),
         }
     }
 }
@@ -108,8 +107,9 @@ impl std::fmt::Display for Operator {
             Operator::More => write!(f, ">"),
             Operator::MoreEqual => write!(f, ">="),
             Operator::LessEqual => write!(f, "<="),
-            Operator::Until => write!(f, "->"),
-            Operator::Since => write!(f, "@"),
+            Operator::At => write!(f, "@"),
+            Operator::Until => write!(f, "<-"),
+            Operator::Since => write!(f, "->"),
             Operator::SinceUntil => write!(f, "<->"),
             Operator::Assignment => write!(f, "=>"),
         }

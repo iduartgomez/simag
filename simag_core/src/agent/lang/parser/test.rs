@@ -135,7 +135,7 @@ fn parser_predicate() {
     assert_eq!(s2_uval.val, Number::SignedFloat(-1.5_f32));
 
     // non-sensical, but can parse:
-    let s3 = b"dean(where t1 is \"now\", t2 is t1)[$John=0]";
+    let s3 = b"dean(t2 is t1, ow)[$John=0]";
     let s3_res = class_decl(s3);
     assert_done_or_err!(s3_res);
     let s3_res = s3_res.unwrap().1;
@@ -146,18 +146,21 @@ fn parser_predicate() {
         s3_res.op_args.as_ref().unwrap(),
         &vec![
             OpArgBorrowed {
-                term: UnconstraintArg::Terminal(b"t1"),
-                comp: Some((Operator::Assignment, UnconstraintArg::String(b"now"))),
-            },
-            OpArgBorrowed {
                 term: UnconstraintArg::Terminal(b"t2"),
                 comp: Some((Operator::Assignment, UnconstraintArg::Terminal(b"t1"))),
             },
+            OpArgBorrowed {
+                term: UnconstraintArg::Keyword(b"ow"),
+                comp: None,
+            },
         ]
     );
+}
 
+#[test]
+fn parse_time_pred() {
     // non-sensical, but can parse:
-    let s4 = b"animal(where t1 is '2015.07.05.11.28')[cow, brown=0.5]";
+    let s4 = b"animal(where t1 is \"now\", where t1 is '2015.07.05.11.28')[cow, brown=0.5]";
     let s4_res = class_decl(s4);
     assert_done_or_err!(s4_res);
     let s4_res = s4_res.unwrap().1;
@@ -165,16 +168,23 @@ fn parser_predicate() {
     assert!(s4_res.op_args.is_some());
     assert_eq!(
         s4_res.op_args.as_ref().unwrap(),
-        &vec![OpArgBorrowed {
-            term: UnconstraintArg::Terminal(b"t1"),
-            comp: Some((
-                Operator::Assignment,
-                UnconstraintArg::String(b"2015.07.05.11.28"),
-            )),
-        }]
+        &vec![
+            OpArgBorrowed {
+                term: UnconstraintArg::Terminal(b"t1"),
+                comp: Some((Operator::Assignment, UnconstraintArg::String(b"now"))),
+            },
+            OpArgBorrowed {
+                term: UnconstraintArg::Terminal(b"t1"),
+                comp: Some((
+                    Operator::Assignment,
+                    UnconstraintArg::String(b"2015.07.05.11.28"),
+                )),
+            }
+        ]
     );
 
-    let s5 = b"happy(where this.time is 'now', since t1, ow)[x>=0.5]";
+    // non-sensical, but can parse:
+    let s5 = b"happy(where this.time is 'now', since t1)[x>=0.5]";
     let s5_res = class_decl(s5);
     assert_done_or_err!(s5_res);
     let s5_res = s5_res.unwrap().1;
@@ -183,7 +193,7 @@ fn parser_predicate() {
         &s5_res.op_args.as_ref().unwrap()[0],
         &OpArgBorrowed {
             term: UnconstraintArg::Keyword(b"time"),
-            comp: Some((Operator::Since, UnconstraintArg::String(b"now"),)),
+            comp: Some((Operator::Assignment, UnconstraintArg::String(b"now"),)),
         }
     );
     assert_eq!(
@@ -194,7 +204,7 @@ fn parser_predicate() {
         }
     );
 
-    let s6 = b"happy(where this.time is t1, since t1 until t2, ow)[x<=0.5]";
+    let s6 = b"happy(where this.time is t1, since t1 until t2)[x<=0.5]";
     let s6_res = class_decl(s6);
     assert_done_or_err!(s6_res);
     let s6_res = s6_res.unwrap().1;
@@ -213,7 +223,15 @@ fn parser_predicate() {
 }
 
 #[test]
-fn parser_function() {
+fn parse_space_pred() {
+    let s1 = b"takes(where this.loc at 'x0.y0.z0')";
+    let s2 = b"takes(where this.loc at l1)";
+    let s3 = b"takes(where 'x0.y0.z0' is this.loc)";
+    let s4 = b"takes(where l1 is this.loc)";
+}
+
+#[test]
+fn parse_function() {
     let s1 = b"fn::criticize(t1 is 'now')[$John=1,$Lucy]";
     let s1_res = func_decl(s1);
     assert_done_or_err!(s1_res);
@@ -231,10 +249,18 @@ fn parser_function() {
     assert_done_or_err!(s3_res);
     assert_eq!(s3_res.unwrap().1.variant, FuncVariants::Relational);
 
+    // time_calc built-in function
     let s4 = b"fn::time_calc(t1<t2)";
     let s4_res = func_decl(s4);
     assert_done_or_err!(s4_res);
     assert_eq!(s4_res.unwrap().1.variant, FuncVariants::NonRelational);
+
+    // move built-in function
+    let s5 = b"fn::move(from l1 to '0.0.0')";
+    let s6 = b"fn::move(from '0.0.0' to l1)";
+    let s7 = b"fn::move(to '0.0.0', since t0 until t1)";
+    let s8 = b"fn::move(to '0.0.0', at t1)";
+    let s9 = b"fn::move(from '0.0.0')"; // is err
 }
 
 #[test]
@@ -251,7 +277,7 @@ fn declare_record() {
     let result = record_decl(source);
     assert!(result.is_ok());
 
-    let source = "(
+    let source = b"(
         [$John, $Mary] = {
             fast=0,
             slow=0.5,

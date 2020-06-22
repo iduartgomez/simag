@@ -13,8 +13,8 @@ mod errors {
 
     #[derive(Debug, PartialEq, Eq)]
     pub enum TimeFnErr {
-        MultiAssign,
         NotAssignment,
+        WrongDef,
         WrongFormat(String),
         IsNotVar,
         InsufArgs,

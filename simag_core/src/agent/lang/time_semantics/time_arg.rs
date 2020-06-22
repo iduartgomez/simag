@@ -17,8 +17,8 @@ pub(in crate::agent) enum TimeArg {
     // UntilVar(Arc<Var>),
     SinceVarUntilVar(Arc<Var>, Arc<Var>),
     SinceVarUntilTime(Arc<Var>, Time),
-    // SinceTimeUntilVar(Arc<Var>, Time),
-    // SinceTimeUntilTime(Arc<Var>, Time),
+    SinceTimeUntilVar(Time, Arc<Var>),
+    SinceTimeUntilTime(Time, Time),
 }
 use TimeArg::*;
 
@@ -103,6 +103,7 @@ impl TimeArg {
                 id.append(&mut format!("{}", val).into_bytes());
                 id
             }
+            _ => unimplemented!(),
         }
     }
 }
@@ -114,7 +115,7 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for TimeArg {
         let (other, context) = input;
 
         let mut var0 = None;
-        let t0 = match ConstraintValue::try_from((&other.term, context)) {
+        let term0 = match ConstraintValue::try_from((&other.term, context)) {
             Ok(ConstraintValue::TimePayload(TimeFn::ThisTime)) => None, // first argument is: this.time
             Ok(ConstraintValue::TimePayload(_)) => unreachable!(),
             Ok(ConstraintValue::String(time_val)) => {
@@ -134,41 +135,40 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for TimeArg {
             Err(err) => return Err(err),
         };
 
-        let (op, t1) = match &other.comp {
+        let (op, term1) = match &other.comp {
             Some((op, unc_arg)) => match ConstraintValue::try_from((unc_arg, context)) {
                 Ok(t) => (*op, Some(t)),
                 Err(ParseErrF::ReservedKW(kw)) => return Err(ParseErrF::ReservedKW(kw)),
                 Err(err) => return Err(err),
             },
-            None => (Operator::Since, None),
+            None => (Operator::Assignment, None),
         };
 
-        match (t0, var0, op, t1) {
-            // where this.time is <TimeFn>
-            (Some(val), None, Operator::Since, Some(empty)) if val.contains_payload() => {
+        match (term0, var0, op, term1) {
+            (Some(val), None, Operator::Since, Some(empty)) => {
+                // since <val>
                 match empty {
                     ConstraintValue::String(empty) if empty == "" => Ok(val),
-                    _ => Err(TimeFnErr::NotAssignment.into()),
+                    _ => Err(TimeFnErr::WrongDef.into()),
                 }
             }
-            // where this.time is|since <val|var>:
-            (None, None, Operator::Since, Some(val)) => {
-                if val.is_var() {
-                    Ok(SinceVar(val.get_var()))
-                } else {
-                    match val {
-                        ConstraintValue::String(val) => {
-                            let val = get_time(val)?;
-                            Ok(DeclTime(TimeFn::Since(val)))
-                        }
-                        _ => Err(TimeFnErr::IsNotVar.into()),
-                    }
+            (None, Some(var), Operator::Since, Some(empty)) => {
+                // since <var>
+                match empty {
+                    ConstraintValue::String(empty) if empty == "" => Ok(SinceVar(var)),
+                    _ => Err(TimeFnErr::WrongDef.into()),
                 }
             }
-            // where this.time until <val|var>:
-            (None, None, Operator::Until, Some(_val)) => unimplemented!(),
-            // since var0 until <val|var>:
+            (None, Some(_var), Operator::Until, Some(_empty)) => {
+                // until <var>
+                unimplemented!()
+            }
+            (Some(_val), None, Operator::Until, Some(_empty)) => {
+                // until <val>
+                unimplemented!()
+            }
             (None, Some(var0), Operator::SinceUntil, Some(val)) => {
+                // since <var> until <val|var>
                 if val.is_var() {
                     Ok(SinceVarUntilVar(var0, val.get_var()))
                 } else {
@@ -177,20 +177,56 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for TimeArg {
                             let val = get_time(val)?;
                             Ok(SinceVarUntilTime(var0, val))
                         }
-                        _ => Err(TimeFnErr::IsNotVar.into()),
+                        _ => Err(TimeFnErr::WrongDef.into()),
                     }
                 }
             }
-            (None, Some(var0), Operator::Since, Some(val)) => {
+            (Some(val0), None, Operator::SinceUntil, Some(val1)) => {
+                // since <val> until <var|val>
+                match val0 {
+                    TimeArg::DeclTime(TimeFn::Since(t0)) => {
+                        if val1.is_var() {
+                            Ok(SinceTimeUntilVar(t0, val1.get_var()))
+                        } else {
+                            match val1 {
+                                ConstraintValue::String(val) => {
+                                    let t1 = get_time(val)?;
+                                    Ok(SinceTimeUntilTime(t0, t1))
+                                }
+                                _ => Err(TimeFnErr::WrongDef.into()),
+                            }
+                        }
+                    }
+                    _ => Err(TimeFnErr::WrongDef.into()),
+                }
+            }
+            (None, Some(var0), Operator::Assignment, Some(val)) => {
                 if let ConstraintValue::TimePayload(TimeFn::ThisTime) = val {
                     // where var0 is this.time, declaration of time type variable: `let <var>: time`
                     Ok(AssignThisToVar(var0))
                 } else {
-                    // where var0 is <val|var>
+                    // where var0 is val
                     unimplemented!()
                 }
             }
-            (None, Some(_var0), Operator::Until, Some(_val)) => unimplemented!(),
+            (None, None, Operator::Assignment, Some(val)) => {
+                // where this.time is <val|var>
+                if val.is_var() {
+                    Ok(SinceVar(val.get_var()))
+                } else {
+                    match val {
+                        ConstraintValue::String(val) => {
+                            let val = get_time(val)?;
+                            Ok(DeclTime(TimeFn::Since(val)))
+                        }
+                        _ => Err(TimeFnErr::WrongDef.into()),
+                    }
+                }
+            }
+            (None, None, Operator::Until, Some(_val)) => {
+                // where this.time until <val|var>:
+                unimplemented!()
+            }
             _ => Err(TimeFnErr::OperatorNotValid.into()),
         }
     }
@@ -235,7 +271,7 @@ impl TimeFn {
     pub fn from_bms(rec: &BmsWrapper) -> Result<TimeFn, ParseErrF> {
         let values: Vec<_> = rec.iter_values().map(|(t, _)| t).collect();
         if values.len() != 2 {
-            return Err(ParseErrF::TimeFnErr(TimeFnErr::IllegalSubstitution));
+            return Err(ParseErrF::TimeFnErr(TimeFnErr::WrongDef));
         }
         Ok(TimeFn::Interval(values[0], values[1]))
     }
