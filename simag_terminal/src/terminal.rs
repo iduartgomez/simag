@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 use std::io::{stdout, Bytes, Read, Stdout, StdoutLock, Write};
 use std::iter::Iterator;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use copypasta::{ClipboardContext, ClipboardProvider};
 use once_cell::sync::Lazy;
@@ -144,7 +144,9 @@ where
 
     fn sequence(&mut self) -> Result<Action<'a>, std::io::Error> {
         // block a for a bit so we catch up all the input from the reading thread
-        std::thread::sleep(std::time::Duration::from_nanos(5));
+        const WAIT: Duration = Duration::from_nanos(10);
+        let wait_time = Instant::now() + WAIT;
+        while wait_time < Instant::now() {}
 
         match parse_event(ESCAPE_SEQ, &mut self.stdin) {
             Ok(event) => Ok(self.parse_event(&event).map_or_else(|| Action::None, |x| x)),
@@ -504,6 +506,7 @@ impl TerminalState {
         self.shifted_backward -= 1;
         self.call_stack.front().cloned()
     }
+
     fn reset_call_stack(&mut self) {
         if self.shifted_backward > 0 {
             self.call_stack.rotate_left(self.shifted_backward);
@@ -527,8 +530,8 @@ fn call_stack_rotation() {
     let back_sample = "bar".to_owned();
     let mut state = TerminalState::new();
     state.call_stack = VecDeque::from_iter(vec!["foo".to_owned(); 2]);
-    state.call_stack.push_front(front_sample.clone());
-    state.push_in_call(back_sample.clone());
+    state.call_stack.push_front(front_sample);
+    state.push_in_call(back_sample);
 
     for i in 0..5 {
         let r = state.get_previous_call();

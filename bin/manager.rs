@@ -39,7 +39,7 @@ impl Manager {
             let mut opt_args: Vec<String> = Vec::new();
             let mut new = true;
             let mut arg: Vec<char> = vec![];
-            for c in orig_arg.to_string().chars() {
+            for c in (*orig_arg).to_string().chars() {
                 if !c.is_whitespace() && new {
                     arg.push(c);
                     new = false;
@@ -232,7 +232,7 @@ impl ConsoleMsg {
                 let msg = format!("{}", ANSIStrings(&msg_new));
                 Action::WriteMulti((msg, true))
             }
-            "wrong_args" | _ => Action::WriteStr(("Wrong arguments...", true)),
+            _ => Action::WriteStr(("Wrong arguments...", true)),
         }
     }
 

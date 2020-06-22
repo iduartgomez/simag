@@ -251,11 +251,14 @@ fn declare_record() {
     let result = record_decl(source);
     assert!(result.is_ok());
 
-    /*
-    //TODO: add a way to define a 'record', conversedly can be used for querying
-    // defining more than one entity with similar values:
-    [$john, $mary] = {
-        ...
-    }
-    */
+    let source = "(
+        [$John, $Mary] = {
+            fast=0,
+            slow=0.5,
+            cat,
+            since '2015-01-02T00:00:00Z',
+        }
+    )";
+    let result = record_decl(source);
+    assert!(result.is_ok());
 }

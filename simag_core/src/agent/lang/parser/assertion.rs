@@ -72,7 +72,30 @@ pub(super) fn record_decl(input: &[u8]) -> IResult<&[u8], ASTNode> {
     let elements = alt((map(arg, Args::Arg), map(op_arg, Args::OpArg)));
 
     let (i, _) = tuple((multispace0, char('('), multispace0))(input)?;
-    let (i, name) = map(terminal, TerminalBorrowed::from_slice)(i)?;
+    let (i, open_ls_delim) = {
+        let (i, l0) = opt(char('['))(i)?;
+        (i, l0.is_some())
+    };
+    let (i, names) = separated_list1(
+        char(','),
+        map(
+            tuple((
+                multispace0,
+                map(terminal, TerminalBorrowed::from_slice),
+                multispace0,
+            )),
+            |(_, name, _)| name,
+        ),
+    )(i)?;
+    let (i, close_ls_delim) = {
+        let (i, (_, l1, ..)) = tuple((multispace0, opt(char(']')), multispace0))(i)?;
+        (i, l1.is_some())
+    };
+
+    if names.len() > 1 && (!open_ls_delim || !close_ls_delim) {
+        return Err(nom::Err::Error(ParseErrB::SyntaxError));
+    }
+
     let (i, _) = tuple((multispace0, char('='), multispace0, char('{')))(i)?;
     let (i, args) = separated_list1(sep, elements)(i)?;
     let (i, _) = tuple((multispace0, opt(char(',')), multispace0))(i)?; // opt trailing comma
@@ -87,23 +110,28 @@ pub(super) fn record_decl(input: &[u8]) -> IResult<&[u8], ASTNode> {
         }
     }
 
+    // let name: TerminalBorrowed = names[0];
+
     let mut declared = Vec::with_capacity(normal_args.len());
-    for mut decl in normal_args {
-        // flip argument and name
-        let class_name = decl.term;
-        decl.term = name;
-        let assert = ASTNode::Assert(AssertBorrowed::from(ClassDeclBorrowed {
-            name: class_name,
-            op_args: {
-                if !op_args.is_empty() {
-                    Some(op_args.clone())
-                } else {
-                    None
-                }
-            },
-            args: vec![decl],
-        }));
-        declared.push(assert);
+    for decl in normal_args {
+        for name in &names {
+            let mut decl = decl.clone();
+            // flip argument and name
+            let class_name = decl.term;
+            decl.term = *name;
+            let assert = ASTNode::Assert(AssertBorrowed::from(ClassDeclBorrowed {
+                name: class_name,
+                op_args: {
+                    if !op_args.is_empty() {
+                        Some(op_args.clone())
+                    } else {
+                        None
+                    }
+                },
+                args: vec![decl],
+            }));
+            declared.push(assert);
+        }
     }
     Ok((rest, ASTNode::Chain(declared)))
 }

@@ -12,7 +12,7 @@ const TELL_TEST: &[&str] = &[
 ];
 
 fn setup(c: &mut Criterion) {
-    c.bench_function("setup", |b| b.iter(|| Agent::default()));
+    c.bench_function("setup", |b| b.iter(Agent::default));
 }
 
 fn tell_insert(c: &mut Criterion) {

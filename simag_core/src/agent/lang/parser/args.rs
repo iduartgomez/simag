@@ -10,7 +10,7 @@ use super::numbers::number;
 use super::*;
 
 // arg	= term [',' uval] ;
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(in crate::agent) struct ArgBorrowed<'a> {
     pub term: TerminalBorrowed<'a>,
     pub uval: Option<UVal>,

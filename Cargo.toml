@@ -6,6 +6,7 @@ autobins = false
 edition = "2018"
 license = "Apache-2.0 OR MIT"
 codecov = { repository = "iduartgomez/simag", branch = "master", service = "github" }
+default-run = "simag"
 
 [dependencies]
 ansi_term =  "0.12.1"
@@ -17,7 +18,7 @@ simag_core = { path = "simag_core" }
 simag_terminal = { path = "simag_terminal" }
 
 [[bin]]
-name="simag"
+name = "simag"
 path = "bin/main.rs"
 
 [[bin]]

@@ -413,7 +413,6 @@ fn repr_eval_fol() {
 #[test]
 fn tell_record() {
     let rep = Representation::default();
-    // include dog
     let source = "(
         $John = {
             fast=0,
@@ -426,4 +425,26 @@ fn tell_record() {
     let res =
         rep.ask("(fast(where this.time is '2015-01-02T00:00:00Z')[$John=0] and slow[$John=0.5] and dog[$John])");
     assert_eq!(res.unwrap().get_results_single(), Some(true));
+
+    let rep = Representation::default();
+    let source = "(
+        [$John, $Mary] = {
+            fast=0,
+            slow=0.5,
+            cat,
+            since '2015-01-02T00:00:00Z',
+        }
+    )";
+    rep.tell(source).unwrap();
+    let res =
+        rep.ask("(fast(where this.time is '2015-01-02T00:00:00Z')[$Mary=0] and slow[$John=0.5])");
+    assert_eq!(res.unwrap().get_results_single(), Some(true));
+
+    /*
+    //TODO: can be used for querying
+    // defining more than one entity with similar values:
+    [$john, $mary] = {
+        ...
+    }
+    */
 }
