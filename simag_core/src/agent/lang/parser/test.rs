@@ -147,7 +147,7 @@ fn parser_predicate() {
         &vec![
             OpArgBorrowed {
                 term: UnconstraintArg::Terminal(b"t2"),
-                comp: Some((Operator::Assignment, UnconstraintArg::Terminal(b"t1"))),
+                comp: Some((Operator::TimeAssignment, UnconstraintArg::Terminal(b"t1"))),
             },
             OpArgBorrowed {
                 term: UnconstraintArg::Keyword(b"ow"),
@@ -159,11 +159,11 @@ fn parser_predicate() {
 
 #[test]
 fn parse_time_pred() {
-    let s3 = b"animal(where t1 is \"now\", where t1 is '2015.07.05.11.28')[cow, brown=0.5]";
+    let s3 = b"animal(where t1 is this.time, where t1 is this.time)[cow, brown=0.5]";
     let s3_res = class_decl(s3);
     assert!(s3_res.is_err());
 
-    let s4 = b"animal(where t1 is \"now\" and t1 is '2015.07.05.11.28', since t1)[cow, brown=0.5]";
+    let s4 = b"animal(where \"now\" is this.time and t1 is this.time, since t1)[cow, brown=0.5]";
     let s4_res = class_decl(s4);
     assert_done_or_err!(s4_res);
     let s4_res = s4_res.unwrap().1;
@@ -173,15 +173,12 @@ fn parse_time_pred() {
         s4_res.op_args.as_ref().unwrap(),
         &vec![
             OpArgBorrowed {
-                term: UnconstraintArg::Terminal(b"t1"),
-                comp: Some((Operator::Assignment, UnconstraintArg::String(b"now"))),
+                term: UnconstraintArg::String(b"now"),
+                comp: Some((Operator::TimeAssignment, UnconstraintArg::Keyword(b"time"))),
             },
             OpArgBorrowed {
                 term: UnconstraintArg::Terminal(b"t1"),
-                comp: Some((
-                    Operator::Assignment,
-                    UnconstraintArg::String(b"2015.07.05.11.28"),
-                )),
+                comp: Some((Operator::TimeAssignment, UnconstraintArg::Keyword(b"time"),)),
             },
             OpArgBorrowed {
                 term: UnconstraintArg::Terminal(b"t1"),
@@ -190,27 +187,7 @@ fn parse_time_pred() {
         ]
     );
 
-    let s5 = b"happy(where this.time is 'now', since t1)[x>=0.5]";
-    let s5_res = class_decl(s5);
-    assert_done_or_err!(s5_res);
-    let s5_res = s5_res.unwrap().1;
-    assert!(s5_res.op_args.is_some());
-    assert_eq!(
-        &s5_res.op_args.as_ref().unwrap()[0],
-        &OpArgBorrowed {
-            term: UnconstraintArg::Keyword(b"time"),
-            comp: Some((Operator::Assignment, UnconstraintArg::String(b"now"),)),
-        }
-    );
-    assert_eq!(
-        &s5_res.op_args.as_ref().unwrap()[1],
-        &OpArgBorrowed {
-            term: UnconstraintArg::Terminal(b"t1"),
-            comp: Some((Operator::Since, UnconstraintArg::String(b""))),
-        }
-    );
-
-    let s6 = b"happy(where this.time is t1, since t1 until t2)[x<=0.5]";
+    let s6 = b"happy(where t1 is this.time, since t1 until t2)[x<=0.5]";
     let s6_res = class_decl(s6);
     assert_done_or_err!(s6_res);
     let s6_res = s6_res.unwrap().1;
@@ -223,28 +200,36 @@ fn parse_time_pred() {
         }
     );
 
-    let s7 = b"happy(where t1 is this.time)[$John]";
+    let s7 = b"happy(where this.time is t1)[$John]";
     let s7_res = class_decl(s7);
-    assert_done_or_err!(s7_res);
+    assert!(s7_res.is_err());
 }
 
 #[test]
 fn parse_space_pred() {
-    let s1 = b"sleep(where this.loc at 'x0.y0.z0')[$Mary]";
+    let s0 = b"sleep(where 'x0.y0.z0' is this.loc)[$Mary]";
+    let s0_res = class_decl(s0);
+    assert_done_or_err!(s0_res);
+    let s0_res = s0_res.unwrap().1;
+    assert_eq!(
+        s0_res.op_args.as_ref().unwrap(),
+        &vec![OpArgBorrowed {
+            term: UnconstraintArg::String(b"x0.y0.z0"),
+            comp: Some((Operator::SpaceAssignment, UnconstraintArg::Keyword(b"loc"))),
+        }]
+    );
+
+    let s1 = b"sleep(where l1 is this.loc)[$Mary]";
     let s1_res = class_decl(s1);
     assert_done_or_err!(s1_res);
-
-    let s2 = b"sleep(where this.loc at l1)[$Mary]";
-    let s2_res = class_decl(s2);
-    assert_done_or_err!(s2_res);
-
-    let s3 = b"sleep(where 'x0.y0.z0' is this.loc)[$Mary]";
-    let s3_res = class_decl(s3);
-    assert_done_or_err!(s3_res);
-
-    let s4 = b"sleep(where l1 is this.loc)[$Mary]";
-    let s4_res = class_decl(s4);
-    assert_done_or_err!(s4_res);
+    let s1_res = s1_res.unwrap().1;
+    assert_eq!(
+        s1_res.op_args.as_ref().unwrap(),
+        &vec![OpArgBorrowed {
+            term: UnconstraintArg::Terminal(b"l1"),
+            comp: Some((Operator::SpaceAssignment, UnconstraintArg::Keyword(b"loc"))),
+        }]
+    );
 }
 
 #[test]

@@ -33,12 +33,6 @@ pub(super) fn op_args(input: &[u8]) -> IResult<&[u8], Vec<OpArgBorrowed>> {
     }
     let (i, _) = tuple((multispace0, char(')'), multispace0))(prev)?;
     Ok((i, args))
-    // delimited!(
-    //     input,
-    //     char!('('),
-    //     separated_list0!(char!(','), op_arg),
-    //     char!(')')
-    // )
 }
 
 // args	= '[' arg $(arg);+ ']';
@@ -155,44 +149,33 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
 
 fn var_assign_arg(orig: &[u8]) -> IResult<&[u8], Vec<OpArgBorrowed>> {
     let mut args = vec![];
-    let (mut prev, _) = tag("where")(orig)?;
+    let (mut rest, _) = tag("where")(orig)?;
     loop {
-        let (i, _) = multispace0(prev)?;
-        let (i, this0) = {
-            let r = opt(tag("this."))(i)?;
-            (r.0, r.1.is_some())
-        };
+        let (i, _) = multispace0(rest)?;
         let (i, v0) = UnconstraintArg::get(i)?;
-        if v0.is_reserved() && !this0 {
-            return Err(nom::Err::Error(ParseErrB::SyntaxError));
+        let (i, _) = tuple((multispace0, tag("is"), multispace0))(i)?;
+        let (i, (.., v1)) = tuple((tag("this."), UnconstraintArg::get))(i)?;
+        let op;
+        match v1 {
+            UnconstraintArg::Keyword(b"time") => op = Operator::TimeAssignment,
+            UnconstraintArg::Keyword(b"loc") => op = Operator::SpaceAssignment,
+            _ => return Err(nom::Err::Error(ParseErrB::SyntaxError)),
         }
 
-        let (i, _) = multispace0(i)?;
-        let (i, _) = tag("is")(i)?;
-        let (i, _) = multispace0(i)?;
-
-        let (i, this1) = {
-            let r = opt(tag("this."))(i)?;
-            (r.0, r.1.is_some())
-        };
-        let (rest, v1) = UnconstraintArg::get(i)?;
-        if v1.is_reserved() && !this1 {
-            return Err(nom::Err::Error(ParseErrB::SyntaxError));
-        }
         args.push(OpArgBorrowed {
             term: v0,
-            comp: Some((Operator::Assignment, v1)),
+            comp: Some((op, v1)),
         });
 
-        match tuple((multispace0, tag("and"), multispace0))(rest) {
-            Ok((rest, _)) => prev = rest,
+        match tuple((multispace0, tag("and"), multispace0))(i) {
+            Ok((i, _)) => rest = i,
             Err::<_, nom::Err<ParseErrB>>(_) => {
-                prev = rest;
+                rest = i;
                 break;
             }
         }
     }
-    Ok((prev, args))
+    Ok((rest, args))
 }
 
 #[derive(PartialEq, Clone)]

@@ -141,7 +141,7 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for TimeArg {
                 Err(ParseErrF::ReservedKW(kw)) => return Err(ParseErrF::ReservedKW(kw)),
                 Err(err) => return Err(err),
             },
-            None => (Operator::Assignment, None),
+            None => (Operator::TimeAssignment, None),
         };
 
         match (term0, var0, op, term1) {
@@ -200,7 +200,7 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for TimeArg {
                     _ => Err(TimeFnErr::WrongDef.into()),
                 }
             }
-            (None, Some(var0), Operator::Assignment, Some(val)) => {
+            (None, Some(var0), Operator::TimeAssignment, Some(val)) => {
                 if let ConstraintValue::TimePayload(TimeFn::ThisTime) = val {
                     // where var0 is this.time, declaration of time type variable: `let <var>: time`
                     Ok(AssignThisToVar(var0))
@@ -209,7 +209,7 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for TimeArg {
                     unimplemented!()
                 }
             }
-            (None, None, Operator::Assignment, Some(val)) => {
+            (None, None, Operator::TimeAssignment, Some(val)) => {
                 // where this.time is <val|var>
                 if val.is_var() {
                     Ok(SinceVar(val.get_var()))

@@ -296,7 +296,7 @@ fn repr_inference_time_calc_2() {
     assert_eq!(rep.ask(q04_2_01).unwrap().get_results_single(), Some(true));
     let q04_2_02 = "(fn::criticize(since '2018-07-01T00:00:00Z')[$John=1,$Lucy])";
     assert_eq!(rep.ask(q04_2_02).unwrap().get_results_single(), None);
-    let q04_2_03 = "(fn::criticize(where this.time is '2018-02-01T00:00:00Z')[$John=1,$Lucy])";
+    let q04_2_03 = "(fn::criticize(since '2018-02-01T00:00:00Z')[$John=1,$Lucy])";
     assert_eq!(rep.ask(q04_2_03).unwrap().get_results_single(), None);
 }
 

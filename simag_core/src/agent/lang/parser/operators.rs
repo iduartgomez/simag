@@ -11,14 +11,15 @@ pub(in crate::agent) enum Operator {
     MoreEqual,
     LessEqual,
     // time operators:
-    /// used whenever a time value is assigned in a declaration
-    At,
     /// used for asserting some time variants holds
     Since,
     Until,
     SinceUntil,
-    // ass
-    Assignment,
+    /// used whenever a time value is assigned in a declaration from `this`
+    TimeAssignment,
+    // space operators:
+    /// used whenever a space value is assigned in a declaration from `this`
+    SpaceAssignment,
 }
 
 impl Operator {
@@ -29,8 +30,8 @@ impl Operator {
             b"=" => Ok((EMPTY, Operator::Equal)),
             b"<=" => Ok((EMPTY, Operator::LessEqual)),
             b">=" => Ok((EMPTY, Operator::MoreEqual)),
-            b"is" => Ok((EMPTY, Operator::Assignment)),
-            b"at" => Ok((EMPTY, Operator::At)),
+            b"is" => Ok((EMPTY, Operator::TimeAssignment)),
+            b"at" => Ok((EMPTY, Operator::SpaceAssignment)),
             _ => Err(nom::Err::Error(ParseErrB::IsNotOperator(c))),
         }
     }
@@ -93,8 +94,8 @@ impl Operator {
             Operator::Until => id.push(6),
             Operator::Since => id.push(7),
             Operator::SinceUntil => id.push(8),
-            Operator::Assignment => id.push(9),
-            Operator::At => id.push(10),
+            Operator::TimeAssignment => id.push(9),
+            Operator::SpaceAssignment => id.push(10),
         }
     }
 }
@@ -107,11 +108,11 @@ impl std::fmt::Display for Operator {
             Operator::More => write!(f, ">"),
             Operator::MoreEqual => write!(f, ">="),
             Operator::LessEqual => write!(f, "<="),
-            Operator::At => write!(f, "@"),
+            Operator::SpaceAssignment => write!(f, "@"),
             Operator::Until => write!(f, "<-"),
             Operator::Since => write!(f, "->"),
             Operator::SinceUntil => write!(f, "<->"),
-            Operator::Assignment => write!(f, "=>"),
+            Operator::TimeAssignment => write!(f, "=>"),
         }
     }
 }
