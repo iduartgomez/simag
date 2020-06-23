@@ -11,3 +11,5 @@ uuid = { version = "^0.4", features = ["v4"] }
 #statrs = "^0.6"
 GSL = "1.1.0"
 #ndarray = "^0.8"
+
+[workspace]

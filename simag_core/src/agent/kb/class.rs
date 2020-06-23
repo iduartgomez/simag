@@ -152,6 +152,7 @@ impl Class {
         pos: usize,
         compare: &Predicate,
     ) -> HashMap<&str, Vec<Arc<GroundedFunc>>> {
+        // FIXME: check time equality!
         let mut res = HashMap::new();
         let (op, val) = compare.get_uval();
         for functions in self.relations.iter() {
@@ -220,6 +221,7 @@ impl Class {
     }
 
     pub fn get_funcs(&self, func: &FuncDecl) -> Vec<Arc<GroundedFunc>> {
+        // FIXME: check time equality!
         let mut res = vec![];
         let lock = self.members.read();
         for curr_func in lock.iter() {

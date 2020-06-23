@@ -32,6 +32,8 @@ pub(in crate::agent) trait TimeOps: OpArgsOps {
                 }
                 OpArg::Time(SinceVarUntilVar(_var0, _var1)) => unimplemented!(),
                 OpArg::Time(SinceVarUntilTime(_var0, _val1)) => unimplemented!(),
+                OpArg::Time(SinceTimeUntilVar(_val0, _var1)) => unimplemented!(),
+                OpArg::Time(SinceTimeUntilTime(_val0, _val1)) => unimplemented!(),
                 OpArg::OverWrite => {
                     ow = true;
                 }

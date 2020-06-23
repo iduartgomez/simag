@@ -174,6 +174,7 @@ impl Entity {
         pos: usize,
         compare: &Predicate,
     ) -> HashMap<&str, Vec<Arc<GroundedFunc>>> {
+        // FIXME: check time equality!
         let mut res = HashMap::new();
         let (op, val) = compare.get_uval();
         for relations in self.relations.iter() {

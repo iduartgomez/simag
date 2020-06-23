@@ -182,12 +182,13 @@ fn repr_inference_time_calc_1() {
         ( meat[$M1=1] )
         ( fn::eat(since '2014-07-05T10:25:00Z')[$M1=1,$Pancho] )
     ";
-    let q01_01 = "(fat(where this.time is 'now')[$Pancho=1])";
+    let q01_01 = "(fat(since 'now')[$Pancho=1])";
     let rep = Representation::default();
     rep.tell(test_01).unwrap();
     assert_eq!(rep.ask(q01_01).unwrap().get_results_single(), Some(true));
+    // FIXME:
     // assert_eq!(
-    //     rep.ask("(fat(where this.time is '2017-07-05T10:25:00Z')[$Pancho=1])")
+    //     rep.ask("(fat(since '2017-07-05T10:25:00Z')[$Pancho=1])")
     //         .unwrap()
     //         .get_results_single(),
     //     None
@@ -207,7 +208,7 @@ fn repr_inference_time_calc_1() {
     ";
     let rep = Representation::default();
     rep.tell(test_02).unwrap();
-    let q02_01 = "(fn::eat(where this.time is 'now')[$M1=1,$Pancho])";
+    let q02_01 = "(fn::eat(since 'now')[$M1=1,$Pancho])";
     let result = rep.ask(q02_01).unwrap().get_results_single();
     assert_eq!(result, Some(true));
 
@@ -257,11 +258,12 @@ fn repr_inference_time_calc_1() {
     // both statements are told again and must override any previous statement
     // this should rollback
     let test_03_04 = "
-        #(fn::eat(since '2015-01-02T00:00:00Z', ow)[$M1=1,$Pancho])
+        (fn::eat(since '2015-01-02T00:00:00Z', ow)[$M1=1,$Pancho])
         (run(since '2015-02-02T00:00:00Z', ow)[$Pancho=1])
     ";
     rep.tell(test_03_04).unwrap();
     let _q03_04 = "(fat[$Pancho=0])";
+    // FIXME:
     // assert_eq!(rep.ask(q03_04).unwrap().get_results_single(), Some(true));
 }
 
@@ -274,11 +276,11 @@ fn repr_inference_time_calc_2() {
          (fat(since t1 until t2)[$Pancho=1]))
     ";
     rep.tell(test_04_01).unwrap();
-    let q04_1_01 = "(fat(where this.time is '2018-04-01T00:00:00Z')[$Pancho=1])";
+    let q04_1_01 = "(fat(since '2018-04-01T00:00:00Z')[$Pancho=1])";
     assert_eq!(rep.ask(q04_1_01).unwrap().get_results_single(), Some(true));
-    let q04_1_02 = "(fat(where this.time is '2018-07-01T00:00:00Z')[$Pancho=1])";
+    let q04_1_02 = "(fat(since '2018-07-01T00:00:00Z')[$Pancho=1])";
     assert_eq!(rep.ask(q04_1_02).unwrap().get_results_single(), None);
-    let q04_1_03 = "(fat(where this.time is '2018-02-01T00:00:00Z')[$Pancho=1])";
+    let q04_1_03 = "(fat(since '2018-02-01T00:00:00Z')[$Pancho=1])";
     assert_eq!(rep.ask(q04_1_03).unwrap().get_results_single(), None);
 
     // Test if a fn is true between time intervals
@@ -290,9 +292,9 @@ fn repr_inference_time_calc_2() {
     ";
     let rep = Representation::default();
     rep.tell(test_04_02).unwrap();
-    let q04_2_01 = "(fn::criticize(where this.time is '2018-04-01T00:00:00Z')[$John=1,$Lucy])";
+    let q04_2_01 = "(fn::criticize(since '2018-04-01T00:00:00Z')[$John=1,$Lucy])";
     assert_eq!(rep.ask(q04_2_01).unwrap().get_results_single(), Some(true));
-    let q04_2_02 = "(fn::criticize(where this.time is '2018-07-01T00:00:00Z')[$John=1,$Lucy])";
+    let q04_2_02 = "(fn::criticize(since '2018-07-01T00:00:00Z')[$John=1,$Lucy])";
     assert_eq!(rep.ask(q04_2_02).unwrap().get_results_single(), None);
     let q04_2_03 = "(fn::criticize(where this.time is '2018-02-01T00:00:00Z')[$John=1,$Lucy])";
     assert_eq!(rep.ask(q04_2_03).unwrap().get_results_single(), None);
@@ -429,7 +431,7 @@ fn tell_record() {
     )";
     rep.tell(source).unwrap();
     let res =
-        rep.ask("(fast(where this.time is '2015-01-02T00:00:00Z')[$John=0] and slow[$John=0.5] and dog[$John])");
+        rep.ask("(fast(since '2015-01-02T00:00:00Z')[$John=0] and slow[$John=0.5] and dog[$John])");
     assert_eq!(res.unwrap().get_results_single(), Some(true));
 
     let rep = Representation::default();
@@ -442,8 +444,7 @@ fn tell_record() {
         }
     )";
     rep.tell(source).unwrap();
-    let res =
-        rep.ask("(fast(where this.time is '2015-01-02T00:00:00Z')[$Mary=0] and slow[$John=0.5])");
+    let res = rep.ask("(fast(since '2015-01-02T00:00:00Z')[$Mary=0] and slow[$John=0.5])");
     assert_eq!(res.unwrap().get_results_single(), Some(true));
 
     /*

@@ -16,8 +16,8 @@ const ASK_SETUP: &[&str] = &[
     ( let x in ( missile[x=1] := weapon[x=1] ) )
     ( let x in ( fn::enemy[x=1,$America] := hostile[x=1] ) )",
     // 2
-    "(run(where this.time is '2015-01-01T00:00:00Z')[$Pancho=1])
-    (fn::eat(where this.time is '2015-02-01T00:00:00Z')[$M1=1,$Pancho])
+    "(run(since '2015-01-01T00:00:00Z')[$Pancho=1])
+    (fn::eat(since '2015-02-01T00:00:00Z')[$M1=1,$Pancho])
     (let x, y, t1:time, t2:time in
         (run(where t1 is this.time)[x=1] and fn::eat(where t2 is this.time)[y=1,x]
         and dog[x=1] and meat[y=1] and fn::time_calc(t1<t2))

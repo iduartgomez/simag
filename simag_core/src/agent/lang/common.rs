@@ -238,6 +238,7 @@ impl FreeClsMemb {
     /// Compares a free term with a grounded term, assumes they are comparable
     /// (panics otherwise).
     pub fn grounded_eq(&self, other: &GroundedMemb) -> bool {
+        // FIXME: check time equality!
         if self.parent.get_name() != other.parent {
             return false;
         }
@@ -319,6 +320,7 @@ impl FreeClassMembership {
     }
 
     pub fn filter_grounded(&self, other: &GroundedMemb) -> bool {
+        // FIXME: check time equality!
         if self.operator.is_some() {
             let val = self.value.as_ref().unwrap();
             let o_val = if let Some(o_val) = *other.value.read() {
