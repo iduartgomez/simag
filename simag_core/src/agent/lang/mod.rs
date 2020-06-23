@@ -7,6 +7,7 @@ mod gr_memb;
 mod logsent;
 mod parser;
 mod skolem;
+pub(self) mod space_semantics;
 mod terminal;
 pub(self) mod time_semantics;
 pub(self) mod typedef;

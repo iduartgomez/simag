@@ -448,7 +448,7 @@ fn tell_record() {
     assert_eq!(res.unwrap().get_results_single(), Some(true));
 
     /*
-    //TODO: can be used for querying
+    //TODO: could be used for querying
     // defining more than one entity with similar values:
     [$john, $mary] = {
         ...

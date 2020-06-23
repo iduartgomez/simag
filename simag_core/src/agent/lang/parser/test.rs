@@ -159,8 +159,11 @@ fn parser_predicate() {
 
 #[test]
 fn parse_time_pred() {
-    // non-sensical, but can parse:
-    let s4 = b"animal(where t1 is \"now\", where t1 is '2015.07.05.11.28')[cow, brown=0.5]";
+    let s3 = b"animal(where t1 is \"now\", where t1 is '2015.07.05.11.28')[cow, brown=0.5]";
+    let s3_res = class_decl(s3);
+    assert!(s3_res.is_err());
+
+    let s4 = b"animal(where t1 is \"now\" and t1 is '2015.07.05.11.28', since t1)[cow, brown=0.5]";
     let s4_res = class_decl(s4);
     assert_done_or_err!(s4_res);
     let s4_res = s4_res.unwrap().1;
@@ -179,11 +182,14 @@ fn parse_time_pred() {
                     Operator::Assignment,
                     UnconstraintArg::String(b"2015.07.05.11.28"),
                 )),
+            },
+            OpArgBorrowed {
+                term: UnconstraintArg::Terminal(b"t1"),
+                comp: Some((Operator::Since, UnconstraintArg::String(b""))),
             }
         ]
     );
 
-    // non-sensical, but can parse:
     let s5 = b"happy(where this.time is 'now', since t1)[x>=0.5]";
     let s5_res = class_decl(s5);
     assert_done_or_err!(s5_res);
@@ -224,10 +230,21 @@ fn parse_time_pred() {
 
 #[test]
 fn parse_space_pred() {
-    let s1 = b"takes(where this.loc at 'x0.y0.z0')";
-    let s2 = b"takes(where this.loc at l1)";
-    let s3 = b"takes(where 'x0.y0.z0' is this.loc)";
-    let s4 = b"takes(where l1 is this.loc)";
+    let s1 = b"sleep(where this.loc at 'x0.y0.z0')[$Mary]";
+    let s1_res = class_decl(s1);
+    assert_done_or_err!(s1_res);
+
+    let s2 = b"sleep(where this.loc at l1)[$Mary]";
+    let s2_res = class_decl(s2);
+    assert_done_or_err!(s2_res);
+
+    let s3 = b"sleep(where 'x0.y0.z0' is this.loc)[$Mary]";
+    let s3_res = class_decl(s3);
+    assert_done_or_err!(s3_res);
+
+    let s4 = b"sleep(where l1 is this.loc)[$Mary]";
+    let s4_res = class_decl(s4);
+    assert_done_or_err!(s4_res);
 }
 
 #[test]
@@ -248,7 +265,10 @@ fn parse_function() {
     let s3_res = func_decl(s3);
     assert_done_or_err!(s3_res);
     assert_eq!(s3_res.unwrap().1.variant, FuncVariants::Relational);
+}
 
+#[test]
+fn parse_special_funcs() {
     // time_calc built-in function
     let s4 = b"fn::time_calc(t1<t2)";
     let s4_res = func_decl(s4);

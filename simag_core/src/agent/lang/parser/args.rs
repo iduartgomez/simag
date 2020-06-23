@@ -1,6 +1,7 @@
 use nom::{
     branch::alt,
     bytes::complete::tag,
+    character::complete::char,
     character::complete::multispace0,
     combinator::{map, opt},
     sequence::tuple,
@@ -8,6 +9,47 @@ use nom::{
 
 use super::numbers::number;
 use super::*;
+
+// op_args = $(op_arg),* ;
+pub(super) fn op_args(input: &[u8]) -> IResult<&[u8], Vec<OpArgBorrowed>> {
+    let (mut prev, _) = tuple((multispace0, char('('), multispace0))(input)?;
+    let mut args = vec![];
+    loop {
+        let rest = if let Ok((rest, arg)) = op_arg(prev) {
+            args.push(arg);
+            rest
+        } else {
+            let (rest, margs) = var_assign_arg(prev)?;
+            args.extend(margs);
+            rest
+        };
+        match char::<_, ParseErrB>(',')(rest) {
+            Ok((rest, _)) => prev = rest,
+            Err(_) => {
+                prev = rest;
+                break;
+            }
+        }
+    }
+    let (i, _) = tuple((multispace0, char(')'), multispace0))(prev)?;
+    Ok((i, args))
+    // delimited!(
+    //     input,
+    //     char!('('),
+    //     separated_list0!(char!(','), op_arg),
+    //     char!(')')
+    // )
+}
+
+// args	= '[' arg $(arg);+ ']';
+pub(super) fn args(input: &[u8]) -> IResult<&[u8], Vec<ArgBorrowed>> {
+    delimited!(
+        input,
+        char!('['),
+        alt!(separated_list1!(char!(','), arg) | map!(arg, to_arg_vec)),
+        char!(']')
+    )
+}
 
 // arg	= term [',' uval] ;
 #[derive(Clone, Debug, PartialEq)]
@@ -24,16 +66,6 @@ pub(super) fn arg(input: &[u8]) -> IResult<&[u8], ArgBorrowed> {
             >> multispace0
             >> u0: opt!(uval)
             >> (ArgBorrowed { term, uval: u0 })
-    )
-}
-
-// args	= '[' arg $(arg);+ ']';
-pub(super) fn args(input: &[u8]) -> IResult<&[u8], Vec<ArgBorrowed>> {
-    delimited!(
-        input,
-        char!('['),
-        alt!(separated_list1!(char!(','), arg) | map!(arg, to_arg_vec)),
-        char!(']')
     )
 }
 
@@ -110,10 +142,22 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
         ))
     }
 
-    fn var_assignment(orig: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
-        let (i, _) = tag("where")(orig)?;
-        let (i, _) = multispace0(i)?;
+    let (i, _) = multispace0(i)?;
+    if let Ok((rest, arg)) = normal_arg(i) {
+        return Ok((rest, arg));
+    }
 
+    match time_arg(i) {
+        Ok((rest, arg)) => Ok((rest, arg)),
+        Err(err) => Err(err),
+    }
+}
+
+fn var_assign_arg(orig: &[u8]) -> IResult<&[u8], Vec<OpArgBorrowed>> {
+    let mut args = vec![];
+    let (mut prev, _) = tag("where")(orig)?;
+    loop {
+        let (i, _) = multispace0(prev)?;
         let (i, this0) = {
             let r = opt(tag("this."))(i)?;
             (r.0, r.1.is_some())
@@ -131,44 +175,24 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
             let r = opt(tag("this."))(i)?;
             (r.0, r.1.is_some())
         };
-        let (i, v1) = UnconstraintArg::get(i)?;
+        let (rest, v1) = UnconstraintArg::get(i)?;
         if v1.is_reserved() && !this1 {
             return Err(nom::Err::Error(ParseErrB::SyntaxError));
         }
+        args.push(OpArgBorrowed {
+            term: v0,
+            comp: Some((Operator::Assignment, v1)),
+        });
 
-        Ok((
-            i,
-            OpArgBorrowed {
-                term: v0,
-                comp: Some((Operator::Assignment, v1)),
-            },
-        ))
+        match tuple((multispace0, tag("and"), multispace0))(rest) {
+            Ok((rest, _)) => prev = rest,
+            Err::<_, nom::Err<ParseErrB>>(_) => {
+                prev = rest;
+                break;
+            }
+        }
     }
-
-    let (i, _) = multispace0(i)?;
-
-    if let Ok((rest, arg)) = var_assignment(i) {
-        return Ok((rest, arg));
-    }
-
-    if let Ok((rest, arg)) = normal_arg(i) {
-        return Ok((rest, arg));
-    }
-
-    match time_arg(i) {
-        Ok((rest, arg)) => Ok((rest, arg)),
-        Err(err) => Err(err),
-    }
-}
-
-// op_args = $(op_arg),* ;
-pub(super) fn op_args(input: &[u8]) -> IResult<&[u8], Vec<OpArgBorrowed>> {
-    delimited!(
-        input,
-        char!('('),
-        separated_list0!(char!(','), op_arg),
-        char!(')')
-    )
+    Ok((prev, args))
 }
 
 #[derive(PartialEq, Clone)]
