@@ -76,6 +76,7 @@ pub(in crate::agent) struct OpArgBorrowed<'a> {
 }
 
 pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
+    #[inline(always)]
     fn normal_arg(orig: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
         let (i, term) = UnconstraintArg::get(orig)?;
         if term.is_reserved() && term != b"ow" {
@@ -110,6 +111,7 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
         }
     }
 
+    #[inline(always)]
     fn time_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
         let (i, first_tag) = alt((tag("since"), tag("at")))(i)?;
         let (i, _) = multispace0(i)?;
@@ -137,6 +139,7 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
         Ok((i, OpArgBorrowed { term: since, comp }))
     }
 
+    #[inline(always)]
     fn space_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
         let (i, from) = opt(tuple((
             tag("from"),
@@ -145,9 +148,11 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
             multispace0,
         )))(i)?;
         let (i, _) = tag("to")(i)?;
-        let (i, (_, to, ..)) = tuple((multispace0, UnconstraintArg::get, multispace0))(i)?;
+        let (i, (_, mut to, ..)) = tuple((multispace0, UnconstraintArg::get, multispace0))(i)?;
 
-        let term = if let Some((.., term, _)) = from {
+        let term = if let Some((.., mut term, _)) = from {
+            // swap positions so we end up having `term: from; comp: to`
+            std::mem::swap(&mut term, &mut to);
             Some(term)
         } else {
             None

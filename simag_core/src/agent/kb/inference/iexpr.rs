@@ -16,8 +16,6 @@ use std::sync::{
     Arc,
 };
 
-// #[cfg(debug_assertions)]
-// use crate::agent::conf::tracing::tracing_info;
 use crate::agent::kb::{
     inference::results::{GroundedResults, InfResults},
     repr::{Answer, Representation},

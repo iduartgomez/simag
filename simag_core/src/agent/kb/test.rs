@@ -419,7 +419,7 @@ fn repr_eval_fol() {
 }
 
 #[test]
-fn tell_record() {
+fn repr_tell_record() {
     let rep = Representation::default();
     let source = "(
         $John = {
@@ -454,4 +454,15 @@ fn tell_record() {
         ...
     }
     */
+}
+
+#[test]
+fn repr_inference_space_calc() {
+    let rep = Representation::default();
+    let source = b"
+        (run(at '0.0.0')[$Pancho] and sleep(at 1.1.0)[$Pancho])
+        (let x, l1:space, l2:time in
+            (run(where l1 is this.loc)[x=1] and sleep(where l2 is this.loc)[x]
+            := move(from l1 to l2)[x] )
+    ";
 }

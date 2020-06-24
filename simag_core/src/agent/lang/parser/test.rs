@@ -261,23 +261,38 @@ fn parse_special_funcs() {
     assert_eq!(s4_res.unwrap().1.variant, FuncVariants::NonRelational);
 
     // move built-in function
-    let s5 = b"fn::move(from l1 to '0.0.0')";
+    let s5 = b"fn::move(from l1 to '0.0.0')[x, y]";
     let s5_res = func_decl(s5);
     assert_done_or_err!(s5_res);
 
-    let s6 = b"fn::move(from '0.0.0' to l1)";
+    let s6 = b"fn::move(from '0.0.0' to l1)[x, y]";
     let s6_res = func_decl(s6);
     assert_done_or_err!(s6_res);
 
-    let s7 = b"fn::move(to '0.0.0', since t0 until t1)";
+    let s7 = b"fn::move(from l1 to '0.0.0', since t0 until t1)[y]";
     let s7_res = func_decl(s7);
     assert_done_or_err!(s7_res);
+    let s7_res = s7_res.unwrap().1;
+    assert_eq!(
+        s7_res.op_args.as_ref().unwrap(),
+        &vec![
+            OpArgBorrowed {
+                term: UnconstraintArg::Terminal(b"l1"),
+                comp: Some((Operator::FromTo, UnconstraintArg::String(b"0.0.0"))),
+            },
+            OpArgBorrowed {
+                term: UnconstraintArg::Terminal(b"t0"),
+                comp: Some((Operator::SinceUntil, UnconstraintArg::Terminal(b"t1"),)),
+            }
+        ]
+    );
+    assert_eq!(s7_res.args.as_ref().unwrap().len(), 1);
 
-    let s8 = b"fn::move(to '0.0.0', at t1)";
+    let s8 = b"fn::move(to '0.0.0', at t1)[x]";
     let s8_res = func_decl(s8);
     assert_done_or_err!(s8_res);
 
-    let s9 = b"fn::move(from '0.0.0')"; // is err
+    let s9 = b"fn::move(from '0.0.0')[x]"; // is err
     let s9_res = func_decl(s9);
     assert!(s9_res.is_err());
 }

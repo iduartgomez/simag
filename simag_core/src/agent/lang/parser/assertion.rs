@@ -31,38 +31,53 @@ pub(super) fn class_decl(input: &[u8]) -> IResult<&[u8], ClassDeclBorrowed> {
 }
 
 pub(super) fn func_decl(input: &[u8]) -> IResult<&[u8], FuncDeclBorrowed> {
-    if let Ok(relational) = do_parse!(
-        input,
-        multispace0
-            >> tag!("fn::")
-            >> name: map!(terminal, TerminalBorrowed::from_slice)
-            >> op1: opt!(op_args)
-            >> a1: args
-            >> (FuncDeclBorrowed {
-                name,
-                args: Some(a1),
-                op_args: op1,
-                variant: FuncVariants::Relational
-            })
-    ) {
-        Ok(relational)
-    } else {
+    #[inline(always)]
+    fn special_func(input: &[u8]) -> IResult<&[u8], FuncDeclBorrowed> {
         let (i, _) = tuple((multispace0, tag("fn::")))(input)?;
         let (i, name) = match is_keyword(i) {
             Ok((rest, TIME_CALC_FN)) => (rest, TIME_CALC_FN),
             Ok((rest, MOVE_FN)) => (rest, MOVE_FN),
             _ => return Err(nom::Err::Error(ParseErrB::SyntaxError)),
         };
-        let (rest, op1) = op_args(i)?;
+        let (mut rest, op1) = op_args(i)?;
+        let args = if !rest.is_empty() {
+            let (r, args) = opt(args)(rest)?;
+            rest = r;
+            args
+        } else {
+            None
+        };
+        if args.is_some() && name != MOVE_FN {
+            return Err(nom::Err::Error(ParseErrB::SyntaxError));
+        }
         Ok((
             rest,
             FuncDeclBorrowed {
                 name: TerminalBorrowed(name),
-                args: None,
+                args,
                 op_args: Some(op1),
                 variant: FuncVariants::NonRelational,
             },
         ))
+    }
+
+    if let Ok((rest, non_relation)) = special_func(input) {
+        Ok((rest, non_relation))
+    } else {
+        do_parse!(
+            input,
+            multispace0
+                >> tag!("fn::")
+                >> name: map!(terminal, TerminalBorrowed::from_slice)
+                >> op1: opt!(op_args)
+                >> a1: args
+                >> (FuncDeclBorrowed {
+                    name,
+                    args: Some(a1),
+                    op_args: op1,
+                    variant: FuncVariants::Relational
+                })
+        )
     }
 }
 
