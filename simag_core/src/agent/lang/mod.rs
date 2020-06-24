@@ -31,6 +31,7 @@ pub(super) use self::skolem::Skolem;
 pub(super) use self::terminal::{GrTerminalKind, Terminal};
 pub(super) use self::time_semantics::TimeOps;
 pub(super) use self::var::{Var, VarKind};
+use built_ins::{MOVE_FN, TIME_CALC_FN};
 
 /// Takes an owned String and returns the corresponding structure representing
 /// object program for the logic function. It can parse several statements
@@ -52,8 +53,8 @@ pub type Time = DateTime<Utc>;
 fn reserved(s: &[u8]) -> bool {
     match s {
         b"let" | b"exists" | b"fn" | b"ow" | b"this" | b"none" | b"in" | b"and" | b"where"
-        | b"is" | b"as" | b"time" | b"time_calc" | b"since" | b"until" | b"at" | b"from"
-        | b"to" | b"move" | b"loc" => true,
+        | b"is" | b"as" | b"time" | TIME_CALC_FN | b"since" | b"until" | b"at" | b"from"
+        | b"to" | MOVE_FN | b"loc" => true,
         _ => false,
     }
 }

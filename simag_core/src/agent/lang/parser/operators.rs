@@ -10,6 +10,7 @@ pub(in crate::agent) enum Operator {
     More,
     MoreEqual,
     LessEqual,
+
     // time operators:
     /// used for asserting some time variants holds
     Since,
@@ -17,9 +18,19 @@ pub(in crate::agent) enum Operator {
     SinceUntil,
     /// used whenever a time value is assigned in a declaration from `this`
     TimeAssignment,
+
     // space operators:
+    /// used for asserting some time variants holds
+    // From,
+    To,
+    FromTo,
     /// used whenever a space value is assigned in a declaration from `this`
     SpaceAssignment,
+}
+
+pub(super) enum OperatorKind {
+    TimeFn,
+    SpaceFn,
 }
 
 impl Operator {
@@ -36,11 +47,29 @@ impl Operator {
         }
     }
 
-    pub(super) fn from_time_op(t: Option<UnconstraintArg>) -> Option<(Operator, UnconstraintArg)> {
-        if let Some(term) = t {
-            Some((Operator::SinceUntil, term))
-        } else {
-            Some((Operator::Since, UnconstraintArg::String(b"")))
+    pub(super) fn from_time_op(
+        t: Option<UnconstraintArg>,
+        k: OperatorKind,
+    ) -> Option<(Operator, UnconstraintArg)> {
+        match k {
+            OperatorKind::TimeFn => {
+                if let Some(term) = t {
+                    // since <a> until <b>
+                    Some((Operator::SinceUntil, term))
+                } else {
+                    // since <a>
+                    Some((Operator::Since, UnconstraintArg::String(EMPTY)))
+                }
+            }
+            OperatorKind::SpaceFn => {
+                if let Some(term) = t {
+                    // from <a> to <b>
+                    Some((Operator::FromTo, term))
+                } else {
+                    // to <b>
+                    Some((Operator::To, UnconstraintArg::String(EMPTY)))
+                }
+            }
         }
     }
 
@@ -96,6 +125,8 @@ impl Operator {
             Operator::SinceUntil => id.push(8),
             Operator::TimeAssignment => id.push(9),
             Operator::SpaceAssignment => id.push(10),
+            Operator::To => id.push(11),
+            Operator::FromTo => id.push(12),
         }
     }
 }
@@ -113,6 +144,8 @@ impl std::fmt::Display for Operator {
             Operator::Since => write!(f, "->"),
             Operator::SinceUntil => write!(f, "<->"),
             Operator::TimeAssignment => write!(f, "=>"),
+            Operator::To => write!(f, "->"),
+            Operator::FromTo => write!(f, "<->"),
         }
     }
 }

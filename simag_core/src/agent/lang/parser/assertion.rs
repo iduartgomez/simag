@@ -1,9 +1,10 @@
 use super::args::{arg, args, op_arg, op_args};
 use super::*;
+use crate::agent::lang::built_ins::{MOVE_FN, TIME_CALC_FN};
 use nom::branch::alt;
+use nom::bytes::complete::tag;
 use nom::character::complete::{char, multispace0};
-use nom::combinator::map;
-use nom::combinator::opt;
+use nom::combinator::{map, opt};
 use nom::multi::separated_list1;
 use nom::sequence::tuple;
 
@@ -46,19 +47,22 @@ pub(super) fn func_decl(input: &[u8]) -> IResult<&[u8], FuncDeclBorrowed> {
     ) {
         Ok(relational)
     } else {
-        do_parse!(
-            input,
-            multispace0
-                >> tag!("fn::")
-                >> name: map!(is_keyword, TerminalBorrowed::from_slice)
-                >> op1: op_args
-                >> (FuncDeclBorrowed {
-                    name,
-                    args: None,
-                    op_args: Some(op1),
-                    variant: FuncVariants::NonRelational
-                })
-        )
+        let (i, _) = tuple((multispace0, tag("fn::")))(input)?;
+        let (i, name) = match is_keyword(i) {
+            Ok((rest, TIME_CALC_FN)) => (rest, TIME_CALC_FN),
+            Ok((rest, MOVE_FN)) => (rest, MOVE_FN),
+            _ => return Err(nom::Err::Error(ParseErrB::SyntaxError)),
+        };
+        let (rest, op1) = op_args(i)?;
+        Ok((
+            rest,
+            FuncDeclBorrowed {
+                name: TerminalBorrowed(name),
+                args: None,
+                op_args: Some(op1),
+                variant: FuncVariants::NonRelational,
+            },
+        ))
     }
 }
 

@@ -6,6 +6,7 @@ use super::TimeFnErr;
 use crate::agent::{
     kb::bms::BmsWrapper,
     lang::{
+        built_ins::TIME_CALC_FN,
         common::{ConstraintValue, OpArg},
         logsent::ParseContext,
         parser::{FuncDeclBorrowed, TerminalBorrowed},
@@ -65,7 +66,7 @@ impl TimeCalc {
     }
 
     pub fn generate_uid(&self) -> Vec<u8> {
-        let mut uid = b"time_calc".to_vec();
+        let mut uid = TIME_CALC_FN.to_vec();
         uid.extend(self.var0.generate_uid());
         self.op.generate_uid(&mut uid);
         uid.extend(self.var1.generate_uid());
@@ -110,7 +111,7 @@ impl<'a> std::convert::TryFrom<(&'a FuncDeclBorrowed<'a>, &'a mut ParseContext)>
     fn try_from(decl: (&'a FuncDeclBorrowed, &mut ParseContext)) -> Result<Self, Self::Error> {
         let (other, context) = decl;
 
-        if let TerminalBorrowed(b"time_calc") = other.name {
+        if let TerminalBorrowed(TIME_CALC_FN) = other.name {
             Ok(Self::new(other, context).map_err(|_| other)?)
         } else {
             Err(other)

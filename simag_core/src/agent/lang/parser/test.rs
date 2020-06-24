@@ -182,7 +182,7 @@ fn parse_time_pred() {
             },
             OpArgBorrowed {
                 term: UnconstraintArg::Terminal(b"t1"),
-                comp: Some((Operator::Since, UnconstraintArg::String(b""))),
+                comp: Some((Operator::Since, UnconstraintArg::String(EMPTY))),
             }
         ]
     );
@@ -262,10 +262,24 @@ fn parse_special_funcs() {
 
     // move built-in function
     let s5 = b"fn::move(from l1 to '0.0.0')";
+    let s5_res = func_decl(s5);
+    assert_done_or_err!(s5_res);
+
     let s6 = b"fn::move(from '0.0.0' to l1)";
+    let s6_res = func_decl(s6);
+    assert_done_or_err!(s6_res);
+
     let s7 = b"fn::move(to '0.0.0', since t0 until t1)";
+    let s7_res = func_decl(s7);
+    assert_done_or_err!(s7_res);
+
     let s8 = b"fn::move(to '0.0.0', at t1)";
+    let s8_res = func_decl(s8);
+    assert_done_or_err!(s8_res);
+
     let s9 = b"fn::move(from '0.0.0')"; // is err
+    let s9_res = func_decl(s9);
+    assert!(s9_res.is_err());
 }
 
 #[test]

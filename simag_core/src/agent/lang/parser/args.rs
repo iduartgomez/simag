@@ -9,6 +9,7 @@ use nom::{
 
 use super::numbers::number;
 use super::*;
+use operators::OperatorKind;
 
 // op_args = $(op_arg),* ;
 pub(super) fn op_args(input: &[u8]) -> IResult<&[u8], Vec<OpArgBorrowed>> {
@@ -110,7 +111,7 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
     }
 
     fn time_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
-        let (i, _) = tag("since")(i)?;
+        let (i, first_tag) = alt((tag("since"), tag("at")))(i)?;
         let (i, _) = multispace0(i)?;
         let (i, since) = UnconstraintArg::get(i)?;
         let (i, _) = multispace0(i)?;
@@ -121,7 +122,32 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
             multispace0,
         )))(i)?;
 
-        let term = if let Some((.., term, _)) = until {
+        if first_tag == b"at" && until.is_some() {
+            return Err(nom::Err::Error(ParseErrB::SyntaxError));
+        }
+
+        let comp = if let Some((.., term, _)) = until {
+            Operator::from_time_op(Some(term), OperatorKind::TimeFn)
+        } else if first_tag == b"since" {
+            Operator::from_time_op(None, OperatorKind::TimeFn)
+        } else {
+            Some((Operator::Until, UnconstraintArg::String(EMPTY)))
+        };
+
+        Ok((i, OpArgBorrowed { term: since, comp }))
+    }
+
+    fn space_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
+        let (i, from) = opt(tuple((
+            tag("from"),
+            multispace0,
+            UnconstraintArg::get,
+            multispace0,
+        )))(i)?;
+        let (i, _) = tag("to")(i)?;
+        let (i, (_, to, ..)) = tuple((multispace0, UnconstraintArg::get, multispace0))(i)?;
+
+        let term = if let Some((.., term, _)) = from {
             Some(term)
         } else {
             None
@@ -130,14 +156,18 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
         Ok((
             i,
             OpArgBorrowed {
-                term: since,
-                comp: Operator::from_time_op(term),
+                term: to,
+                comp: Operator::from_time_op(term, OperatorKind::SpaceFn),
             },
         ))
     }
 
     let (i, _) = multispace0(i)?;
     if let Ok((rest, arg)) = normal_arg(i) {
+        return Ok((rest, arg));
+    }
+
+    if let Ok((rest, arg)) = space_arg(i) {
         return Ok((rest, arg));
     }
 

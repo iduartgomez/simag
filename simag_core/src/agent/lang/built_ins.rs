@@ -3,6 +3,9 @@ use std::{collections::HashMap, sync::Arc};
 use super::{logsent::ParseContext, parser::FuncDeclBorrowed, time_semantics::TimeCalc, Var};
 use crate::agent::kb::bms::BmsWrapper;
 
+pub const MOVE_FN: &[u8] = b"move";
+pub const TIME_CALC_FN: &[u8] = b"time_calc";
+
 /// Special built-in functions callable in logical sentences.
 #[derive(Debug, Clone)]
 pub(in crate::agent) enum BuiltIns {

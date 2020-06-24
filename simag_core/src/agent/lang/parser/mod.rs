@@ -66,7 +66,7 @@ const OR_OP: &[u8] = b"or";
 const IFF_OP: &[u8] = b"equiv";
 const IMPL_OP: &[u8] = b"implies";
 
-const EMPTY: &[u8] = b" ";
+const EMPTY: &[u8] = b"";
 
 pub(in crate::agent) struct Parser;
 impl Parser {
