@@ -86,8 +86,8 @@ impl Representation {
     /// class for future use.
     ///
     /// For more examples check the LogSentence type docs.
-    pub fn tell(&self, source: &str) -> Result<(), Vec<ParseErrF>> {
-        let pres = logic_parser(source, true, &self.threads);
+    pub fn tell<T: AsRef<str>>(&self, source: T) -> Result<(), Vec<ParseErrF>> {
+        let pres = logic_parser(source.as_ref(), true, &self.threads);
         if let Ok(mut sentences) = pres {
             let mut errors = Vec::new();
             for _ in 0..sentences.len() {

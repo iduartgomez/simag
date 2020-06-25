@@ -33,6 +33,32 @@ pub(super) enum OperatorKind {
     SpaceFn,
 }
 
+pub(super) fn second_operand(
+    t: Option<UnconstraintArg>,
+    k: OperatorKind,
+) -> Option<(Operator, UnconstraintArg)> {
+    match k {
+        OperatorKind::TimeFn => {
+            if let Some(term) = t {
+                // since <a> until <b>
+                Some((Operator::SinceUntil, term))
+            } else {
+                // since <a>
+                Some((Operator::Since, UnconstraintArg::String(EMPTY)))
+            }
+        }
+        OperatorKind::SpaceFn => {
+            if let Some(term) = t {
+                // from <a> to <b>
+                Some((Operator::FromTo, term))
+            } else {
+                // to <b>
+                Some((Operator::To, UnconstraintArg::String(EMPTY)))
+            }
+        }
+    }
+}
+
 impl Operator {
     pub(super) fn from_chars(c: &[u8]) -> IResult<&[u8], Operator> {
         match c {
@@ -44,32 +70,6 @@ impl Operator {
             b"is" => Ok((EMPTY, Operator::TimeAssignment)),
             b"at" => Ok((EMPTY, Operator::SpaceAssignment)),
             _ => Err(nom::Err::Error(ParseErrB::IsNotOperator(c))),
-        }
-    }
-
-    pub(super) fn from_time_op(
-        t: Option<UnconstraintArg>,
-        k: OperatorKind,
-    ) -> Option<(Operator, UnconstraintArg)> {
-        match k {
-            OperatorKind::TimeFn => {
-                if let Some(term) = t {
-                    // since <a> until <b>
-                    Some((Operator::SinceUntil, term))
-                } else {
-                    // since <a>
-                    Some((Operator::Since, UnconstraintArg::String(EMPTY)))
-                }
-            }
-            OperatorKind::SpaceFn => {
-                if let Some(term) = t {
-                    // from <a> to <b>
-                    Some((Operator::FromTo, term))
-                } else {
-                    // to <b>
-                    Some((Operator::To, UnconstraintArg::String(EMPTY)))
-                }
-            }
         }
     }
 

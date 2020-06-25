@@ -522,6 +522,8 @@ impl Assert {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(in crate::agent) enum OpArg {
+    // TODO: split `generic` in two variants
+    /// Generic optional argument which includes one binding value and optionally a second operand to compare against
     Generic(ConstraintValue, Option<(Operator, ConstraintValue)>),
     Time(TimeArg),
     OverWrite,

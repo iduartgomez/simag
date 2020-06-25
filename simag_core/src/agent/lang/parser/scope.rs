@@ -1,5 +1,9 @@
 use nom::{
-    branch::alt, bytes::complete::tag, character::complete::multispace0, combinator::opt,
+    branch::alt,
+    bytes::complete::tag,
+    character::complete::multispace0,
+    combinator::{map, opt},
+    multi::many0,
     sequence::tuple,
 };
 
@@ -197,31 +201,27 @@ fn logic_cond<'a>(
 
 /// One or multiple concatenated assertions, e.g.: (let x, y in abc[x=1] && def[x=2] && ...)
 pub(super) fn multiple_asserts(input: &[u8]) -> IResult<&[u8], ASTNode> {
-    let (rest, asserts) = do_parse!(
-        input,
-        multispace0
-            >> tag!("(")
-            >> multispace0
-            >> vars: opt!(scope_var_decl)
-            >> multispace0
-            >> decl: many0!(map!(
-                do_parse!(
-                    multispace0
-                        >> decl: assert_knowledge
-                        >> multispace0
-                        >> op: map!(operators::logic_operator, LogicOperator::from_bytes)
-                        >> (op?.1, decl)
-                ),
-                assert_one
-            ))
-            >> multispace0
-            >> last: map!(assert_knowledge, ASTNode::from)
-            >> multispace0
-            >> tag!(")")
-            >> multispace0
-            >> (vars, decl, last)
-    )?;
-    let (_, asserts) = assert_many(asserts)?;
+    let take_decl = map(
+        tuple((
+            multispace0,
+            assert_knowledge,
+            multispace0,
+            operators::logic_operator,
+            multispace0,
+        )),
+        |(_, decl, _, op, ..)| -> IResult<&[u8], (LogicOperator, AssertBorrowed)> {
+            Ok((EMPTY, (LogicOperator::from_bytes(op)?.1, decl)))
+        },
+    );
+
+    let (i, _) = tuple((multispace0, tag("("), multispace0))(input)?;
+    let (i, vars) = opt(scope_var_decl)(i)?;
+    let (i, decl) = many0(map(take_decl, |decl| -> IResult<&[u8], ASTNode> {
+        assert_one(decl?.1)
+    }))(i)?;
+    let (i, last) = map(assert_knowledge, ASTNode::from)(i)?;
+    let (rest, _) = tuple((multispace0, tag(")"), multispace0))(i)?;
+    let asserts = assert_many((vars, decl, last))?.1;
     Ok((rest, asserts))
 }
 
@@ -239,17 +239,16 @@ pub(super) fn assert_one(input: AssertOne) -> IResult<&[u8], ASTNode> {
     ))
 }
 
-type AssertMany<'a> = (
-    Option<DeclVars<'a>>,
-    Vec<IResult<'a, &'a [u8], ASTNode<'a>>>,
-    ASTNode<'a>,
-);
+type AssertMany<'a, T> = (Option<DeclVars<'a>>, T, ASTNode<'a>);
 
-pub(super) fn assert_many(input: AssertMany) -> IResult<&[u8], ASTNode> {
-    let (vars, mut decl, last) = input;
+pub(super) fn assert_many<'a, T>(input: AssertMany<'a, T>) -> IResult<&[u8], ASTNode>
+where
+    T: IntoIterator<Item = IResult<'a, &'a [u8], ASTNode<'a>>>,
+{
+    let (vars, decl, last) = input;
 
     let mut fd = vec![];
-    for e in decl.drain(..) {
+    for e in decl.into_iter() {
         match e {
             Ok((_, e)) => fd.push(e),
             err => return err,

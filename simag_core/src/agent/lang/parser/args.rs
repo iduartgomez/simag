@@ -9,7 +9,7 @@ use nom::{
 
 use super::numbers::number;
 use super::*;
-use operators::OperatorKind;
+use operators::{second_operand, OperatorKind};
 
 // op_args = $(op_arg),* ;
 pub(super) fn op_args(input: &[u8]) -> IResult<&[u8], Vec<OpArgBorrowed>> {
@@ -72,6 +72,7 @@ fn to_arg_vec(arg: ArgBorrowed) -> Vec<ArgBorrowed> {
 #[derive(Debug, PartialEq, Clone)]
 pub(in crate::agent) struct OpArgBorrowed<'a> {
     pub term: UnconstraintArg<'a>,
+    /// optional operand to compare against
     pub comp: Option<(Operator, UnconstraintArg<'a>)>,
 }
 
@@ -129,9 +130,9 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
         }
 
         let comp = if let Some((.., term, _)) = until {
-            Operator::from_time_op(Some(term), OperatorKind::TimeFn)
+            second_operand(Some(term), OperatorKind::TimeFn)
         } else if first_tag == b"since" {
-            Operator::from_time_op(None, OperatorKind::TimeFn)
+            second_operand(None, OperatorKind::TimeFn)
         } else {
             Some((Operator::Until, UnconstraintArg::String(EMPTY)))
         };
@@ -141,6 +142,16 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
 
     #[inline(always)]
     fn space_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
+        if let Ok((rest, (tag, .., term))) =
+            tuple((tag("at"), multispace0, UnconstraintArg::get))(i)
+        {
+            let arg = OpArgBorrowed {
+                term,
+                comp: Some((Operator::from_chars(tag)?.1, UnconstraintArg::String(EMPTY))),
+            };
+            return Ok((rest, arg));
+        }
+
         let (i, from) = opt(tuple((
             tag("from"),
             multispace0,
@@ -162,7 +173,7 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
             i,
             OpArgBorrowed {
                 term: to,
-                comp: Operator::from_time_op(term, OperatorKind::SpaceFn),
+                comp: second_operand(term, OperatorKind::SpaceFn),
             },
         ))
     }
