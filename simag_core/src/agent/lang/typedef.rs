@@ -4,4 +4,5 @@ pub(super) enum TypeDef {
     //Class,
     //Entity,
     Time,
+    Space,
 }

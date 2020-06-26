@@ -19,7 +19,7 @@ pub(super) fn class_decl(input: &[u8]) -> IResult<&[u8], ClassDeclBorrowed> {
     do_parse!(
         input,
         multispace0
-            >> name: map!(terminal, TerminalBorrowed::from_slice)
+            >> name: map!(terminal, TerminalBorrowed::from)
             >> op_args: opt!(op_args)
             >> a1: args
             >> (ClassDeclBorrowed {
@@ -61,14 +61,21 @@ pub(super) fn func_decl(input: &[u8]) -> IResult<&[u8], FuncDeclBorrowed> {
         ))
     }
 
-    if let Ok((rest, non_relation)) = special_func(input) {
-        Ok((rest, non_relation))
-    } else {
+    #[inline(always)]
+    fn normal_pred(input: &[u8]) -> IResult<&[u8], FuncDeclBorrowed> {
+        let i = tuple((multispace0, tag("fn::")))(input)?.0;
+        let (i, name) = {
+            let (i, name) = terminal(i)?;
+            (i, TerminalBorrowed::from(name))
+        };
+        let (i, oa) = opt(op_args)(i)?;
+        let (i, a) = args(i)?;
+
         do_parse!(
             input,
             multispace0
                 >> tag!("fn::")
-                >> name: map!(terminal, TerminalBorrowed::from_slice)
+                >> name: map!(terminal, TerminalBorrowed::from)
                 >> op1: opt!(op_args)
                 >> a1: args
                 >> (FuncDeclBorrowed {
@@ -78,6 +85,12 @@ pub(super) fn func_decl(input: &[u8]) -> IResult<&[u8], FuncDeclBorrowed> {
                     variant: FuncVariants::Relational
                 })
         )
+    }
+
+    if let Ok((rest, non_relation)) = special_func(input) {
+        Ok((rest, non_relation))
+    } else {
+        normal_pred(input)
     }
 }
 
@@ -100,7 +113,7 @@ pub(super) fn record_decl(input: &[u8]) -> IResult<&[u8], ASTNode> {
         map(
             tuple((
                 multispace0,
-                map(terminal, TerminalBorrowed::from_slice),
+                map(terminal, TerminalBorrowed::from),
                 multispace0,
             )),
             |(_, name, _)| name,

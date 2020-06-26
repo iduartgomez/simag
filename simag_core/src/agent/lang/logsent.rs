@@ -40,6 +40,7 @@ pub(in crate::agent) struct LogSentence {
     pub id: SentID,
     pub created: Time,
     pub has_time_vars: usize,
+    pub has_space_vars: usize,
     particles: Vec<Particle>,
     vars: Vec<Arc<Var>>,
     skolem: Vec<Arc<Skolem>>,
@@ -68,6 +69,7 @@ impl<'a> LogSentence {
             vars,
             predicates: (vec![], vec![]),
             has_time_vars: 0,
+            has_space_vars: 0,
             created: Utc::now(),
             id,
             sent_kind: context.stype,
@@ -94,11 +96,15 @@ impl<'a> LogSentence {
             if !self.vars.is_empty() || !self.skolem.is_empty() {
                 for var in &self.vars {
                     match var.kind {
+                        VarKind::Normal => {}
                         VarKind::TimeDecl | VarKind::Time => {
                             self.has_time_vars += 1;
                             continue;
                         }
-                        VarKind::Normal => {}
+                        VarKind::SpaceDecl | VarKind::Space => {
+                            self.has_space_vars += 1;
+                            continue;
+                        }
                     }
                 }
                 let total_vars = self.vars.len() + self.skolem.len();

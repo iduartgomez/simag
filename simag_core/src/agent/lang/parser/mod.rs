@@ -210,8 +210,8 @@ fn string(input: &[u8]) -> IResult<&[u8], &[u8]> {
 #[derive(PartialEq, Clone, Copy)]
 pub(in crate::agent) struct TerminalBorrowed<'a>(pub &'a [u8]);
 
-impl<'a> TerminalBorrowed<'a> {
-    pub fn from_slice(i: &'a [u8]) -> TerminalBorrowed<'a> {
+impl<'a> From<&'a [u8]> for TerminalBorrowed<'a> {
+    fn from(i: &'a [u8]) -> TerminalBorrowed<'a> {
         TerminalBorrowed(i)
     }
 }
@@ -270,7 +270,7 @@ fn is_keyword(input: &[u8]) -> IResult<&[u8], &[u8]> {
 
 fn is_type(input: &[u8]) -> bool {
     match input {
-        b"time" => true,
+        b"time" | b"space" => true,
         _ => false,
     }
 }

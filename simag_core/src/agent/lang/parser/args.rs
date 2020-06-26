@@ -57,7 +57,7 @@ pub(super) fn arg(input: &[u8]) -> IResult<&[u8], ArgBorrowed> {
     do_parse!(
         input,
         multispace0
-            >> term: map!(terminal, TerminalBorrowed::from_slice)
+            >> term: map!(terminal, TerminalBorrowed::from)
             >> multispace0
             >> u0: opt!(uval)
             >> (ArgBorrowed { term, uval: u0 })
@@ -84,16 +84,9 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
             return Err(nom::Err::Error(ParseErrB::NonTerminal(EMPTY, orig)));
         }
         let (i, _) = multispace0(i)?;
-        let (i, op) = opt(alt((
-            tag(">="),
-            tag("<="),
-            tag("="),
-            tag(">"),
-            tag("<"),
-            tag("is"),
-        )))(i)?;
+        let (i, op) = opt(alt((tag(">="), tag("<="), tag("="), tag(">"), tag("<"))))(i)?;
         if let Some(op) = op {
-            let comp = Operator::from_chars(op);
+            let op = Operator::from_chars(op)?.1;
             let (i, _) = multispace0(i)?;
             let (i, term2) = UnconstraintArg::get(i)?;
             if term2.is_reserved() && term2 != b"ow" {
@@ -104,7 +97,7 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
                 i,
                 OpArgBorrowed {
                     term,
-                    comp: Some((comp?.1, term2)),
+                    comp: Some((op, term2)),
                 },
             ))
         } else {
@@ -142,12 +135,10 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
 
     #[inline(always)]
     fn space_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
-        if let Ok((rest, (tag, .., term))) =
-            tuple((tag("at"), multispace0, UnconstraintArg::get))(i)
-        {
+        if let Ok((rest, (.., term))) = tuple((tag("at"), multispace0, UnconstraintArg::get))(i) {
             let arg = OpArgBorrowed {
                 term,
-                comp: Some((Operator::from_chars(tag)?.1, UnconstraintArg::String(EMPTY))),
+                comp: Some((Operator::At, UnconstraintArg::String(EMPTY))),
             };
             return Ok((rest, arg));
         }

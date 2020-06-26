@@ -1,4 +1,3 @@
-use float_cmp::ApproxEqUlps;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::iter::FromIterator;
@@ -11,6 +10,7 @@ use super::{
     fn_decl::FuncDecl,
     logsent::{LogSentResolution, ParseContext, ProofResContext},
     parser::{ArgBorrowed, Number, OpArgBorrowed, Operator, UVal, UnconstraintArg},
+    space_semantics::{SpaceArg, SpaceFnErr},
     time_semantics::{TimeArg, TimeFn, TimeFnErr, TimeOps},
     var::Var,
     BuiltIns, GroundedFunc, GroundedMemb, Terminal,
@@ -20,6 +20,7 @@ use crate::agent::{
     kb::{repr::Representation, VarAssignment},
 };
 use crate::FLOAT_EQ_ULPS;
+use float_cmp::ApproxEqUlps;
 use parking_lot::RwLock;
 
 // Predicate types:
@@ -441,6 +442,7 @@ impl Assert {
             Assert::ClassDecl(c) => c.contains_var(var),
             Assert::SpecialFunc(builtins) => match builtins {
                 BuiltIns::TimeCalculus(f) => f.contains_var(var),
+                BuiltIns::MoveFn(f) => f.contains_var(var),
             },
         }
     }
@@ -526,6 +528,7 @@ pub(in crate::agent) enum OpArg {
     /// Generic optional argument which includes one binding value and optionally a second operand to compare against
     Generic(ConstraintValue, Option<(Operator, ConstraintValue)>),
     Time(TimeArg),
+    Space(SpaceArg),
     OverWrite,
 }
 
@@ -536,6 +539,14 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for OpArg {
             Ok(arg) => return Ok(OpArg::Time(arg)),
             Err(ParseErrF::TimeFnErr(TimeFnErr::WrongDef)) => {
                 return Err(ParseErrF::TimeFnErr(TimeFnErr::WrongDef))
+            }
+            _ => {}
+        }
+
+        match SpaceArg::try_from(input) {
+            Ok(arg) => return Ok(OpArg::Space(arg)),
+            Err(ParseErrF::SpaceFnErr(SpaceFnErr::WrongDef)) => {
+                return Err(ParseErrF::SpaceFnErr(SpaceFnErr::WrongDef))
             }
             _ => {}
         }
@@ -583,6 +594,7 @@ impl<'a> OpArg {
                 id
             }
             OpArg::Time(time_arg) => time_arg.generate_uid(),
+            OpArg::Space(space_arg) => space_arg.generate_uid(),
             OpArg::OverWrite => vec![5],
         }
     }
@@ -602,6 +614,7 @@ pub(in crate::agent) enum ConstraintValue {
     Terminal(Terminal),
     String(String),
     TimePayload(TimeFn),
+    SpacePayload,
 }
 
 impl<'a> TryFrom<(&'a UnconstraintArg<'a>, &'a ParseContext)> for ConstraintValue {
@@ -617,6 +630,7 @@ impl<'a> TryFrom<(&'a UnconstraintArg<'a>, &'a ParseContext)> for ConstraintValu
                 String::from_utf8_lossy(slice).into_owned(),
             )),
             UnconstraintArg::Keyword(b"time") => Ok(ConstraintValue::TimePayload(TimeFn::ThisTime)),
+            UnconstraintArg::Keyword(b"space") => Ok(ConstraintValue::SpacePayload),
             UnconstraintArg::Keyword(kw) => Err(ParseErrF::ReservedKW(
                 str::from_utf8(kw).unwrap().to_owned(),
             )),
@@ -630,6 +644,7 @@ impl<'a> ConstraintValue {
             ConstraintValue::Terminal(t) => t.generate_uid(),
             ConstraintValue::String(s) => Vec::from_iter(s.as_bytes().iter().cloned()),
             ConstraintValue::TimePayload(t) => t.generate_uid(),
+            ConstraintValue::SpacePayload => vec![0], // FIXME
         }
     }
 

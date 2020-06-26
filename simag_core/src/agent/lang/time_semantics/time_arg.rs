@@ -119,9 +119,9 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for TimeArg {
             Ok(ConstraintValue::TimePayload(TimeFn::ThisTime)) => None, // first argument is: this.time
             Ok(ConstraintValue::TimePayload(_)) => unreachable!(),
             Ok(ConstraintValue::String(time_val)) => {
-                if let Some((op, _)) = other.comp {
+                if let Some((Operator::Since, _)) = other.comp {
                     // first argument is a time decl, e.g. 'now'
-                    let t = TimeFn::from_str(time_val.as_bytes(), op)?;
+                    let t = TimeFn::from_str(time_val.as_bytes(), Operator::Since)?;
                     Some(TimeArg::DeclTime(t))
                 } else {
                     return Err(TimeFnErr::IsNotVar.into());
@@ -132,13 +132,14 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for TimeArg {
                 var0 = Some(val.get_var());
                 None
             }
+            Ok(ConstraintValue::SpacePayload) => return Err(TimeFnErr::IsNotVar.into()),
             Err(err) => return Err(err),
         };
 
         let (op, term1) = match &other.comp {
             Some((op, unc_arg)) => match ConstraintValue::try_from((unc_arg, context)) {
                 Ok(t) => (*op, Some(t)),
-                Err(ParseErrF::ReservedKW(kw)) => return Err(ParseErrF::ReservedKW(kw)),
+                // Err(ParseErrF::ReservedKW(kw)) => return Err(ParseErrF::ReservedKW(kw)),
                 Err(err) => return Err(err),
             },
             None => (Operator::TimeAssignment, None),
@@ -254,7 +255,7 @@ fn get_time<T: AsRef<str>>(slice: T) -> Result<Time, ParseErrF> {
 
 impl TimeFn {
     pub fn from_str(slice: &[u8], op: Operator) -> Result<TimeFn, ParseErrF> {
-        if slice == b"now" {
+        if slice == b"now" && op == Operator::Since {
             Ok(TimeFn::Now)
         } else {
             let s = std::str::from_utf8(slice).unwrap();

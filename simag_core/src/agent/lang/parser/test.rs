@@ -115,7 +115,7 @@ macro_rules! assert_done_or_err {
 
 #[test]
 #[allow(clippy::cognitive_complexity)]
-fn parser_predicate() {
+fn parse_predicate() {
     let s1 = b"professor[$Lucy=1]";
     let s1_res = class_decl(s1);
     assert_done_or_err!(s1_res);
@@ -134,8 +134,7 @@ fn parser_predicate() {
     assert_eq!(s2_uval.op, Operator::More);
     assert_eq!(s2_uval.val, Number::SignedFloat(-1.5_f32));
 
-    // non-sensical, but can parse:
-    let s3 = b"dean(t2 is t1, ow)[$John=0]";
+    let s3 = b"dean(from t1 to t2, ow)[$John=0]";
     let s3_res = class_decl(s3);
     assert_done_or_err!(s3_res);
     let s3_res = s3_res.unwrap().1;
@@ -146,8 +145,8 @@ fn parser_predicate() {
         s3_res.op_args.as_ref().unwrap(),
         &vec![
             OpArgBorrowed {
-                term: UnconstraintArg::Terminal(b"t2"),
-                comp: Some((Operator::TimeAssignment, UnconstraintArg::Terminal(b"t1"))),
+                term: UnconstraintArg::Terminal(b"t1"),
+                comp: Some((Operator::FromTo, UnconstraintArg::Terminal(b"t2"))),
             },
             OpArgBorrowed {
                 term: UnconstraintArg::Keyword(b"ow"),
@@ -234,7 +233,7 @@ fn parse_space_pred() {
 
 #[test]
 fn parse_function() {
-    let s1 = b"fn::criticize(t1 is 'now')[$John=1,$Lucy]";
+    let s1 = b"fn::criticize(since t1 until 'now')[$John=1,$Lucy]";
     let s1_res = func_decl(s1);
     assert_done_or_err!(s1_res);
     assert_eq!(s1_res.unwrap().1.variant, FuncVariants::Relational);

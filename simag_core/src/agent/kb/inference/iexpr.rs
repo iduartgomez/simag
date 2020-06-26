@@ -101,7 +101,7 @@ impl<'rep> Inference<'rep> {
     }
 
     /// Find if a grounded class membership is true, false or unknown.
-    /// ie. (person[$John,u=1])
+    /// ie. (person[$John=1])
     fn query_cls_gr(&self) {
         self.query
             .cls_queries_grounded

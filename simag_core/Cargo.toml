@@ -15,6 +15,7 @@ dashmap = "3.11.4"
 parking_lot = "0.10"
 once_cell = "^1.3.0"
 env_logger = "0.7.1"
+smallvec = "1.4.0"
 
 simag_terminal = { path = "../simag_terminal" }
 

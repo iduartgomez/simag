@@ -342,13 +342,13 @@ pub(super) fn scope_var_decl(i: &[u8]) -> IResult<&[u8], DeclVars> {
             }
             if var {
                 vars.push(VarDeclBorrowed::Var(VarBorrowed {
-                    name: TerminalBorrowed::from_slice(name),
+                    name: TerminalBorrowed::from(name),
                     ty,
                     val,
                 }));
             } else {
                 vars.push(VarDeclBorrowed::Skolem(SkolemBorrowed {
-                    name: TerminalBorrowed::from_slice(name),
+                    name: TerminalBorrowed::from(name),
                     ty,
                     val,
                 }));

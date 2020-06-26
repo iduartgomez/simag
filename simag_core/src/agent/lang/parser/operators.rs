@@ -24,6 +24,8 @@ pub(in crate::agent) enum Operator {
     // From,
     To,
     FromTo,
+    /// assign a location at declaration time
+    At,
     /// used whenever a space value is assigned in a declaration from `this`
     SpaceAssignment,
 }
@@ -67,8 +69,7 @@ impl Operator {
             b"=" => Ok((EMPTY, Operator::Equal)),
             b"<=" => Ok((EMPTY, Operator::LessEqual)),
             b">=" => Ok((EMPTY, Operator::MoreEqual)),
-            b"is" => Ok((EMPTY, Operator::TimeAssignment)),
-            b"at" => Ok((EMPTY, Operator::SpaceAssignment)),
+            b"at" => Ok((EMPTY, Operator::At)),
             _ => Err(nom::Err::Error(ParseErrB::IsNotOperator(c))),
         }
     }
@@ -127,6 +128,7 @@ impl Operator {
             Operator::SpaceAssignment => id.push(10),
             Operator::To => id.push(11),
             Operator::FromTo => id.push(12),
+            Operator::At => id.push(13),
         }
     }
 }
@@ -146,6 +148,7 @@ impl std::fmt::Display for Operator {
             Operator::SpaceAssignment => write!(f, "@"),
             Operator::To => write!(f, "->"),
             Operator::FromTo => write!(f, "<->"),
+            Operator::At => write!(f, "@"),
         }
     }
 }
