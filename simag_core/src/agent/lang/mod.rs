@@ -85,6 +85,7 @@ mod errors {
         RFuncWrongArgs,
         WrongArgNumb,
         WrongDef,
+        NotBuiltin,
         TypeUnsupported,
         FailedConversion(&'static str),
         LogSentErr(LogSentErr),

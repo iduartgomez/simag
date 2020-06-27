@@ -1,8 +1,11 @@
 use std::{collections::HashMap, sync::Arc};
 
 use super::{
-    logsent::ParseContext, parser::FuncDeclBorrowed, space_semantics::MoveFn,
-    time_semantics::TimeCalc, Var,
+    logsent::ParseContext,
+    parser::{FuncDeclBorrowed, TerminalBorrowed},
+    space_semantics::MoveFn,
+    time_semantics::TimeCalc,
+    ParseErrF, Var,
 };
 use crate::agent::kb::bms::BmsWrapper;
 
@@ -40,17 +43,17 @@ impl BuiltIns {
     }
 }
 
-impl<'a> std::convert::TryFrom<(&'a FuncDeclBorrowed<'a>, &'a mut ParseContext)> for BuiltIns {
-    type Error = &'a FuncDeclBorrowed<'a>;
+impl<'a> std::convert::TryFrom<(&'a FuncDeclBorrowed<'a>, &mut ParseContext)> for BuiltIns {
+    type Error = ParseErrF;
 
-    fn try_from(input: (&'a FuncDeclBorrowed, &mut ParseContext)) -> Result<Self, Self::Error> {
+    fn try_from(input: (&FuncDeclBorrowed<'a>, &mut ParseContext)) -> Result<Self, Self::Error> {
         let (decl, ctxt) = input;
-        if let Ok(f) = TimeCalc::try_from((decl, &mut *ctxt)) {
-            Ok(BuiltIns::TimeCalculus(f))
-        } else if let Ok(f) = MoveFn::try_from((decl, &mut *ctxt)) {
-            Ok(BuiltIns::MoveFn(f))
-        } else {
-            Err(decl)
+        match decl.name.0 {
+            MOVE_FN => Ok(BuiltIns::MoveFn(MoveFn::try_from((decl, &mut *ctxt))?)),
+            TIME_CALC_FN => Ok(BuiltIns::TimeCalculus(TimeCalc::try_from((
+                decl, &mut *ctxt,
+            ))?)),
+            _ => Err(ParseErrF::WrongDef),
         }
     }
 }

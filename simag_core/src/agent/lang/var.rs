@@ -131,6 +131,10 @@ impl Var {
     pub fn name_eq(&self, other: &Var) -> bool {
         self.name == other.name
     }
+
+    pub fn generate_uid(&self) -> Vec<u8> {
+        format!("{:?}", self as *const Var).into_bytes()
+    }
 }
 
 impl std::cmp::PartialEq for Var {

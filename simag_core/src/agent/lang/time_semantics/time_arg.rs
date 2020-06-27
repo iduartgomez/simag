@@ -16,9 +16,9 @@ pub(in crate::agent) enum TimeArg {
     SinceVar(Arc<Var>),
     // UntilVar(Arc<Var>),
     SinceVarUntilVar(Arc<Var>, Arc<Var>),
-    SinceVarUntilTime(Arc<Var>, Time),
-    SinceTimeUntilVar(Time, Arc<Var>),
-    SinceTimeUntilTime(Time, Time),
+    SinceVarUntilTime(Arc<Var>, TimeFn),
+    SinceTimeUntilVar(TimeFn, Arc<Var>),
+    SinceTimeUntilTime(TimeFn, TimeFn),
 }
 use TimeArg::*;
 
@@ -90,17 +90,17 @@ impl TimeArg {
 
     pub fn generate_uid(&self) -> Vec<u8> {
         match self {
-            AssignThisToVar(var) => format!("{:?}", var.as_ref() as *const Var).into_bytes(),
+            AssignThisToVar(var) => var.generate_uid(),
             DeclTime(decl) => decl.generate_uid(),
-            SinceVar(var) => format!("{:?}", var.as_ref() as *const Var).into_bytes(),
+            SinceVar(var) => var.generate_uid(),
             SinceVarUntilVar(v0, v1) => {
-                let mut id = format!("{:?}", v0.as_ref() as *const Var).into_bytes();
-                id.append(&mut format!("{:?}", v1.as_ref() as *const Var).into_bytes());
+                let mut id = v0.generate_uid();
+                id.append(&mut v1.generate_uid());
                 id
             }
             SinceVarUntilTime(v0, val) => {
-                let mut id = format!("{:?}", v0.as_ref() as *const Var).into_bytes();
-                id.append(&mut format!("{}", val).into_bytes());
+                let mut id = v0.generate_uid();
+                id.append(&mut format!("{:?}", val).into_bytes());
                 id
             }
             _ => unimplemented!(),
@@ -174,10 +174,11 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for TimeArg {
                     Ok(SinceVarUntilVar(var0, val.get_var()))
                 } else {
                     match val {
-                        ConstraintValue::String(val) => {
-                            let val = get_time(val)?;
-                            Ok(SinceVarUntilTime(var0, val))
-                        }
+                        ConstraintValue::String(val) => Ok(SinceVarUntilTime(
+                            var0,
+                            TimeFn::from_str(val.as_bytes(), Operator::Until)
+                                .map_err(|_| Into::<ParseErrF>::into(TimeFnErr::WrongDef))?,
+                        )),
                         _ => Err(TimeFnErr::WrongDef.into()),
                     }
                 }
@@ -187,13 +188,15 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for TimeArg {
                 match val0 {
                     TimeArg::DeclTime(TimeFn::Since(t0)) => {
                         if val1.is_var() {
-                            Ok(SinceTimeUntilVar(t0, val1.get_var()))
+                            Ok(SinceTimeUntilVar(TimeFn::Since(t0), val1.get_var()))
                         } else {
                             match val1 {
-                                ConstraintValue::String(val) => {
-                                    let t1 = get_time(val)?;
-                                    Ok(SinceTimeUntilTime(t0, t1))
-                                }
+                                ConstraintValue::String(val) => Ok(SinceTimeUntilTime(
+                                    TimeFn::Since(t0),
+                                    TimeFn::from_str(val.as_bytes(), Operator::Until).map_err(
+                                        |_| Into::<ParseErrF>::into(TimeFnErr::WrongDef),
+                                    )?,
+                                )),
                                 _ => Err(TimeFnErr::WrongDef.into()),
                             }
                         }
@@ -217,7 +220,8 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for TimeArg {
                 } else {
                     match val {
                         ConstraintValue::String(val) => {
-                            let val = get_time(val)?;
+                            let val = get_time(val)
+                                .map_err(|_| Into::<ParseErrF>::into(TimeFnErr::WrongDef))?;
                             Ok(DeclTime(TimeFn::Since(val)))
                         }
                         _ => Err(TimeFnErr::WrongDef.into()),
@@ -240,6 +244,7 @@ pub(in crate::agent) enum TimeFn {
     Now,
     /// Applies since the declared instant in time.
     Since(Time),
+    Until(Time),
     /// Time interval for value decl, in the form of [t0,t1).
     Interval(Time, Time),
     ThisTime,
@@ -255,13 +260,14 @@ fn get_time<T: AsRef<str>>(slice: T) -> Result<Time, ParseErrF> {
 
 impl TimeFn {
     pub fn from_str(slice: &[u8], op: Operator) -> Result<TimeFn, ParseErrF> {
-        if slice == b"now" && op == Operator::Since {
+        if slice == b"now" {
             Ok(TimeFn::Now)
         } else {
             let s = std::str::from_utf8(slice).unwrap();
             let time = get_time(s)?;
             match op {
                 Operator::Since => Ok(TimeFn::Since(time.with_timezone(&Utc))),
+                Operator::Until => Ok(TimeFn::Until(time.with_timezone(&Utc))),
                 _ => Err(TimeFnErr::OperatorNotValid.into()),
             }
         }
@@ -296,6 +302,10 @@ impl TimeFn {
         match self {
             TimeFn::Since(time) => {
                 id.push(0);
+                id.append(&mut format!("{}", time).into_bytes());
+            }
+            TimeFn::Until(time) => {
+                id.push(3);
                 id.append(&mut format!("{}", time).into_bytes());
             }
             TimeFn::Interval(time0, time1) => {

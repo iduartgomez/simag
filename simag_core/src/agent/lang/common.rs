@@ -671,14 +671,4 @@ impl<'a> ConstraintValue {
             _ => unreachable!(),
         }
     }
-
-    pub fn contains_var(&self, var: &Var) -> bool {
-        match self {
-            ConstraintValue::Terminal(term) => {
-                let this_var = term.get_var_ref();
-                this_var == var
-            }
-            _ => unreachable!(),
-        }
-    }
 }

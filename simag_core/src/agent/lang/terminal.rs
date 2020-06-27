@@ -43,7 +43,7 @@ impl<'a> Terminal {
 
     pub(in crate::agent::lang) fn generate_uid(&self) -> Vec<u8> {
         match *self {
-            Terminal::FreeTerm(ref var) => format!("{:?}", &**var as *const Var).into_bytes(),
+            Terminal::FreeTerm(ref var) => var.generate_uid(),
             Terminal::GroundedTerm(ref name) => Vec::from_iter(name.as_bytes().iter().cloned()),
         }
     }
@@ -85,7 +85,11 @@ impl<'a> Terminal {
         if let Terminal::FreeTerm(ref var) = *self {
             var.clone()
         } else {
-            panic!()
+            panic!(format!(
+                "SIMAG - {}:{} - called `get_var` on a non-var term",
+                file!(),
+                line!()
+            ))
         }
     }
 }
