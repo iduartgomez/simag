@@ -417,7 +417,12 @@ impl<'a> LogSentence {
         time_assign
     }
 
-    pub fn extract_all_predicates(self) -> (Vec<Arc<Var>>, Vec<Assert>) {
+    pub fn extract_all_predicates(
+        self,
+    ) -> (
+        impl IntoIterator<Item = Arc<Var>>,
+        impl IntoIterator<Item = Assert>,
+    ) {
         let LogSentence {
             vars, particles, ..
         } = self;

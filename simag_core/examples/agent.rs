@@ -4,7 +4,8 @@ const ASK_SETUP: &[&str] = &[
     // 0
     "( professor[$Lucy=1] )",
     // 1
-    "( fn::owns[$M1=1,$Nono] )
+    "
+    ( fn::owns[$M1=1,$Nono] )
     ( missile[$M1=1] )
     ( american[$West=1] )
     ( fn::enemy[$Nono=1,$America] )
@@ -14,14 +15,19 @@ const ASK_SETUP: &[&str] = &[
     ( let x in
         (( fn::owns[x=1,$Nono] and missile[x=1] ) := fn::sells[x=1,$West,$Nono] ))
     ( let x in ( missile[x=1] := weapon[x=1] ) )
-    ( let x in ( fn::enemy[x=1,$America] := hostile[x=1] ) )",
+    ( let x in ( fn::enemy[x=1,$America] := hostile[x=1] ) )
+    ",
     // 2
-    "(run(since '2015-01-01T00:00:00Z')[$Pancho=1])
+    "
+    (meat[$M1=1])
+    (dog[$Pancho=1])
+    (run(since '2015-01-01T00:00:00Z')[$Pancho=1])
     (fn::eat(since '2015-02-01T00:00:00Z')[$M1=1,$Pancho])
     (let x, y, t1:time, t2:time in
         (run(where t1 is this.time)[x=1] and fn::eat(where t2 is this.time)[y=1,x]
         and dog[x=1] and meat[y=1] and fn::time_calc(t1<t2))
-        := (fat[x=1] or fat[x=0]))",
+        := (fat[x=1] or fat[x=0]))
+    ",
 ];
 
 const ASK_QUESTION: &[&str] = &[
@@ -34,19 +40,20 @@ const ASK_QUESTION: &[&str] = &[
 ];
 
 fn new_knowledge(agent: &mut Agent) {
-    for _ in 0..10_000 {
+    for _ in 0..1_000 {
+        agent.clear();
         for s in ASK_SETUP {
             agent.tell(s).unwrap();
         }
         for q in ASK_QUESTION {
-            agent.ask(q).unwrap();
+            let _r = agent.ask(q).unwrap();
+            // eprintln!("query: {}, result: {:?}", q, _r.get_results_single());
         }
-        agent.clear();
     }
 }
 
 fn old_knowledge(agent: &Agent) {
-    for _ in 0..100_000 {
+    for _ in 0..10_000 {
         for q in ASK_QUESTION {
             agent.ask(q).unwrap();
         }

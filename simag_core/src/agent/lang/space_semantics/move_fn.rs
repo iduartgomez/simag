@@ -16,7 +16,8 @@ use smallvec::SmallVec;
 
 #[derive(Debug, Clone)]
 pub(in crate::agent) struct MoveFn {
-    vars: SmallVec<[Arc<Var>; 4]>,
+    // this rarely will contain more than 2 vars
+    vars: SmallVec<[Arc<Var>; 2]>,
     space_arg: SpaceArg,
     time_arg: Option<TimeArg>,
 }
@@ -56,7 +57,7 @@ impl MoveFn {
                 }
             }
         }
-
+        vars.shrink_to_fit();
         if let Some(space_arg) = space_arg {
             Ok(MoveFn {
                 vars,

@@ -1,11 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use super::{
-    logsent::ParseContext,
-    parser::{FuncDeclBorrowed, TerminalBorrowed},
-    space_semantics::MoveFn,
-    time_semantics::TimeCalc,
-    ParseErrF, Var,
+    logsent::ParseContext, parser::FuncDeclBorrowed, space_semantics::MoveFn,
+    time_semantics::TimeCalc, ParseErrF, Var,
 };
 use crate::agent::kb::bms::BmsWrapper;
 

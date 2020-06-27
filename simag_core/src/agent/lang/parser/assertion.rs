@@ -69,22 +69,16 @@ pub(super) fn func_decl(input: &[u8]) -> IResult<&[u8], FuncDeclBorrowed> {
             (i, TerminalBorrowed::from(name))
         };
         let (i, oa) = opt(op_args)(i)?;
-        let (i, a) = args(i)?;
-
-        do_parse!(
-            input,
-            multispace0
-                >> tag!("fn::")
-                >> name: map!(terminal, TerminalBorrowed::from)
-                >> op1: opt!(op_args)
-                >> a1: args
-                >> (FuncDeclBorrowed {
-                    name,
-                    args: Some(a1),
-                    op_args: op1,
-                    variant: FuncVariants::Relational
-                })
-        )
+        let (rest, a) = args(i)?;
+        Ok((
+            rest,
+            FuncDeclBorrowed {
+                name,
+                args: Some(a),
+                op_args: oa,
+                variant: FuncVariants::Relational,
+            },
+        ))
     }
 
     if let Ok((rest, non_relation)) = special_func(input) {
