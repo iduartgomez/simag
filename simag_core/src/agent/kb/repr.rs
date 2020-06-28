@@ -16,9 +16,9 @@ use crate::agent::kb::{
     VarAssignment,
 };
 use crate::agent::lang::{
-    logic_parser, Assert, ClassDecl, FreeClassMembership, FuncDecl, GrTerminalKind,
+    Assert, ClassDecl, FreeClassMembership, FuncDecl, GrTerminalKind,
     GrTerminalKind::{Class as ClassTerm, Entity as EntityTerm},
-    GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ParseErrF, ParseTree, Predicate,
+    GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ParseErrF, ParseTree, Parser, Predicate,
     ProofResContext, SentVarReq, TimeOps, Var,
 };
 
@@ -87,7 +87,7 @@ impl Representation {
     ///
     /// For more examples check the LogSentence type docs.
     pub fn tell<T: AsRef<str>>(&self, source: T) -> Result<(), Vec<ParseErrF>> {
-        let pres = logic_parser(source.as_ref(), true, &self.threads);
+        let pres = Parser::parse(source.as_ref(), true, &self.threads);
         if let Ok(mut sentences) = pres {
             let mut errors = Vec::new();
             for _ in 0..sentences.len() {
@@ -137,7 +137,7 @@ impl Representation {
 
     /// Asks the KB if some fact is true and returns the answer to the query.
     pub fn ask(&self, source: &str) -> Result<Answer, QueryErr> {
-        let queries = logic_parser(source, false, &self.threads);
+        let queries = Parser::parse(source, false, &self.threads);
         if let Ok(queries) = queries {
             let pres = QueryInput::ManyQueries(queries);
             self.ask_processed(pres, usize::max_value(), false)

@@ -33,7 +33,7 @@ fn remove_comments() -> Result<(), nom::Err<ParseErrB<'static>>> {
 }
 
 #[test]
-fn parse_statements() -> Result<(), nom::Err<ParseErrB<'static>>> {
+fn statements() -> Result<(), nom::Err<ParseErrB<'static>>> {
     let source = b"
             ( american[x=1] )
         ";
@@ -42,7 +42,7 @@ fn parse_statements() -> Result<(), nom::Err<ParseErrB<'static>>> {
 }
 
 #[test]
-fn parse_variables() -> Result<(), nom::Err<ParseErrB<'static>>> {
+fn variables() -> Result<(), nom::Err<ParseErrB<'static>>> {
     let source = b"let a, b in";
     scope_var_decl(source)?;
     let source = b"exists a, b in";
@@ -61,7 +61,7 @@ fn parse_variables() -> Result<(), nom::Err<ParseErrB<'static>>> {
 }
 
 #[test]
-fn parse_sentences() -> Result<(), nom::Err<ParseErrB<'static>>> {
+fn sentences() -> Result<(), nom::Err<ParseErrB<'static>>> {
     let source = b"
             ( american[x=1] and ( weapon[y=1] and hostile[z=1] ) )
         ";
@@ -115,7 +115,7 @@ macro_rules! assert_done_or_err {
 
 #[test]
 #[allow(clippy::cognitive_complexity)]
-fn parse_predicate() {
+fn predicate() {
     let s1 = b"professor[$Lucy=1]";
     let s1_res = class_decl(s1);
     assert_done_or_err!(s1_res);
@@ -157,7 +157,7 @@ fn parse_predicate() {
 }
 
 #[test]
-fn parse_time_pred() {
+fn time_pred() {
     let s3 = b"animal(where t1 is this.time, where t1 is this.time)[cow, brown=0.5]";
     let s3_res = class_decl(s3);
     assert!(s3_res.is_err());
@@ -205,7 +205,7 @@ fn parse_time_pred() {
 }
 
 #[test]
-fn parse_space_pred() {
+fn space_pred() {
     let s0 = b"sleep(where 'x0.y0.z0' is this.loc)[$Mary]";
     let s0_res = class_decl(s0);
     assert_done_or_err!(s0_res);
@@ -232,7 +232,7 @@ fn parse_space_pred() {
 }
 
 #[test]
-fn parse_function() {
+fn function() {
     let s1 = b"fn::criticize(since t1 until 'now')[$John=1,$Lucy]";
     let s1_res = func_decl(s1);
     assert_done_or_err!(s1_res);
@@ -252,7 +252,7 @@ fn parse_function() {
 }
 
 #[test]
-fn parse_special_funcs() {
+fn special_funcs() {
     // time_calc built-in function
     let s4 = b"fn::time_calc(t1<t2)";
     let s4_res = func_decl(s4);

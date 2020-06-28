@@ -68,9 +68,17 @@ const IMPL_OP: &[u8] = b"implies";
 
 const EMPTY: &[u8] = b"";
 
+/// Lexerless (mostly) recursive descent parser. Takes a string and outputs a correct ParseTree.
 pub(in crate::agent) struct Parser;
+
 impl Parser {
-    /// Lexerless (mostly) recursive descent parser. Takes a string and outputs a correct ParseTree.
+    /// Takes an str representing the code and returns the corresponding structure
+    /// representing object program for the logic function. It can parse several blocks
+    /// of code separated by parantheses.
+    ///
+    /// It includes a a scanner and parser for the synthatical analysis which translate
+    /// to the **program** in form of parse trees to be feed to an agent, which will then
+    /// translate to the appropiate data structures for further use.
     pub fn parse(
         input: &str,
         tell: bool,
@@ -147,43 +155,18 @@ impl Parser {
     /// Get the different input blocks, each block is it's own issolated sequence of expressions (or program),
     /// and output the AST for it.
     fn get_blocks<'b>(input: &'b [u8]) -> Result<Vec<ASTNode<'b>>, ParseErrB<'b>> {
-        // find the positions of the closing delimiters and try until it fails
-        let mut mcd = VecDeque::new();
-        let mut lp = 0;
-        let mut rp = 0;
-        let mut slp = -1_i64;
-        for (i, c) in input.iter().enumerate() {
-            if *c == b'(' {
-                lp += 1;
-                if slp < 0 {
-                    slp = i as i64;
-                }
-            } else if *c == b')' {
-                rp += 1;
-                if rp == lp {
-                    if i + 1 < input.len() {
-                        mcd.push_back((slp as usize, i + 1));
-                    } else {
-                        mcd.push_back((slp as usize, input.len()));
-                    }
-                    slp = -1;
-                }
-            }
-        }
-        if lp != rp {
-            return Err(ParseErrB::ImbalDelim(input));
-        } else if mcd.is_empty() {
-            return Err(ParseErrB::NotScope(input));
-        }
-
         let mut results: Vec<ASTNode> = Vec::new();
-        for _ in 0..mcd.len() {
-            let (lp, rp) = mcd.pop_front().unwrap();
-            match Scope::parse_scope(&input[lp..rp]) {
-                Ok((_, done)) => results.push(done),
+        let mut rest = input;
+        while rest != EMPTY {
+            match Scope::parse_scope(rest) {
+                Ok((r, done)) => {
+                    rest = r;
+                    results.push(done)
+                }
                 _ => return Err(ParseErrB::SyntaxError),
             }
         }
+
         if results.is_empty() {
             Err(ParseErrB::NotScope(input))
         } else {
@@ -280,7 +263,6 @@ pub(in crate::agent) enum ParseErrB<'a, I = &'a [u8]> {
     Nom(I, nom::error::ErrorKind),
     SyntaxError,
     NotScope(&'a [u8]),
-    ImbalDelim(&'a [u8]),
     NonTerminal(&'a [u8], &'a [u8]),
     IsNotStr(&'a [u8]),
     IsNotNumber(&'a [u8]),
@@ -304,11 +286,6 @@ impl<'a> fmt::Display for ParseErrB<'a> {
             ParseErrB::SyntaxError => "syntax error".to_string(),
             ParseErrB::NotScope(arr) => format!(
                 "syntax error, scope is invalid or not found:\n{}",
-                str::from_utf8(arr).unwrap()
-            ),
-            ParseErrB::ImbalDelim(arr) => format!(
-                "syntax error, 
-                             open delimiters:\n{}",
                 str::from_utf8(arr).unwrap()
             ),
             ParseErrB::NonTerminal(_, arr) => format!(

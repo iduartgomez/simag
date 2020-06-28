@@ -90,7 +90,7 @@ const ASK_QUESTION: &[&str] = &[
     // 0
     "( professor[$Lucy=1] )",
     // 1
-    "(criminal[$West=1]) and hostile[$Nono=1] and weapon[$M1=1]",
+    "(criminal[$West=1] and hostile[$Nono=1] and weapon[$M1=1])",
     // 2
     "(fat[$Pancho=1])",
 ];

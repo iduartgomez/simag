@@ -136,8 +136,6 @@ pub(super) fn record_decl(input: &[u8]) -> IResult<&[u8], ASTNode> {
         }
     }
 
-    // let name: TerminalBorrowed = names[0];
-
     let mut declared = Vec::with_capacity(normal_args.len());
     for decl in normal_args {
         for name in &names {

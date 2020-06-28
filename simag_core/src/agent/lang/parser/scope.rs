@@ -1,7 +1,7 @@
 use nom::{
     branch::alt,
     bytes::complete::tag,
-    character::complete::multispace0,
+    character::complete::{char, multispace0},
     combinator::{map, opt},
     multi::many0,
     sequence::tuple,
@@ -51,9 +51,7 @@ impl<'a> Scope<'a> {
 }
 
 pub(super) fn sentence(input: &[u8]) -> IResult<&[u8], ASTNode> {
-    let (i, _) = multispace0(input)?;
-    let (i, _) = tag("(")(i)?;
-    let (i, _) = multispace0(i)?;
+    let (i, _) = tuple((multispace0, char('('), multispace0))(input)?;
     let (i, vars) = opt(scope_var_decl)(i)?;
     let (i, _) = multispace0(i)?;
 
@@ -93,9 +91,7 @@ pub(super) fn sentence(input: &[u8]) -> IResult<&[u8], ASTNode> {
         return Err(nom::Err::Failure(ParseErrB::SyntaxError));
     }
 
-    let (i, _) = multispace0(next_input)?;
-    let (i, _) = tag(")")(i)?;
-    let (rest, _) = multispace0(i)?;
+    let (rest, _) = tuple((multispace0, char(')'), multispace0))(next_input)?;
     Ok((rest, node))
 }
 
@@ -214,13 +210,13 @@ pub(super) fn multiple_asserts(input: &[u8]) -> IResult<&[u8], ASTNode> {
         },
     );
 
-    let (i, _) = tuple((multispace0, tag("("), multispace0))(input)?;
+    let (i, _) = tuple((multispace0, char('('), multispace0))(input)?;
     let (i, vars) = opt(scope_var_decl)(i)?;
     let (i, decl) = many0(map(take_decl, |decl| -> IResult<&[u8], ASTNode> {
         assert_one(decl?.1)
     }))(i)?;
     let (i, last) = map(assert_knowledge, ASTNode::from)(i)?;
-    let (rest, _) = tuple((multispace0, tag(")"), multispace0))(i)?;
+    let (rest, _) = tuple((multispace0, char(')'), multispace0))(i)?;
     let asserts = assert_many((vars, decl, last))?.1;
     Ok((rest, asserts))
 }

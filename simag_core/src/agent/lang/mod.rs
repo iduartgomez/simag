@@ -14,7 +14,6 @@ pub(self) mod typedef;
 mod var;
 
 use chrono::{DateTime, Utc};
-use std::collections::VecDeque;
 
 pub(self) use self::built_ins::BuiltIns;
 pub(super) use self::cls_decl::ClassDecl;
@@ -26,26 +25,13 @@ pub(super) use self::fn_decl::FuncDecl;
 pub(super) use self::gr_func::GroundedFunc;
 pub(super) use self::gr_memb::GroundedMemb;
 pub(super) use self::logsent::{LogSentence, ProofResContext, SentID, SentVarReq};
+pub(super) use self::parser::Parser;
 pub(super) use self::parser::{Operator, ParseTree};
 pub(super) use self::skolem::Skolem;
 pub(super) use self::terminal::{GrTerminalKind, Terminal};
 pub(super) use self::time_semantics::TimeOps;
 pub(super) use self::var::{Var, VarKind};
 use built_ins::{MOVE_FN, TIME_CALC_FN};
-
-/// Takes an owned String and returns the corresponding structure representing
-/// object program for the logic function. It can parse several statements
-/// at the same time, separated by newlines and/or curly braces.
-///
-/// It includes a a scanner and parser for the synthatical analysis which translate
-/// to the **program** in form of parse trees to be feed to an Agent.
-pub(in crate::agent) fn logic_parser(
-    source: &str,
-    tell: bool,
-    thread_pool: &rayon::ThreadPool,
-) -> Result<VecDeque<parser::ParseTree>, ParseErrF> {
-    parser::Parser::parse(source, tell, thread_pool)
-}
 
 pub type Time = DateTime<Utc>;
 
