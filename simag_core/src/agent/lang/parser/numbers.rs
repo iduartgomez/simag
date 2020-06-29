@@ -29,7 +29,7 @@ pub(super) fn number(input: &[u8]) -> IResult<&[u8], Number> {
         } else if idx > 0 {
             break;
         } else {
-            return Err(nom::Err::Error(ParseErrB::IsNotNumber(input)));
+            return Err(nom::Err::Error(ParseErrB::NotNumber(input)));
         }
     }
     if float && (input[0] == b'-') {

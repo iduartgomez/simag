@@ -159,7 +159,8 @@ impl TimeOps for ClassDecl {
             Predicate::GroundedMemb(ref compare) => {
                 let entity = agent.get_obj_from_class(self.get_name(), &compare.term);
                 if let Some(grounded) = entity {
-                    if *grounded == *compare {
+                    // if *grounded == *compare {
+                    if grounded.compare_ignoring_times(compare) {
                         return grounded.bms.clone();
                     }
                 } else {
@@ -258,7 +259,7 @@ impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
                             {
                                 context.set_newest_grfact(time);
                             }
-                            if *current != *compare {
+                            if !current.compare_ignoring_times(compare) {
                                 return Some(false);
                             }
                         } else {

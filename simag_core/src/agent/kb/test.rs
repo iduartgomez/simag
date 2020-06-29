@@ -461,10 +461,18 @@ fn repr_inference_space_calc() {
     let rep = Representation::default();
     let source = "
         (run(at '0.0.0')[$Pancho] and sleep(at '1.1.0')[$Pancho])
-        (let x, l1:space, l2:space, t0:time='2015-01-02T00:00:00Z' in
-            (run(where l1 is this.loc)[x=1] and sleep(where l2 is this.loc)[x])
-            := fn::move(from l1 to l2, since t0 until 'now')[x] 
-        )
     ";
     rep.tell(source).unwrap();
+    let res = rep.ask("(run(at '1.1.0')[$Pancho])").unwrap();
+    assert_eq!(res.get_results_single(), Some(false));
+    let res = rep.ask("(sleep(at '1.1.0')[$Pancho])").unwrap();
+    assert_eq!(res.get_results_single(), Some(true));
+
+    // let source = "
+    //     (let x, l1:space, l2:space, t0:time='2015-01-02T00:00:00Z' in
+    //         (run(where l1 is this.loc)[x=1] and sleep(where l2 is this.loc)[x])
+    //         := fn::move(from l1 to l2, since t0 until 'now')[x]
+    //     )
+    // ";
+    // rep.tell(source).unwrap();
 }

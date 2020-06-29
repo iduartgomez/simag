@@ -112,6 +112,10 @@ impl<'a> ASTNode<'a> {
                 Ok(Some(ParseTree::Assertion(v0)))
             }
             ASTNode::Scope(ref node) => {
+                match node.logic_op {
+                    None | Some(LogicOperator::And) => {}
+                    _ => return Err(ParseErrF::WrongDef),
+                }
                 let a: Result<Option<ParseTree>, ParseErrF> = (**node).is_assertion(context);
                 match a {
                     Err(err) => Err(err),

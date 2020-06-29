@@ -286,7 +286,7 @@ impl<'a> ProofResContext for RuleResContext<'a> {
     fn has_cls_memb(&self, cls: &GroundedMemb) -> Option<bool> {
         match self.cmp_pred {
             Some(GroundedRef::Function(_)) | None => None,
-            Some(GroundedRef::Class(cmp)) => Some(cmp == cls),
+            Some(GroundedRef::Class(cmp)) => Some(cmp.compare_ignoring_times(cls)),
         }
     }
 }

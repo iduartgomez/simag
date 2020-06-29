@@ -70,7 +70,7 @@ impl Operator {
             b"<=" => Ok((EMPTY, Operator::LessEqual)),
             b">=" => Ok((EMPTY, Operator::MoreEqual)),
             b"at" => Ok((EMPTY, Operator::At)),
-            _ => Err(nom::Err::Error(ParseErrB::IsNotOperator(c))),
+            _ => Err(nom::Err::Error(ParseErrB::NotOperator(c))),
         }
     }
 
@@ -177,7 +177,7 @@ impl LogicOperator {
             Ok((rest, OR_OP)) => Ok((rest, LogicOperator::Or)),
             Ok((rest, IFF_OP)) => Ok((rest, LogicOperator::Biconditional)),
             Ok((rest, IMPL_OP)) => Ok((rest, LogicOperator::Implication)),
-            _ => Err(nom::Err::Error(ParseErrB::IsNotOperator(i))),
+            _ => Err(nom::Err::Error(ParseErrB::NotOperator(i))),
         }
     }
 

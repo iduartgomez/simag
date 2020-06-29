@@ -264,9 +264,9 @@ impl GroundedMemb {
 
     /// Compare if a grounded membership is true at the times stated by the pred
     #[allow(unused_variables)]
-    pub fn compare_at_time_intervals(&self, pred: &GroundedMemb) -> Option<bool> {
+    pub fn compare(&self, pred: &GroundedMemb) -> Option<bool> {
         if pred.bms.is_none() {
-            return Some(self == pred);
+            return Some(self.compare_ignoring_times(pred));
         }
         let self_bms = &**self.bms.as_ref().unwrap();
         let pred_bms = &**pred.bms.as_ref().unwrap();
@@ -289,13 +289,11 @@ impl GroundedMemb {
                 val_lhs, val_rhs, op_lhs, op_rhs,
             ))
         } else {
-            Some(self == pred)
+            Some(self.compare_ignoring_times(pred))
         }
     }
-}
 
-impl std::cmp::PartialEq for GroundedMemb {
-    fn eq(&self, other: &GroundedMemb) -> bool {
+    pub(in crate::agent) fn compare_ignoring_times(&self, other: &GroundedMemb) -> bool {
         if self.term != other.term || self.parent != other.parent {
             return false;
         }

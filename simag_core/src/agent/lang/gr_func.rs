@@ -44,13 +44,23 @@ impl GroundedFunc {
             let op_rhs = self.args[0].operator.unwrap();
             let op_lhs = pred.args[0].operator.unwrap();
             val_rhs?;
+
+            match (&self.third, &pred.third) {
+                (Some(arg0), Some(arg1)) => {
+                    if arg0.compare_ignoring_times(arg1) {
+                        return Some(false);
+                    }
+                }
+                (None, None) => {}
+                _ => return Some(false),
+            };
             if !(self.name == pred.name
-                && self.third == pred.third
                 && self.args[0].term == pred.args[0].term
                 && self.args[1].term == pred.args[1].term)
             {
                 return Some(false);
             }
+
             Some(GroundedMemb::compare_two_grounded_eq(
                 val_lhs, val_rhs, op_lhs, op_rhs,
             ))
@@ -221,7 +231,25 @@ impl std::clone::Clone for GroundedFunc {
 
 impl std::cmp::PartialEq for GroundedFunc {
     fn eq(&self, other: &GroundedFunc) -> bool {
-        self.name == other.name && self.args == other.args && self.third == other.third
+        if self.name != other.name {
+            return false;
+        }
+
+        for (a, b) in (&self.args)
+            .iter()
+            .chain(self.third.as_ref())
+            .zip(other.args.iter().chain(other.third.as_ref()))
+        {
+            match (a, b) {
+                (arg0, arg1) => {
+                    if !arg0.compare_ignoring_times(arg1) {
+                        return false;
+                    }
+                }
+                _ => return false,
+            }
+        }
+        true
     }
 }
 

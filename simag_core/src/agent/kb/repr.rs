@@ -505,14 +505,14 @@ impl Representation {
             EntityTerm(subject) => {
                 if let Some(entity) = self.entities.get(subject) {
                     if let Some(current) = entity.belongs_to_class(pred.get_parent(), true) {
-                        return current.compare_at_time_intervals(pred);
+                        return current.compare(pred);
                     }
                 }
             }
             ClassTerm(class_name) => {
                 if let Some(class) = self.classes.get(class_name) {
                     if let Some(current) = class.belongs_to_class(pred.get_parent(), true) {
-                        return current.compare_at_time_intervals(pred);
+                        return current.compare(pred);
                     }
                 }
             }

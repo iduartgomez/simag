@@ -81,7 +81,7 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
     fn normal_arg(orig: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
         let (i, term) = UnconstraintArg::get(orig)?;
         if term.is_reserved() && term != b"ow" {
-            return Err(nom::Err::Error(ParseErrB::NonTerminal(EMPTY, orig)));
+            return Err(nom::Err::Error(ParseErrB::NotTerminal(EMPTY, orig)));
         }
         let (i, _) = multispace0(i)?;
         let (i, op) = opt(alt((tag(">="), tag("<="), tag("="), tag(">"), tag("<"))))(i)?;
@@ -90,7 +90,7 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
             let (i, _) = multispace0(i)?;
             let (i, term2) = UnconstraintArg::get(i)?;
             if term2.is_reserved() && term2 != b"ow" {
-                return Err(nom::Err::Error(ParseErrB::NonTerminal(orig, i)));
+                return Err(nom::Err::Error(ParseErrB::NotTerminal(orig, i)));
             }
             let (i, _) = multispace0(i)?;
             Ok((

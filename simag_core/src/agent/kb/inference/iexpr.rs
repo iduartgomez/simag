@@ -110,7 +110,7 @@ impl<'rep> Inference<'rep> {
                 for pred in preds {
                     let query = pred.get_parent();
                     let result = if !self.ignore_current {
-                        // FIXME: only checks for the current value, not for intervals
+                        // FIXME: only checks for the current value, not for time intervals
                         self.kb.class_membership_query(pred)
                     } else {
                         None
@@ -661,7 +661,7 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
             if !is_func {
                 let query_cls = self.actv.get_cls();
                 if query_cls.comparable(&gt) {
-                    let val = query_cls == &gt;
+                    let val = query_cls.compare_ignoring_times(&gt);
                     let d = &self.results.grounded_queries;
                     let mut gr_results_dict = {
                         if d.contains_key(self.actv.get_pred()) {
