@@ -29,7 +29,7 @@ pub(in crate::agent) struct GroundedFunc {
 
 impl GroundedFunc {
     #[allow(unused_variables)]
-    pub fn compare_at_time_intervals(&self, pred: &GroundedFunc) -> Option<bool> {
+    pub fn compare(&self, pred: &GroundedFunc) -> Option<bool> {
         // block both BMS for the duration of the comparison
         let self_lock = &*self.bms.acquire_read_lock();
         let pred_lock = &*pred.bms.acquire_read_lock();
@@ -65,8 +65,30 @@ impl GroundedFunc {
                 val_lhs, val_rhs, op_lhs, op_rhs,
             ))
         } else {
-            Some(self == pred)
+            Some(self.compare_ignoring_times(pred))
         }
+    }
+
+    pub(in crate::agent) fn compare_ignoring_times(&self, other: &GroundedFunc) -> bool {
+        if self.name != other.name {
+            return false;
+        }
+
+        for (a, b) in (&self.args)
+            .iter()
+            .chain(self.third.as_ref())
+            .zip(other.args.iter().chain(other.third.as_ref()))
+        {
+            match (a, b) {
+                (arg0, arg1) => {
+                    if !arg0.compare_ignoring_times(arg1) {
+                        return false;
+                    }
+                }
+                _ => return false,
+            }
+        }
+        true
     }
 
     pub fn from_free(
@@ -229,31 +251,31 @@ impl std::clone::Clone for GroundedFunc {
     }
 }
 
-impl std::cmp::PartialEq for GroundedFunc {
-    fn eq(&self, other: &GroundedFunc) -> bool {
-        if self.name != other.name {
-            return false;
-        }
+// impl std::cmp::PartialEq for GroundedFunc {
+//     fn eq(&self, other: &GroundedFunc) -> bool {
+//         if self.name != other.name {
+//             return false;
+//         }
 
-        for (a, b) in (&self.args)
-            .iter()
-            .chain(self.third.as_ref())
-            .zip(other.args.iter().chain(other.third.as_ref()))
-        {
-            match (a, b) {
-                (arg0, arg1) => {
-                    if !arg0.compare_ignoring_times(arg1) {
-                        return false;
-                    }
-                }
-                _ => return false,
-            }
-        }
-        true
-    }
-}
+//         for (a, b) in (&self.args)
+//             .iter()
+//             .chain(self.third.as_ref())
+//             .zip(other.args.iter().chain(other.third.as_ref()))
+//         {
+//             match (a, b) {
+//                 (arg0, arg1) => {
+//                     if !arg0.compare_ignoring_times(arg1) {
+//                         return false;
+//                     }
+//                 }
+//                 _ => return false,
+//             }
+//         }
+//         true
+//     }
+// }
 
-impl std::cmp::Eq for GroundedFunc {}
+// impl std::cmp::Eq for GroundedFunc {}
 
 impl std::fmt::Debug for GroundedFunc {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {

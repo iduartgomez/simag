@@ -356,7 +356,7 @@ impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
                                 {
                                     context.set_newest_grfact(time);
                                 }
-                                if **current != grfunc {
+                                if !current.compare_ignoring_times(&grfunc) {
                                     return Some(false);
                                 } else {
                                     return Some(true);

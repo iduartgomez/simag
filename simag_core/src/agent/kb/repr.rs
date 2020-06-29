@@ -545,12 +545,12 @@ impl Representation {
         if let EntityTerm(subject_name) = subject.into() {
             if let Some(entity) = self.entities.get(subject_name) {
                 if let Some(current) = entity.has_relationship(pred) {
-                    return current.compare_at_time_intervals(pred);
+                    return current.compare(pred);
                 }
             }
         } else if let Some(class) = self.classes.get(subject) {
             if let Some(current) = class.has_relationship(pred) {
-                return current.compare_at_time_intervals(pred);
+                return current.compare(pred);
             }
         }
         None
@@ -564,7 +564,7 @@ impl Representation {
         if let EntityTerm(subject_name) = subject.into() {
             if let Some(entity) = self.entities.get(subject_name) {
                 if let Some(current) = entity.has_relationship(pred) {
-                    if *current == *pred {
+                    if current.compare_ignoring_times(pred) {
                         return Some(current);
                     } else {
                         return None;
@@ -573,7 +573,7 @@ impl Representation {
             }
         } else if let Some(class) = self.classes.get(subject) {
             if let Some(current) = class.has_relationship(pred) {
-                if *current == *pred {
+                if current.compare_ignoring_times(pred) {
                     return Some(current);
                 } else {
                     return None;

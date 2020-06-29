@@ -279,7 +279,7 @@ impl<'a> ProofResContext for RuleResContext<'a> {
     fn has_relationship(&self, func: &GroundedFunc) -> Option<bool> {
         match self.cmp_pred {
             Some(GroundedRef::Class(_)) | None => None,
-            Some(GroundedRef::Function(cmp)) => Some(cmp == func),
+            Some(GroundedRef::Function(cmp)) => Some(cmp.compare_ignoring_times(func)),
         }
     }
 

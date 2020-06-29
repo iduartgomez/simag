@@ -706,7 +706,7 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
             if is_func {
                 let query_func = self.actv.get_func();
                 if query_func.comparable(&gf) {
-                    let val = query_func == &gf;
+                    let val = query_func.compare_ignoring_times(&gf);
                     let d = &self.results.grounded_queries;
                     let mut gr_results_dict = {
                         if d.contains_key(self.actv.get_pred()) {
