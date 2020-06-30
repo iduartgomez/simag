@@ -37,72 +37,6 @@ impl<'a> FuncDecl {
         }
     }
 
-    /// Assumes all arguments are grounded and converts to a GroundedFunc (panics otherwise).
-    pub fn into_grounded(self) -> GroundedFunc {
-        let FuncDecl {
-            name,
-            args,
-            op_args,
-            ..
-        } = self;
-        let name = match name {
-            Terminal::GroundedTerm(name) => name,
-            Terminal::FreeTerm(_) => unreachable!(),
-        };
-        let mut first = None;
-        let mut second = None;
-        let mut third = None;
-        let mut val = None;
-        let mut args = args.unwrap();
-        for (i, a) in args.drain(..).enumerate() {
-            let mut n_a = match a {
-                Predicate::GroundedMemb(term) => term,
-                Predicate::FreeClsMemb(_) | Predicate::FreeClassMembership(_) => unreachable!(),
-            };
-            n_a.bms = None;
-            if i == 0 {
-                val = n_a.get_value();
-                first = Some(n_a);
-            } else if i == 1 {
-                second = Some(n_a);
-            } else {
-                third = Some(n_a);
-            }
-        }
-        let mut time_data = BmsWrapper::new(false);
-        let mut ow = false;
-        if let Some(mut oargs) = op_args {
-            for arg in oargs.drain(..) {
-                match arg {
-                    OpArg::Time(DeclTime(TimeFn::Since(time))) => {
-                        time_data.new_record(Some(time), val, None);
-                    }
-                    OpArg::Time(DeclTime(TimeFn::Interval(t0, t1))) => {
-                        time_data.new_record(Some(t0), val, None);
-                        time_data.new_record(Some(t1), None, None);
-                    }
-                    OpArg::Time(DeclTime(TimeFn::Now)) => {
-                        time_data.new_record(Some(Utc::now()), val, None);
-                    }
-                    OpArg::OverWrite => {
-                        ow = true;
-                    }
-                    _ => {}
-                }
-            }
-        }
-        if time_data.record_len() == 0 {
-            time_data.new_record(None, val, None);
-        }
-        time_data.overwrite = AtomicBool::new(ow);
-        GroundedFunc {
-            name,
-            args: [first.unwrap(), second.unwrap()],
-            third,
-            bms: Arc::new(time_data),
-        }
-    }
-
     pub fn is_grounded(&self) -> bool {
         if !self.parent_is_grounded() {
             return false;
@@ -278,6 +212,74 @@ impl<'a> FuncDecl {
     }
 }
 
+impl Into<GroundedFunc> for FuncDecl {
+    /// Assumes all arguments are grounded and converts to a GroundedFunc (panics otherwise).
+    fn into(self) -> GroundedFunc {
+        let FuncDecl {
+            name,
+            args,
+            op_args,
+            ..
+        } = self;
+        let name = match name {
+            Terminal::GroundedTerm(name) => name,
+            Terminal::FreeTerm(_) => unreachable!(),
+        };
+        let mut first = None;
+        let mut second = None;
+        let mut third = None;
+        let mut val = None;
+        let mut args = args.unwrap();
+        for (i, a) in args.drain(..).enumerate() {
+            let mut n_a = match a {
+                Predicate::GroundedMemb(term) => term,
+                Predicate::FreeClsMemb(_) | Predicate::FreeClassMembership(_) => unreachable!(),
+            };
+            n_a.bms = None;
+            if i == 0 {
+                val = n_a.get_value();
+                first = Some(n_a);
+            } else if i == 1 {
+                second = Some(n_a);
+            } else {
+                third = Some(n_a);
+            }
+        }
+        let mut time_data = BmsWrapper::new(false);
+        let mut ow = false;
+        if let Some(mut oargs) = op_args {
+            for arg in oargs.drain(..) {
+                match arg {
+                    OpArg::Time(DeclTime(TimeFn::Since(time))) => {
+                        time_data.new_record(Some(time), None, val, None);
+                    }
+                    OpArg::Time(DeclTime(TimeFn::Interval(t0, t1))) => {
+                        time_data.new_record(Some(t0), None, val, None);
+                        time_data.new_record(Some(t1), None, None, None);
+                    }
+                    OpArg::Time(DeclTime(TimeFn::Now)) => {
+                        time_data.new_record(Some(Utc::now()), None, val, None);
+                    }
+                    OpArg::OverWrite => {
+                        ow = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if time_data.record_len() == 0 {
+            time_data.new_record(None, None, val, None);
+        }
+        time_data.overwrite = AtomicBool::new(ow);
+        GroundedFunc {
+            name,
+            args: [first.unwrap(), second.unwrap()],
+            third,
+            bms: Arc::new(time_data),
+        }
+    }
+}
+
 impl OpArgsOps for FuncDecl {
     fn get_op_args(&self) -> Option<&[common::OpArg]> {
         self.op_args.as_deref()
@@ -292,7 +294,7 @@ impl TimeOps for FuncDecl {
     ) -> Option<Arc<BmsWrapper>> {
         if self.is_grounded() {
             let sbj = self.args.as_ref().unwrap();
-            let grfunc = self.clone().into_grounded();
+            let grfunc = self.clone().into();
             if let Some(relation) = agent.get_relationship(&grfunc, sbj[0].get_name()) {
                 Some(relation.bms.clone())
             } else {
@@ -330,7 +332,7 @@ impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
     ) -> Option<bool> {
         if self.is_grounded() {
             let sbj = self.args.as_ref().unwrap();
-            let grfunc = self.clone().into_grounded();
+            let grfunc = self.clone().into();
             if context.compare_relation(&grfunc) {
                 let cmp = context.has_relationship(&grfunc);
                 if let Some(false) = cmp {

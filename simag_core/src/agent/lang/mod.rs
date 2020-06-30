@@ -7,7 +7,7 @@ mod gr_memb;
 mod logsent;
 mod parser;
 mod skolem;
-pub(self) mod space_semantics;
+pub(self) mod spatial_semantics;
 mod terminal;
 pub(self) mod time_semantics;
 pub(self) mod typedef;
@@ -28,10 +28,12 @@ pub(super) use self::logsent::{LogSentence, ProofResContext, SentID, SentVarReq}
 pub(super) use self::parser::Parser;
 pub(super) use self::parser::{Operator, ParseTree};
 pub(super) use self::skolem::Skolem;
+pub(super) use self::spatial_semantics::SpatialOps;
 pub(super) use self::terminal::{GrTerminalKind, Terminal};
 pub(super) use self::time_semantics::TimeOps;
 pub(super) use self::var::{Var, VarKind};
 use built_ins::{MOVE_FN, TIME_CALC_FN};
+pub(super) use spatial_semantics::Point;
 
 pub type Time = DateTime<Utc>;
 
@@ -41,8 +43,8 @@ fn reserved(s: &[u8]) -> bool {
         b"let" | b"exists" | b"fn" | b"ow" | b"this" | b"none" | b"in" | b"and" | b"where" | b"is" | b"as"  
         // time kw
         | TIME_CALC_FN | b"time" | b"since" | b"until" | b"at"
-        // space kw
-        | MOVE_FN | b"space" | b"to" | b"from" | b"loc" => true,
+        // location kw
+        | MOVE_FN | b"location" | b"to" | b"from" | b"loc" => true,
         _ => false,
     }
 }
@@ -54,7 +56,7 @@ pub(in crate::agent) trait OpArgsOps {
 mod errors {
     use super::logsent::LogSentErr;
     use super::parser::ParseErrB;
-    use super::{space_semantics::SpaceFnErr, time_semantics::TimeFnErr};
+    use super::{spatial_semantics::SpatialFnErr, time_semantics::TimeFnErr};
     use crate::agent::kb::bms::BmsError;
 
     use std::fmt;
@@ -76,7 +78,7 @@ mod errors {
         FailedConversion(&'static str),
         LogSentErr(LogSentErr),
         TimeFnErr(TimeFnErr),
-        SpaceFnErr(SpaceFnErr),
+        SpatialFnErr(SpatialFnErr),
         SyntaxErr(String),
     }
 

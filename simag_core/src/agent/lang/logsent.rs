@@ -40,7 +40,7 @@ pub(in crate::agent) struct LogSentence {
     pub id: SentID,
     pub created: Time,
     pub has_time_vars: usize,
-    pub has_space_vars: usize,
+    pub has_spatial_vars: usize,
     particles: Vec<Particle>,
     vars: Vec<Arc<Var>>,
     skolem: Vec<Arc<Skolem>>,
@@ -69,7 +69,7 @@ impl<'a> LogSentence {
             vars,
             predicates: (vec![], vec![]),
             has_time_vars: 0,
-            has_space_vars: 0,
+            has_spatial_vars: 0,
             created: Utc::now(),
             id,
             sent_kind: context.stype,
@@ -101,8 +101,8 @@ impl<'a> LogSentence {
                             self.has_time_vars += 1;
                             continue;
                         }
-                        VarKind::SpaceDecl | VarKind::Space => {
-                            self.has_space_vars += 1;
+                        VarKind::SpatialDecl | VarKind::Location => {
+                            self.has_spatial_vars += 1;
                             continue;
                         }
                     }

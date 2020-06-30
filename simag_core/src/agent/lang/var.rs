@@ -2,7 +2,7 @@ use super::{
     common::ConstraintValue,
     logsent::ParseContext,
     parser::{TerminalBorrowed, UnconstraintArg, VarBorrowed},
-    space_semantics::Point,
+    spatial_semantics::Point,
     time_semantics::{TimeFn, TimeFnErr},
     typedef::TypeDef,
     Operator, ParseErrF,
@@ -36,8 +36,8 @@ pub(in crate::agent) enum VarKind {
     Normal,
     Time,
     TimeDecl,
-    Space,
-    SpaceDecl,
+    Location,
+    SpatialDecl,
 }
 
 impl std::fmt::Debug for VarKind {
@@ -52,8 +52,8 @@ impl std::fmt::Display for VarKind {
             VarKind::Normal => write!(f, "Normal"),
             VarKind::Time => write!(f, "Time"),
             VarKind::TimeDecl => write!(f, "TimeDecl"),
-            VarKind::Space => write!(f, "Space"),
-            VarKind::SpaceDecl => write!(f, "SpaceDecl"),
+            VarKind::Location => write!(f, "Location"),
+            VarKind::SpatialDecl => write!(f, "SpatialDecl"),
         }
     }
 }
@@ -82,18 +82,18 @@ impl<'a> std::convert::TryFrom<(&'a VarBorrowed<'a>, &'a ParseContext)> for Var 
                 kind = VarKind::Time;
                 (TypeDef::Time, None)
             }
-            (def, Some(val)) if def.0 == b"space" => match val {
+            (def, Some(val)) if def.0 == b"location" => match val {
                 UnconstraintArg::String(slice) => {
                     let time = Point::try_from(*slice)?;
-                    kind = VarKind::SpaceDecl;
-                    (TypeDef::Space, Some(ConstraintValue::SpacePayload));
+                    kind = VarKind::SpatialDecl;
+                    (TypeDef::Location, Some(ConstraintValue::SpatialPayload));
                     todo!();
                 }
                 _ => return Err(TimeFnErr::InsufArgs.into()),
             },
-            (def, None) if def.0 == b"space" => {
-                kind = VarKind::Space;
-                (TypeDef::Space, None)
+            (def, None) if def.0 == b"location" => {
+                kind = VarKind::Location;
+                (TypeDef::Location, None)
             }
             (_, None) => (TypeDef::Erased, None),
             _ => return Err(ParseErrF::TypeUnsupported),

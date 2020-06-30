@@ -88,7 +88,7 @@ pub(in crate::agent::kb) fn rules_inference_rollback(
             }
         } else {
             let func = p.unwrap_fn_as_ref();
-            let cmp = func.clone().into_grounded();
+            let cmp = func.clone().into();
             if let Some(grfunc) = agent.get_relationship(&cmp, cmp.get_arg_name(1)) {
                 gr_funcs.push(grfunc);
             }

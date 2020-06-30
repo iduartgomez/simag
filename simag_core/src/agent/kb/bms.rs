@@ -7,7 +7,7 @@
 
 pub(in crate::agent) use self::errors::BmsError;
 use super::{inference::QueryInput, repr::Representation};
-use crate::agent::lang::{Grounded, GroundedRef, ProofResContext, SentID, Time};
+use crate::agent::lang::{Grounded, GroundedRef, Point, ProofResContext, SentID, Time};
 
 use chrono::Utc;
 use parking_lot::{RwLock, RwLockReadGuard};
@@ -47,6 +47,7 @@ impl BmsWrapper {
     pub fn new_record(
         &self,
         time: Option<Time>,
+        location: Option<Point>,
         value: Option<f32>,
         was_produced: Option<(SentID, Time)>,
     ) {
@@ -63,6 +64,7 @@ impl BmsWrapper {
         let record = BmsRecord {
             produced: vec![],
             time,
+            location,
             value,
             was_produced,
         };
@@ -103,18 +105,20 @@ impl BmsWrapper {
                             .get_results_single();
                         if answ.is_none() {
                             let bms = &func.bms;
-                            let mut time: Option<Time> = None;
-                            let mut value: Option<f32> = None;
+                            let mut time = None;
+                            let mut value = None;
+                            let mut loc = None;
                             let recs = (*func_lock).iter();
                             for rec in recs.rev() {
                                 if rec.was_produced.is_none() {
                                     time = Some(rec.time);
                                     value = rec.value;
+                                    loc = rec.location.clone();
                                     break;
                                 }
                             }
                             func.update_value(value);
-                            bms.new_record(time, value, None);
+                            bms.new_record(time, loc, value, None);
                         }
                     }
                 }
@@ -135,8 +139,9 @@ impl BmsWrapper {
                             .get_results_single();
                         if answ.is_none() {
                             let bms = cls.bms.as_ref().unwrap();
-                            let mut time: Option<Time> = None;
-                            let mut value: Option<f32> = None;
+                            let mut time = None;
+                            let mut value = None;
+                            let mut loc = None;
                             {
                                 let lock = bms.records.read();
                                 let recs = (*lock).iter();
@@ -144,13 +149,14 @@ impl BmsWrapper {
                                     if rec.was_produced.is_none() {
                                         time = Some(rec.time);
                                         value = rec.value;
+                                        loc = rec.location.clone();
                                         break;
                                     }
                                 }
                             }
 
                             cls.update_value(value);
-                            bms.new_record(time, value, None);
+                            bms.new_record(time, loc, value, None);
                         }
                     }
                 }
@@ -176,24 +182,27 @@ impl BmsWrapper {
             return;
         }
 
-        let (up_rec_value, up_rec_date) = {
+        let (up_rec_value, up_rec_date, up_rec_loc) = {
             let lock = data.records.read();
             let last = lock.last().unwrap();
-            (last.value, last.time)
+            (last.value, last.time, last.location.clone())
         };
-        let (last_rec_value, last_rec_date) = {
+        let (last_rec_value, last_rec_date, last_rec_loc) = {
             let lock = self.records.read();
             let last = lock.last().unwrap();
-            (last.value, last.time)
+            (last.value, last.time, last.location.clone())
         };
 
-        if (last_rec_date == up_rec_date) && (last_rec_value == up_rec_value) {
+        if (last_rec_date == up_rec_date)
+            && (last_rec_value == up_rec_value)
+            && (last_rec_loc == up_rec_loc)
+        {
             return;
         }
 
         // create a new record with the new data
         owner.update_value(up_rec_value);
-        self.new_record(Some(up_rec_date), up_rec_value, was_produced);
+        self.new_record(Some(up_rec_date), up_rec_loc, up_rec_value, was_produced);
 
         // check if there are any inconsistencies with the knowledge produced with
         // the previous value
@@ -319,6 +328,15 @@ impl BmsWrapper {
         let records = self.records.read();
         if let Some(rec) = records.last() {
             rec.value
+        } else {
+            None
+        }
+    }
+
+    pub fn get_last_location(&self) -> Option<Point> {
+        let records = self.records.read();
+        if let Some(rec) = records.last() {
+            rec.location.clone()
         } else {
             None
         }
@@ -540,6 +558,7 @@ impl std::iter::Iterator for TimeValueIterator {
 pub(in crate::agent) struct BmsRecord {
     produced: Vec<(Grounded, Option<f32>)>,
     time: Time,
+    location: Option<Point>,
     value: Option<f32>,
     was_produced: Option<(SentID, Time)>,
 }

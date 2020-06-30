@@ -48,10 +48,10 @@ impl GroundedMemb {
                         let t_bms = BmsWrapper::new(false);
                         if let Some(times) = times {
                             for (time, val) in times {
-                                t_bms.new_record(Some(time), val, None);
+                                t_bms.new_record(Some(time), None, val, None);
                             }
                         } else {
-                            t_bms.new_record(None, Some(val as f32), None);
+                            t_bms.new_record(None, None, Some(val as f32), None);
                         }
                         bms = Some(Arc::new(t_bms));
                         val as f32
@@ -64,10 +64,10 @@ impl GroundedMemb {
                         let t_bms = BmsWrapper::new(false);
                         if let Some(times) = times {
                             for (time, val) in times {
-                                t_bms.new_record(Some(time), val, None);
+                                t_bms.new_record(Some(time), None, val, None);
                             }
                         } else {
-                            t_bms.new_record(None, Some(val as f32), None);
+                            t_bms.new_record(None, None, Some(val as f32), None);
                         }
                         bms = Some(Arc::new(t_bms));
                         val
@@ -152,7 +152,7 @@ impl GroundedMemb {
                 bms.update(&GroundedRef::Class(self), agent, data_bms, was_produced)
             } else {
                 let data_bms = BmsWrapper::new(false);
-                data_bms.new_record(None, new_val, None);
+                data_bms.new_record(None, None, new_val, None);
                 bms.update(&GroundedRef::Class(self), agent, &data_bms, was_produced)
             }
         }
@@ -166,7 +166,7 @@ impl GroundedMemb {
         let bms;
         let val = if free.value.is_some() {
             let t_bms = BmsWrapper::new(false);
-            t_bms.new_record(None, free.value, None);
+            t_bms.new_record(None, None, free.value, None);
             bms = Some(Arc::new(t_bms));
             Some(free.value.unwrap())
         } else {
@@ -273,6 +273,13 @@ impl GroundedMemb {
         // block both BMS for the duration of the comparison
         let self_lock = &*self_bms.acquire_read_lock();
         let pred_lock = &*pred_bms.acquire_read_lock();
+
+        // check if there are location arguments
+        let pred_loc = pred_bms.get_last_location();
+        let self_loc = self_bms.get_last_location();
+        if pred_loc != self_loc {
+            return Some(false);
+        }
 
         if let Some(time) = pred_bms.is_predicate() {
             let op_rhs = self.operator.unwrap();

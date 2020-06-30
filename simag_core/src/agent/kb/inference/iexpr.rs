@@ -1124,7 +1124,7 @@ impl QueryProcessed {
             match *fdecl.get_parent() {
                 Terminal::GroundedTerm(_) => {
                     if fdecl.is_grounded() {
-                        let mut fgr = Arc::try_unwrap(fdecl).map_err(|_| ())?.into_grounded();
+                        let mut fgr: GroundedFunc = Arc::try_unwrap(fdecl).map_err(|_| ())?.into();
                         Arc::get_mut(&mut fgr.bms).unwrap().of_predicate();
                         query.push_to_fnquery_grounded(fgr);
                     } else {

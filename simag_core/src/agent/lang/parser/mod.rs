@@ -253,7 +253,7 @@ fn is_keyword(input: &[u8]) -> IResult<&[u8], &[u8]> {
 
 fn is_type(input: &[u8]) -> bool {
     match input {
-        b"time" | b"space" => true,
+        b"time" | b"location" => true,
         _ => false,
     }
 }

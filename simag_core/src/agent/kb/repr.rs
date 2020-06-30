@@ -19,7 +19,7 @@ use crate::agent::lang::{
     Assert, ClassDecl, FreeClassMembership, FuncDecl, GrTerminalKind,
     GrTerminalKind::{Class as ClassTerm, Entity as EntityTerm},
     GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ParseErrF, ParseTree, Parser, Predicate,
-    ProofResContext, SentVarReq, TimeOps, Var,
+    ProofResContext, SentVarReq, SpatialOps, TimeOps, Var,
 };
 
 // TODO: find better solution for self-referential borrows escaping self method scopes
@@ -98,6 +98,9 @@ impl Representation {
                                 Assert::ClassDecl(cls_decl) => {
                                     let f = HashMap::new();
                                     let time_data = cls_decl.get_own_time_data(&f, None);
+                                    let loc_data = cls_decl
+                                        .get_own_spatial_data(&f)
+                                        .map_err(|err| vec![err])?;
                                     for a in cls_decl {
                                         let t = time_data.clone();
                                         t.replace_value(a.get_value(), ReplaceMode::Tell);
@@ -112,7 +115,7 @@ impl Representation {
                                     }
                                 }
                                 Assert::FuncDecl(func_decl) => {
-                                    let a = Arc::new(func_decl.into_grounded());
+                                    let a = Arc::new(func_decl.into());
                                     let x: Option<&IExprResult> = None;
                                     self.up_relation(&a, x)
                                 }

@@ -251,32 +251,6 @@ impl std::clone::Clone for GroundedFunc {
     }
 }
 
-// impl std::cmp::PartialEq for GroundedFunc {
-//     fn eq(&self, other: &GroundedFunc) -> bool {
-//         if self.name != other.name {
-//             return false;
-//         }
-
-//         for (a, b) in (&self.args)
-//             .iter()
-//             .chain(self.third.as_ref())
-//             .zip(other.args.iter().chain(other.third.as_ref()))
-//         {
-//             match (a, b) {
-//                 (arg0, arg1) => {
-//                     if !arg0.compare_ignoring_times(arg1) {
-//                         return false;
-//                     }
-//                 }
-//                 _ => return false,
-//             }
-//         }
-//         true
-//     }
-// }
-
-// impl std::cmp::Eq for GroundedFunc {}
-
 impl std::fmt::Debug for GroundedFunc {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{}", self)

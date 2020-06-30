@@ -39,14 +39,14 @@ impl TimeArg {
         let bms = BmsWrapper::new(false);
         match self {
             DeclTime(TimeFn::Since(payload)) => {
-                bms.new_record(Some(*payload), value, None);
+                bms.new_record(Some(*payload), None, value, None);
             }
             DeclTime(TimeFn::Now) => {
-                bms.new_record(None, value, None);
+                bms.new_record(None, None, value, None);
             }
             DeclTime(TimeFn::Interval(time0, time1)) => {
-                bms.new_record(Some(*time0), value, None);
-                bms.new_record(Some(*time1), None, None);
+                bms.new_record(Some(*time0), None, value, None);
+                bms.new_record(Some(*time1), None, None, None);
             }
             SinceVar(var) => {
                 let assignment = &**(assignments.get(&**var).unwrap());
@@ -132,7 +132,7 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for TimeArg {
                 var0 = Some(val.get_var());
                 None
             }
-            Ok(ConstraintValue::SpacePayload) => return Err(TimeFnErr::IsNotVar.into()),
+            Ok(ConstraintValue::SpatialPayload) => return Err(TimeFnErr::IsNotVar.into()),
             Err(err) => return Err(err),
         };
 
@@ -287,10 +287,10 @@ impl TimeFn {
         let bms = BmsWrapper::new(false);
         match *self {
             TimeFn::Since(ref payload) => {
-                bms.new_record(Some(*payload), value, None);
+                bms.new_record(Some(*payload), None, value, None);
             }
             TimeFn::Now => {
-                bms.new_record(None, value, None);
+                bms.new_record(None, None, value, None);
             }
             _ => unreachable!(),
         }

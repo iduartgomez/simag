@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use super::{
-    logsent::ParseContext, parser::FuncDeclBorrowed, space_semantics::MoveFn,
+    logsent::ParseContext, parser::FuncDeclBorrowed, spatial_semantics::MoveFn,
     time_semantics::TimeCalc, ParseErrF, Var,
 };
 use crate::agent::kb::bms::BmsWrapper;

@@ -164,7 +164,7 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
             i,
             OpArgBorrowed {
                 term: to,
-                comp: second_operand(term, OperatorKind::SpaceFn),
+                comp: second_operand(term, OperatorKind::SpatialFn),
             },
         ))
     }
@@ -195,7 +195,7 @@ fn var_assign_arg(orig: &[u8]) -> IResult<&[u8], Vec<OpArgBorrowed>> {
         let op;
         match v1 {
             UnconstraintArg::Keyword(b"time") => op = Operator::TimeAssignment,
-            UnconstraintArg::Keyword(b"loc") => op = Operator::SpaceAssignment,
+            UnconstraintArg::Keyword(b"loc") => op = Operator::SpatialAssignment,
             _ => return Err(nom::Err::Error(ParseErrB::SyntaxError)),
         }
 

@@ -1,7 +1,7 @@
 use std::convert::TryFrom;
 use std::sync::Arc;
 
-use super::SpaceArg;
+use super::SpatialArg;
 use crate::agent::{
     lang::{
         built_ins::MOVE_FN,
@@ -18,7 +18,7 @@ use smallvec::SmallVec;
 pub(in crate::agent) struct MoveFn {
     // this rarely will contain more than 2 vars
     vars: SmallVec<[Arc<Var>; 2]>,
-    space_arg: SpaceArg,
+    spatial_arg: SpatialArg,
     time_arg: Option<TimeArg>,
 }
 
@@ -36,15 +36,15 @@ impl MoveFn {
             return Err(ParseErrF::WrongArgNumb);
         }
 
-        let mut space_arg = None;
+        let mut spatial_arg = None;
         let mut time_arg = None;
         if let Some(args) = &decl.op_args {
             for arg in args {
-                if let Ok(arg) = SpaceArg::try_from((arg, &*context)) {
-                    if space_arg.is_some() {
+                if let Ok(arg) = SpatialArg::try_from((arg, &*context)) {
+                    if spatial_arg.is_some() {
                         return Err(ParseErrF::WrongArgNumb);
                     }
-                    space_arg = Some(arg);
+                    spatial_arg = Some(arg);
                     continue;
                 }
 
@@ -58,10 +58,10 @@ impl MoveFn {
             }
         }
         vars.shrink_to_fit();
-        if let Some(space_arg) = space_arg {
+        if let Some(spatial_arg) = spatial_arg {
             Ok(MoveFn {
                 vars,
-                space_arg,
+                spatial_arg,
                 time_arg,
             })
         } else {

@@ -205,7 +205,7 @@ fn time_pred() {
 }
 
 #[test]
-fn space_pred() {
+fn spatial_pred() {
     let s0 = b"sleep(where 'x0.y0.z0' is this.loc)[$Mary]";
     let s0_res = class_decl(s0);
     assert_done_or_err!(s0_res);
@@ -214,7 +214,10 @@ fn space_pred() {
         s0_res.op_args.as_ref().unwrap(),
         &vec![OpArgBorrowed {
             term: UnconstraintArg::String(b"x0.y0.z0"),
-            comp: Some((Operator::SpaceAssignment, UnconstraintArg::Keyword(b"loc"))),
+            comp: Some((
+                Operator::SpatialAssignment,
+                UnconstraintArg::Keyword(b"loc")
+            )),
         }]
     );
 
@@ -226,7 +229,10 @@ fn space_pred() {
         s1_res.op_args.as_ref().unwrap(),
         &vec![OpArgBorrowed {
             term: UnconstraintArg::Terminal(b"l1"),
-            comp: Some((Operator::SpaceAssignment, UnconstraintArg::Keyword(b"loc"))),
+            comp: Some((
+                Operator::SpatialAssignment,
+                UnconstraintArg::Keyword(b"loc")
+            )),
         }]
     );
 }

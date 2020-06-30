@@ -10,6 +10,7 @@ use super::{
     *,
 };
 use crate::agent::kb::{bms::BmsWrapper, repr::Representation, VarAssignment};
+use spatial_semantics::SpatialOps;
 
 #[derive(Debug, Clone)]
 pub(in crate::agent) struct ClassDecl {
@@ -182,6 +183,8 @@ impl TimeOps for ClassDecl {
         None
     }
 }
+
+impl SpatialOps for ClassDecl {}
 
 impl std::iter::IntoIterator for ClassDecl {
     type Item = GroundedMemb;

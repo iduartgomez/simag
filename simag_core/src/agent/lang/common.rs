@@ -10,7 +10,7 @@ use super::{
     fn_decl::FuncDecl,
     logsent::{LogSentResolution, ParseContext, ProofResContext},
     parser::{ArgBorrowed, Number, OpArgBorrowed, Operator, UVal, UnconstraintArg},
-    space_semantics::{SpaceArg, SpaceFnErr},
+    spatial_semantics::{SpatialArg, SpatialFnErr},
     time_semantics::{TimeArg, TimeFn, TimeFnErr, TimeOps},
     var::Var,
     BuiltIns, GroundedFunc, GroundedMemb, Terminal,
@@ -277,7 +277,7 @@ impl FreeClsMemb {
     }
 }
 
-/// Reified object, free class belongship. Ie: x[$Lucy,u>0.5]
+/// Reified object, free class belongship. Ie: x[$Lucy>0.5]
 #[derive(Debug, Clone)]
 pub(in crate::agent) struct FreeClassMembership {
     term: String,
@@ -293,9 +293,10 @@ impl FreeClassMembership {
         uval: Option<UVal>,
         parent: &Terminal,
     ) -> Result<FreeClassMembership, ParseErrF> {
+        //TODO: should be able to take op_args
         let (val, op) = match_uval(uval)?;
         let t_bms = BmsWrapper::new(false);
-        t_bms.new_record(None, val, None);
+        t_bms.new_record(None, None, val, None);
         Ok(FreeClassMembership {
             term,
             value: val,
@@ -528,7 +529,7 @@ pub(in crate::agent) enum OpArg {
     /// Generic optional argument which includes one binding value and optionally a second operand to compare against
     Generic(ConstraintValue, Option<(Operator, ConstraintValue)>),
     Time(TimeArg),
-    Space(SpaceArg),
+    Spatial(SpatialArg),
     OverWrite,
 }
 
@@ -543,10 +544,10 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for OpArg {
             _ => {}
         }
 
-        match SpaceArg::try_from(input) {
-            Ok(arg) => return Ok(OpArg::Space(arg)),
-            Err(ParseErrF::SpaceFnErr(SpaceFnErr::WrongDef)) => {
-                return Err(ParseErrF::SpaceFnErr(SpaceFnErr::WrongDef))
+        match SpatialArg::try_from(input) {
+            Ok(arg) => return Ok(OpArg::Spatial(arg)),
+            Err(ParseErrF::SpatialFnErr(SpatialFnErr::WrongDef)) => {
+                return Err(ParseErrF::SpatialFnErr(SpatialFnErr::WrongDef))
             }
             _ => {}
         }
@@ -594,7 +595,7 @@ impl<'a> OpArg {
                 id
             }
             OpArg::Time(time_arg) => time_arg.generate_uid(),
-            OpArg::Space(space_arg) => space_arg.generate_uid(),
+            OpArg::Spatial(spatial_arg) => spatial_arg.generate_uid(),
             OpArg::OverWrite => vec![5],
         }
     }
@@ -614,7 +615,7 @@ pub(in crate::agent) enum ConstraintValue {
     Terminal(Terminal),
     String(String),
     TimePayload(TimeFn),
-    SpacePayload,
+    SpatialPayload,
 }
 
 impl<'a> TryFrom<(&'a UnconstraintArg<'a>, &'a ParseContext)> for ConstraintValue {
@@ -630,7 +631,7 @@ impl<'a> TryFrom<(&'a UnconstraintArg<'a>, &'a ParseContext)> for ConstraintValu
                 String::from_utf8_lossy(slice).into_owned(),
             )),
             UnconstraintArg::Keyword(b"time") => Ok(ConstraintValue::TimePayload(TimeFn::ThisTime)),
-            UnconstraintArg::Keyword(b"space") => Ok(ConstraintValue::SpacePayload),
+            UnconstraintArg::Keyword(b"location") => Ok(ConstraintValue::SpatialPayload),
             UnconstraintArg::Keyword(kw) => Err(ParseErrF::ReservedKW(
                 str::from_utf8(kw).unwrap().to_owned(),
             )),
@@ -644,7 +645,7 @@ impl<'a> ConstraintValue {
             ConstraintValue::Terminal(t) => t.generate_uid(),
             ConstraintValue::String(s) => Vec::from_iter(s.as_bytes().iter().cloned()),
             ConstraintValue::TimePayload(t) => t.generate_uid(),
-            ConstraintValue::SpacePayload => vec![0], // FIXME
+            ConstraintValue::SpatialPayload => vec![0], // FIXME
         }
     }
 

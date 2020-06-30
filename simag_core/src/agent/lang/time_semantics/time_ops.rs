@@ -13,19 +13,28 @@ pub(in crate::agent) trait TimeOps: OpArgsOps {
         assignments: &HashMap<&Var, Arc<BmsWrapper>>,
         value: Option<f32>,
     ) -> BmsWrapper {
-        if self.get_op_args().is_none() {
+        let op_args = if let Some(args) = self.get_op_args() {
+            args
+        } else {
             let t_bms = BmsWrapper::new(false);
-            t_bms.new_record(None, value, None);
+            t_bms.new_record(None, None, value, None);
             return t_bms;
-        }
+        };
+
         let mut v = None;
         let mut ow = false;
-        for arg in self.get_op_args().unwrap() {
+        for arg in op_args {
             match arg {
                 OpArg::Time(arg) if arg.contains_payload() => {
+                    if v.is_some() {
+                        panic!("can only set time value once")
+                    }
                     v = Some(arg.get_time_payload(assignments, value));
                 }
                 OpArg::Time(SinceVar(var)) => {
+                    if v.is_some() {
+                        panic!("can only set time value once")
+                    }
                     if let Some(val) = assignments.get(&**var) {
                         v = Some((&**val).clone());
                     }
@@ -46,7 +55,7 @@ pub(in crate::agent) trait TimeOps: OpArgsOps {
             bms
         } else {
             let bms = BmsWrapper::new(ow);
-            bms.new_record(None, value, None);
+            bms.new_record(None, None, value, None);
             bms
         }
     }
