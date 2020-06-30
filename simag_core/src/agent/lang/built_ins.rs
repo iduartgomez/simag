@@ -4,7 +4,7 @@ use super::{
     logsent::ParseContext, parser::FuncDeclBorrowed, spatial_semantics::MoveFn,
     time_semantics::TimeCalc, ParseErrF, Var,
 };
-use crate::agent::kb::bms::BmsWrapper;
+use crate::agent::kb::bms::{BmsWrapper, IsTimeData};
 
 pub const MOVE_FN: &[u8] = b"move";
 pub const TIME_CALC_FN: &[u8] = b"time_calc";
@@ -32,7 +32,10 @@ impl BuiltIns {
     }
 
     #[inline]
-    pub fn grounded_eq(&self, time_assign: &HashMap<&Var, Arc<BmsWrapper>>) -> Option<bool> {
+    pub fn grounded_eq(
+        &self,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
+    ) -> Option<bool> {
         match self {
             BuiltIns::TimeCalculus(f) => Some(f.time_resolution(time_assign)),
             BuiltIns::MoveFn(f) => todo!(),

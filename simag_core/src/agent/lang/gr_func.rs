@@ -1,5 +1,5 @@
-use super::GroundedMemb;
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::str;
 use std::sync::Arc;
 
@@ -7,10 +7,10 @@ use super::{
     common::{GroundedRef, Predicate},
     fn_decl::FuncDecl,
     logsent::SentID,
-    Terminal, TimeOps, Var,
+    GroundedMemb, Terminal, TimeOps, Var,
 };
 use crate::agent::{
-    kb::bms::BmsWrapper,
+    kb::bms::{BmsWrapper, IsTimeData, RecordHistory},
     kb::{repr::Representation, VarAssignment},
     lang::Time,
 };
@@ -24,7 +24,7 @@ pub(in crate::agent) struct GroundedFunc {
     pub(in crate::agent::lang) name: String,
     pub(in crate::agent::lang) args: [GroundedMemb; 2],
     pub(in crate::agent::lang) third: Option<GroundedMemb>,
-    pub bms: Arc<BmsWrapper>,
+    pub bms: Arc<BmsWrapper<RecordHistory>>,
 }
 
 impl GroundedFunc {
@@ -94,7 +94,7 @@ impl GroundedFunc {
     pub fn from_free(
         free: &FuncDecl,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
     ) -> Result<GroundedFunc, ()> {
         if !free.variant.is_relational() || free.args.as_ref().unwrap().len() < 2 {
             return Err(());
@@ -139,7 +139,7 @@ impl GroundedFunc {
             name,
             args: [first.unwrap(), second.unwrap()],
             third,
-            bms: Arc::new(time_data),
+            bms: Arc::new(time_data.try_into()?),
         })
     }
 

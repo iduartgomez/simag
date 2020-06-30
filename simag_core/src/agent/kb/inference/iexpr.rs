@@ -8,6 +8,7 @@
 //! referenced from the representation or the query (for the duration of the query).
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::convert::TryInto;
 use std::hash::{Hash, Hasher};
 use std::iter::FromIterator;
 use std::mem;
@@ -1092,7 +1093,7 @@ impl QueryProcessed {
                             Predicate::GroundedMemb(t) => {
                                 if let Some(times) = cdecl.get_time_payload(t.get_value()) {
                                     if let Some(bms) = t.bms.as_ref() {
-                                        bms.overwrite_data(&times)
+                                        bms.overwrite_data(&times.try_into()?)
                                     };
                                 }
                                 let cls: &str = t.get_name().into();

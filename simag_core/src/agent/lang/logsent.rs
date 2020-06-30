@@ -26,7 +26,11 @@ use super::{
     time_semantics::TimeArg::*,
     ParseErrF, Skolem, Time, Var, VarKind,
 };
-use crate::agent::{kb::bms::BmsWrapper, kb::repr::Representation, kb::VarAssignment};
+use crate::agent::{
+    kb::bms::{BmsWrapper, IsTimeData},
+    kb::repr::Representation,
+    kb::VarAssignment,
+};
 pub(in crate::agent) type SentID = u64;
 pub use self::errors::LogSentErr;
 
@@ -390,7 +394,7 @@ impl<'a> LogSentence {
         &self,
         agent: &Representation,
         var_assign: Option<&HashMap<&Var, &VarAssignment>>,
-    ) -> HashMap<&Var, Arc<BmsWrapper>> {
+    ) -> HashMap<&Var, Arc<BmsWrapper<IsTimeData>>> {
         let mut time_assign = HashMap::new();
         'outer: for var in &self.vars {
             match var.kind {
@@ -701,7 +705,7 @@ impl LogicIndCond {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
     ) -> Option<bool> {
         if let Some(res) = {
@@ -723,7 +727,7 @@ impl LogicIndCond {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
         rhs: bool,
     ) {
@@ -772,7 +776,7 @@ impl LogicEquivalence {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
     ) -> Option<bool> {
         context.set_inconsistent(false);
@@ -850,7 +854,7 @@ impl LogicImplication {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
     ) -> Option<bool> {
         let n0_res = context.sent().particles[self.next_lhs].clone().solve(
@@ -916,7 +920,7 @@ impl LogicConjunction {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
     ) -> Option<bool> {
         let n0_res = context.sent().particles[self.next_lhs].clone().solve(
@@ -947,7 +951,7 @@ impl LogicConjunction {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
         rhs: bool,
     ) {
@@ -1003,7 +1007,7 @@ impl LogicDisjunction {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
     ) -> Option<bool> {
         let n0_res = context.sent().particles[self.next_lhs].clone().solve(
@@ -1040,7 +1044,7 @@ impl LogicDisjunction {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
         rhs: bool,
     ) {
@@ -1095,7 +1099,7 @@ impl LogicAtom {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
     ) -> Option<bool> {
         if let Some(res) = self
@@ -1117,7 +1121,7 @@ impl LogicAtom {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
     ) {
         self.pred
@@ -1157,7 +1161,7 @@ impl Particle {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
     ) -> Option<bool> {
         match *self {
@@ -1175,7 +1179,7 @@ impl Particle {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
         rhs: bool,
     ) {
@@ -1342,7 +1346,7 @@ pub(in crate::agent) trait LogSentResolution<T: ProofResContext> {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
     ) -> Option<bool>;
 
@@ -1350,7 +1354,7 @@ pub(in crate::agent) trait LogSentResolution<T: ProofResContext> {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
     );
 }

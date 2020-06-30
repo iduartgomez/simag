@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 use std::sync::Arc;
 
 use super::{
@@ -9,7 +9,11 @@ use super::{
     time_semantics::{TimeArg, TimeOps},
     *,
 };
-use crate::agent::kb::{bms::BmsWrapper, repr::Representation, VarAssignment};
+use crate::agent::kb::{
+    bms::{BmsWrapper, IsTimeData},
+    repr::Representation,
+    VarAssignment,
+};
 use spatial_semantics::SpatialOps;
 
 #[derive(Debug, Clone)]
@@ -140,7 +144,7 @@ impl TimeOps for ClassDecl {
         &self,
         agent: &Representation,
         var_assign: Option<&HashMap<&Var, &VarAssignment>>,
-    ) -> Option<Arc<BmsWrapper>> {
+    ) -> Option<Arc<BmsWrapper<IsTimeData>>> {
         let arg = &self.args[0];
         match *arg {
             Predicate::FreeClsMemb(ref free) => {
@@ -148,7 +152,7 @@ impl TimeOps for ClassDecl {
                 if let Some(entity) = var_assign.as_ref().unwrap().get(&*free.term) {
                     if let Some(grounded) = entity.get_class(free.parent.get_name()) {
                         if free.grounded_eq(grounded) {
-                            return grounded.bms.clone();
+                            return grounded.bms.clone().map(|bms| Arc::new((&*bms).into()));
                         }
                     } else {
                         return None;
@@ -162,7 +166,7 @@ impl TimeOps for ClassDecl {
                 if let Some(grounded) = entity {
                     // if *grounded == *compare {
                     if grounded.compare_ignoring_times(compare) {
-                        return grounded.bms.clone();
+                        return grounded.bms.clone().map(|bms| Arc::new((&*bms).into()));
                     }
                 } else {
                     return None;
@@ -173,7 +177,7 @@ impl TimeOps for ClassDecl {
         None
     }
 
-    fn get_time_payload(&self, value: Option<f32>) -> Option<BmsWrapper> {
+    fn get_time_payload(&self, value: Option<f32>) -> Option<BmsWrapper<IsTimeData>> {
         self.op_args.as_ref()?;
         for arg in self.op_args.as_ref().unwrap() {
             if let OpArg::Time(TimeArg::DeclTime(ref decl)) = *arg {
@@ -210,7 +214,7 @@ impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        _: &HashMap<&Var, Arc<BmsWrapper>>,
+        _: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
     ) -> Option<bool> {
         for a in &self.args {
@@ -280,7 +284,7 @@ impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
     ) {
         use crate::agent::kb::bms::ReplaceMode;
@@ -301,7 +305,7 @@ impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
             let t = time_data.clone();
             t.replace_value(grfact.get_value(), ReplaceMode::Substitute);
             if let Some(bms) = grfact.bms.as_ref() {
-                bms.overwrite_data(&t)
+                bms.overwrite_data(&t.try_into().unwrap())
             };
             #[cfg(debug_assertions)]
             {

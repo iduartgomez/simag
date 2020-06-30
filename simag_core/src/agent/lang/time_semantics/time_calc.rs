@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::TimeFnErr;
 use crate::agent::{
-    kb::bms::BmsWrapper,
+    kb::bms::{BmsWrapper, IsTimeData},
     lang::{
         built_ins::TIME_CALC_FN,
         common::OpArg,
@@ -73,7 +73,10 @@ impl TimeCalc {
         uid
     }
 
-    pub fn time_resolution(&self, assignments: &HashMap<&Var, Arc<BmsWrapper>>) -> bool {
+    pub fn time_resolution(
+        &self,
+        assignments: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
+    ) -> bool {
         let arg0 = assignments.get(&*self.var0).unwrap().get_last_date();
         let arg1 = assignments.get(&*self.var1).unwrap().get_last_date();
 

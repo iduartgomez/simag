@@ -4,24 +4,48 @@
 //! 1) Recording how a belief came to existence to the agent.
 //! 2) Detecting inconsistences between new and old beliefs.
 //! 3) Fixing those inconsitences.
+use std::cmp::Ordering as CmpOrdering;
+use std::mem;
+use std::{
+    convert::TryInto,
+    marker::PhantomData,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 pub(in crate::agent) use self::errors::BmsError;
 use super::{inference::QueryInput, repr::Representation};
 use crate::agent::lang::{Grounded, GroundedRef, Point, ProofResContext, SentID, Time};
-
 use chrono::Utc;
 use parking_lot::{RwLock, RwLockReadGuard};
 
-use std::cmp::Ordering as CmpOrdering;
-use std::mem;
-use std::sync::atomic::{AtomicBool, Ordering};
+pub(in crate::agent) fn update_producers<C: ProofResContext>(owner: &Grounded, context: &C) {
+    // add the produced knowledge to each producer in case it comes
+    // from a logic sentence resolution
+    for a in context.get_antecedents() {
+        match *a {
+            Grounded::Class(ref cls) => {
+                let cls = cls.upgrade().unwrap();
+                let value = cls.get_value();
+                cls.bms.as_ref().unwrap().add_entry(owner.clone(), value);
+            }
+            Grounded::Function(ref func) => {
+                let func = func.upgrade().unwrap();
+                let value = func.get_value();
+                func.bms.add_entry(owner.clone(), value);
+            }
+        }
+    }
+}
 
 /// Acts as a wrapper for the Belief Maintenance System for a given agent.
 ///
 /// Serves to keep the believes alive in memory, fix inconsistencies and
 /// serialize any information.
 #[derive(Debug)]
-pub(in crate::agent) struct BmsWrapper {
+pub(in crate::agent) struct BmsWrapper<T>
+where
+    T: BmsKind,
+{
     records: RwLock<Vec<BmsRecord>>,
     /// set if it's a predicate with the time of query execution
     pred: Option<Time>,
@@ -32,14 +56,60 @@ pub(in crate::agent) struct BmsWrapper {
     /// being checked, which could produce new facts or update existing facts rolling back
     /// previous knowledge that no longer applies.
     pub overwrite: AtomicBool,
+    _kind: PhantomData<T>,
 }
 
-impl BmsWrapper {
-    pub fn new(overwrite: bool) -> BmsWrapper {
+pub(in crate::agent) trait BmsKind {}
+
+#[derive(Debug, Clone)]
+pub(in crate::agent) struct IsSpatialData;
+impl BmsKind for IsSpatialData {}
+
+#[derive(Debug, Clone)]
+pub(in crate::agent) struct IsTimeData;
+impl BmsKind for IsTimeData {}
+
+impl TryInto<BmsWrapper<RecordHistory>> for BmsWrapper<IsTimeData> {
+    type Error = ();
+
+    fn try_into(self) -> Result<BmsWrapper<RecordHistory>, Self::Error> {
+        let BmsWrapper {
+            records,
+            pred,
+            overwrite,
+            ..
+        } = self;
+        Ok(BmsWrapper {
+            _kind: PhantomData,
+            records,
+            pred,
+            overwrite,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(in crate::agent) struct RecordHistory;
+impl BmsKind for RecordHistory {}
+
+impl Into<BmsWrapper<IsTimeData>> for &BmsWrapper<RecordHistory> {
+    fn into(self) -> BmsWrapper<IsTimeData> {
+        BmsWrapper {
+            records: RwLock::new((&*self.records.read()).clone()),
+            pred: self.pred,
+            overwrite: AtomicBool::new(self.overwrite.load(Ordering::Acquire)),
+            _kind: PhantomData,
+        }
+    }
+}
+
+impl<T: BmsKind> BmsWrapper<T> {
+    pub fn new(overwrite: bool) -> Self {
         BmsWrapper {
             records: RwLock::new(vec![]),
             pred: None,
             overwrite: AtomicBool::new(overwrite),
+            _kind: PhantomData,
         }
     }
 
@@ -82,7 +152,7 @@ impl BmsWrapper {
         &self,
         owner: &GroundedRef,
         agent: &Representation,
-        data: &BmsWrapper,
+        data: &Self,
         was_produced: Option<(SentID, Time)>,
     ) {
         let ask_processed = |entry: &(Grounded, Option<f32>), cmp_rec: &Time| {
@@ -269,38 +339,6 @@ impl BmsWrapper {
         record.add_entry((produced, with_val));
     }
 
-    pub fn update_producers<T: ProofResContext>(owner: &Grounded, context: &T) {
-        // add the produced knowledge to each producer in case it comes
-        // from a logic sentence resolution
-        for a in context.get_antecedents() {
-            match *a {
-                Grounded::Class(ref cls) => {
-                    let cls = cls.upgrade().unwrap();
-                    let value = cls.get_value();
-                    cls.bms.as_ref().unwrap().add_entry(owner.clone(), value);
-                }
-                Grounded::Function(ref func) => {
-                    let func = func.upgrade().unwrap();
-                    let value = func.get_value();
-                    func.bms.add_entry(owner.clone(), value);
-                }
-            }
-        }
-    }
-
-    /// Drops all the records and writes the records from the incoming BMS.
-    pub fn overwrite_data(&self, other: &BmsWrapper) {
-        let lock = &mut *self.records.write();
-        // drop old records
-        lock.truncate(0);
-        // insert new records
-        for rec in &*other.records.read() {
-            lock.push(rec.clone())
-        }
-        self.overwrite
-            .store(other.overwrite.load(Ordering::Acquire), Ordering::Release);
-    }
-
     pub fn record_len(&self) -> usize {
         self.records.read().len()
     }
@@ -372,7 +410,7 @@ impl BmsWrapper {
     /// then A (along all the knowledge produced by this registry)
     /// will be rolled back to previous record. All produced records will
     /// be rolled back recursively.
-    pub(in crate::agent) fn rollback_one_once(&self, other: &BmsWrapper) {
+    pub(in crate::agent) fn rollback_one_once(&self, other: &Self) {
         // Write lock to guarantee atomicity of the operation
         let lock_self = &mut *self.records.write();
         let lock_other = &mut *other.records.write();
@@ -387,9 +425,9 @@ impl BmsWrapper {
         };
 
         if own_is_newer {
-            BmsWrapper::rollback_once(lock_self.pop().unwrap());
+            Self::rollback_once(lock_self.pop().unwrap());
         } else {
-            BmsWrapper::rollback_once(lock_other.pop().unwrap());
+            Self::rollback_once(lock_other.pop().unwrap());
         }
     }
 
@@ -433,13 +471,13 @@ impl BmsWrapper {
             }
         };
         if rollback_this {
-            BmsWrapper::rollback_once(lock.pop().unwrap());
+            Self::rollback_once(lock.pop().unwrap());
         }
     }
 
     /// Compare the time of the last record of two BMS and return
     /// the ordering of self vs. other.
-    pub fn cmp_by_time(&self, other: &BmsWrapper) -> CmpOrdering {
+    pub fn cmp_by_time(&self, other: &Self) -> CmpOrdering {
         let lock0 = &*self.records.read();
         let lock1 = &*other.records.read();
         let own_last_time = &lock0.last().unwrap().time;
@@ -452,7 +490,7 @@ impl BmsWrapper {
     /// as `unknown`.
     ///
     /// This operation is meant to be used when asserting new facts.
-    pub fn merge_from_until(&mut self, until: &BmsWrapper) -> Result<(), errors::BmsError> {
+    pub fn merge_from_until(&mut self, until: &Self) -> Result<(), errors::BmsError> {
         let mut self_records = self.records.write();
         let other_records = until.records.read();
 
@@ -521,18 +559,34 @@ impl BmsWrapper {
     }
 }
 
-impl std::clone::Clone for BmsWrapper {
-    fn clone(&self) -> BmsWrapper {
+impl BmsWrapper<RecordHistory> {
+    /// Drops all the records and writes the records from the incoming BMS.
+    pub fn overwrite_data(&self, other: &Self) {
+        let lock = &mut *self.records.write();
+        // drop old records
+        lock.truncate(0);
+        // insert new records
+        for rec in &*other.records.read() {
+            lock.push(rec.clone())
+        }
+        self.overwrite
+            .store(other.overwrite.load(Ordering::Acquire), Ordering::Release);
+    }
+}
+
+impl<T: BmsKind> std::clone::Clone for BmsWrapper<T> {
+    fn clone(&self) -> BmsWrapper<T> {
         let recs = &*self.records.read();
         BmsWrapper {
             records: RwLock::new(recs.clone()),
             pred: self.pred,
             overwrite: AtomicBool::new(self.overwrite.load(Ordering::Acquire)),
+            _kind: PhantomData,
         }
     }
 }
 
-impl std::fmt::Display for BmsWrapper {
+impl<T: BmsKind> std::fmt::Display for BmsWrapper<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let record = self.get_last_date();
         let val = self.get_last_value();

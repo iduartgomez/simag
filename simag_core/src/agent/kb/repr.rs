@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::iter::FromIterator;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -96,16 +97,21 @@ impl Representation {
                         for assertion in assertions {
                             match assertion {
                                 Assert::ClassDecl(cls_decl) => {
-                                    let f = HashMap::new();
-                                    let time_data = cls_decl.get_own_time_data(&f, None);
+                                    let ta = HashMap::new();
+                                    let time_data = cls_decl.get_own_time_data(&ta, None);
+                                    let la = HashMap::new();
                                     let loc_data = cls_decl
-                                        .get_own_spatial_data(&f)
+                                        .get_own_spatial_data(&la)
                                         .map_err(|err| vec![err])?;
                                     for a in cls_decl {
                                         let t = time_data.clone();
                                         t.replace_value(a.get_value(), ReplaceMode::Tell);
                                         if let Some(bms) = a.bms.as_ref() {
-                                            bms.overwrite_data(&t);
+                                            bms.overwrite_data(&t.try_into().map_err(|_| {
+                                                vec![ParseErrF::FailedConversion(
+                                                    "BmsWrapper<RecordHistory>",
+                                                )]
+                                            })?);
                                             if a.is_time_interval() {
                                                 a.update_value(None);
                                             }

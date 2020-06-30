@@ -4,10 +4,8 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use float_cmp::ApproxEqUlps;
 
-use crate::agent::kb::{
-    bms::BmsWrapper,
-    repr::{lookahead_rules, Representation},
-};
+use super::bms;
+use crate::agent::kb::repr::{lookahead_rules, Representation};
 use crate::agent::lang::{
     FreeClassMembership, Grounded, GroundedFunc, GroundedMemb, GroundedRef, LogSentence, Operator,
     Predicate, ProofResContext,
@@ -117,10 +115,7 @@ impl Entity {
                     &*grounded,
                     Some((context.get_id(), context.get_production_time())),
                 );
-                BmsWrapper::update_producers(
-                    &Grounded::Class(Arc::downgrade(&current.clone())),
-                    context,
-                );
+                bms::update_producers(&Grounded::Class(Arc::downgrade(&current.clone())), context);
             } else {
                 #[cfg(debug_assertions)]
                 {
@@ -137,10 +132,7 @@ impl Entity {
             if let Some(context) = context {
                 let bms = grounded.bms.as_ref().unwrap();
                 bms.set_last_rec_producer(Some((context.get_id(), context.get_production_time())));
-                BmsWrapper::update_producers(
-                    &Grounded::Class(Arc::downgrade(&grounded.clone())),
-                    context,
-                );
+                bms::update_producers(&Grounded::Class(Arc::downgrade(&grounded.clone())), context);
             }
             #[cfg(debug_assertions)]
             {
@@ -273,7 +265,7 @@ impl Entity {
                                 &*func,
                                 Some((context.get_id(), context.get_production_time())),
                             );
-                            BmsWrapper::update_producers(
+                            bms::update_producers(
                                 &Grounded::Function(Arc::downgrade(&f.clone())),
                                 context,
                             );
@@ -307,7 +299,7 @@ impl Entity {
                         context.get_id(),
                         context.get_production_time(),
                     )));
-                    BmsWrapper::update_producers(
+                    bms::update_producers(
                         &Grounded::Function(Arc::downgrade(&func.clone())),
                         context,
                     );
@@ -322,10 +314,7 @@ impl Entity {
             if let Some(context) = context {
                 func.bms
                     .set_last_rec_producer(Some((context.get_id(), context.get_production_time())));
-                BmsWrapper::update_producers(
-                    &Grounded::Function(Arc::downgrade(&func.clone())),
-                    context,
-                );
+                bms::update_producers(&Grounded::Function(Arc::downgrade(&func.clone())), context);
             }
             #[cfg(debug_assertions)]
             {

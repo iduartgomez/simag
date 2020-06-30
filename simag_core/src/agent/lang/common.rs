@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 use std::iter::FromIterator;
 use std::str;
 use std::sync::{Arc, Weak};
@@ -16,7 +16,7 @@ use super::{
     BuiltIns, GroundedFunc, GroundedMemb, Terminal,
 };
 use crate::agent::{
-    kb::bms::BmsWrapper,
+    kb::bms::{BmsWrapper, IsTimeData, RecordHistory},
     kb::{repr::Representation, VarAssignment},
 };
 use crate::FLOAT_EQ_ULPS;
@@ -284,7 +284,7 @@ pub(in crate::agent) struct FreeClassMembership {
     pub(in crate::agent::lang) value: Option<f32>,
     operator: Option<Operator>,
     parent: Arc<Var>,
-    pub times: BmsWrapper,
+    pub times: BmsWrapper<RecordHistory>,
 }
 
 impl FreeClassMembership {
@@ -343,8 +343,8 @@ impl FreeClassMembership {
         }
     }
 
-    pub fn overwrite_time_data(&self, data: &BmsWrapper) {
-        self.times.overwrite_data(data);
+    pub fn overwrite_time_data(&self, data: &BmsWrapper<IsTimeData>) {
+        self.times.overwrite_data(&data.clone().try_into().unwrap());
     }
 
     #[inline]
@@ -420,7 +420,7 @@ impl Assert {
         &self,
         agent: &Representation,
         var_assign: Option<&HashMap<&Var, &VarAssignment>>,
-    ) -> Option<Arc<BmsWrapper>> {
+    ) -> Option<Arc<BmsWrapper<IsTimeData>>> {
         match *self {
             Assert::FuncDecl(ref f) => f.get_times(agent, var_assign),
             Assert::ClassDecl(ref c) => c.get_times(agent, var_assign),
@@ -488,7 +488,7 @@ impl Assert {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
     ) -> Option<bool> {
         match self {
@@ -503,7 +503,7 @@ impl Assert {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
     ) {
         match *self {

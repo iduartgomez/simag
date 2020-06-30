@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use super::SpatialFnErr;
 use crate::agent::{
-    kb::bms::BmsWrapper,
+    kb::bms::{BmsWrapper, IsSpatialData},
     lang::spatial_semantics::SpatialArg::*,
     lang::{common::OpArg, OpArgsOps, Var},
     ParseErrF,
@@ -11,8 +11,8 @@ use crate::agent::{
 pub(in crate::agent) trait SpatialOps: OpArgsOps {
     fn get_own_spatial_data(
         &self,
-        _assignments: &HashMap<&Var, Arc<BmsWrapper>>,
-    ) -> Result<BmsWrapper, ParseErrF> {
+        _assignments: &HashMap<&Var, Arc<BmsWrapper<IsSpatialData>>>,
+    ) -> Result<BmsWrapper<IsSpatialData>, ParseErrF> {
         let op_args = if let Some(args) = self.get_op_args() {
             args
         } else {

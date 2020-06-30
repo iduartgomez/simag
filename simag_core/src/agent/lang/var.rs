@@ -7,7 +7,7 @@ use super::{
     typedef::TypeDef,
     Operator, ParseErrF,
 };
-use crate::agent::kb::bms::BmsWrapper;
+use crate::agent::kb::bms::{BmsWrapper, IsTimeData};
 use std::convert::TryFrom;
 
 /// Variable equality is bassed on physical address, to compare term equality use the
@@ -113,7 +113,7 @@ impl<'a> std::convert::TryFrom<(&'a VarBorrowed<'a>, &'a ParseContext)> for Var 
 }
 
 impl Var {
-    pub fn get_times(&self) -> BmsWrapper {
+    pub fn get_times(&self) -> BmsWrapper<IsTimeData> {
         self.assigned_val
             .as_ref()
             .map(|arg| TimeFn::try_from(arg).unwrap())

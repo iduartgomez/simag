@@ -5,6 +5,7 @@ use dashmap::DashMap;
 use float_cmp::ApproxEqUlps;
 use parking_lot::RwLock;
 
+use super::bms;
 use crate::agent::kb::{
     bms::BmsWrapper,
     repr::{lookahead_rules, Representation},
@@ -98,10 +99,7 @@ impl Class {
                     &*grounded,
                     Some((context.get_id(), context.get_production_time())),
                 );
-                BmsWrapper::update_producers(
-                    &Grounded::Class(Arc::downgrade(&current.clone())),
-                    context,
-                );
+                bms::update_producers(&Grounded::Class(Arc::downgrade(&current.clone())), context);
             } else {
                 current.update(agent, &*grounded, None);
             }
@@ -110,10 +108,7 @@ impl Class {
             if let Some(context) = context {
                 let bms = grounded.bms.as_ref().unwrap();
                 bms.set_last_rec_producer(Some((context.get_id(), context.get_production_time())));
-                BmsWrapper::update_producers(
-                    &Grounded::Class(Arc::downgrade(&grounded.clone())),
-                    context,
-                );
+                bms::update_producers(&Grounded::Class(Arc::downgrade(&grounded.clone())), context);
             }
             self.classes.insert(name.to_string(), grounded.clone());
             true
@@ -307,7 +302,7 @@ impl Class {
                                 &*func,
                                 Some((context.get_id(), context.get_production_time())),
                             );
-                            BmsWrapper::update_producers(
+                            bms::update_producers(
                                 &Grounded::Function(Arc::downgrade(&f.clone())),
                                 context,
                             );
@@ -325,7 +320,7 @@ impl Class {
                         context.get_id(),
                         context.get_production_time(),
                     )));
-                    BmsWrapper::update_producers(
+                    bms::update_producers(
                         &Grounded::Function(Arc::downgrade(&func.clone())),
                         context,
                     );
@@ -340,10 +335,7 @@ impl Class {
             if let Some(context) = context {
                 func.bms
                     .set_last_rec_producer(Some((context.get_id(), context.get_production_time())));
-                BmsWrapper::update_producers(
-                    &Grounded::Function(Arc::downgrade(&func.clone())),
-                    context,
-                );
+                bms::update_producers(&Grounded::Function(Arc::downgrade(&func.clone())), context);
             }
             self.relations.insert(name.to_string(), vec![func.clone()]);
             true

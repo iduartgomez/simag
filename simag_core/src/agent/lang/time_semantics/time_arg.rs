@@ -3,7 +3,7 @@ use std::convert::TryFrom;
 use std::sync::Arc;
 
 use super::*;
-use crate::agent::kb::bms::BmsWrapper;
+use crate::agent::kb::bms::{BmsWrapper, IsTimeData};
 use crate::agent::lang::{common::ConstraintValue, logsent::ParseContext, parser::Operator, *};
 use chrono::{DateTime, Utc};
 use parser::OpArgBorrowed;
@@ -33,9 +33,9 @@ impl TimeArg {
 
     pub fn get_time_payload(
         &self,
-        assignments: &HashMap<&Var, Arc<BmsWrapper>>,
+        assignments: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         value: Option<f32>,
-    ) -> BmsWrapper {
+    ) -> BmsWrapper<IsTimeData> {
         let bms = BmsWrapper::new(false);
         match self {
             DeclTime(TimeFn::Since(payload)) => {
@@ -275,7 +275,7 @@ impl TimeFn {
 
     /// Get a time interval from a bmswrapper, ie. created with the
     /// merge_from_until method.
-    pub fn from_bms(rec: &BmsWrapper) -> Result<TimeFn, ParseErrF> {
+    pub fn from_bms(rec: &BmsWrapper<IsTimeData>) -> Result<TimeFn, ParseErrF> {
         let values: Vec<_> = rec.iter_values().map(|(t, _)| t).collect();
         if values.len() != 2 {
             return Err(ParseErrF::TimeFnErr(TimeFnErr::WrongDef));
@@ -283,7 +283,7 @@ impl TimeFn {
         Ok(TimeFn::Interval(values[0], values[1]))
     }
 
-    pub fn get_time_payload(&self, value: Option<f32>) -> BmsWrapper {
+    pub fn get_time_payload(&self, value: Option<f32>) -> BmsWrapper<IsTimeData> {
         let bms = BmsWrapper::new(false);
         match *self {
             TimeFn::Since(ref payload) => {

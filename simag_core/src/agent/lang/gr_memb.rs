@@ -1,6 +1,3 @@
-use super::{FreeClsMemb, GroundedRef};
-use float_cmp::ApproxEqUlps;
-use parking_lot::RwLock;
 use std::str;
 use std::sync::Arc;
 
@@ -8,10 +5,15 @@ use super::{
     errors::ParseErrF,
     logsent::{ParseContext, SentID},
     parser::{Number, Operator, UVal},
-    GrTerminalKind, Time,
+    FreeClsMemb, GrTerminalKind, GroundedRef, Time,
 };
-use crate::agent::{kb::bms::BmsWrapper, kb::repr::Representation};
+use crate::agent::{
+    kb::bms::{BmsWrapper, RecordHistory},
+    kb::repr::Representation,
+};
 use crate::FLOAT_EQ_ULPS;
+use float_cmp::ApproxEqUlps;
+use parking_lot::RwLock;
 
 /// Grounded membership of an entity to a class.
 ///
@@ -22,7 +24,7 @@ pub(in crate::agent) struct GroundedMemb {
     pub(in crate::agent::lang) value: RwLock<Option<f32>>,
     pub(in crate::agent::lang) operator: Option<Operator>,
     pub(in crate::agent::lang) parent: String,
-    pub bms: Option<Arc<BmsWrapper>>,
+    pub bms: Option<Arc<BmsWrapper<RecordHistory>>>,
 }
 
 impl GroundedMemb {

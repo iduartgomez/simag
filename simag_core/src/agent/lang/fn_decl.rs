@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 use std::sync::{atomic::AtomicBool, Arc};
 
 use super::{
@@ -11,7 +11,7 @@ use super::{
     *,
 };
 use crate::agent::{
-    kb::bms::{BmsWrapper, ReplaceMode},
+    kb::bms::{BmsWrapper, IsTimeData, ReplaceMode},
     kb::{repr::Representation, VarAssignment},
 };
 
@@ -291,12 +291,12 @@ impl TimeOps for FuncDecl {
         &self,
         agent: &Representation,
         var_assign: Option<&HashMap<&Var, &VarAssignment>>,
-    ) -> Option<Arc<BmsWrapper>> {
+    ) -> Option<Arc<BmsWrapper<IsTimeData>>> {
         if self.is_grounded() {
             let sbj = self.args.as_ref().unwrap();
             let grfunc = self.clone().into();
             if let Some(relation) = agent.get_relationship(&grfunc, sbj[0].get_name()) {
-                Some(relation.bms.clone())
+                Some(Arc::new((&*relation.bms).into()))
             } else {
                 None
             }
@@ -309,7 +309,7 @@ impl TimeOps for FuncDecl {
                         let assignments = var_assign.as_ref().unwrap();
                         if let Some(entity) = assignments.get(&*arg.term) {
                             if let Some(current) = entity.get_relationship(&grfunc) {
-                                return Some(current.bms.clone());
+                                return Some(Arc::new((&*current.bms).into()));
                             }
                         }
                     }
@@ -327,7 +327,7 @@ impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
     ) -> Option<bool> {
         if self.is_grounded() {
@@ -376,13 +376,13 @@ impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
     ) {
         if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, time_assign) {
             let time_data = self.get_own_time_data(time_assign, None);
             time_data.replace_value(grfunc.get_value(), ReplaceMode::Substitute);
-            grfunc.bms.overwrite_data(&time_data);
+            grfunc.bms.overwrite_data(&time_data.try_into().unwrap());
             #[cfg(debug_assertions)]
             {
                 log::trace!("Correct substitution found, updating: {:?}", grfunc);

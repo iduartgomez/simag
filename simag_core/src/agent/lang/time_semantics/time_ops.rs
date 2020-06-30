@@ -2,7 +2,11 @@ use std::collections::HashMap;
 use std::sync::{atomic::AtomicBool, Arc};
 
 use super::TimeArg::*;
-use crate::agent::kb::{bms::BmsWrapper, repr::Representation, VarAssignment};
+use crate::agent::kb::{
+    bms::{BmsWrapper, IsTimeData},
+    repr::Representation,
+    VarAssignment,
+};
 use crate::agent::lang::{common::OpArg, OpArgsOps, Var};
 
 pub(in crate::agent) trait TimeOps: OpArgsOps {
@@ -10,9 +14,9 @@ pub(in crate::agent) trait TimeOps: OpArgsOps {
     /// those will be dropped
     fn get_own_time_data(
         &self,
-        assignments: &HashMap<&Var, Arc<BmsWrapper>>,
+        assignments: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         value: Option<f32>,
-    ) -> BmsWrapper {
+    ) -> BmsWrapper<IsTimeData> {
         let op_args = if let Some(args) = self.get_op_args() {
             args
         } else {
@@ -64,7 +68,7 @@ pub(in crate::agent) trait TimeOps: OpArgsOps {
         &self,
         agent: &Representation,
         var_assign: Option<&HashMap<&Var, &VarAssignment>>,
-    ) -> Option<Arc<BmsWrapper>>;
+    ) -> Option<Arc<BmsWrapper<IsTimeData>>>;
 
     fn get_time_decl(&self, var0: &Var) -> bool {
         if let Some(args) = self.get_op_args() {
@@ -79,7 +83,7 @@ pub(in crate::agent) trait TimeOps: OpArgsOps {
         }
     }
 
-    fn get_time_payload(&self, _value: Option<f32>) -> Option<BmsWrapper> {
+    fn get_time_payload(&self, _value: Option<f32>) -> Option<BmsWrapper<IsTimeData>> {
         unimplemented!()
     }
 }
