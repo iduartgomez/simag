@@ -152,7 +152,15 @@ impl TimeOps for ClassDecl {
                 if let Some(entity) = var_assign.as_ref().unwrap().get(&*free.term) {
                     if let Some(grounded) = entity.get_class(free.parent.get_name()) {
                         if free.grounded_eq(grounded) {
-                            return grounded.bms.clone().map(|bms| Arc::new((&*bms).into()));
+                            return grounded.bms.as_ref().map(|bms| {
+                                Arc::new((&**bms).try_into().unwrap_or_else(|_| {
+                                    panic!(
+                                        "SIMAG - {}:{} - unreachable: illegal conversion",
+                                        file!(),
+                                        line!()
+                                    )
+                                }))
+                            });
                         }
                     } else {
                         return None;
@@ -166,7 +174,15 @@ impl TimeOps for ClassDecl {
                 if let Some(grounded) = entity {
                     // if *grounded == *compare {
                     if grounded.compare_ignoring_times(compare) {
-                        return grounded.bms.clone().map(|bms| Arc::new((&*bms).into()));
+                        return grounded.bms.as_ref().map(|bms| {
+                            Arc::new((&**bms).try_into().unwrap_or_else(|_| {
+                                panic!(
+                                    "SIMAG - {}:{} - unreachable: illegal conversion",
+                                    file!(),
+                                    line!()
+                                )
+                            }))
+                        });
                     }
                 } else {
                     return None;
@@ -305,7 +321,7 @@ impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
             let t = time_data.clone();
             t.replace_value(grfact.get_value(), ReplaceMode::Substitute);
             if let Some(bms) = grfact.bms.as_ref() {
-                bms.overwrite_data(&t.try_into().unwrap())
+                bms.overwrite_data(t)
             };
             #[cfg(debug_assertions)]
             {

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
-use std::sync::{atomic::AtomicBool, Arc};
+use std::sync::Arc;
 
 use super::{
     common::*,
@@ -11,7 +11,7 @@ use super::{
     *,
 };
 use crate::agent::{
-    kb::bms::{BmsWrapper, IsTimeData, ReplaceMode},
+    kb::bms::{BmsWrapper, IsTimeData, RecordHistory, ReplaceMode},
     kb::{repr::Representation, VarAssignment},
 };
 
@@ -245,7 +245,7 @@ impl Into<GroundedFunc> for FuncDecl {
                 third = Some(n_a);
             }
         }
-        let mut time_data = BmsWrapper::new(false);
+        let time_data = BmsWrapper::<RecordHistory>::new();
         let mut ow = false;
         if let Some(mut oargs) = op_args {
             for arg in oargs.drain(..) {
@@ -270,12 +270,11 @@ impl Into<GroundedFunc> for FuncDecl {
         if time_data.record_len() == 0 {
             time_data.new_record(None, None, val, None);
         }
-        time_data.overwrite = AtomicBool::new(ow);
         GroundedFunc {
             name,
             args: [first.unwrap(), second.unwrap()],
             third,
-            bms: Arc::new(time_data),
+            bms: Arc::new(time_data.with_ow_val(ow)),
         }
     }
 }
@@ -296,7 +295,13 @@ impl TimeOps for FuncDecl {
             let sbj = self.args.as_ref().unwrap();
             let grfunc = self.clone().into();
             if let Some(relation) = agent.get_relationship(&grfunc, sbj[0].get_name()) {
-                Some(Arc::new((&*relation.bms).into()))
+                Some(Arc::new((&*relation.bms).try_into().unwrap_or_else(|_| {
+                    panic!(
+                        "SIMAG - {}:{} - unreachable: illegal conversion",
+                        file!(),
+                        line!()
+                    )
+                })))
             } else {
                 None
             }
@@ -309,7 +314,15 @@ impl TimeOps for FuncDecl {
                         let assignments = var_assign.as_ref().unwrap();
                         if let Some(entity) = assignments.get(&*arg.term) {
                             if let Some(current) = entity.get_relationship(&grfunc) {
-                                return Some(Arc::new((&*current.bms).into()));
+                                return Some(Arc::new((&*current.bms).try_into().unwrap_or_else(
+                                    |_| {
+                                        panic!(
+                                            "SIMAG - {}:{} - unreachable: illegal conversion",
+                                            file!(),
+                                            line!()
+                                        )
+                                    },
+                                )));
                             }
                         }
                     }
@@ -382,7 +395,7 @@ impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
         if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, time_assign) {
             let time_data = self.get_own_time_data(time_assign, None);
             time_data.replace_value(grfunc.get_value(), ReplaceMode::Substitute);
-            grfunc.bms.overwrite_data(&time_data.try_into().unwrap());
+            grfunc.bms.overwrite_data(time_data);
             #[cfg(debug_assertions)]
             {
                 log::trace!("Correct substitution found, updating: {:?}", grfunc);

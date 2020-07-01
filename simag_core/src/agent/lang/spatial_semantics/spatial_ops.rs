@@ -16,9 +16,7 @@ pub(in crate::agent) trait SpatialOps: OpArgsOps {
         let op_args = if let Some(args) = self.get_op_args() {
             args
         } else {
-            let t_bms = BmsWrapper::new(false);
-            t_bms.new_record(None, None, None, None);
-            return Ok(t_bms);
+            return Ok(BmsWrapper::<IsSpatialData>::new(None));
         };
 
         let mut v = None;
@@ -36,8 +34,6 @@ pub(in crate::agent) trait SpatialOps: OpArgsOps {
             }
         }
 
-        let bms = BmsWrapper::new(ow);
-        bms.new_record(None, v, None, None);
-        Ok(bms)
+        Ok(BmsWrapper::<IsSpatialData>::new(v).with_ow_val(ow))
     }
 }

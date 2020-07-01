@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::convert::TryInto;
 use std::str;
 use std::sync::Arc;
 
@@ -139,7 +138,7 @@ impl GroundedFunc {
             name,
             args: [first.unwrap(), second.unwrap()],
             third,
-            bms: Arc::new(time_data.try_into()?),
+            bms: Arc::new(time_data.into()),
         })
     }
 

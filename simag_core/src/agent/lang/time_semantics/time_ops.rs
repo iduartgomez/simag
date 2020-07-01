@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{atomic::AtomicBool, Arc};
+use std::sync::Arc;
 
 use super::TimeArg::*;
 use crate::agent::kb::{
@@ -20,9 +20,7 @@ pub(in crate::agent) trait TimeOps: OpArgsOps {
         let op_args = if let Some(args) = self.get_op_args() {
             args
         } else {
-            let t_bms = BmsWrapper::new(false);
-            t_bms.new_record(None, None, value, None);
-            return t_bms;
+            return BmsWrapper::<IsTimeData>::new(None, value);
         };
 
         let mut v = None;
@@ -54,13 +52,11 @@ pub(in crate::agent) trait TimeOps: OpArgsOps {
             }
         }
 
-        if let Some(mut bms) = v {
-            bms.overwrite = AtomicBool::new(ow);
-            bms
+        if let Some(bms) = v {
+            bms.with_ow_val(ow)
         } else {
-            let bms = BmsWrapper::new(ow);
-            bms.new_record(None, None, value, None);
-            bms
+            let bms = BmsWrapper::<IsTimeData>::new(None, value);
+            bms.with_ow_val(ow)
         }
     }
 

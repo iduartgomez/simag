@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryFrom;
 use std::iter::FromIterator;
 use std::str;
 use std::sync::{Arc, Weak};
@@ -16,7 +16,7 @@ use super::{
     BuiltIns, GroundedFunc, GroundedMemb, Terminal,
 };
 use crate::agent::{
-    kb::bms::{BmsWrapper, IsTimeData, RecordHistory},
+    kb::bms::{BmsWrapper, IsTimeData},
     kb::{repr::Representation, VarAssignment},
 };
 use crate::FLOAT_EQ_ULPS;
@@ -284,7 +284,7 @@ pub(in crate::agent) struct FreeClassMembership {
     pub(in crate::agent::lang) value: Option<f32>,
     operator: Option<Operator>,
     parent: Arc<Var>,
-    pub times: BmsWrapper<RecordHistory>,
+    pub times: BmsWrapper<IsTimeData>,
 }
 
 impl FreeClassMembership {
@@ -295,14 +295,12 @@ impl FreeClassMembership {
     ) -> Result<FreeClassMembership, ParseErrF> {
         //TODO: should be able to take op_args
         let (val, op) = match_uval(uval)?;
-        let t_bms = BmsWrapper::new(false);
-        t_bms.new_record(None, None, val, None);
         Ok(FreeClassMembership {
             term,
             value: val,
             operator: op,
             parent: parent.get_var(),
-            times: t_bms,
+            times: BmsWrapper::<IsTimeData>::new(None, val),
         })
     }
 
@@ -343,8 +341,8 @@ impl FreeClassMembership {
         }
     }
 
-    pub fn overwrite_time_data(&self, data: &BmsWrapper<IsTimeData>) {
-        self.times.overwrite_data(&data.clone().try_into().unwrap());
+    pub fn overwrite_time_data(&self, data: BmsWrapper<IsTimeData>) {
+        self.times.overwrite_data(data);
     }
 
     #[inline]

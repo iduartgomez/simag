@@ -36,21 +36,26 @@ impl TimeArg {
         assignments: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         value: Option<f32>,
     ) -> BmsWrapper<IsTimeData> {
-        let bms = BmsWrapper::new(false);
         match self {
             DeclTime(TimeFn::Since(payload)) => {
-                bms.new_record(Some(*payload), None, value, None);
+                BmsWrapper::<IsTimeData>::new(Some(*payload), value)
             }
-            DeclTime(TimeFn::Now) => {
-                bms.new_record(None, None, value, None);
-            }
+            DeclTime(TimeFn::Now) => BmsWrapper::<IsTimeData>::new(None, value),
             DeclTime(TimeFn::Interval(time0, time1)) => {
-                bms.new_record(Some(*time0), None, value, None);
-                bms.new_record(Some(*time1), None, None, None);
+                let mut t0 = BmsWrapper::<IsTimeData>::new(Some(*time0), value);
+                let t1 = &BmsWrapper::<IsTimeData>::new(Some(*time1), None);
+                t0.merge_from_until(t1).unwrap_or_else(|_| {
+                    panic!(
+                        "SIMAG - {}:{} - unreachable: illegal merge",
+                        file!(),
+                        line!()
+                    )
+                });
+                t0
             }
             SinceVar(var) => {
                 let assignment = &**(assignments.get(&**var).unwrap());
-                return assignment.clone();
+                assignment.clone()
             }
             _ => unreachable!(format!(
                 "SIMAG - {}:{} - unreachable: can't get time payload from a free variable",
@@ -58,7 +63,6 @@ impl TimeArg {
                 line!()
             )),
         }
-        bms
     }
 
     pub fn contains_var(&self, var: &Var) -> bool {
@@ -273,28 +277,20 @@ impl TimeFn {
         }
     }
 
-    /// Get a time interval from a bmswrapper, ie. created with the
-    /// merge_from_until method.
+    /// Get a time interval from a bmswrapper, e.g. created with the merge_from_until method.
     pub fn from_bms(rec: &BmsWrapper<IsTimeData>) -> Result<TimeFn, ParseErrF> {
-        let values: Vec<_> = rec.iter_values().map(|(t, _)| t).collect();
-        if values.len() != 2 {
-            return Err(ParseErrF::TimeFnErr(TimeFnErr::WrongDef));
-        }
-        Ok(TimeFn::Interval(values[0], values[1]))
+        let values = rec
+            .get_time_interval()
+            .map_err(|_| ParseErrF::TimeFnErr(TimeFnErr::WrongDef))?;
+        Ok(TimeFn::Interval(values[0].0, values[1].0))
     }
 
     pub fn get_time_payload(&self, value: Option<f32>) -> BmsWrapper<IsTimeData> {
-        let bms = BmsWrapper::new(false);
         match *self {
-            TimeFn::Since(ref payload) => {
-                bms.new_record(Some(*payload), None, value, None);
-            }
-            TimeFn::Now => {
-                bms.new_record(None, None, value, None);
-            }
+            TimeFn::Since(ref payload) => BmsWrapper::<IsTimeData>::new(Some(*payload), value),
+            TimeFn::Now => BmsWrapper::<IsTimeData>::new(None, value),
             _ => unreachable!(),
         }
-        bms
     }
 
     pub fn generate_uid(&self) -> Vec<u8> {

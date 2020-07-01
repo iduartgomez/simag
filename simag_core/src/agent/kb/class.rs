@@ -6,10 +6,7 @@ use float_cmp::ApproxEqUlps;
 use parking_lot::RwLock;
 
 use super::bms;
-use crate::agent::kb::{
-    bms::BmsWrapper,
-    repr::{lookahead_rules, Representation},
-};
+use crate::agent::kb::repr::{lookahead_rules, Representation};
 use crate::agent::lang::{
     FreeClassMembership, FreeClsMemb, FuncDecl, Grounded, GroundedFunc, GroundedMemb, GroundedRef,
     LogSentence, Operator, Predicate, ProofResContext,

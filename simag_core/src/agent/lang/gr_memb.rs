@@ -47,7 +47,7 @@ impl GroundedMemb {
             val = Some(match val0 {
                 Number::UnsignedInteger(val) => {
                     if val == 0 || val == 1 {
-                        let t_bms = BmsWrapper::new(false);
+                        let t_bms = BmsWrapper::<RecordHistory>::new();
                         if let Some(times) = times {
                             for (time, val) in times {
                                 t_bms.new_record(Some(time), None, val, None);
@@ -63,7 +63,7 @@ impl GroundedMemb {
                 }
                 Number::UnsignedFloat(val) => {
                     if val >= 0. && val <= 1. {
-                        let t_bms = BmsWrapper::new(false);
+                        let t_bms = BmsWrapper::<RecordHistory>::new();
                         if let Some(times) = times {
                             for (time, val) in times {
                                 t_bms.new_record(Some(time), None, val, None);
@@ -153,7 +153,7 @@ impl GroundedMemb {
                 let data_bms = data.bms.as_ref().unwrap();
                 bms.update(&GroundedRef::Class(self), agent, data_bms, was_produced)
             } else {
-                let data_bms = BmsWrapper::new(false);
+                let data_bms = BmsWrapper::<RecordHistory>::new();
                 data_bms.new_record(None, None, new_val, None);
                 bms.update(&GroundedRef::Class(self), agent, &data_bms, was_produced)
             }
@@ -167,7 +167,7 @@ impl GroundedMemb {
     pub fn from_free(free: &FreeClsMemb, assignment: &str) -> GroundedMemb {
         let bms;
         let val = if free.value.is_some() {
-            let t_bms = BmsWrapper::new(false);
+            let t_bms = BmsWrapper::<RecordHistory>::new();
             t_bms.new_record(None, None, free.value, None);
             bms = Some(Arc::new(t_bms));
             Some(free.value.unwrap())

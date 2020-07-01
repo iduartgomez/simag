@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::convert::TryInto;
 use std::iter::FromIterator;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -107,11 +106,7 @@ impl Representation {
                                         let t = time_data.clone();
                                         t.replace_value(a.get_value(), ReplaceMode::Tell);
                                         if let Some(bms) = a.bms.as_ref() {
-                                            bms.overwrite_data(&t.try_into().map_err(|_| {
-                                                vec![ParseErrF::FailedConversion(
-                                                    "BmsWrapper<RecordHistory>",
-                                                )]
-                                            })?);
+                                            bms.overwrite_data(t);
                                             if a.is_time_interval() {
                                                 a.update_value(None);
                                             }
