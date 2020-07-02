@@ -43,11 +43,7 @@ impl<'a> ClassDecl {
         let args = {
             let mut v0 = Vec::with_capacity(other.args.len());
             for arg in &other.args {
-                let mut pred = Predicate::from(arg, context, &class_name, false)?;
-                // if truth value was ellided, default to 1
-                if !pred.has_uval() {
-                    pred.replace_uval(1.0)
-                }
+                let pred = Predicate::from(arg, context, &class_name, None)?;
                 v0.push(pred);
             }
             v0
@@ -154,7 +150,7 @@ impl TimeOps for ClassDecl {
                         if free.grounded_eq(grounded) {
                             return grounded.bms.as_ref().map(|bms| {
                                 Arc::new((&**bms).try_into().unwrap_or_else(|_| {
-                                    panic!(
+                                    unreachable!(
                                         "SIMAG - {}:{} - unreachable: illegal conversion",
                                         file!(),
                                         line!()
@@ -176,7 +172,7 @@ impl TimeOps for ClassDecl {
                     if grounded.compare_ignoring_times(compare) {
                         return grounded.bms.as_ref().map(|bms| {
                             Arc::new((&**bms).try_into().unwrap_or_else(|_| {
-                                panic!(
+                                unreachable!(
                                     "SIMAG - {}:{} - unreachable: illegal conversion",
                                     file!(),
                                     line!()
@@ -303,8 +299,6 @@ impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
         time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
     ) {
-        use crate::agent::kb::bms::ReplaceMode;
-
         let time_data = self.get_own_time_data(time_assign, None);
         for a in &self.args {
             let grfact = match *a {
@@ -319,7 +313,7 @@ impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
                 _ => return, // this path won't be taken in any program
             };
             let t = time_data.clone();
-            t.replace_value(grfact.get_value(), ReplaceMode::Substitute);
+            t.replace_value(grfact.get_value());
             if let Some(bms) = grfact.bms.as_ref() {
                 bms.overwrite_data(t)
             };

@@ -45,7 +45,7 @@ impl TimeArg {
                 let mut t0 = BmsWrapper::<IsTimeData>::new(Some(*time0), value);
                 let t1 = &BmsWrapper::<IsTimeData>::new(Some(*time1), None);
                 t0.merge_from_until(t1).unwrap_or_else(|_| {
-                    panic!(
+                    unreachable!(
                         "SIMAG - {}:{} - unreachable: illegal merge",
                         file!(),
                         line!()

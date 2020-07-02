@@ -5,9 +5,8 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 
-use super::entity::Entity;
+use super::{bms::build_declaration_bms, entity::Entity};
 use crate::agent::kb::{
-    bms::ReplaceMode,
     class::*,
     inference::{
         meet_sent_requirements, ArgsProduct, GroundedResult, IExprResult, InfResults, Inference,
@@ -19,7 +18,7 @@ use crate::agent::lang::{
     Assert, ClassDecl, FreeClassMembership, FuncDecl, GrTerminalKind,
     GrTerminalKind::{Class as ClassTerm, Entity as EntityTerm},
     GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ParseErrF, ParseTree, Parser, Predicate,
-    ProofResContext, SentVarReq, SpatialOps, TimeOps, Var,
+    ProofResContext, SentVarReq, Var,
 };
 
 // TODO: find better solution for self-referential borrows escaping self method scopes
@@ -95,30 +94,14 @@ impl Representation {
                     ParseTree::Assertion(assertions) => {
                         for assertion in assertions {
                             match assertion {
-                                Assert::ClassDecl(cls_decl) => {
-                                    let ta = HashMap::new();
-                                    let time_data = cls_decl.get_own_time_data(&ta, None);
-                                    let la = HashMap::new();
-                                    let loc_data = cls_decl
-                                        .get_own_spatial_data(&la)
-                                        .map_err(|err| vec![err])?;
-                                    for a in cls_decl {
-                                        let t = time_data.clone();
-                                        t.replace_value(a.get_value(), ReplaceMode::Tell);
-                                        if let Some(bms) = a.bms.as_ref() {
-                                            bms.overwrite_data(t);
-                                            if a.is_time_interval() {
-                                                a.update_value(None);
-                                            }
-                                        };
-                                        let x: Option<&IExprResult> = None;
-                                        self.up_membership(&Arc::new(a), x)
-                                    }
-                                }
+                                Assert::ClassDecl(cls_decl) => build_declaration_bms(cls_decl)
+                                    .map_err(|err| vec![err])?
+                                    .for_each(|decl| {
+                                        self.up_membership(&Arc::new(decl), None::<&IExprResult>)
+                                    }),
                                 Assert::FuncDecl(func_decl) => {
                                     let a = Arc::new(func_decl.into());
-                                    let x: Option<&IExprResult> = None;
-                                    self.up_relation(&a, x)
+                                    self.up_relation(&a, None::<&IExprResult>)
                                 }
                                 _ => return Err(vec![ParseErrF::WrongDef]),
                             }

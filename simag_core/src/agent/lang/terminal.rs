@@ -85,7 +85,7 @@ impl<'a> Terminal {
         if let Terminal::FreeTerm(ref var) = *self {
             var.clone()
         } else {
-            panic!(format!(
+            unreachable!(format!(
                 "SIMAG - {}:{} - called `get_var` on a non-var term",
                 file!(),
                 line!()

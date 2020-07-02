@@ -104,8 +104,8 @@ fn repr_inference_ask_func() {
     assert_eq!(rep.ask(q02_01).unwrap().get_results_single(), Some(true));
 
     let test_03 = "
-        ( professor[$Lucy=1] )
-        ( dean[$John=1] )
+        ( professor[$Lucy] )
+        ( dean[$John] )
         ( fn::criticize[$John=1,$Lucy] )
         ( let x in ( dean[x=1] := professor[x=1] ) )
         ( let x in ( professor[x=1] := person[x=1] ) )
@@ -430,8 +430,7 @@ fn repr_tell_record() {
         }
     )";
     rep.tell(source).unwrap();
-    let res =
-        rep.ask("(fast(since '2015-01-02T00:00:00Z')[$John=0] and slow[$John=0.5] and dog[$John])");
+    let res = rep.ask("(fast(since '2015-01-02T00:00:00Z')[$John=0] and slow[$John=0.5])");
     assert_eq!(res.unwrap().get_results_single(), Some(true));
 
     let rep = Representation::default();
@@ -444,7 +443,7 @@ fn repr_tell_record() {
         }
     )";
     rep.tell(source).unwrap();
-    let res = rep.ask("(fast(since '2015-01-02T00:00:00Z')[$Mary=0] and slow[$John=0.5])");
+    let res = rep.ask("(fast[$Mary=0] and cat(since '2015-01-02T00:00:00Z')[$John=1.0])");
     assert_eq!(res.unwrap().get_results_single(), Some(true));
 
     /*

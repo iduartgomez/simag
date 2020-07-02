@@ -38,24 +38,30 @@ impl GroundedMemb {
         parent: String,
         times: Option<Vec<(Time, Option<f32>)>>,
         context: &ParseContext,
+        is_func: Option<usize>,
     ) -> Result<GroundedMemb, ParseErrF> {
-        let val;
-        let op;
-        let bms;
+        let mut val = None;
+        let mut op = None;
+        let mut bms = None;
+
+        let make_bms = |val: f32| -> BmsWrapper<RecordHistory> {
+            let t_bms = BmsWrapper::<RecordHistory>::new();
+            if let Some(times) = times {
+                for (time, val) in times {
+                    t_bms.new_record(Some(time), None, val, None);
+                }
+            } else {
+                t_bms.new_record(None, None, Some(val as f32), None);
+            }
+            t_bms
+        };
+
         if let Some(uval) = uval {
             let UVal { val: val0, op: op0 } = uval;
             val = Some(match val0 {
                 Number::UnsignedInteger(val) => {
                     if val == 0 || val == 1 {
-                        let t_bms = BmsWrapper::<RecordHistory>::new();
-                        if let Some(times) = times {
-                            for (time, val) in times {
-                                t_bms.new_record(Some(time), None, val, None);
-                            }
-                        } else {
-                            t_bms.new_record(None, None, Some(val as f32), None);
-                        }
-                        bms = Some(Arc::new(t_bms));
+                        bms = Some(Arc::new(make_bms(val as f32)));
                         val as f32
                     } else {
                         return Err(ParseErrF::IUVal(val as f32));
@@ -63,15 +69,7 @@ impl GroundedMemb {
                 }
                 Number::UnsignedFloat(val) => {
                     if val >= 0. && val <= 1. {
-                        let t_bms = BmsWrapper::<RecordHistory>::new();
-                        if let Some(times) = times {
-                            for (time, val) in times {
-                                t_bms.new_record(Some(time), None, val, None);
-                            }
-                        } else {
-                            t_bms.new_record(None, None, Some(val as f32), None);
-                        }
-                        bms = Some(Arc::new(t_bms));
+                        bms = Some(Arc::new(make_bms(val)));
                         val
                     } else {
                         return Err(ParseErrF::IUVal(val as f32));
@@ -88,11 +86,12 @@ impl GroundedMemb {
             } else {
                 op = Some(op0);
             }
-        } else {
-            val = None;
-            op = None;
-            bms = None;
+        } else if is_func.filter(|x| *x == 0).is_some() || is_func.is_none() {
+            op = Some(Operator::Equal);
+            val = Some(1.0);
+            bms = Some(Arc::new(make_bms(1.0)));
         }
+
         Ok(GroundedMemb {
             term: term.into(),
             value: RwLock::new(val),
@@ -346,7 +345,7 @@ impl std::fmt::Display for GroundedMemb {
         let comp_op = if let Some(op) = self.operator {
             format!("{}", op)
         } else {
-            "".to_owned()
+            " ? ".to_owned()
         };
         let (value, time) = if let Some(ref bms) = self.bms {
             (

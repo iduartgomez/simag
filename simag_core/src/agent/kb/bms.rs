@@ -7,48 +7,26 @@
 use std::cmp::Ordering as CmpOrdering;
 use std::mem;
 use std::{
+    collections::HashMap,
     convert::TryInto,
     marker::PhantomData,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 
 pub(in crate::agent) use self::errors::BmsError;
 use super::{inference::QueryInput, repr::Representation};
-use crate::agent::lang::{Grounded, GroundedRef, Point, ProofResContext, SentID, Time};
+use crate::agent::{
+    lang::{
+        ClassDecl, Grounded, GroundedMemb, GroundedRef, Point, ProofResContext, SentID, SpatialOps,
+        Time, TimeOps,
+    },
+    ParseErrF,
+};
 use chrono::Utc;
 use parking_lot::{RwLock, RwLockReadGuard};
-
-pub(in crate::agent) fn update_producers<C: ProofResContext>(owner: &Grounded, context: &C) {
-    // add the produced knowledge to each producer in case it comes
-    // from a logic sentence resolution
-    for a in context.get_antecedents() {
-        match *a {
-            Grounded::Class(ref cls) => {
-                let cls = cls.upgrade().unwrap();
-                let value = cls.get_value();
-                cls.bms.as_ref().unwrap().add_entry(owner.clone(), value);
-            }
-            Grounded::Function(ref func) => {
-                let func = func.upgrade().unwrap();
-                let value = func.get_value();
-                func.bms.add_entry(owner.clone(), value);
-            }
-        }
-    }
-}
-
-fn _overwrite_data<T: BmsKind>(first: &BmsWrapper<T>, other: BmsWrapper<IsTimeData>) {
-    let lock = &mut *first.records.write();
-    // drop old records
-    lock.truncate(0);
-    // insert new records
-    for rec in &*other.records.read() {
-        lock.push(rec.clone())
-    }
-    first
-        .overwrite
-        .store(other.overwrite.load(Ordering::Acquire), Ordering::Release);
-}
 
 /// Acts as a wrapper for the Belief Maintenance System for a given agent.
 ///
@@ -580,20 +558,11 @@ impl BmsWrapper<IsTimeData> {
         Ok(())
     }
 
-    /// Replaces a record when creating one of two records.
-    pub fn replace_value(&self, val: Option<f32>, mode: ReplaceMode) {
+    /// Replaces the value of the last, active, record.
+    pub fn replace_value(&self, val: Option<f32>) {
         let records = &mut *self.records.write();
-        match mode {
-            ReplaceMode::Substitute => {
-                let last = records.last_mut().unwrap();
-                last.value = val;
-            }
-            ReplaceMode::Tell => {
-                // can be an interval, so we replace the first value
-                let first = records.first_mut().unwrap();
-                first.value = val;
-            }
-        }
+        let last = records.last_mut().unwrap();
+        last.value = val;
     }
 
     pub fn get_time_interval(&self) -> Result<[(Time, Option<f32>); 2], ()> {
@@ -634,6 +603,66 @@ impl BmsWrapper<IsSpatialData> {
             _kind: PhantomData,
         }
     }
+
+    /// Merges a wrapper with just time data with an other with just spatial data.
+    ///
+    /// In order for the merge to function the following conditions must hold:
+    /// - Both of the wrappers must be of the same length.
+    pub fn merge(self, time_data: BmsWrapper<IsTimeData>) -> Result<BmsWrapper<RecordHistory>, ()> {
+        let overwrite = AtomicBool::new(
+            self.overwrite.load(Ordering::Acquire) || time_data.overwrite.load(Ordering::Acquire),
+        );
+
+        let mut spatial_recs = self.records.into_inner();
+        let time_data_recs = time_data.records.into_inner();
+
+        if spatial_recs.len() != 1 && spatial_recs.len() != 2 {
+            return Err(());
+        }
+
+        let records;
+        if spatial_recs.len() == time_data_recs.len() {
+            records = RwLock::new(
+                time_data_recs
+                    .into_iter()
+                    .zip(spatial_recs.into_iter())
+                    .map(|(time_rec, space_rec)| BmsRecord {
+                        produced: vec![],
+                        time: time_rec.time,
+                        location: space_rec.location,
+                        value: time_rec.value,
+                        was_produced: None,
+                    })
+                    .collect(),
+            );
+        } else if spatial_recs.len() == 1 && time_data_recs.len() == 2 {
+            if let Some(spatial_rec) = spatial_recs.pop() {
+                records = RwLock::new(
+                    time_data_recs
+                        .into_iter()
+                        .map(|time_rec| BmsRecord {
+                            produced: vec![],
+                            time: time_rec.time,
+                            location: spatial_rec.location.clone(),
+                            value: time_rec.value,
+                            was_produced: None,
+                        })
+                        .collect(),
+                );
+            } else {
+                return Err(());
+            }
+        } else {
+            return Err(());
+        }
+
+        Ok(BmsWrapper {
+            overwrite,
+            pred: None,
+            records,
+            _kind: PhantomData,
+        })
+    }
 }
 
 impl<T: BmsKind> std::clone::Clone for BmsWrapper<T> {
@@ -673,10 +702,64 @@ impl BmsRecord {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(in crate::agent) enum ReplaceMode {
-    Tell,
-    Substitute,
+pub(in crate::agent) fn update_producers<C: ProofResContext>(owner: &Grounded, context: &C) {
+    // add the produced knowledge to each producer in case it comes
+    // from a logic sentence resolution
+    for a in context.get_antecedents() {
+        match *a {
+            Grounded::Class(ref cls) => {
+                let cls = cls.upgrade().unwrap();
+                let value = cls.get_value();
+                cls.bms.as_ref().unwrap().add_entry(owner.clone(), value);
+            }
+            Grounded::Function(ref func) => {
+                let func = func.upgrade().unwrap();
+                let value = func.get_value();
+                func.bms.add_entry(owner.clone(), value);
+            }
+        }
+    }
+}
+
+pub(in crate::agent) fn build_declaration_bms(
+    cls_decl: ClassDecl,
+) -> Result<impl Iterator<Item = GroundedMemb>, ParseErrF> {
+    let ta = HashMap::new();
+    let time_data = cls_decl.get_own_time_data(&ta, None);
+    let la = HashMap::new();
+    let loc_data = cls_decl.get_own_spatial_data(&la)?;
+    let f_bms = loc_data.merge(time_data).map_err(|_| ParseErrF::WrongDef)?;
+
+    Ok(cls_decl.into_iter().map(move |mut a| {
+        let val = a.get_value();
+        if let Some(bms) = a.bms.as_mut() {
+            let t = f_bms.clone();
+            {
+                // replace first because it may be an interval
+                let records = &mut *t.records.write();
+                records.first_mut().unwrap().value = val;
+            }
+            *bms = Arc::new(t);
+            if a.is_time_interval() {
+                // if it's a time interval make sure the last value is None
+                a.update_value(None);
+            }
+        };
+        a
+    }))
+}
+
+fn _overwrite_data<T: BmsKind>(first: &BmsWrapper<T>, other: BmsWrapper<IsTimeData>) {
+    let lock = &mut *first.records.write();
+    // drop old records
+    lock.truncate(0);
+    // insert new records
+    for rec in &*other.records.read() {
+        lock.push(rec.clone())
+    }
+    first
+        .overwrite
+        .store(other.overwrite.load(Ordering::Acquire), Ordering::Release);
 }
 
 mod errors {

@@ -315,6 +315,33 @@ fn declare_record() {
     )";
     let result = record_decl(source);
     assert!(result.is_ok());
+    let stmt = match result.unwrap().1 {
+        ASTNode::Chain(nodes) => nodes
+            .into_iter()
+            .find(|decl| match decl {
+                ASTNode::Assert(decl) => match decl {
+                    AssertBorrowed::ClassDecl(cls) if cls.name == TerminalBorrowed(b"dog") => true,
+                    _ => false,
+                },
+                _ => false,
+            })
+            .unwrap(),
+        _ => panic!(),
+    };
+    match stmt {
+        ASTNode::Assert(AssertBorrowed::ClassDecl(cls)) => {
+            assert!(cls.args.len() == 1);
+            assert_eq!(
+                cls.args[0],
+                ArgBorrowed {
+                    term: TerminalBorrowed(b"$John"),
+                    uval: None
+                }
+            );
+            assert!(cls.op_args.unwrap().len() == 1);
+        }
+        _ => panic!(),
+    }
 
     let source = b"(
         [$John, $Mary] = {

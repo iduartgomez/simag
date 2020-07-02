@@ -79,12 +79,10 @@ impl GroundedFunc {
             .zip(other.args.iter().chain(other.third.as_ref()))
         {
             match (a, b) {
-                (arg0, arg1) => {
-                    if !arg0.compare_ignoring_times(arg1) {
-                        return false;
-                    }
+                (arg0, arg1) if !arg0.compare_ignoring_times(arg1) => {
+                    return false;
                 }
-                _ => return false,
+                _ => {}
             }
         }
         true

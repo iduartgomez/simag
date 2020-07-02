@@ -21,7 +21,6 @@ use crate::agent::{
 };
 use crate::FLOAT_EQ_ULPS;
 use float_cmp::ApproxEqUlps;
-use parking_lot::RwLock;
 
 // Predicate types:
 
@@ -33,11 +32,13 @@ pub(in crate::agent) enum Predicate {
 }
 
 impl<'a> Predicate {
+    /// # Args
+    /// - is_func: whether this predicate is a func declaration or not; and the argument number in case it is.
     pub(in crate::agent::lang) fn from(
         arg: &'a ArgBorrowed<'a>,
         context: &'a mut ParseContext,
         name: &'a Terminal,
-        is_func: bool,
+        is_func: Option<usize>,
     ) -> Result<Predicate, ParseErrF> {
         if name.is_grounded() {
             match Terminal::from(&arg.term, context) {
@@ -52,6 +53,7 @@ impl<'a> Predicate {
                         name.get_name().to_string(),
                         None,
                         context,
+                        is_func,
                     )?;
                     Ok(Predicate::GroundedMemb(t))
                 }
@@ -62,7 +64,7 @@ impl<'a> Predicate {
                 return Err(ParseErrF::ClassIsVar);
             }
             match Terminal::from(&arg.term, context) {
-                Ok(Terminal::FreeTerm(_)) if !is_func => Err(ParseErrF::BothAreVars),
+                Ok(Terminal::FreeTerm(_)) if is_func.is_none() => Err(ParseErrF::BothAreVars),
                 Ok(Terminal::FreeTerm(ft)) => {
                     let t = FreeClsMemb::try_new(ft, arg.uval, name)?;
                     Ok(Predicate::FreeClsMemb(t))
@@ -114,14 +116,6 @@ impl<'a> Predicate {
                     (None, None)
                 }
             }
-        }
-    }
-
-    pub(in crate::agent::lang) fn replace_uval(&mut self, val: f32) {
-        match self {
-            Predicate::FreeClsMemb(ref mut t) => t.value = Some(val),
-            Predicate::GroundedMemb(ref mut t) => t.value = RwLock::new(Some(val)),
-            Predicate::FreeClassMembership(ref mut t) => t.value = Some(val),
         }
     }
 

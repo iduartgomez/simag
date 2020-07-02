@@ -11,7 +11,7 @@ use super::{
     *,
 };
 use crate::agent::{
-    kb::bms::{BmsWrapper, IsTimeData, RecordHistory, ReplaceMode},
+    kb::bms::{BmsWrapper, IsTimeData, RecordHistory},
     kb::{repr::Representation, VarAssignment},
 };
 
@@ -122,7 +122,7 @@ impl<'a> FuncDecl {
             }
             let mut vars = 0;
             for (i, a) in oargs.iter().enumerate() {
-                let pred = Predicate::from(a, context, &name, true)?;
+                let pred = Predicate::from(a, context, &name, Some(i))?;
                 if pred.has_uval() && (i == 1 || i == 2) {
                     return Err(ParseErrF::RFuncWrongArgs);
                 }
@@ -296,7 +296,7 @@ impl TimeOps for FuncDecl {
             let grfunc = self.clone().into();
             if let Some(relation) = agent.get_relationship(&grfunc, sbj[0].get_name()) {
                 Some(Arc::new((&*relation.bms).try_into().unwrap_or_else(|_| {
-                    panic!(
+                    unreachable!(
                         "SIMAG - {}:{} - unreachable: illegal conversion",
                         file!(),
                         line!()
@@ -316,7 +316,7 @@ impl TimeOps for FuncDecl {
                             if let Some(current) = entity.get_relationship(&grfunc) {
                                 return Some(Arc::new((&*current.bms).try_into().unwrap_or_else(
                                     |_| {
-                                        panic!(
+                                        unreachable!(
                                             "SIMAG - {}:{} - unreachable: illegal conversion",
                                             file!(),
                                             line!()
@@ -394,7 +394,7 @@ impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
     ) {
         if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, time_assign) {
             let time_data = self.get_own_time_data(time_assign, None);
-            time_data.replace_value(grfunc.get_value(), ReplaceMode::Substitute);
+            time_data.replace_value(grfunc.get_value());
             grfunc.bms.overwrite_data(time_data);
             #[cfg(debug_assertions)]
             {
