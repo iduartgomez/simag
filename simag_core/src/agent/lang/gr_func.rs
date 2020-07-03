@@ -32,6 +32,7 @@ impl GroundedFunc {
         // block both BMS for the duration of the comparison
         let self_lock = &*self.bms.acquire_read_lock();
         let pred_lock = &*pred.bms.acquire_read_lock();
+
         if let Some(time) = pred.bms.is_predicate() {
             let time_pred = pred.bms.get_last_date();
             let val_lhs = pred.bms.get_last_value();
@@ -107,7 +108,7 @@ impl GroundedFunc {
         let mut value = None;
         for (i, a) in free.args.as_ref().unwrap().iter().enumerate() {
             let n_a = match *a {
-                Predicate::FreeClsMemb(ref free) => {
+                Predicate::FreeMembershipToClass(ref free) => {
                     let assigned = if let Some(assignments) = assignments {
                         assignments
                     } else {

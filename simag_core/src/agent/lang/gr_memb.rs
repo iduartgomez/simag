@@ -5,7 +5,7 @@ use super::{
     errors::ParseErrF,
     logsent::{ParseContext, SentID},
     parser::{Number, Operator, UVal},
-    FreeClsMemb, GrTerminalKind, GroundedRef, Time,
+    FreeMembershipToClass, GrTerminalKind, GroundedRef, Time,
 };
 use crate::agent::{
     kb::bms::{BmsWrapper, RecordHistory},
@@ -163,7 +163,7 @@ impl GroundedMemb {
         *self.value.write() = val;
     }
 
-    pub fn from_free(free: &FreeClsMemb, assignment: &str) -> GroundedMemb {
+    pub fn from_free(free: &FreeMembershipToClass, assignment: &str) -> GroundedMemb {
         let bms;
         let val = if free.value.is_some() {
             let t_bms = BmsWrapper::<RecordHistory>::new();

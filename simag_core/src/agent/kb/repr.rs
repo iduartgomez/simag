@@ -325,7 +325,7 @@ impl Representation {
             |cls_decl: &ClassDecl, candidates: &HashMap<&Var, Vec<Arc<VarAssignment>>>| {
                 for a in cls_decl.get_args() {
                     match *a {
-                        Predicate::FreeClsMemb(ref free) => {
+                        Predicate::FreeMembershipToClass(ref free) => {
                             if let Some(ls) = candidates.get(free.get_var_ref()) {
                                 for entity in ls {
                                     let grfact =

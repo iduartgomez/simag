@@ -18,7 +18,7 @@ use chrono::{DateTime, Utc};
 pub(self) use self::built_ins::BuiltIns;
 pub(super) use self::cls_decl::ClassDecl;
 pub(super) use self::common::{
-    Assert, FreeClassMembership, FreeClsMemb, Grounded, GroundedRef, Predicate,
+    Assert, FreeClassMembership, FreeMembershipToClass, Grounded, GroundedRef, Predicate,
 };
 pub(super) use self::errors::ParseErrF;
 pub(super) use self::fn_decl::FuncDecl;

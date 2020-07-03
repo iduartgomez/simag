@@ -40,7 +40,7 @@ fn repr_inference_ask_pred() {
         ( let x in ( missile[x=1] := weapon[x=1] ) )
         ( let x in ( fn::enemy[x=1,$America] := hostile[x=1] ) )
     ";
-    let q03_01 = "(criminal[$West=1] and hostile[$Nono=1] and weapon[$M1=1])";
+    let q03_01 = "(criminal[$West] and hostile[$Nono] and weapon[$M1])";
     let rep = Representation::default();
     rep.tell(test_03).unwrap();
     let answ = rep.ask(q03_01);

@@ -22,9 +22,9 @@ use crate::agent::kb::{
     VarAssignment,
 };
 use crate::agent::lang::{
-    Assert, ClassDecl, FreeClassMembership, FreeClsMemb, FuncDecl, Grounded, GroundedFunc,
-    GroundedMemb, LogSentence, ParseTree, Predicate, ProofResContext, SentID, SentVarReq, Terminal,
-    Time, TimeOps, Var, VarKind,
+    Assert, ClassDecl, FreeClassMembership, FreeMembershipToClass, FuncDecl, Grounded,
+    GroundedFunc, GroundedMemb, LogSentence, ParseTree, Predicate, ProofResContext, SentID,
+    SentVarReq, Terminal, Time, TimeOps, Var, VarKind,
 };
 use chrono::Utc;
 use dashmap::DashMap;
@@ -1053,7 +1053,7 @@ pub(in crate::agent) enum QueryInput {
 
 #[derive(Debug)]
 pub(in crate::agent::kb) struct QueryProcessed {
-    cls_queries_free: HashMap<Arc<Var>, Vec<FreeClsMemb>>,
+    cls_queries_free: HashMap<Arc<Var>, Vec<FreeMembershipToClass>>,
     cls_queries_grounded: HashMap<String, Vec<Arc<GroundedMemb>>>,
     cls_memb_query: HashMap<Arc<Var>, Vec<FreeClassMembership>>,
     func_queries_free: HashMap<Arc<Var>, Vec<Arc<FuncDecl>>>,
@@ -1086,7 +1086,7 @@ impl QueryProcessed {
                 Terminal::GroundedTerm(_) => {
                     for a in cdecl.get_args() {
                         match a {
-                            Predicate::FreeClsMemb(t) => {
+                            Predicate::FreeMembershipToClass(t) => {
                                 query.push_to_clsquery_free(t.get_var(), t.clone());
                             }
                             Predicate::GroundedMemb(t) => {
@@ -1129,7 +1129,7 @@ impl QueryProcessed {
                         query.push_to_fnquery_grounded(fgr);
                     } else {
                         for a in fdecl.get_args() {
-                            if let Predicate::FreeClsMemb(ref t) = *a {
+                            if let Predicate::FreeMembershipToClass(ref t) = *a {
                                 query.push_to_fnquery_free(t.get_var(), fdecl.clone());
                             }
                         }
@@ -1199,7 +1199,7 @@ impl QueryProcessed {
     }
 
     #[inline]
-    fn push_to_clsquery_free(&mut self, term: Arc<Var>, cls: FreeClsMemb) {
+    fn push_to_clsquery_free(&mut self, term: Arc<Var>, cls: FreeMembershipToClass) {
         self.cls_queries_free
             .entry(term)
             .or_insert_with(Vec::new)

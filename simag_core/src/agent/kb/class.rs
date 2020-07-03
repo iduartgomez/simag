@@ -8,8 +8,8 @@ use parking_lot::RwLock;
 use super::bms;
 use crate::agent::kb::repr::{lookahead_rules, Representation};
 use crate::agent::lang::{
-    FreeClassMembership, FreeClsMemb, FuncDecl, Grounded, GroundedFunc, GroundedMemb, GroundedRef,
-    LogSentence, Operator, Predicate, ProofResContext,
+    FreeClassMembership, FreeMembershipToClass, FuncDecl, Grounded, GroundedFunc, GroundedMemb,
+    GroundedRef, LogSentence, Operator, Predicate, ProofResContext,
 };
 use crate::FLOAT_EQ_ULPS;
 
@@ -117,7 +117,7 @@ impl Class {
         self.members.write().push(member);
     }
 
-    pub fn get_members(&self, comp: &FreeClsMemb) -> Vec<Arc<GroundedMemb>> {
+    pub fn get_members(&self, comp: &FreeMembershipToClass) -> Vec<Arc<GroundedMemb>> {
         let lock = self.members.read();
         lock.iter()
             .map(|x| x.unwrap_memb())

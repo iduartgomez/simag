@@ -26,8 +26,11 @@ use float_cmp::ApproxEqUlps;
 
 #[derive(Debug, Clone)]
 pub(in crate::agent) enum Predicate {
-    FreeClsMemb(FreeClsMemb),
+    /// (let x in some[x])
+    FreeMembershipToClass(FreeMembershipToClass),
+    /// abc[$def=1]
     GroundedMemb(GroundedMemb),
+    /// (let x in x[$Lucy>0.5])
     FreeClassMembership(FreeClassMembership),
 }
 
@@ -43,8 +46,8 @@ impl<'a> Predicate {
         if name.is_grounded() {
             match Terminal::from(&arg.term, context) {
                 Ok(Terminal::FreeTerm(ft)) => {
-                    let t = FreeClsMemb::try_new(ft, arg.uval, name)?;
-                    Ok(Predicate::FreeClsMemb(t))
+                    let t = FreeMembershipToClass::try_new(ft, arg.uval, name)?;
+                    Ok(Predicate::FreeMembershipToClass(t))
                 }
                 Ok(Terminal::GroundedTerm(gt)) => {
                     let t = GroundedMemb::try_new(
@@ -66,8 +69,8 @@ impl<'a> Predicate {
             match Terminal::from(&arg.term, context) {
                 Ok(Terminal::FreeTerm(_)) if is_func.is_none() => Err(ParseErrF::BothAreVars),
                 Ok(Terminal::FreeTerm(ft)) => {
-                    let t = FreeClsMemb::try_new(ft, arg.uval, name)?;
-                    Ok(Predicate::FreeClsMemb(t))
+                    let t = FreeMembershipToClass::try_new(ft, arg.uval, name)?;
+                    Ok(Predicate::FreeMembershipToClass(t))
                 }
                 Ok(Terminal::GroundedTerm(gt)) => {
                     let t = FreeClassMembership::try_new(gt, arg.uval, name)?;
@@ -81,7 +84,7 @@ impl<'a> Predicate {
     #[inline]
     pub fn is_var(&self) -> bool {
         match *self {
-            Predicate::FreeClsMemb(_) => true,
+            Predicate::FreeMembershipToClass(_) => true,
             _ => false,
         }
     }
@@ -98,7 +101,7 @@ impl<'a> Predicate {
                     (None, None)
                 }
             }
-            Predicate::FreeClsMemb(ref t) => {
+            Predicate::FreeMembershipToClass(ref t) => {
                 if t.value.is_some() {
                     let val = *t.value.as_ref().unwrap();
                     let op = *t.operator.as_ref().unwrap();
@@ -124,14 +127,14 @@ impl<'a> Predicate {
         match *self {
             Predicate::GroundedMemb(ref t) => t.get_name().into(),
             Predicate::FreeClassMembership(ref t) => &t.term,
-            Predicate::FreeClsMemb(_) => unreachable!(),
+            Predicate::FreeMembershipToClass(_) => unreachable!(),
         }
     }
 
     #[inline]
     pub(in crate::agent::lang) fn generate_uid(&self) -> Vec<u8> {
         match *self {
-            Predicate::FreeClsMemb(ref t) => t.generate_uid(),
+            Predicate::FreeMembershipToClass(ref t) => t.generate_uid(),
             Predicate::GroundedMemb(ref t) => t.generate_uid(),
             Predicate::FreeClassMembership(ref t) => t.generate_uid(),
         }
@@ -140,7 +143,7 @@ impl<'a> Predicate {
     pub fn has_uval(&self) -> bool {
         match *self {
             Predicate::GroundedMemb(ref t) => t.value.read().is_some(),
-            Predicate::FreeClsMemb(ref t) => t.value.is_some(),
+            Predicate::FreeMembershipToClass(ref t) => t.value.is_some(),
             Predicate::FreeClassMembership(ref t) => t.value.is_some(),
         }
     }
@@ -177,22 +180,23 @@ impl<'a> GroundedRef<'a> {
 
 // Free types:
 
+/// (let x in some[x])
 #[derive(Debug, Clone)]
-pub(in crate::agent) struct FreeClsMemb {
+pub(in crate::agent) struct FreeMembershipToClass {
     pub(in crate::agent::lang) term: Arc<Var>,
     pub(in crate::agent::lang) value: Option<f32>,
     pub(in crate::agent::lang) operator: Option<Operator>,
     pub(in crate::agent::lang) parent: Terminal,
 }
 
-impl FreeClsMemb {
+impl FreeMembershipToClass {
     fn try_new(
         term: Arc<Var>,
         uval: Option<UVal>,
         parent: &Terminal,
-    ) -> Result<FreeClsMemb, ParseErrF> {
+    ) -> Result<FreeMembershipToClass, ParseErrF> {
         let (val, op) = match_uval(uval)?;
-        Ok(FreeClsMemb {
+        Ok(FreeMembershipToClass {
             term,
             value: val,
             operator: op,
@@ -278,7 +282,7 @@ pub(in crate::agent) struct FreeClassMembership {
     pub(in crate::agent::lang) value: Option<f32>,
     operator: Option<Operator>,
     parent: Arc<Var>,
-    pub times: BmsWrapper<IsTimeData>,
+    times: BmsWrapper<IsTimeData>,
 }
 
 impl FreeClassMembership {

@@ -96,7 +96,7 @@ impl<'a> ClassDecl {
     pub(in crate::agent::lang) fn contains_var(&self, var: &Var) -> bool {
         for a in &self.args {
             match *a {
-                Predicate::FreeClsMemb(ref term) if &*term.term == var => return true,
+                Predicate::FreeMembershipToClass(ref term) if &*term.term == var => return true,
                 _ => continue,
             }
         }
@@ -143,7 +143,7 @@ impl TimeOps for ClassDecl {
     ) -> Option<Arc<BmsWrapper<IsTimeData>>> {
         let arg = &self.args[0];
         match *arg {
-            Predicate::FreeClsMemb(ref free) => {
+            Predicate::FreeMembershipToClass(ref free) => {
                 var_assign?;
                 if let Some(entity) = var_assign.as_ref().unwrap().get(&*free.term) {
                     if let Some(grounded) = entity.get_class(free.parent.get_name()) {
@@ -231,7 +231,7 @@ impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
     ) -> Option<bool> {
         for a in &self.args {
             match *a {
-                Predicate::FreeClsMemb(ref free) => {
+                Predicate::FreeMembershipToClass(ref free) => {
                     assignments?;
                     if let Some(entity) = assignments.as_ref().unwrap().get(&*free.term) {
                         if let Some(current) = entity.get_class(free.parent.get_name()) {
@@ -302,7 +302,7 @@ impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
         let time_data = self.get_own_time_data(time_assign, None);
         for a in &self.args {
             let grfact = match *a {
-                Predicate::FreeClsMemb(ref free) => {
+                Predicate::FreeMembershipToClass(ref free) => {
                     if let Some(entity) = assignments.as_ref().unwrap().get(&*free.term) {
                         GroundedMemb::from_free(free, entity.name)
                     } else {

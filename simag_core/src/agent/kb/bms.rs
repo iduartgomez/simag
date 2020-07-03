@@ -492,7 +492,9 @@ impl BmsWrapper<RecordHistory> {
     }
 
     pub fn of_predicate(&mut self) {
-        self.pred = Some(Utc::now());
+        if self.pred.is_none() {
+            self.pred = Some(Utc::now());
+        }
     }
 
     pub fn is_predicate(&self) -> Option<&Time> {

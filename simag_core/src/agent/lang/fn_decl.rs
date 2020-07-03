@@ -176,7 +176,7 @@ impl<'a> FuncDecl {
     pub(in crate::agent::lang) fn contains_var(&self, var: &Var) -> bool {
         if self.args.is_some() {
             for a in self.args.as_ref().unwrap() {
-                if let Predicate::FreeClsMemb(ref term) = *a {
+                if let Predicate::FreeMembershipToClass(ref term) = *a {
                     if &*term.term == var {
                         return true;
                     }
@@ -233,7 +233,9 @@ impl Into<GroundedFunc> for FuncDecl {
         for (i, a) in args.drain(..).enumerate() {
             let mut n_a = match a {
                 Predicate::GroundedMemb(term) => term,
-                Predicate::FreeClsMemb(_) | Predicate::FreeClassMembership(_) => unreachable!(),
+                Predicate::FreeMembershipToClass(_) | Predicate::FreeClassMembership(_) => {
+                    unreachable!()
+                }
             };
             n_a.bms = None;
             if i == 0 {
@@ -310,7 +312,7 @@ impl TimeOps for FuncDecl {
             let f = HashMap::new();
             if let Ok(grfunc) = GroundedFunc::from_free(self, var_assign, &f) {
                 for arg in self.get_args() {
-                    if let Predicate::FreeClsMemb(ref arg) = *arg {
+                    if let Predicate::FreeMembershipToClass(ref arg) = *arg {
                         let assignments = var_assign.as_ref().unwrap();
                         if let Some(entity) = assignments.get(&*arg.term) {
                             if let Some(current) = entity.get_relationship(&grfunc) {
@@ -361,7 +363,7 @@ impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
             let assigned = assignments?;
             if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, time_assign) {
                 for arg in self.get_args() {
-                    if let Predicate::FreeClsMemb(ref arg) = *arg {
+                    if let Predicate::FreeMembershipToClass(ref arg) = *arg {
                         if let Some(entity) = assigned.get(&*arg.term) {
                             if let Some(current) = entity.get_relationship(&grfunc) {
                                 let a = Grounded::Function(Arc::downgrade(&current.clone()));
