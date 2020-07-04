@@ -1,3 +1,5 @@
+use std::convert::TryFrom;
+
 use super::{AssertBorrowed, LogicOperator, ParseErrF, Scope};
 use crate::agent::lang::{
     cls_decl::ClassDecl,
@@ -79,14 +81,14 @@ impl<'a> ASTNode<'a> {
             ASTNode::Assert(ref decl) => match *decl {
                 // perform potential variable substitution
                 AssertBorrowed::ClassDecl(ref decl) => {
-                    let mut cls = ClassDecl::from(decl, context)?;
+                    let mut cls = ClassDecl::try_from((decl, &mut *context))?;
                     if context.in_assertion && context.is_tell {
                         cls.var_substitution()?;
                     }
                     Ok(Some(ParseTree::Assertion(vec![Assert::ClassDecl(cls)])))
                 }
                 AssertBorrowed::FuncDecl(ref decl) => {
-                    let mut func = FuncDecl::from(decl, context)?;
+                    let mut func = FuncDecl::try_from((decl, &mut *context))?;
                     if context.in_assertion && context.is_tell {
                         func.var_substitution()?;
                     }

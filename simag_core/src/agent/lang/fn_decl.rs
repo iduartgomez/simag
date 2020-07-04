@@ -6,12 +6,13 @@ use super::{
     common::*,
     logsent::{LogSentResolution, ParseContext},
     parser::{FuncDeclBorrowed, FuncVariants},
+    spatial_semantics::SpatialArg,
     time_semantics::{TimeArg::*, TimeFn, TimeOps},
     var::Var,
     *,
 };
 use crate::agent::{
-    kb::bms::{BmsWrapper, IsTimeData, OverwriteBms, RecordHistory},
+    kb::bms::{BmsWrapper, IsSpatialData, IsTimeData, OverwriteBms},
     kb::{repr::Representation, VarAssignment},
 };
 
@@ -23,20 +24,20 @@ pub(in crate::agent) struct FuncDecl {
     pub variant: FuncVariants,
 }
 
-impl<'a> FuncDecl {
-    pub fn from(
-        other: &FuncDeclBorrowed<'a>,
-        context: &mut ParseContext,
-    ) -> Result<FuncDecl, ParseErrF> {
+impl<'a> TryFrom<(&FuncDeclBorrowed<'a>, &mut ParseContext)> for FuncDecl {
+    type Error = ParseErrF;
+
+    fn try_from(input: (&FuncDeclBorrowed, &mut ParseContext)) -> Result<Self, Self::Error> {
+        let (other, context) = input;
         let func_name = Terminal::from(&other.name, context)?;
         match other.variant {
             FuncVariants::Relational => FuncDecl::decl_relational_fn(other, context, func_name),
-            FuncVariants::NonRelational => {
-                FuncDecl::decl_nonrelational_fn(other, context, func_name)
-            }
+            _ => Err(ParseErrF::WrongDef), // only built-in funcs can be non-relational; parsed before this
         }
     }
+}
 
+impl<'a> FuncDecl {
     pub fn is_grounded(&self) -> bool {
         if !self.parent_is_grounded() {
             return false;
@@ -107,8 +108,29 @@ impl<'a> FuncDecl {
         let op_args = match other.op_args {
             Some(ref oargs) => {
                 let mut v0 = Vec::with_capacity(oargs.len());
+                let mut found_time_arg = false;
+                let mut found_spatial_arg = false;
                 for e in oargs {
                     let a = OpArg::try_from((e, &*context))?;
+                    match a {
+                        OpArg::Spatial(_) => {
+                            if found_spatial_arg {
+                                // only one allowed
+                                return Err(ParseErrF::WrongArgNumb);
+                            } else {
+                                found_spatial_arg = true
+                            }
+                        }
+                        OpArg::Time(_) => {
+                            if found_time_arg {
+                                // only one allowed
+                                return Err(ParseErrF::WrongArgNumb);
+                            } else {
+                                found_time_arg = true
+                            }
+                        }
+                        _ => {}
+                    }
                     v0.push(a);
                 }
                 Some(v0)
@@ -143,33 +165,6 @@ impl<'a> FuncDecl {
             args: Some(args),
             op_args,
             variant: FuncVariants::Relational,
-        })
-    }
-
-    fn decl_nonrelational_fn(
-        other: &FuncDeclBorrowed<'a>,
-        context: &mut ParseContext,
-        name: Terminal,
-    ) -> Result<FuncDecl, ParseErrF> {
-        let op_args = match other.op_args {
-            Some(ref oargs) => {
-                let mut v0 = Vec::with_capacity(oargs.len());
-                for e in oargs {
-                    let a = match OpArg::try_from((e, &*context)) {
-                        Err(err) => return Err(err),
-                        Ok(a) => a,
-                    };
-                    v0.push(a);
-                }
-                Some(v0)
-            }
-            None => None,
-        };
-        Ok(FuncDecl {
-            name,
-            args: None,
-            op_args,
-            variant: FuncVariants::NonRelational,
         })
     }
 
@@ -247,20 +242,32 @@ impl Into<GroundedFunc> for FuncDecl {
                 third = Some(n_a);
             }
         }
-        let time_data = BmsWrapper::<RecordHistory>::new();
+        let mut time_data = None;
+        let mut spatial_data = None;
         let mut ow = false;
         if let Some(mut oargs) = op_args {
             for arg in oargs.drain(..) {
                 match arg {
                     OpArg::Time(DeclTime(TimeFn::Since(time))) => {
-                        time_data.new_record(Some(time), None, val, None);
+                        time_data = Some(BmsWrapper::<IsTimeData>::new(Some(time), val));
                     }
                     OpArg::Time(DeclTime(TimeFn::Interval(t0, t1))) => {
-                        time_data.new_record(Some(t0), None, val, None);
-                        time_data.new_record(Some(t1), None, None, None);
+                        let mut t0 = BmsWrapper::<IsTimeData>::new(Some(t0), val);
+                        let t1 = &BmsWrapper::<IsTimeData>::new(Some(t1), None);
+                        t0.merge_from_until(t1).unwrap_or_else(|_| {
+                            unreachable!(
+                                "SIMAG - {}:{} - unreachable: illegal merge",
+                                file!(),
+                                line!()
+                            )
+                        });
+                        time_data = Some(t0)
                     }
                     OpArg::Time(DeclTime(TimeFn::Now)) => {
-                        time_data.new_record(Some(Utc::now()), None, val, None);
+                        time_data = Some(BmsWrapper::<IsTimeData>::new(None, val));
+                    }
+                    OpArg::Spatial(SpatialArg::DeclLocation(loc)) => {
+                        spatial_data = Some(BmsWrapper::<IsSpatialData>::new(Some(loc)));
                     }
                     OpArg::OverWrite => {
                         ow = true;
@@ -269,14 +276,21 @@ impl Into<GroundedFunc> for FuncDecl {
                 }
             }
         }
-        if time_data.record_len() == 0 {
-            time_data.new_record(None, None, val, None);
-        }
+        let time_data = if let Some(time) = time_data {
+            time
+        } else {
+            BmsWrapper::<IsTimeData>::new(None, val)
+        };
+        let final_bms = if let Some(loc) = spatial_data {
+            time_data.merge(loc).unwrap()
+        } else {
+            time_data.into()
+        };
         GroundedFunc {
             name,
             args: [first.unwrap(), second.unwrap()],
             third,
-            bms: Arc::new(time_data.with_ow_val(ow)),
+            bms: Arc::new(final_bms.with_ow_val(ow)),
         }
     }
 }

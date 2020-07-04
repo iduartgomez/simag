@@ -113,7 +113,7 @@ impl<'a> std::convert::TryFrom<(&'a FuncDeclBorrowed<'a>, &'a mut ParseContext)>
         let (other, context) = decl;
 
         if let TerminalBorrowed(TIME_CALC_FN) = other.name {
-            Self::new(other, context)
+            TimeCalc::new(other, context)
         } else {
             Err(ParseErrF::NotBuiltin)
         }

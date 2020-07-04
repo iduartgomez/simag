@@ -210,15 +210,6 @@ impl BmsWrapper<RecordHistory> {
         }
     }
 
-    pub fn get_last_location(&self) -> Option<Point> {
-        let records = self.records.read();
-        if let Some(rec) = records.last() {
-            rec.location.clone()
-        } else {
-            None
-        }
-    }
-
     /// Set a producer for the last truth value
     pub fn set_last_rec_producer(&self, produced: Option<(SentID, Time)>) {
         let records = &mut *self.records.write();

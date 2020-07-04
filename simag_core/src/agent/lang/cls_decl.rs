@@ -23,17 +23,38 @@ pub(in crate::agent) struct ClassDecl {
     pub op_args: Option<Vec<OpArg>>,
 }
 
-impl<'a> ClassDecl {
-    pub fn from(
-        other: &ClassDeclBorrowed<'a>,
-        context: &mut ParseContext,
-    ) -> Result<ClassDecl, ParseErrF> {
+impl<'a> TryFrom<(&ClassDeclBorrowed<'a>, &mut ParseContext)> for ClassDecl {
+    type Error = ParseErrF;
+
+    fn try_from(input: (&ClassDeclBorrowed, &mut ParseContext)) -> Result<Self, Self::Error> {
+        let (other, context) = input;
         let class_name = Terminal::from(&other.name, context)?;
         let op_args = match other.op_args {
             Some(ref oargs) => {
                 let mut v0 = Vec::with_capacity(oargs.len());
+                let mut found_time_arg = false;
+                let mut found_spatial_arg = false;
                 for e in oargs {
                     let a = OpArg::try_from((e, &*context))?;
+                    match a {
+                        OpArg::Spatial(_) => {
+                            if found_spatial_arg {
+                                // only one allowed
+                                return Err(ParseErrF::WrongArgNumb);
+                            } else {
+                                found_spatial_arg = true
+                            }
+                        }
+                        OpArg::Time(_) => {
+                            if found_time_arg {
+                                // only one allowed
+                                return Err(ParseErrF::WrongArgNumb);
+                            } else {
+                                found_time_arg = true
+                            }
+                        }
+                        _ => {}
+                    }
                     v0.push(a);
                 }
                 Some(v0)
@@ -55,7 +76,9 @@ impl<'a> ClassDecl {
             op_args,
         })
     }
+}
 
+impl<'a> ClassDecl {
     pub fn get_args(&self) -> &[Predicate] {
         &self.args
     }

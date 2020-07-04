@@ -4,6 +4,7 @@ use std::collections::HashSet;
 
 #[test]
 fn repr_inference_ask_pred() {
+    // straight query of declared knowledge
     let test_01 = "
         ( professor[$Lucy=1] )
     ";
@@ -14,6 +15,7 @@ fn repr_inference_ask_pred() {
     assert_eq!(rep.ask(q01_01).unwrap().get_results_single(), None);
     assert_eq!(rep.ask(q01_02).unwrap().get_results_single(), Some(true));
 
+    // produced by one or two log sentence
     let test_02 = "
         ( professor[$Lucy=1] )
         ( dean[$John=1] )
@@ -27,6 +29,7 @@ fn repr_inference_ask_pred() {
     assert_eq!(rep.ask(q02_01).unwrap().get_results_single(), Some(false));
     assert_eq!(rep.ask(q02_02).unwrap().get_results_single(), Some(true));
 
+    // produced by a sequence of logical sentences
     let test_03 = "
         ( fn::owns[$M1=1,$Nono] )
         ( missile[$M1=1] )
@@ -46,6 +49,7 @@ fn repr_inference_ask_pred() {
     let answ = rep.ask(q03_01);
     assert_eq!(answ.unwrap().get_results_single(), Some(true));
 
+    // retrieve all objs which fit a criteria
     let test_04 = "
         # query for all 'professor'
         ( professor[$Lucy=1] )
@@ -60,6 +64,7 @@ fn repr_inference_ask_pred() {
     assert!(a04_01.contains_key("$Lucy"));
     assert!(a04_01.contains_key("$John"));
 
+    // retrieve of all classes an object/subclass belongs to
     let test_05 = "
         # query for all classes '$Lucy' is member of
         (professor[$Lucy=1])
@@ -83,6 +88,7 @@ fn repr_inference_ask_pred() {
 
 #[test]
 fn repr_inference_ask_func() {
+    // straight query of declared knowledge
     let test_01 = "
         ( professor[$Lucy=1] )
         ( dean[$John=1] )
@@ -93,6 +99,7 @@ fn repr_inference_ask_func() {
     rep.tell(test_01).unwrap();
     assert_eq!(rep.ask(q01_01).unwrap().get_results_single(), Some(true));
 
+    // produced by one log sentence
     let test_02 = "
         ( animal[cow=1] )
         ( female[cow=1] )
@@ -103,6 +110,7 @@ fn repr_inference_ask_func() {
     rep.tell(test_02).unwrap();
     assert_eq!(rep.ask(q02_01).unwrap().get_results_single(), Some(true));
 
+    // produced by a sequence of logical sentences
     let test_03 = "
         ( professor[$Lucy] )
         ( dean[$John] )
@@ -120,8 +128,8 @@ fn repr_inference_ask_func() {
     assert_eq!(rep.ask(q03_01).unwrap().get_results_single(), Some(true));
     assert_eq!(rep.ask(q03_02).unwrap().get_results_single(), Some(true));
 
+    // retrieve all objs which fit a criteria
     let test_04 = "
-        # retrieve all objs which fit to a criteria
         (fn::produce[milk=1,$Lulu])
         (cow[$Lucy=1])
         (goat[$Vicky=1])
@@ -137,8 +145,8 @@ fn repr_inference_ask_func() {
     assert!(a04_01.contains_key("$Lulu"));
     assert!(a04_01.contains_key("$Vicky"));
 
+    // retrieve all relations between objects
     let test_05 = "
-        # retrieve all relations between objects
         (fn::loves[$Vicky=1,$Lucy])
         (fn::worships[$Vicky=1,cats])
         (fn::hates[$Vicky=0,dogs])
@@ -159,6 +167,7 @@ fn repr_inference_ask_func() {
     }
     assert_eq!(cnt, 2);
 
+    // mixed query retrieve all relations which fit a criteria
     let q05_02 = "(let x, y in (fn::x[$Vicky=0,y]))";
     let answ = rep.ask(q05_02);
     let a05_02 = answ.unwrap().get_relationships();
@@ -283,6 +292,10 @@ fn repr_inference_time_calc_2() {
     let q04_1_03 = "(fat(since '2018-02-01T00:00:00Z')[$Pancho=1])";
     assert_eq!(rep.ask(q04_1_03).unwrap().get_results_single(), None);
 
+    // TODO: "(let t0:time='2018-02-01T00:00:00Z' in fat(since t0)[$Pancho=1])"
+    // "(let t0:time='2018-02-01T00:00:00Z', x in fat(since t0)[x=1])"
+    // "(let t0:time='2018-02-01T00:00:00Z', x in x(since t0)[$Pancho=1])"
+
     // Test if a fn is true between time intervals
     let test_04_02 = "
         ( professor[$Lucy=1] )
@@ -298,6 +311,10 @@ fn repr_inference_time_calc_2() {
     assert_eq!(rep.ask(q04_2_02).unwrap().get_results_single(), None);
     let q04_2_03 = "(fn::criticize(since '2018-02-01T00:00:00Z')[$John=1,$Lucy])";
     assert_eq!(rep.ask(q04_2_03).unwrap().get_results_single(), None);
+
+    // TODO: "(let t0:time='2018-02-01T00:00:00Z' in fn::criticize(since t0)[$John=1,$Lucy])"
+    // "(let t0:time='2018-02-01T00:00:00Z', x in fn::x(since t0)[$John=1,$Lucy])"
+    // "(let t0:time='2018-02-01T00:00:00Z', x in fn::criticize(since t0)[x=1,$Lucy])"
 }
 
 #[test]
@@ -459,14 +476,14 @@ fn repr_tell_record() {
 fn repr_inference_spatial_calc() {
     let rep = Representation::default();
     // ask loc gr memb
-    // let source = "
-    //     (run(at '0.0.0')[$Pancho] and sleep(at '1.1.0')[$Pancho])
-    // ";
-    // rep.tell(source).unwrap();
-    // let res = rep.ask("(run(at '1.1.0')[$Pancho])").unwrap();
-    // assert_eq!(res.get_results_single(), Some(false));
-    // let res = rep.ask("(sleep(at '1.1.0')[$Pancho])").unwrap();
-    // assert_eq!(res.get_results_single(), Some(true));
+    let source = "
+        (run(at '0.0.0')[$Pancho] and sleep(at '1.1.0')[$Pancho])
+    ";
+    rep.tell(source).unwrap();
+    let res = rep.ask("(run(at '1.1.0')[$Pancho])").unwrap();
+    assert_eq!(res.get_results_single(), Some(false));
+    let res = rep.ask("(sleep(at '1.1.0')[$Pancho])").unwrap();
+    assert_eq!(res.get_results_single(), Some(true));
 
     // ask loc gr func
     let source = "
@@ -475,7 +492,7 @@ fn repr_inference_spatial_calc() {
     rep.tell(source).unwrap();
     let res = rep.ask("(fn::eat(at '1.1.0')[$Pancho,meat])").unwrap();
     assert_eq!(res.get_results_single(), Some(false));
-    let res = rep.ask("(fn::water(at '1.1.0')[$Pancho,water])").unwrap();
+    let res = rep.ask("(fn::drink(at '1.1.0')[$Pancho,water])").unwrap();
     assert_eq!(res.get_results_single(), Some(true));
 
     // let source = "

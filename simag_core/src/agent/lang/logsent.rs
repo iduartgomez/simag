@@ -1544,7 +1544,7 @@ mod ast_walker {
             ASTNode::Assert(ref decl) => {
                 let particle = match *decl {
                     AssertBorrowed::ClassDecl(ref decl) => {
-                        let cls = match ClassDecl::from(decl, context) {
+                        let cls = match ClassDecl::try_from((decl, &mut *context)) {
                             Err(err) => return Err(LogSentErr::Boxed(Box::new(err))),
                             Ok(cls) => cls,
                         };
@@ -1555,7 +1555,7 @@ mod ast_walker {
                         if let Ok(special_func) = BuiltIns::try_from((decl, &mut *context)) {
                             PIntermediate::from(Assert::SpecialFunc(special_func))
                         } else {
-                            match FuncDecl::from(decl, context) {
+                            match FuncDecl::try_from((decl, &mut *context)) {
                                 Err(err) => return Err(LogSentErr::Boxed(Box::new(err))),
                                 Ok(func) => PIntermediate::from(Assert::FuncDecl(func)),
                             }
