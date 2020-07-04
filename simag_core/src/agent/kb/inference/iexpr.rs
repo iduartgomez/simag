@@ -17,6 +17,7 @@ use std::sync::{
 };
 
 use crate::agent::kb::{
+    bms::{HasBms, OverwriteBms},
     inference::results::{GroundedResults, InfResults},
     repr::{Answer, Representation},
     VarAssignment,
@@ -24,7 +25,7 @@ use crate::agent::kb::{
 use crate::agent::lang::{
     Assert, ClassDecl, FreeClassMembership, FreeMembershipToClass, FuncDecl, Grounded,
     GroundedFunc, GroundedMemb, LogSentence, ParseTree, Predicate, ProofResContext, SentID,
-    SentVarReq, Terminal, Time, TimeOps, Var, VarKind,
+    SentVarReq, SpatialOps, Terminal, Time, TimeOps, Var, VarKind,
 };
 use chrono::Utc;
 use dashmap::DashMap;
@@ -1074,6 +1075,34 @@ impl QueryProcessed {
     }
 
     fn get_query(mut self, prequery: QueryInput) -> Result<QueryProcessed, ()> {
+        fn build_query_bms<T>(cdecl: &ClassDecl, query: &T) -> Result<(), ()>
+        where
+            T: HasBms,
+        {
+            let locs = cdecl.get_spatial_payload();
+            let times = cdecl.get_time_payload(query.get_value());
+            match (times, locs) {
+                (Some(times), None) => {
+                    if let Some(bms) = query.get_bms() {
+                        bms.overwrite_data(times.into())?;
+                    }
+                }
+                (None, Some(locs)) => {
+                    if let Some(bms) = query.get_bms() {
+                        bms.overwrite_loc_data(locs)?;
+                    }
+                }
+                (Some(times), Some(locs)) => {
+                    let merged = times.merge(locs)?;
+                    if let Some(bms) = query.get_bms() {
+                        bms.overwrite_data(merged)?;
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+
         fn assert_memb(query: &mut QueryProcessed, mut cdecl: Arc<ClassDecl>) -> Result<(), ()> {
             for a in Arc::get_mut(&mut cdecl).ok_or_else(|| ())?.get_args_mut() {
                 if let Predicate::GroundedMemb(t) = a {
@@ -1090,11 +1119,7 @@ impl QueryProcessed {
                                 query.push_to_clsquery_free(t.get_var(), t.clone());
                             }
                             Predicate::GroundedMemb(t) => {
-                                if let Some(times) = cdecl.get_time_payload(t.get_value()) {
-                                    if let Some(bms) = t.bms.as_ref() {
-                                        bms.overwrite_data(times)
-                                    };
-                                }
+                                build_query_bms(&*cdecl, t)?;
                                 let cls: &str = t.get_name().into();
                                 query
                                     .push_to_clsquery_grounded(cls.to_owned(), Arc::new(t.clone()));
@@ -1107,9 +1132,7 @@ impl QueryProcessed {
                     for a in cdecl.get_args() {
                         match a {
                             Predicate::FreeClassMembership(t) => {
-                                if let Some(times) = cdecl.get_time_payload(None) {
-                                    t.overwrite_time_data(times);
-                                }
+                                build_query_bms(&*cdecl, t)?;
                                 query.ask_class_memb(t.clone());
                             }
                             _ => return Err(()), // should not happen ever

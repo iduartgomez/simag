@@ -11,7 +11,7 @@ use super::{
     *,
 };
 use crate::agent::{
-    kb::bms::{BmsWrapper, IsTimeData, RecordHistory},
+    kb::bms::{BmsWrapper, IsTimeData, OverwriteBms, RecordHistory},
     kb::{repr::Representation, VarAssignment},
 };
 
@@ -397,7 +397,7 @@ impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
         if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, time_assign) {
             let time_data = self.get_own_time_data(time_assign, None);
             time_data.replace_value(grfunc.get_value());
-            grfunc.bms.overwrite_data(time_data);
+            grfunc.bms.overwrite_data(time_data.into()).unwrap();
             #[cfg(debug_assertions)]
             {
                 log::trace!("Correct substitution found, updating: {:?}", grfunc);

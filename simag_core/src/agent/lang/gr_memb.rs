@@ -8,7 +8,7 @@ use super::{
     FreeMembershipToClass, GrTerminalKind, GroundedRef, Time,
 };
 use crate::agent::{
-    kb::bms::{BmsWrapper, RecordHistory},
+    kb::bms::{BmsWrapper, HasBms, RecordHistory},
     kb::repr::Representation,
 };
 use crate::FLOAT_EQ_ULPS;
@@ -210,7 +210,7 @@ impl GroundedMemb {
     // FIXME: this is error prone, encode if is a time interval at the type level when the bms is first created?
     pub fn is_time_interval(&self) -> bool {
         if let Some(bms) = &self.bms {
-            bms.record_len() == 2 && bms.get_last_value().is_none()
+            bms.record_len() == 2 && bms.get_last_value().0.is_none()
         } else {
             false
         }
@@ -275,24 +275,20 @@ impl GroundedMemb {
         let self_lock = &*self_bms.acquire_read_lock();
         let pred_lock = &*pred_bms.acquire_read_lock();
 
-        // check if there are location arguments
-        let pred_loc = pred_bms.get_last_location();
-        let self_loc = self_bms.get_last_location();
-        if pred_loc != self_loc {
-            return Some(false);
-        }
-
         if let Some(time) = pred_bms.is_predicate() {
             let op_rhs = self.operator.unwrap();
             let op_lhs = pred.operator.unwrap();
             let time_pred = pred_bms.get_last_date();
-            let val_lhs = pred_bms.get_last_value();
-            let val_rhs = if time_pred < *time {
+            let (val_lhs, loc_lhs) = pred_bms.get_last_value();
+            let (val_rhs, loc_rhs) = if time_pred < *time {
                 self_bms.get_record_at_time(time_pred)
             } else {
                 self_bms.get_last_value()
             };
             val_rhs?;
+            if loc_lhs != loc_rhs {
+                return Some(false);
+            }
             Some(Self::compare_two_grounded_eq(
                 val_lhs, val_rhs, op_lhs, op_rhs,
             ))
@@ -349,7 +345,7 @@ impl std::fmt::Display for GroundedMemb {
         };
         let (value, time) = if let Some(ref bms) = self.bms {
             (
-                bms.get_last_value(),
+                bms.get_last_value().0,
                 format!(" @ `{}` ", bms.get_last_date()),
             )
         } else {
@@ -360,5 +356,17 @@ impl std::fmt::Display for GroundedMemb {
             "GrMemb {{ {}[{}{}{:?}{}] }}",
             self.parent, self.term, comp_op, value, time
         )
+    }
+}
+
+impl HasBms for GroundedMemb {
+    type BmsType = BmsWrapper<RecordHistory>;
+
+    fn get_bms(&self) -> Option<&Self::BmsType> {
+        self.bms.as_ref().map(|bms| &**bms)
+    }
+
+    fn get_value(&self) -> Option<f32> {
+        self.get_value()
     }
 }

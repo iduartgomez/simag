@@ -35,8 +35,8 @@ impl GroundedFunc {
 
         if let Some(time) = pred.bms.is_predicate() {
             let time_pred = pred.bms.get_last_date();
-            let val_lhs = pred.bms.get_last_value();
-            let val_rhs = if time_pred < *time {
+            let (val_lhs, loc_lhs) = pred.bms.get_last_value();
+            let (val_rhs, loc_rhs) = if time_pred < *time {
                 self.bms.get_record_at_time(time_pred)
             } else {
                 self.bms.get_last_value()
@@ -44,7 +44,9 @@ impl GroundedFunc {
             let op_rhs = self.args[0].operator.unwrap();
             let op_lhs = pred.args[0].operator.unwrap();
             val_rhs?;
-
+            if loc_lhs != loc_rhs {
+                return Some(false);
+            }
             match (&self.third, &pred.third) {
                 (Some(arg0), Some(arg1)) => {
                     if arg0.compare_ignoring_times(arg1) {

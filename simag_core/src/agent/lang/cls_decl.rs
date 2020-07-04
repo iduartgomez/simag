@@ -10,11 +10,11 @@ use super::{
     *,
 };
 use crate::agent::kb::{
-    bms::{BmsWrapper, IsTimeData},
+    bms::{BmsWrapper, IsSpatialData, IsTimeData, OverwriteBms},
     repr::Representation,
     VarAssignment,
 };
-use spatial_semantics::SpatialOps;
+use spatial_semantics::{SpatialArg, SpatialOps};
 
 #[derive(Debug, Clone)]
 pub(in crate::agent) struct ClassDecl {
@@ -200,7 +200,17 @@ impl TimeOps for ClassDecl {
     }
 }
 
-impl SpatialOps for ClassDecl {}
+impl SpatialOps for ClassDecl {
+    fn get_spatial_payload(&self) -> Option<BmsWrapper<IsSpatialData>> {
+        self.op_args.as_ref()?;
+        for arg in self.op_args.as_ref().unwrap() {
+            if let OpArg::Spatial(SpatialArg::DeclLocation(loc)) = arg {
+                return Some(BmsWrapper::<IsSpatialData>::new(Some(loc.clone())));
+            }
+        }
+        None
+    }
+}
 
 impl std::iter::IntoIterator for ClassDecl {
     type Item = GroundedMemb;
@@ -315,7 +325,7 @@ impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
             let t = time_data.clone();
             t.replace_value(grfact.get_value());
             if let Some(bms) = grfact.bms.as_ref() {
-                bms.overwrite_data(t)
+                bms.overwrite_data(t.into()).unwrap();
             };
             #[cfg(debug_assertions)]
             {

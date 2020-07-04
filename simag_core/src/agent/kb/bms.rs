@@ -52,6 +52,57 @@ where
 
 pub(in crate::agent) trait BmsKind {}
 
+pub(in crate::agent) trait HasBms {
+    type BmsType: OverwriteBms;
+
+    fn get_bms(&self) -> Option<&Self::BmsType>;
+
+    fn get_value(&self) -> Option<f32>;
+}
+
+pub(in crate::agent) trait OverwriteBms {
+    /// Drops all the records and writes the records from the incoming BMS.
+    fn overwrite_data(&self, other: BmsWrapper<RecordHistory>) -> Result<(), ()>;
+
+    fn overwrite_loc_data(&self, spatial_data: BmsWrapper<IsSpatialData>) -> Result<(), ()>;
+}
+
+#[inline]
+fn internal_overwrite_data<T: BmsKind>(
+    first: &BmsWrapper<T>,
+    other: BmsWrapper<RecordHistory>,
+) -> Result<(), ()> {
+    let lock = &mut *first.records.write();
+    // drop old records
+    lock.truncate(0);
+    // insert new records
+    for rec in &*other.records.read() {
+        lock.push(rec.clone())
+    }
+    first
+        .overwrite
+        .store(other.overwrite.load(Ordering::Acquire), Ordering::Release);
+    Ok(())
+}
+
+#[inline]
+fn internal_overwrite_loc_data<T: BmsKind>(
+    first: &BmsWrapper<T>,
+    spatial_data: BmsWrapper<IsSpatialData>,
+) -> Result<(), ()> {
+    let spatial_data = &*spatial_data.records.read();
+    let location = match spatial_data.last() {
+        Some(loc) if spatial_data.len() == 1 => loc.location.clone(),
+        _ => return Err(()),
+    };
+
+    for rec in &mut *first.records.write() {
+        rec.location = location.clone();
+    }
+
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub(in crate::agent) struct IsSpatialData;
 impl BmsKind for IsSpatialData {}
@@ -103,12 +154,12 @@ impl<T: BmsKind> BmsWrapper<T> {
         rec.time
     }
 
-    pub fn get_last_value(&self) -> Option<f32> {
+    pub fn get_last_value(&self) -> (Option<f32>, Option<Point>) {
         let records = self.records.read();
         if let Some(rec) = records.last() {
-            rec.value
+            (rec.value, rec.location.clone())
         } else {
-            None
+            (None, None)
         }
     }
 
@@ -125,7 +176,7 @@ impl<T: BmsKind> BmsWrapper<T> {
 impl BmsWrapper<RecordHistory> {
     pub fn new() -> Self {
         BmsWrapper {
-            records: RwLock::new(vec![]),
+            records: RwLock::new(Vec::with_capacity(2)),
             pred: None,
             overwrite: AtomicBool::new(false),
             _kind: PhantomData,
@@ -258,17 +309,18 @@ impl BmsWrapper<RecordHistory> {
     }
 
     /// Return the value valid at the given time, if any.
-    pub fn get_record_at_time(&self, cmp_time: Time) -> Option<f32> {
-        let mut lastest = None;
+    pub fn get_record_at_time(&self, cmp_time: Time) -> (Option<f32>, Option<Point>) {
+        let mut latest = (None, None);
         for rec in self
             .records
             .read()
             .iter()
             .take_while(|rec| rec.time <= cmp_time)
         {
-            lastest = rec.value;
+            // TODO: optimize this to avoid copying/cloning
+            latest = (rec.value, rec.location.clone());
         }
-        lastest
+        latest
     }
 
     /// Add a new record to this BMS.
@@ -482,11 +534,6 @@ impl BmsWrapper<RecordHistory> {
         self.cleanup_records()
     }
 
-    /// Drops all the records and writes the records from the incoming BMS.
-    pub fn overwrite_data(&self, other: BmsWrapper<IsTimeData>) {
-        _overwrite_data(self, other)
-    }
-
     pub fn record_len(&self) -> usize {
         self.records.read().len()
     }
@@ -499,6 +546,16 @@ impl BmsWrapper<RecordHistory> {
 
     pub fn is_predicate(&self) -> Option<&Time> {
         self.pred.as_ref()
+    }
+}
+
+impl OverwriteBms for BmsWrapper<RecordHistory> {
+    fn overwrite_data(&self, other: BmsWrapper<RecordHistory>) -> Result<(), ()> {
+        internal_overwrite_data(self, other)
+    }
+
+    fn overwrite_loc_data(&self, spatial_data: BmsWrapper<IsSpatialData>) -> Result<(), ()> {
+        internal_overwrite_loc_data(self, spatial_data)
     }
 }
 
@@ -582,9 +639,21 @@ impl BmsWrapper<IsTimeData> {
         }
     }
 
-    /// Drops all the records and writes the records from the incoming BMS.
-    pub fn overwrite_data(&self, other: BmsWrapper<IsTimeData>) {
-        _overwrite_data(self, other)
+    pub fn merge(
+        self,
+        spatial_data: BmsWrapper<IsSpatialData>,
+    ) -> Result<BmsWrapper<RecordHistory>, ()> {
+        spatial_data.merge(self)
+    }
+}
+
+impl OverwriteBms for BmsWrapper<IsTimeData> {
+    fn overwrite_data(&self, other: BmsWrapper<RecordHistory>) -> Result<(), ()> {
+        internal_overwrite_data(self, other)
+    }
+
+    fn overwrite_loc_data(&self, spatial_data: BmsWrapper<IsSpatialData>) -> Result<(), ()> {
+        internal_overwrite_loc_data(self, spatial_data)
     }
 }
 
@@ -749,19 +818,6 @@ pub(in crate::agent) fn build_declaration_bms(
         };
         a
     }))
-}
-
-fn _overwrite_data<T: BmsKind>(first: &BmsWrapper<T>, other: BmsWrapper<IsTimeData>) {
-    let lock = &mut *first.records.write();
-    // drop old records
-    lock.truncate(0);
-    // insert new records
-    for rec in &*other.records.read() {
-        lock.push(rec.clone())
-    }
-    first
-        .overwrite
-        .store(other.overwrite.load(Ordering::Acquire), Ordering::Release);
 }
 
 mod errors {

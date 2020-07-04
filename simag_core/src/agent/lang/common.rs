@@ -16,7 +16,7 @@ use super::{
     BuiltIns, GroundedFunc, GroundedMemb, Terminal,
 };
 use crate::agent::{
-    kb::bms::{BmsWrapper, IsTimeData},
+    kb::bms::{BmsWrapper, HasBms, IsTimeData},
     kb::{repr::Representation, VarAssignment},
 };
 use crate::FLOAT_EQ_ULPS;
@@ -339,10 +339,6 @@ impl FreeClassMembership {
         }
     }
 
-    pub fn overwrite_time_data(&self, data: BmsWrapper<IsTimeData>) {
-        self.times.overwrite_data(data);
-    }
-
     #[inline]
     pub fn get_name(&self) -> &str {
         &self.term
@@ -351,6 +347,18 @@ impl FreeClassMembership {
     #[inline]
     pub fn get_var(&self) -> Arc<Var> {
         self.parent.clone()
+    }
+}
+
+impl HasBms for FreeClassMembership {
+    type BmsType = BmsWrapper<IsTimeData>;
+
+    fn get_bms(&self) -> Option<&Self::BmsType> {
+        Some(&self.times)
+    }
+
+    fn get_value(&self) -> Option<f32> {
+        self.value
     }
 }
 

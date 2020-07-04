@@ -36,4 +36,8 @@ pub(in crate::agent) trait SpatialOps: OpArgsOps {
 
         Ok(BmsWrapper::<IsSpatialData>::new(v).with_ow_val(ow))
     }
+
+    fn get_spatial_payload(&self) -> Option<BmsWrapper<IsSpatialData>> {
+        unimplemented!()
+    }
 }
