@@ -1,6 +1,6 @@
 use std::{convert::TryFrom, sync::Arc};
 
-use super::SpatialFnErr;
+use super::{Point, SpatialFnErr};
 use crate::agent::{
     lang::{
         common::ConstraintValue,
@@ -10,34 +10,6 @@ use crate::agent::{
     },
     ParseErrF,
 };
-use smallvec::SmallVec;
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(in crate::agent) struct Point(u64, u64, u64);
-
-impl TryFrom<&str> for Point {
-    type Error = ParseErrF;
-
-    fn try_from(input: &str) -> Result<Self, Self::Error> {
-        let p: Result<SmallVec<[u64; 3]>, _> = input
-            .split('.')
-            .map(|p| p.parse())
-            .collect::<Result<_, _>>();
-        match p {
-            Ok(val) if val.len() == 3 => Ok(Point(val[0], val[1], val[2])),
-            _ => Err(ParseErrF::WrongDef),
-        }
-    }
-}
-
-impl TryFrom<&[u8]> for Point {
-    type Error = ParseErrF;
-
-    fn try_from(input: &[u8]) -> Result<Self, Self::Error> {
-        let input_str = std::str::from_utf8(input).unwrap();
-        Self::try_from(input_str)
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(in crate::agent) enum SpatialArg {
