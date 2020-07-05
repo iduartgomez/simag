@@ -13,13 +13,13 @@ pub(super) use spatial_arg::SpatialArg;
 pub(in crate::agent) use spatial_ops::SpatialOps;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(in crate::agent) struct Point(u64, u64, u64);
+pub(in crate::agent) struct Point(i64, i64, i64);
 
 impl TryFrom<&str> for Point {
     type Error = ParseErrF;
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
-        let p: Result<SmallVec<[u64; 3]>, _> = input
+        let p: Result<SmallVec<[i64; 3]>, _> = input
             .split('.')
             .map(|p| p.parse())
             .collect::<Result<_, _>>();
