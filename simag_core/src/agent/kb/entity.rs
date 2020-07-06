@@ -8,9 +8,10 @@ use super::bms;
 use crate::agent::kb::repr::{lookahead_rules, Representation};
 use crate::agent::lang::{
     FreeClassMembership, Grounded, GroundedFunc, GroundedMemb, GroundedRef, LogSentence, Operator,
-    Predicate, ProofResContext,
+    Point, Predicate, ProofResContext, Time,
 };
 use crate::FLOAT_EQ_ULPS;
+use bms::{BmsWrapper, RecordHistory};
 
 /// An entity is a singleton, the unique member of it's own class.
 ///
@@ -44,6 +45,7 @@ pub(crate) struct Entity {
     classes: DashMap<String, Arc<GroundedMemb>>,
     relations: DashMap<String, Vec<Arc<GroundedFunc>>>,
     beliefs: DashMap<String, Vec<Arc<LogSentence>>>,
+    location: BmsWrapper<RecordHistory>,
 }
 
 impl Entity {
@@ -53,7 +55,18 @@ impl Entity {
             classes: DashMap::new(),
             relations: DashMap::new(),
             beliefs: DashMap::new(),
+            location: BmsWrapper::<RecordHistory>::new(),
         }
+    }
+
+    /// Updates this class location.
+    pub(in crate::agent::kb) fn with_location(
+        &self,
+        loc: Point,
+        was_produced: Option<(u64, Time)>,
+    ) {
+        self.location
+            .new_record(None, Some(loc), None, was_produced);
     }
 
     pub(in crate::agent::kb) fn belongs_to_class(

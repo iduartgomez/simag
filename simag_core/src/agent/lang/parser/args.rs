@@ -4,7 +4,7 @@ use nom::{
     character::complete::char,
     character::complete::multispace0,
     combinator::{map, opt},
-    sequence::tuple,
+    sequence::{preceded, tuple},
 };
 
 use super::numbers::number;
@@ -107,30 +107,45 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
 
     #[inline(always)]
     fn time_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
+        let (i, term) = opt(preceded(multispace0, UnconstraintArg::get_non_kw))(i)?;
+        let (i, _) = multispace0(i)?;
         let (i, first_tag) = alt((tag("since"), tag("at")))(i)?;
         let (i, _) = multispace0(i)?;
-        let (i, since) = UnconstraintArg::get(i)?;
+        let (i, mut first_loc) = UnconstraintArg::get(i)?;
+
         let (i, _) = multispace0(i)?;
-        let (i, until) = opt(tuple((
+        let (i, second_loc) = opt(tuple((
             tag("until"),
             multispace0,
             UnconstraintArg::get,
             multispace0,
         )))(i)?;
 
-        if first_tag == b"at" && until.is_some() {
+        if (first_tag == b"at" && second_loc.is_some()) || (second_loc.is_some() && term.is_some())
+        {
             return Err(nom::Err::Error(ParseErrB::SyntaxError));
         }
 
-        let comp = if let Some((.., term, _)) = until {
+        let comp = if let Some((.., term, _)) = second_loc {
             second_operand(Some(term), OperatorKind::TimeFn)
         } else if first_tag == b"since" {
             second_operand(None, OperatorKind::TimeFn)
+        } else if let Some(UnconstraintArg::Terminal(t)) = term {
+            let mut name = UnconstraintArg::Terminal(t);
+            std::mem::swap(&mut first_loc, &mut name);
+            // final result is: <obj> at <location>
+            Some((Operator::At, name))
         } else {
-            Some((Operator::Until, UnconstraintArg::String(EMPTY)))
+            return Err(nom::Err::Error(ParseErrB::SyntaxError));
         };
 
-        Ok((i, OpArgBorrowed { term: since, comp }))
+        Ok((
+            i,
+            OpArgBorrowed {
+                term: first_loc,
+                comp,
+            },
+        ))
     }
 
     #[inline(always)]
@@ -170,7 +185,7 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
     }
 
     let (i, _) = multispace0(i)?;
-    if let Ok((rest, arg)) = normal_arg(i) {
+    if let Ok((rest, arg)) = time_arg(i) {
         return Ok((rest, arg));
     }
 
@@ -178,7 +193,7 @@ pub(super) fn op_arg(i: &[u8]) -> IResult<&[u8], OpArgBorrowed> {
         return Ok((rest, arg));
     }
 
-    match time_arg(i) {
+    match normal_arg(i) {
         Ok((rest, arg)) => Ok((rest, arg)),
         Err(err) => Err(err),
     }
@@ -222,6 +237,18 @@ pub(in crate::agent) enum UnconstraintArg<'a> {
     String(&'a [u8]),
 }
 
+impl<'a> std::ops::Deref for UnconstraintArg<'a> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            UnconstraintArg::Terminal(r) => *r,
+            UnconstraintArg::String(r) => *r,
+            UnconstraintArg::Keyword(kw) => *kw,
+        }
+    }
+}
+
 impl<'a, T> PartialEq<T> for UnconstraintArg<'a>
 where
     T: AsRef<[u8]>,
@@ -254,6 +281,13 @@ impl<'a> UnconstraintArg<'a> {
             map(terminal, UnconstraintArg::Terminal),
             map(string, UnconstraintArg::String),
             map(is_keyword, UnconstraintArg::Keyword),
+        ))(i)
+    }
+
+    fn get_non_kw(i: &[u8]) -> IResult<&[u8], UnconstraintArg> {
+        alt((
+            map(terminal, UnconstraintArg::Terminal),
+            map(string, UnconstraintArg::String),
         ))(i)
     }
 

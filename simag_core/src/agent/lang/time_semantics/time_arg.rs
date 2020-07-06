@@ -76,14 +76,14 @@ impl TimeArg {
     pub fn var_substitution(&mut self) -> Result<(), ParseErrF> {
         match self {
             SinceVarUntilVar(var0, var1) => {
-                let mut var0_time = var0.get_times();
-                let var1_time = var1.get_times();
+                let mut var0_time = var0.get_time();
+                let var1_time = var1.get_time();
                 var0_time.merge_from_until(&var1_time)?;
                 let mut assignment = DeclTime(TimeFn::from_bms(&var0_time)?);
                 std::mem::swap(&mut assignment, self);
             }
             SinceVar(var0) => {
-                let var0_time = var0.get_times();
+                let var0_time = var0.get_time();
                 let mut assignment = DeclTime(TimeFn::from_bms(&var0_time)?);
                 std::mem::swap(&mut assignment, self);
             }
@@ -136,7 +136,7 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for TimeArg {
                 var0 = Some(val.get_var());
                 None
             }
-            Ok(ConstraintValue::SpatialPayload) => return Err(TimeFnErr::IsNotVar.into()),
+            Ok(ConstraintValue::SpatialPayload(_)) => return Err(TimeFnErr::IsNotVar.into()),
             Err(err) => return Err(err),
         };
 

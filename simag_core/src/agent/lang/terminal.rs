@@ -117,7 +117,7 @@ where
     }
 }
 
-impl<'a, T> From<T> for GrTerminalKind<T>
+impl<T> From<T> for GrTerminalKind<T>
 where
     T: AsRef<str>,
 {
@@ -126,6 +126,19 @@ where
             GrTerminalKind::Entity(s)
         } else {
             GrTerminalKind::Class(s)
+        }
+    }
+}
+
+impl From<&[u8]> for GrTerminalKind<String> {
+    fn from(s: &[u8]) -> GrTerminalKind<String> {
+        unsafe {
+            // safety: this is always safe as parser only receives valid utf-8 str
+            if s.starts_with(b"$") {
+                GrTerminalKind::Entity(str::from_utf8_unchecked(s).to_owned())
+            } else {
+                GrTerminalKind::Class(str::from_utf8_unchecked(s).to_owned())
+            }
         }
     }
 }

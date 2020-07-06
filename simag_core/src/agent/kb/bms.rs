@@ -592,11 +592,7 @@ impl BmsWrapper<IsTimeData> {
 
         let until = other_records.get(0).unwrap();
         let from = self_records.get_mut(0).unwrap();
-        if until.value != from.value {
-            return Err(errors::BmsError::IllegalMerge(
-                "Different values while merging".to_string(),
-            ));
-        }
+
         let mut until = until.clone();
         if until.time < from.time {
             return Err(errors::BmsError::IllegalMerge(

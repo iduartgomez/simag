@@ -15,7 +15,7 @@ mod var;
 
 use chrono::{DateTime, Utc};
 
-pub(self) use self::built_ins::BuiltIns;
+pub(super) use self::built_ins::BuiltIns;
 pub(super) use self::cls_decl::ClassDecl;
 pub(super) use self::common::{
     Assert, FreeClassMembership, FreeMembershipToClass, Grounded, GroundedRef, Predicate,
@@ -80,6 +80,7 @@ mod errors {
         TimeFnErr(TimeFnErr),
         SpatialFnErr(SpatialFnErr),
         SyntaxErr(String),
+        ToDo,
     }
 
     impl fmt::Display for ParseErrF {

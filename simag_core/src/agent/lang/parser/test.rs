@@ -300,6 +300,8 @@ fn special_funcs() {
     let s9 = b"fn::move(from '0.0.0')[x]"; // is err
     let s9_res = func_decl(s9);
     assert!(s9_res.is_err());
+
+    let _s10 = b"(fn::location($John at '0.0.0'))";
 }
 
 #[test]

@@ -1,6 +1,6 @@
 use super::args::{arg, args, op_arg, op_args};
 use super::*;
-use crate::agent::lang::built_ins::{MOVE_FN, TIME_CALC_FN};
+use crate::agent::lang::built_ins::{LOCATION_FN, MOVE_FN, TIME_CALC_FN};
 use nom::branch::alt;
 use nom::bytes::complete::tag;
 use nom::character::complete::{char, multispace0};
@@ -37,6 +37,7 @@ pub(super) fn func_decl(input: &[u8]) -> IResult<&[u8], FuncDeclBorrowed> {
         let (i, name) = match is_keyword(i) {
             Ok((rest, TIME_CALC_FN)) => (rest, TIME_CALC_FN),
             Ok((rest, MOVE_FN)) => (rest, MOVE_FN),
+            Ok((rest, LOCATION_FN)) => (rest, LOCATION_FN),
             _ => return Err(nom::Err::Error(ParseErrB::SyntaxError)),
         };
         let (mut rest, op1) = op_args(i)?;

@@ -199,6 +199,12 @@ impl<'a> From<&'a [u8]> for TerminalBorrowed<'a> {
     }
 }
 
+impl<'a> PartialEq<&[u8]> for TerminalBorrowed<'a> {
+    fn eq(&self, other: &&[u8]) -> bool {
+        self.0 == *other
+    }
+}
+
 impl<'a> std::fmt::Debug for TerminalBorrowed<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "Term({})", str::from_utf8(self.0).unwrap())

@@ -27,7 +27,7 @@ use super::{
     ParseErrF, Skolem, Time, Var, VarKind,
 };
 use crate::agent::{
-    kb::bms::{BmsWrapper, IsTimeData},
+    kb::bms::{BmsWrapper, IsSpatialData, IsTimeData},
     kb::repr::Representation,
     kb::VarAssignment,
 };
@@ -339,6 +339,7 @@ impl<'a> LogSentence {
                 HashMap::with_capacity(0)
             }
         };
+        let loc_assign = HashMap::new();
         #[cfg(debug_assertions)]
         {
             log::trace!(
@@ -356,28 +357,60 @@ impl<'a> LogSentence {
         }
 
         if self.sent_kind.is_iexpr() {
-            if let Some(res) = root.solve(agent, assignments, &time_assign, &mut context) {
+            if let Some(res) =
+                root.solve(agent, assignments, &time_assign, &loc_assign, &mut context)
+            {
                 if res {
-                    root.substitute(agent, assignments, &time_assign, &mut context, false);
+                    root.substitute(
+                        agent,
+                        assignments,
+                        &time_assign,
+                        &loc_assign,
+                        &mut context,
+                        false,
+                    );
                     context.set_result(Some(true));
                 } else {
-                    root.substitute(agent, assignments, &time_assign, &mut context, true);
+                    root.substitute(
+                        agent,
+                        assignments,
+                        &time_assign,
+                        &loc_assign,
+                        &mut context,
+                        true,
+                    );
                     context.set_result(Some(false));
                 }
             } else {
                 context.set_result(None);
             }
-        } else if let Some(res) = root.solve(agent, assignments, &time_assign, &mut context) {
+        } else if let Some(res) =
+            root.solve(agent, assignments, &time_assign, &loc_assign, &mut context)
+        {
             if res {
                 if root.is_icond() {
                     context.substituting();
-                    root.substitute(agent, assignments, &time_assign, &mut context, false)
+                    root.substitute(
+                        agent,
+                        assignments,
+                        &time_assign,
+                        &loc_assign,
+                        &mut context,
+                        false,
+                    )
                 }
                 context.set_result(Some(true));
             } else {
                 if root.is_icond() {
                     context.substituting();
-                    root.substitute(agent, assignments, &time_assign, &mut context, true)
+                    root.substitute(
+                        agent,
+                        assignments,
+                        &time_assign,
+                        &loc_assign,
+                        &mut context,
+                        true,
+                    )
                 }
                 context.set_result(Some(false));
             }
@@ -412,7 +445,7 @@ impl<'a> LogSentence {
                     }
                 }
                 VarKind::TimeDecl => {
-                    let times = Arc::new(var.get_times());
+                    let times = Arc::new(var.get_time());
                     time_assign.insert(&**var, times);
                 }
                 _ => {}
@@ -706,11 +739,12 @@ impl LogicIndCond {
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
+        loc_assign: &HashMap<&Var, Arc<BmsWrapper<IsSpatialData>>>,
         context: &mut T,
     ) -> Option<bool> {
         if let Some(res) = {
             let next_p = context.sent().particles[self.next_lhs].clone();
-            next_p.solve(agent, assignments, time_assign, context)
+            next_p.solve(agent, assignments, time_assign, loc_assign, context)
         } {
             if res {
                 Some(true)
@@ -728,6 +762,7 @@ impl LogicIndCond {
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
+        loc_assign: &HashMap<&Var, Arc<BmsWrapper<IsSpatialData>>>,
         context: &mut T,
         rhs: bool,
     ) {
@@ -736,7 +771,7 @@ impl LogicIndCond {
         };
         let next_p = context.sent().particles[self.next_rhs].clone();
         if next_p.is_disjunction() || !rhs {
-            next_p.substitute(agent, assignments, time_assign, context, rhs);
+            next_p.substitute(agent, assignments, time_assign, loc_assign, context, rhs);
         }
     }
 
@@ -777,6 +812,7 @@ impl LogicEquivalence {
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
+        loc_assign: &HashMap<&Var, Arc<BmsWrapper<IsSpatialData>>>,
         context: &mut T,
     ) -> Option<bool> {
         context.set_inconsistent(false);
@@ -784,6 +820,7 @@ impl LogicEquivalence {
             agent,
             assignments,
             time_assign,
+            loc_assign,
             context,
         );
         let first = context.is_inconsistent();
@@ -792,6 +829,7 @@ impl LogicEquivalence {
             agent,
             assignments,
             time_assign,
+            loc_assign,
             context,
         );
         let second = context.is_inconsistent();
@@ -855,12 +893,14 @@ impl LogicImplication {
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
+        loc_assign: &HashMap<&Var, Arc<BmsWrapper<IsSpatialData>>>,
         context: &mut T,
     ) -> Option<bool> {
         let n0_res = context.sent().particles[self.next_lhs].clone().solve(
             agent,
             assignments,
             time_assign,
+            loc_assign,
             context,
         );
         context.set_inconsistent(false);
@@ -868,6 +908,7 @@ impl LogicImplication {
             agent,
             assignments,
             time_assign,
+            loc_assign,
             context,
         );
         if let Some(true) = n0_res {
@@ -921,18 +962,21 @@ impl LogicConjunction {
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
+        loc_assign: &HashMap<&Var, Arc<BmsWrapper<IsSpatialData>>>,
         context: &mut T,
     ) -> Option<bool> {
         let n0_res = context.sent().particles[self.next_lhs].clone().solve(
             agent,
             assignments,
             time_assign,
+            loc_assign,
             context,
         );
         let rhs_res = context.sent().particles[self.next_rhs].clone().solve(
             agent,
             assignments,
             time_assign,
+            loc_assign,
             context,
         );
         if n0_res.is_none() | rhs_res.is_none() {
@@ -952,6 +996,7 @@ impl LogicConjunction {
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
+        loc_assign: &HashMap<&Var, Arc<BmsWrapper<IsSpatialData>>>,
         context: &mut T,
         rhs: bool,
     ) {
@@ -959,6 +1004,7 @@ impl LogicConjunction {
             agent,
             assignments,
             time_assign,
+            loc_assign,
             context,
             rhs,
         );
@@ -966,6 +1012,7 @@ impl LogicConjunction {
             agent,
             assignments,
             time_assign,
+            loc_assign,
             context,
             rhs,
         );
@@ -1008,18 +1055,21 @@ impl LogicDisjunction {
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
+        loc_assign: &HashMap<&Var, Arc<BmsWrapper<IsSpatialData>>>,
         context: &mut T,
     ) -> Option<bool> {
         let n0_res = context.sent().particles[self.next_lhs].clone().solve(
             agent,
             assignments,
             time_assign,
+            loc_assign,
             context,
         );
         let n1_res = context.sent().particles[self.next_rhs].clone().solve(
             agent,
             assignments,
             time_assign,
+            loc_assign,
             context,
         );
         if n0_res != n1_res {
@@ -1045,6 +1095,7 @@ impl LogicDisjunction {
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
+        loc_assign: &HashMap<&Var, Arc<BmsWrapper<IsSpatialData>>>,
         context: &mut T,
         rhs: bool,
     ) {
@@ -1053,6 +1104,7 @@ impl LogicDisjunction {
                 agent,
                 assignments,
                 time_assign,
+                loc_assign,
                 context,
                 rhs,
             )
@@ -1061,6 +1113,7 @@ impl LogicDisjunction {
                 agent,
                 assignments,
                 time_assign,
+                loc_assign,
                 context,
                 rhs,
             )
@@ -1100,11 +1153,12 @@ impl LogicAtom {
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
+        loc_assign: &HashMap<&Var, Arc<BmsWrapper<IsSpatialData>>>,
         context: &mut T,
     ) -> Option<bool> {
-        if let Some(res) = self
-            .pred
-            .grounded_eq(agent, assignments, time_assign, context)
+        if let Some(res) =
+            self.pred
+                .grounded_eq(agent, assignments, time_assign, loc_assign, context)
         {
             if res {
                 Some(true)
@@ -1162,15 +1216,28 @@ impl Particle {
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
+        loc_assign: &HashMap<&Var, Arc<BmsWrapper<IsSpatialData>>>,
         context: &mut T,
     ) -> Option<bool> {
         match *self {
-            Particle::Conjunction(_, ref p) => p.solve(agent, assignments, time_assign, context),
-            Particle::Disjunction(_, ref p) => p.solve(agent, assignments, time_assign, context),
-            Particle::Implication(_, ref p) => p.solve(agent, assignments, time_assign, context),
-            Particle::Equivalence(_, ref p) => p.solve(agent, assignments, time_assign, context),
-            Particle::IndConditional(_, ref p) => p.solve(agent, assignments, time_assign, context),
-            Particle::Atom(_, ref p) => p.solve(agent, assignments, time_assign, context),
+            Particle::Conjunction(_, ref p) => {
+                p.solve(agent, assignments, time_assign, loc_assign, context)
+            }
+            Particle::Disjunction(_, ref p) => {
+                p.solve(agent, assignments, time_assign, loc_assign, context)
+            }
+            Particle::Implication(_, ref p) => {
+                p.solve(agent, assignments, time_assign, loc_assign, context)
+            }
+            Particle::Equivalence(_, ref p) => {
+                p.solve(agent, assignments, time_assign, loc_assign, context)
+            }
+            Particle::IndConditional(_, ref p) => {
+                p.solve(agent, assignments, time_assign, loc_assign, context)
+            }
+            Particle::Atom(_, ref p) => {
+                p.solve(agent, assignments, time_assign, loc_assign, context)
+            }
         }
     }
 
@@ -1180,18 +1247,19 @@ impl Particle {
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
+        loc_assign: &HashMap<&Var, Arc<BmsWrapper<IsSpatialData>>>,
         context: &mut T,
         rhs: bool,
     ) {
         match *self {
             Particle::IndConditional(_, ref p) => {
-                p.substitute(agent, assignments, time_assign, context, rhs)
+                p.substitute(agent, assignments, time_assign, loc_assign, context, rhs)
             }
             Particle::Disjunction(_, ref p) => {
-                p.substitute(agent, assignments, time_assign, context, rhs)
+                p.substitute(agent, assignments, time_assign, loc_assign, context, rhs)
             }
             Particle::Conjunction(_, ref p) => {
-                p.substitute(agent, assignments, time_assign, context, rhs)
+                p.substitute(agent, assignments, time_assign, loc_assign, context, rhs)
             }
             Particle::Atom(_, ref p) => p.substitute(agent, assignments, time_assign, context),
             Particle::Implication(_, _) | Particle::Equivalence(_, _) => {}

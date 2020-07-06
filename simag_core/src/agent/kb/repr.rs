@@ -15,10 +15,10 @@ use crate::agent::kb::{
     VarAssignment,
 };
 use crate::agent::lang::{
-    Assert, ClassDecl, FreeClassMembership, FuncDecl, GrTerminalKind,
+    Assert, BuiltIns, ClassDecl, FreeClassMembership, FuncDecl, GrTerminalKind,
     GrTerminalKind::{Class as ClassTerm, Entity as EntityTerm},
-    GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ParseErrF, ParseTree, Parser, Predicate,
-    ProofResContext, SentVarReq, Var,
+    GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ParseErrF, ParseTree, Parser, Point,
+    Predicate, ProofResContext, SentVarReq, Var,
 };
 
 // TODO: find better solution for self-referential borrows escaping self method scopes
@@ -102,6 +102,9 @@ impl Representation {
                                 Assert::FuncDecl(func_decl) => {
                                     let a = Arc::new(func_decl.into());
                                     self.up_relation(&a, None::<&IExprResult>)
+                                }
+                                Assert::SpecialFunc(BuiltIns::Location(loc_fn)) => {
+                                    self.upsert_objects_with_loc(loc_fn.objects_to_update())
                                 }
                                 _ => return Err(vec![ParseErrF::WrongDef]),
                             }
@@ -192,6 +195,31 @@ impl Representation {
         if is_new {
             let parent = self.classes.get(assert.get_parent()).unwrap();
             parent.add_member(decl);
+        }
+    }
+
+    fn upsert_objects_with_loc(&self, objs: impl Iterator<Item = (GrTerminalKind<String>, Point)>) {
+        for (term, loc) in objs {
+            match term {
+                ClassTerm(class_name) => {
+                    if let Some(class) = self.classes.get(&class_name) {
+                        (*class).with_location(loc, None);
+                    } else {
+                        let class = Class::new(class_name, ClassKind::Membership);
+                        class.with_location(loc, None);
+                        self.classes.insert(class.name.clone(), class);
+                    }
+                }
+                EntityTerm(subject) => {
+                    if let Some(entity) = self.entities.get(&subject) {
+                        (*entity).with_location(loc, None);
+                    } else {
+                        let entity = Entity::new(subject);
+                        entity.with_location(loc, None);
+                        self.entities.insert(entity.name.clone(), entity);
+                    }
+                }
+            }
         }
     }
 

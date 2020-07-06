@@ -9,9 +9,10 @@ use super::bms;
 use crate::agent::kb::repr::{lookahead_rules, Representation};
 use crate::agent::lang::{
     FreeClassMembership, FreeMembershipToClass, FuncDecl, Grounded, GroundedFunc, GroundedMemb,
-    GroundedRef, LogSentence, Operator, Predicate, ProofResContext,
+    GroundedRef, LogSentence, Operator, Point, Predicate, ProofResContext, Time,
 };
 use crate::FLOAT_EQ_ULPS;
+use bms::{BmsWrapper, RecordHistory};
 
 /// A class is a set of entities that share some properties.
 /// It can be a subset of others supersets, and viceversa.
@@ -29,6 +30,7 @@ pub(in crate::agent) struct Class {
     pub beliefs: DashMap<String, Vec<Arc<LogSentence>>>,
     pub rules: RwLock<Vec<Arc<LogSentence>>>,
     pub(in crate::agent::kb) members: RwLock<Vec<ClassMember>>,
+    location: BmsWrapper<RecordHistory>,
 }
 
 impl Class {
@@ -40,7 +42,18 @@ impl Class {
             beliefs: DashMap::new(),
             rules: RwLock::new(Vec::new()),
             members: RwLock::new(Vec::new()),
+            location: BmsWrapper::<RecordHistory>::new(),
         }
+    }
+
+    /// Updates this class location.
+    pub(in crate::agent::kb) fn with_location(
+        &self,
+        loc: Point,
+        was_produced: Option<(u64, Time)>,
+    ) {
+        self.location
+            .new_record(None, Some(loc), None, was_produced);
     }
 
     pub(in crate::agent::kb) fn belongs_to_class(

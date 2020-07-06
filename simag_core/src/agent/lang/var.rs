@@ -113,12 +113,16 @@ impl<'a> std::convert::TryFrom<(&'a VarBorrowed<'a>, &'a ParseContext)> for Var 
 }
 
 impl Var {
-    pub fn get_times(&self) -> BmsWrapper<IsTimeData> {
+    pub fn get_time(&self) -> BmsWrapper<IsTimeData> {
         self.assigned_val
             .as_ref()
             .map(|arg| TimeFn::try_from(arg).unwrap())
             .unwrap()
             .get_time_payload(None)
+    }
+
+    pub fn get_location(&self) -> Point {
+        todo!()
     }
 
     pub fn is_time_var(&self) -> bool {

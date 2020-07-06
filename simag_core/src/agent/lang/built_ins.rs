@@ -1,33 +1,51 @@
 use std::{collections::HashMap, sync::Arc};
 
 use super::{
-    logsent::ParseContext, parser::FuncDeclBorrowed, spatial_semantics::MoveFn,
-    time_semantics::TimeCalc, ParseErrF, Var,
+    logsent::ParseContext,
+    parser::FuncDeclBorrowed,
+    spatial_semantics::{LocFn, MoveFn},
+    time_semantics::TimeCalcFn,
+    ParseErrF, Var,
 };
-use crate::agent::kb::bms::{BmsWrapper, IsTimeData};
+use crate::agent::kb::bms::{BmsWrapper, IsSpatialData, IsTimeData};
 
 pub const MOVE_FN: &[u8] = b"move";
+pub const LOCATION_FN: &[u8] = b"location";
 pub const TIME_CALC_FN: &[u8] = b"time_calc";
 
 /// Special built-in functions callable in logical sentences.
 #[derive(Debug, Clone)]
-pub(in crate::agent) enum BuiltIns {
-    TimeCalculus(TimeCalc),
-    MoveFn(MoveFn),
+pub(in crate::agent) enum BuiltIns<T = String>
+where
+    T: AsRef<str>,
+{
+    // time semantics funcs:
+    TimeCalculus(TimeCalcFn),
+    // spatial semantics funcs:
+    Move(MoveFn),
+    Location(LocFn<T>),
 }
 
-impl BuiltIns {
+impl<T: AsRef<str>> From<LocFn<T>> for BuiltIns<T> {
+    fn from(func: LocFn<T>) -> Self {
+        BuiltIns::Location(func)
+    }
+}
+
+impl<T: AsRef<str>> BuiltIns<T> {
     pub fn generate_uid(&self) -> Vec<u8> {
         match self {
             BuiltIns::TimeCalculus(f) => f.generate_uid(),
-            BuiltIns::MoveFn(f) => f.generate_uid(),
+            BuiltIns::Move(f) => f.generate_uid(),
+            BuiltIns::Location(f) => f.generate_id(),
         }
     }
 
     pub fn get_name(&self) -> &str {
         match self {
             BuiltIns::TimeCalculus(_) => "time_calc",
-            BuiltIns::MoveFn(_) => "move",
+            BuiltIns::Move(_) => "move",
+            BuiltIns::Location(_) => "location",
         }
     }
 
@@ -35,10 +53,12 @@ impl BuiltIns {
     pub fn grounded_eq(
         &self,
         time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
+        loc_assign: &HashMap<&Var, Arc<BmsWrapper<IsSpatialData>>>,
     ) -> Option<bool> {
         match self {
             BuiltIns::TimeCalculus(f) => Some(f.time_resolution(time_assign)),
-            BuiltIns::MoveFn(f) => todo!(),
+            BuiltIns::Location(f) => Some(f.loc_resolution(loc_assign)),
+            BuiltIns::Move(_) => None, // makes no sense in this context
         }
     }
 }
@@ -49,8 +69,8 @@ impl<'a> std::convert::TryFrom<(&'a FuncDeclBorrowed<'a>, &mut ParseContext)> fo
     fn try_from(input: (&FuncDeclBorrowed<'a>, &mut ParseContext)) -> Result<Self, Self::Error> {
         let (decl, ctxt) = input;
         match decl.name.0 {
-            MOVE_FN => Ok(BuiltIns::MoveFn(MoveFn::try_from((decl, &mut *ctxt))?)),
-            TIME_CALC_FN => Ok(BuiltIns::TimeCalculus(TimeCalc::try_from((
+            MOVE_FN => Ok(BuiltIns::Move(MoveFn::try_from((decl, &mut *ctxt))?)),
+            TIME_CALC_FN => Ok(BuiltIns::TimeCalculus(TimeCalcFn::try_from((
                 decl, &mut *ctxt,
             ))?)),
             _ => Err(ParseErrF::WrongDef),

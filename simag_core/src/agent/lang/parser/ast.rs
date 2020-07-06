@@ -6,6 +6,7 @@ use crate::agent::lang::{
     common::Assert,
     fn_decl::FuncDecl,
     logsent::{ParseContext, SentKind},
+    spatial_semantics::LocFn,
     LogSentence,
 };
 
@@ -88,11 +89,20 @@ impl<'a> ASTNode<'a> {
                     Ok(Some(ParseTree::Assertion(vec![Assert::ClassDecl(cls)])))
                 }
                 AssertBorrowed::FuncDecl(ref decl) => {
-                    let mut func = FuncDecl::try_from((decl, &mut *context))?;
-                    if context.in_assertion && context.is_tell {
-                        func.var_substitution()?;
+                    match FuncDecl::try_from((decl, &mut *context)) {
+                        Ok(mut func) => {
+                            if context.in_assertion && context.is_tell {
+                                func.var_substitution()?;
+                            }
+                            Ok(Some(ParseTree::Assertion(vec![Assert::FuncDecl(func)])))
+                        }
+                        Err(_) => {
+                            let func = LocFn::try_from((decl, &mut *context))?;
+                            Ok(Some(ParseTree::Assertion(vec![Assert::SpecialFunc(
+                                func.into(),
+                            )])))
+                        }
                     }
-                    Ok(Some(ParseTree::Assertion(vec![Assert::FuncDecl(func)])))
                 }
             },
             ASTNode::Chain(ref multi_decl) => {

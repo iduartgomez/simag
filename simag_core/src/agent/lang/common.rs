@@ -13,10 +13,10 @@ use super::{
     spatial_semantics::{SpatialArg, SpatialFnErr},
     time_semantics::{TimeArg, TimeFn, TimeFnErr, TimeOps},
     var::Var,
-    BuiltIns, GroundedFunc, GroundedMemb, Terminal,
+    BuiltIns, GroundedFunc, GroundedMemb, Point, Terminal,
 };
 use crate::agent::{
-    kb::bms::{BmsWrapper, HasBms, IsTimeData},
+    kb::bms::{BmsWrapper, HasBms, IsSpatialData, IsTimeData},
     kb::{repr::Representation, VarAssignment},
 };
 use crate::FLOAT_EQ_ULPS;
@@ -447,7 +447,8 @@ impl Assert {
             Assert::ClassDecl(c) => c.contains_var(var),
             Assert::SpecialFunc(builtins) => match builtins {
                 BuiltIns::TimeCalculus(f) => f.contains_var(var),
-                BuiltIns::MoveFn(f) => f.contains_var(var),
+                BuiltIns::Move(f) => f.contains_var(var),
+                BuiltIns::Location(f) => f.contains_var(var),
             },
         }
     }
@@ -493,12 +494,13 @@ impl Assert {
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
+        loc_assign: &HashMap<&Var, Arc<BmsWrapper<IsSpatialData>>>,
         context: &mut T,
     ) -> Option<bool> {
         match self {
             Assert::FuncDecl(f) => f.grounded_eq(agent, assignments, time_assign, context),
             Assert::ClassDecl(c) => c.grounded_eq(agent, assignments, time_assign, context),
-            Assert::SpecialFunc(f) => f.grounded_eq(time_assign),
+            Assert::SpecialFunc(f) => f.grounded_eq(time_assign, loc_assign),
         }
     }
 
@@ -619,7 +621,7 @@ pub(in crate::agent) enum ConstraintValue {
     Terminal(Terminal),
     String(String),
     TimePayload(TimeFn),
-    SpatialPayload,
+    SpatialPayload(Point),
 }
 
 impl<'a> TryFrom<(&'a UnconstraintArg<'a>, &'a ParseContext)> for ConstraintValue {
@@ -635,7 +637,7 @@ impl<'a> TryFrom<(&'a UnconstraintArg<'a>, &'a ParseContext)> for ConstraintValu
                 String::from_utf8_lossy(slice).into_owned(),
             )),
             UnconstraintArg::Keyword(b"time") => Ok(ConstraintValue::TimePayload(TimeFn::ThisTime)),
-            UnconstraintArg::Keyword(b"location") => Ok(ConstraintValue::SpatialPayload),
+            UnconstraintArg::Keyword(b"location") => todo!(),
             UnconstraintArg::Keyword(kw) => Err(ParseErrF::ReservedKW(
                 str::from_utf8(kw).unwrap().to_owned(),
             )),
@@ -649,7 +651,7 @@ impl<'a> ConstraintValue {
             ConstraintValue::Terminal(t) => t.generate_uid(),
             ConstraintValue::String(s) => Vec::from_iter(s.as_bytes().iter().cloned()),
             ConstraintValue::TimePayload(t) => t.generate_uid(),
-            ConstraintValue::SpatialPayload => vec![0], // FIXME
+            ConstraintValue::SpatialPayload(_) => vec![0], // FIXME
         }
     }
 

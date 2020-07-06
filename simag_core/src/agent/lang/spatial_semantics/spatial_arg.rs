@@ -51,7 +51,7 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for SpatialArg {
                 var0 = Some(val.get_var());
                 None
             }
-            Ok(ConstraintValue::SpatialPayload) => None,
+            Ok(ConstraintValue::SpatialPayload(_)) => return Err(ParseErrF::WrongDef),
             _ => return Err(ParseErrF::WrongDef),
         };
 
