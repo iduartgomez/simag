@@ -538,6 +538,21 @@ impl BmsWrapper<RecordHistory> {
     pub fn is_predicate(&self) -> Option<&Time> {
         self.pred.as_ref()
     }
+
+    /// Get records at a given point space if any at the provided time.
+    //  If the provided time is none, then only the last record will be retrieved
+    pub fn get_record_at_location(&self, loc: &Point, time: Option<Time>) -> Vec<Option<f32>> {
+        if let Some(_time) = time {
+            todo!()
+        } else {
+            if let (rec_val, Some(rec_loc)) = self.get_last_value() {
+                if &rec_loc == loc {
+                    return vec![rec_val];
+                }
+            }
+            Vec::new()
+        }
+    }
 }
 
 impl OverwriteBms for BmsWrapper<RecordHistory> {

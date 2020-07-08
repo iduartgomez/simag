@@ -645,6 +645,34 @@ impl Representation {
         self.entities.clear();
         self.classes.clear();
     }
+
+    pub(super) fn find_objs_by_loc<'a, T: AsRef<str> + 'a>(
+        &self,
+        objects: impl Iterator<Item = (&'a GrTerminalKind<T>, &'a Point)>,
+    ) -> Vec<&'a GrTerminalKind<T>> {
+        let mut answer = vec![];
+        for (term, loc) in objects {
+            match term {
+                ClassTerm(class_name) => {
+                    if let Some(class) = self.classes.get(class_name.as_ref()) {
+                        let rec = class.location.get_record_at_location(loc, None);
+                        if !rec.is_empty() {
+                            answer.push(term)
+                        }
+                    }
+                }
+                EntityTerm(subject) => {
+                    if let Some(entity) = self.entities.get(subject.as_ref()) {
+                        let rec = entity.location.get_record_at_location(loc, None);
+                        if !rec.is_empty() {
+                            answer.push(term)
+                        }
+                    }
+                }
+            }
+        }
+        answer
+    }
 }
 
 /// Error type for query failures.

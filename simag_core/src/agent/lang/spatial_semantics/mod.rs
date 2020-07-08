@@ -9,7 +9,7 @@ use smallvec::SmallVec;
 
 use super::ParseErrF;
 pub(super) use errors::SpatialFnErr;
-pub(super) use location_fn::LocFn;
+pub(in crate::agent) use location_fn::LocFn;
 pub(super) use move_fn::MoveFn;
 pub(super) use spatial_arg::SpatialArg;
 pub(in crate::agent) use spatial_ops::SpatialOps;

@@ -55,6 +55,13 @@ impl<T: AsRef<str>> LocFn<T> {
             _ => None,
         })
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&GrTerminalKind<T>, &Point)> {
+        self.locations.iter().filter_map(|(t, l)| match l {
+            ObjLocation::Reified(loc) => Some((t, loc)),
+            _ => None,
+        })
+    }
 }
 
 impl<'a> std::convert::TryFrom<(&'a FuncDeclBorrowed<'a>, &'a mut ParseContext)> for LocFn<String> {

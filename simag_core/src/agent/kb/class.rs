@@ -30,7 +30,7 @@ pub(in crate::agent) struct Class {
     pub beliefs: DashMap<String, Vec<Arc<LogSentence>>>,
     pub rules: RwLock<Vec<Arc<LogSentence>>>,
     pub(in crate::agent::kb) members: RwLock<Vec<ClassMember>>,
-    location: BmsWrapper<RecordHistory>,
+    pub(in crate::agent::kb) location: BmsWrapper<RecordHistory>,
 }
 
 impl Class {

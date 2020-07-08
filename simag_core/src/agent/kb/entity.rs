@@ -45,7 +45,7 @@ pub(crate) struct Entity {
     classes: DashMap<String, Arc<GroundedMemb>>,
     relations: DashMap<String, Vec<Arc<GroundedFunc>>>,
     beliefs: DashMap<String, Vec<Arc<LogSentence>>>,
-    location: BmsWrapper<RecordHistory>,
+    pub(super) location: BmsWrapper<RecordHistory>,
 }
 
 impl Entity {

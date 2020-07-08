@@ -497,13 +497,11 @@ fn repr_inference_spatial_calc() {
 
     let source = "
         (fn::location($John at '0.0.0'))
-        /*
         (run(at '0.0.0')[$John] and sleep(at '1.1.0')[$John])
         (let x, l1:location, l2:location, t0:time='2015-01-02T00:00:00Z' in
             (run(where l1 is this.loc)[x=1] and sleep(where l2 is this.loc)[x])
             := fn::move(from l1 to l2, since t0 until 'now')[x]
         )
-        */
     ";
     rep.tell(source).unwrap();
     let res = rep.ask("(fn::location($John at '1.1.0'))").unwrap();

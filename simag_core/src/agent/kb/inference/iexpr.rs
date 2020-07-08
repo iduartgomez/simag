@@ -23,8 +23,8 @@ use crate::agent::kb::{
     VarAssignment,
 };
 use crate::agent::lang::{
-    Assert, ClassDecl, FreeClassMembership, FreeMembershipToClass, FuncDecl, Grounded,
-    GroundedFunc, GroundedMemb, LogSentence, ParseTree, Predicate, ProofResContext, SentID,
+    Assert, BuiltIns, ClassDecl, FreeClassMembership, FreeMembershipToClass, FuncDecl, Grounded,
+    GroundedFunc, GroundedMemb, LocFn, LogSentence, ParseTree, Predicate, ProofResContext, SentID,
     SentVarReq, SpatialOps, Terminal, Time, TimeOps, Var, VarKind,
 };
 use chrono::Utc;
@@ -98,6 +98,10 @@ impl<'rep> Inference<'rep> {
 
         if !self.query.func_memb_query.is_empty() {
             self.tpool.install(|| self.query_func_memb());
+        }
+
+        if !self.query.loc_query.is_empty() {
+            self.tpool.install(|| self.query_loc())
         }
     }
 
@@ -267,6 +271,14 @@ impl<'rep> Inference<'rep> {
                     }
                 }
             });
+    }
+
+    /// Find or asserts if objects are positioned in a specified location.
+    /// ie. (fn::location($John at '1.1.0'))
+    fn query_loc(&self) {
+        self.query.loc_query.par_iter().for_each(|loc_fn| {
+            self.kb.find_objs_by_loc(loc_fn.iter());
+        });
     }
 }
 
@@ -1060,6 +1072,7 @@ pub(in crate::agent::kb) struct QueryProcessed {
     func_queries_free: HashMap<Arc<Var>, Vec<Arc<FuncDecl>>>,
     func_queries_grounded: Vec<Arc<GroundedFunc>>,
     func_memb_query: HashMap<Arc<Var>, Vec<Arc<FuncDecl>>>,
+    loc_query: Vec<LocFn<String>>,
 }
 
 impl QueryProcessed {
@@ -1069,8 +1082,9 @@ impl QueryProcessed {
             cls_queries_grounded: HashMap::new(),
             cls_memb_query: HashMap::new(),
             func_queries_free: HashMap::new(),
-            func_queries_grounded: vec![],
+            func_queries_grounded: Vec::new(),
             func_memb_query: HashMap::new(),
+            loc_query: Vec::new(),
         }
     }
 
@@ -1184,6 +1198,9 @@ impl QueryProcessed {
                                     Assert::FuncDecl(fdecl) => {
                                         let fdecl = Arc::new(fdecl);
                                         assert_rel(&mut self, fdecl)?;
+                                    }
+                                    Assert::SpecialFunc(BuiltIns::Location(loc_fn)) => {
+                                        self.loc_query.push(loc_fn)
                                     }
                                     _ => unreachable!(),
                                 }
