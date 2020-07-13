@@ -2,10 +2,10 @@ use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
 use std::mem;
-use std::sync::Arc;
+use std::{hash::Hash, sync::Arc};
 
 use crate::agent::kb::inference::iexpr::QueryProcessed;
-use crate::agent::lang::{GroundedFunc, GroundedMemb, Time, Var};
+use crate::agent::lang::{GrTerminalKind, GroundedFunc, GroundedMemb, Point, Time, Var};
 
 type ObjName<'a> = &'a str;
 type QueryPred = String;
@@ -23,8 +23,26 @@ pub(in crate::agent::kb) struct InfResults<'rep> {
     pub grounded_queries: DashMap<QueryPred, GroundedResults<'rep>>,
     membership: DashMap<Arc<Var>, QueryResMemb<'rep>>,
     relationships: DashMap<Arc<Var>, QueryResRels<'rep>>,
+    objs_by_loc: DashMap<Point, HashSet<LocResult>>,
     query: Arc<QueryProcessed>,
 }
+
+#[derive(Debug)]
+struct LocResult(Arc<GrTerminalKind<String>>, bool);
+
+impl Hash for LocResult {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state)
+    }
+}
+
+impl PartialEq for LocResult {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for LocResult {}
 
 impl<'rep> InfResults<'rep> {
     pub fn new(query: Arc<QueryProcessed>) -> InfResults<'rep> {
@@ -32,6 +50,7 @@ impl<'rep> InfResults<'rep> {
             grounded_queries: DashMap::new(),
             membership: DashMap::new(),
             relationships: DashMap::new(),
+            objs_by_loc: DashMap::new(),
             query,
         }
     }
@@ -69,10 +88,28 @@ impl<'rep> InfResults<'rep> {
             .insert(obj, res);
     }
 
+    pub fn add_objs_by_loc<'a: 'b, 'b>(
+        &'b self,
+        objs: impl Iterator<Item = (&'a Point, Arc<GrTerminalKind<String>>, bool)>,
+    ) {
+        for (loc, obj, val) in objs {
+            if let Some(mut entries) = self.objs_by_loc.get_mut(loc) {
+                entries.insert(LocResult(obj, val));
+            } else {
+                self.objs_by_loc.insert(loc.clone(), {
+                    let mut hs = HashSet::new();
+                    hs.insert(LocResult(obj, val));
+                    hs
+                });
+            }
+        }
+    }
+
     pub fn get_results_single(&self) -> Option<bool> {
-        if self.grounded_queries.is_empty() {
+        if self.grounded_queries.is_empty() && self.objs_by_loc.is_empty() {
             return None;
         }
+
         for r0 in self.grounded_queries.iter() {
             for r1 in r0.values() {
                 if let Some((false, _)) = *r1 {
@@ -82,6 +119,13 @@ impl<'rep> InfResults<'rep> {
                 }
             }
         }
+
+        for objs in self.objs_by_loc.iter() {
+            if objs.iter().any(|obj| !obj.1) {
+                return Some(false);
+            }
+        }
+
         Some(true)
     }
 

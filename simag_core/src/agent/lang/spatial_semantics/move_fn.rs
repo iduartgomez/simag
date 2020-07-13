@@ -1,16 +1,20 @@
 use std::convert::TryFrom;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use super::SpatialArg;
 use crate::agent::{
+    kb::{
+        bms::{BmsWrapper, IsSpatialData},
+        VarAssignment,
+    },
     lang::{
         built_ins::MOVE_FN,
         logsent::ParseContext,
         parser::{FuncDeclBorrowed, TerminalBorrowed},
         time_semantics::TimeArg,
-        Terminal, Var,
+        ProofResContext, Terminal, Var,
     },
-    ParseErrF,
+    ParseErrF, Representation,
 };
 use smallvec::SmallVec;
 
@@ -69,10 +73,6 @@ impl MoveFn {
         }
     }
 
-    pub fn generate_uid(&self) -> Vec<u8> {
-        Vec::from(b"move".as_ref())
-    }
-
     pub fn contains_var(&self, var: &Var) -> bool {
         for arg in &self.vars {
             if &**arg == var {
@@ -80,6 +80,21 @@ impl MoveFn {
             }
         }
         false
+    }
+
+    pub fn generate_uid(&self) -> Vec<u8> {
+        Vec::from(b"move".as_ref())
+    }
+
+    pub fn substitute<T: ProofResContext>(
+        &self,
+        _agent: &Representation,
+        _assignments: Option<&HashMap<&Var, &VarAssignment>>,
+        _loc_assign: &HashMap<&Var, Arc<BmsWrapper<IsSpatialData>>>,
+        _context: &mut T,
+    ) {
+        // register the moved objects
+        todo!()
     }
 }
 

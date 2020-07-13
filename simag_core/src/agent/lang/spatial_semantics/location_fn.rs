@@ -17,7 +17,7 @@ pub(in crate::agent) struct LocFn<T>
 where
     T: AsRef<str>,
 {
-    locations: Vec<(GrTerminalKind<T>, ObjLocation)>,
+    locations: Vec<(Arc<GrTerminalKind<T>>, ObjLocation)>,
 }
 
 #[derive(Debug, Clone)]
@@ -46,7 +46,7 @@ impl<T: AsRef<str>> LocFn<T> {
         todo!()
     }
 
-    pub fn objects_to_update(self) -> impl Iterator<Item = (GrTerminalKind<T>, Point)>
+    pub fn objects_to_update(self) -> impl Iterator<Item = (Arc<GrTerminalKind<T>>, Point)>
     where
         T: 'static,
     {
@@ -56,7 +56,7 @@ impl<T: AsRef<str>> LocFn<T> {
         })
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&GrTerminalKind<T>, &Point)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&Arc<GrTerminalKind<T>>, &Point)> {
         self.locations.iter().filter_map(|(t, l)| match l {
             ObjLocation::Reified(loc) => Some((t, loc)),
             _ => None,
@@ -86,7 +86,7 @@ impl<'a> std::convert::TryFrom<(&'a FuncDeclBorrowed<'a>, &'a mut ParseContext)>
                         }
                     };
                     let term = GrTerminalKind::from(&**term);
-                    locations.push((term, loc));
+                    locations.push((Arc::new(term), loc));
                 } else {
                     return Err(ParseErrF::ToDo);
                 }

@@ -18,14 +18,17 @@ use std::sync::{
 
 use crate::agent::kb::{
     bms::{HasBms, OverwriteBms},
+    class::Class,
+    entity::Entity,
     inference::results::{GroundedResults, InfResults},
     repr::{Answer, Representation},
     VarAssignment,
 };
 use crate::agent::lang::{
-    Assert, BuiltIns, ClassDecl, FreeClassMembership, FreeMembershipToClass, FuncDecl, Grounded,
-    GroundedFunc, GroundedMemb, LocFn, LogSentence, ParseTree, Predicate, ProofResContext, SentID,
-    SentVarReq, SpatialOps, Terminal, Time, TimeOps, Var, VarKind,
+    Assert, BuiltIns, ClassDecl, FreeClassMembership, FreeMembershipToClass, FuncDecl,
+    GrTerminalKind, Grounded, GroundedFunc, GroundedMemb, LocFn, LogSentence, ParseTree, Point,
+    Predicate, ProofResContext, SentID, SentVarReq, SpatialOps, Terminal, Time, TimeOps, Var,
+    VarKind,
 };
 use chrono::Utc;
 use dashmap::DashMap;
@@ -277,8 +280,103 @@ impl<'rep> Inference<'rep> {
     /// ie. (fn::location($John at '1.1.0'))
     fn query_loc(&self) {
         self.query.loc_query.par_iter().for_each(|loc_fn| {
-            self.kb.find_objs_by_loc(loc_fn.iter());
+            let objs = self.kb.find_objs_by_loc(loc_fn.iter());
+
+            {
+                let not_retrieved_objs = objs.iter().filter_map(|(loc, term, was_located)| {
+                    if !was_located {
+                        Some((loc, term))
+                    } else {
+                        None
+                    }
+                });
+                for (point, obj) in not_retrieved_objs {
+                    match &**obj {
+                        GrTerminalKind::Entity(ent) => {
+                            if let Some(ent) = self.kb.entities.get(ent.as_str()) {
+                                let trial = MoveInfTrial {
+                                    kb: self.kb,
+                                    obj: Movable::Entity(&*ent),
+                                    term: obj,
+                                    nodes: DashMap::new(),
+                                    loc: *point,
+                                };
+                                self.results.add_objs_by_loc(trial.unify().into_iter())
+                            }
+                        }
+                        GrTerminalKind::Class(cls) => todo!(),
+                    }
+                }
+            }
+
+            let initially_retrieved = objs.into_iter().filter(|(_, _, res)| *res);
+            self.results.add_objs_by_loc(initially_retrieved);
         });
+    }
+}
+
+struct MoveInfTrial<'rep> {
+    kb: &'rep Representation,
+    obj: Movable<'rep>,
+    term: &'rep Arc<GrTerminalKind<String>>,
+    loc: &'rep Point,
+    nodes: DashMap<&'rep str, Vec<ProofNode<'rep>>>,
+}
+
+enum Movable<'rep> {
+    Class(&'rep Class),
+    Entity(&'rep Entity),
+}
+
+impl<'rep> MoveInfTrial<'rep> {
+    fn unify(self) -> Option<(&'rep Point, Arc<GrTerminalKind<String>>, bool)> {
+        match self.obj {
+            Movable::Entity(ent) => {
+                for sent in ent.move_beliefs.read().iter().rev() {
+                    // try unbifying from last sentence to first
+                    add_rule_node(sent, &self.nodes);
+                    if self.unification_trial(sent) {
+                        // find out if this moved the obj
+                        let it = std::iter::once((self.term, self.loc));
+                        if let Some(res) = self
+                            .kb
+                            .find_objs_by_loc(it)
+                            .into_iter()
+                            .find(|(_, _, res)| *res)
+                        {
+                            return Some(res);
+                        }
+                    }
+                }
+            }
+            _ => todo!(),
+        }
+        None
+    }
+
+    fn unification_trial(&self, sent: &Arc<LogSentence>) -> bool {
+        let sent_req: SentVarReq = sent.get_lhs_predicates().into();
+        for var_requirements in sent_req {
+            if let Some(assignments) = meet_sent_requirements(self.kb, &var_requirements) {
+                if let Some(mapped) = ArgsProduct::product(assignments) {
+                    for args in mapped {
+                        let args: ProofArgs = ProofArgs::new(args);
+                        let n_args = &args.as_proof_input();
+                        let mut antecedents = vec![];
+                        for p in sent.get_all_lhs_predicates() {
+                            antecedents.push(p.get_name())
+                        }
+                        let node = ProofNode::new(sent, antecedents);
+                        let context = IExprResult::new(args.clone(), &node);
+                        let solved_proof = node.proof.solve(self.kb, Some(n_args), context);
+                        if solved_proof.result.is_some() {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
     }
 }
 
@@ -530,7 +628,6 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
             // the proofs are tried in order of addition to the KB
 
             if let Some(nodes) = self.nodes.get(parent) {
-                // if let Some(nodes) = self.nodes.get(parent) {
                 // the node for each rule is stored in an efficient sorted list
                 // by rule creation datetime, from newest to oldest
                 // as the newest rules take precedence
@@ -781,29 +878,33 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
                     }
                 };
                 for sent in comp.difference(&rules) {
-                    let mut antecedents = vec![];
-                    for p in sent.get_all_lhs_predicates() {
-                        let p = unsafe { &*(p as *const Assert) as &'rep Assert };
-                        antecedents.push(p.get_name())
-                    }
-                    let node = ProofNode::new(sent, antecedents);
-                    for pred in sent.get_rhs_predicates() {
-                        let pred = unsafe { &*(pred as *const Assert) as &'rep Assert };
-                        let name = pred.get_name();
-                        let mut ls = self.nodes.entry(name).or_insert_with(Vec::new);
-                        if ls
-                            .iter()
-                            .map(|x| x.proof.id)
-                            .find(|x| *x == sent.id)
-                            .is_none()
-                        {
-                            ls.push(node.clone());
-                        }
-                        ls.sort_by(|a, b| a.proof.created.cmp(&b.proof.created).reverse());
-                    }
+                    add_rule_node(sent, &self.nodes);
                 }
             }
         }
+    }
+}
+
+fn add_rule_node<'rep>(sent: &Arc<LogSentence>, nodes: &DashMap<&'rep str, Vec<ProofNode<'rep>>>) {
+    let mut antecedents = vec![];
+    for p in sent.get_all_lhs_predicates() {
+        let p = unsafe { &*(p as *const Assert) as &'rep Assert };
+        antecedents.push(p.get_name())
+    }
+    let node = ProofNode::new(sent, antecedents);
+    for pred in sent.get_rhs_predicates() {
+        let pred = unsafe { &*(pred as *const Assert) as &'rep Assert };
+        let name = pred.get_name();
+        let mut ls = nodes.entry(name).or_insert_with(Vec::new);
+        if ls
+            .iter()
+            .map(|x| x.proof.id)
+            .find(|x| *x == sent.id)
+            .is_none()
+        {
+            ls.push(node.clone());
+        }
+        ls.sort_by(|a, b| a.proof.created.cmp(&b.proof.created).reverse());
     }
 }
 
@@ -1061,6 +1162,7 @@ impl<'rep> Hash for ProofNode<'rep> {
 pub(in crate::agent) enum QueryInput {
     AskRelationalFunc(Arc<GroundedFunc>),
     AskClassMember(Arc<GroundedMemb>),
+    AskLocation(LocFn<String>),
     ManyQueries(VecDeque<ParseTree>),
 }
 
@@ -1185,6 +1287,7 @@ impl QueryProcessed {
             QueryInput::AskRelationalFunc(fdecl) => {
                 self.func_queries_grounded.push(fdecl);
             }
+            QueryInput::AskLocation(loc_fn) => self.loc_query.push(loc_fn),
             QueryInput::ManyQueries(trees) => {
                 for parsetree in trees {
                     match parsetree {

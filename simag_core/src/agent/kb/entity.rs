@@ -12,6 +12,7 @@ use crate::agent::lang::{
 };
 use crate::FLOAT_EQ_ULPS;
 use bms::{BmsWrapper, RecordHistory};
+use parking_lot::RwLock;
 
 /// An entity is a singleton, the unique member of it's own class.
 ///
@@ -45,6 +46,7 @@ pub(crate) struct Entity {
     classes: DashMap<String, Arc<GroundedMemb>>,
     relations: DashMap<String, Vec<Arc<GroundedFunc>>>,
     beliefs: DashMap<String, Vec<Arc<LogSentence>>>,
+    pub(super) move_beliefs: RwLock<Vec<Arc<LogSentence>>>,
     pub(super) location: BmsWrapper<RecordHistory>,
 }
 
@@ -55,6 +57,7 @@ impl Entity {
             classes: DashMap::new(),
             relations: DashMap::new(),
             beliefs: DashMap::new(),
+            move_beliefs: RwLock::new(Vec::new()),
             location: BmsWrapper::<RecordHistory>::new(),
         }
     }
@@ -339,6 +342,10 @@ impl Entity {
     }
 
     pub(in crate::agent::kb) fn add_belief(&self, belief: Arc<LogSentence>, parent: &str) {
+        if belief.has_move_func() {
+            self.move_beliefs.write().push(belief.clone());
+        }
+
         if let Some(mut ls) = self.beliefs.get_mut(parent) {
             ls.push(belief)
         } else {

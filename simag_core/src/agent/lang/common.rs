@@ -510,12 +510,18 @@ impl Assert {
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
         time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
+        loc_assign: &HashMap<&Var, Arc<BmsWrapper<IsSpatialData>>>,
         context: &mut T,
     ) {
-        match *self {
-            Assert::FuncDecl(ref f) => f.substitute(agent, assignments, time_assign, context),
-            Assert::ClassDecl(ref c) => c.substitute(agent, assignments, time_assign, context),
-            Assert::SpecialFunc(_) => todo!(),
+        match self {
+            Assert::FuncDecl(f) => f.substitute(agent, assignments, time_assign, context),
+            Assert::ClassDecl(c) => c.substitute(agent, assignments, time_assign, context),
+            Assert::SpecialFunc(BuiltIns::Move(move_fn)) => move_fn.substitute(agent, assignments, loc_assign, context),
+            Assert::SpecialFunc(_) => unreachable!(format!(
+                "SIMAG - {}:{} - unreachable: implication cannot have any other than `move` buil-in func",
+                file!(),
+                line!()
+            )),
         }
     }
 

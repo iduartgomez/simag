@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{hash_map::RandomState, HashMap};
 use std::iter::FromIterator;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -103,9 +103,13 @@ impl Representation {
                                     let a = Arc::new(func_decl.into());
                                     self.up_relation(&a, None::<&IExprResult>)
                                 }
-                                Assert::SpecialFunc(BuiltIns::Location(loc_fn)) => {
-                                    self.upsert_objects_with_loc(loc_fn.objects_to_update())
-                                }
+                                Assert::SpecialFunc(BuiltIns::Location(loc_fn)) => self
+                                    .upsert_objects_with_loc(loc_fn.objects_to_update().flat_map(
+                                        |(obj, loc)| match Arc::try_unwrap(obj) {
+                                            Ok(t) => Some((t, loc)),
+                                            _ => None,
+                                        },
+                                    )),
                                 _ => return Err(vec![ParseErrF::WrongDef]),
                             }
                         }
@@ -294,7 +298,7 @@ impl Representation {
                 class.add_belief(belief.clone(), name);
                 repr.classes.insert(subject.to_string(), class);
             }
-        };
+        }
 
         for p in belief.get_all_predicates() {
             match *p {
@@ -367,6 +371,7 @@ impl Representation {
                     }
                 }
             };
+
         let iter_func_candidates =
             |func_decl: &FuncDecl, candidates: &HashMap<&Var, Vec<Arc<VarAssignment>>>| {
                 let mapped = ArgsProduct::product(candidates.clone());
@@ -392,12 +397,22 @@ impl Representation {
                 for var in candidates.keys() {
                     let it = belief.get_rhs_predicates();
                     for pred in it.iter().filter(|x| x.contains(&**var)) {
-                        match **pred {
+                        match pred {
                             Assert::ClassDecl(ref cls_decl) => {
                                 iter_cls_candidates(cls_decl, &candidates)
                             }
                             Assert::FuncDecl(ref func_decl) => {
                                 iter_func_candidates(func_decl, &candidates)
+                            }
+                            Assert::SpecialFunc(BuiltIns::Move(move_fn)) => {
+                                if let Some(mapped) = ArgsProduct::product(candidates.clone()) {
+                                    for args in mapped {
+                                        let args: HashMap<_, _, RandomState> =
+                                            HashMap::from_iter(args.iter().map(|(v, a)| (*v, &*a)));
+                                        // FIXME: get theoretical destination loc from the move fn
+                                        // ask if the obj is in that location
+                                    }
+                                }
                             }
                             Assert::SpecialFunc(_) => {}
                         }
@@ -648,25 +663,33 @@ impl Representation {
 
     pub(super) fn find_objs_by_loc<'a, T: AsRef<str> + 'a>(
         &self,
-        objects: impl Iterator<Item = (&'a GrTerminalKind<T>, &'a Point)>,
-    ) -> Vec<&'a GrTerminalKind<T>> {
+        objects: impl Iterator<Item = (&'a Arc<GrTerminalKind<T>>, &'a Point)>,
+    ) -> Vec<(&'a Point, Arc<GrTerminalKind<T>>, bool)> {
         let mut answer = vec![];
         for (term, loc) in objects {
-            match term {
+            match &**term {
                 ClassTerm(class_name) => {
                     if let Some(class) = self.classes.get(class_name.as_ref()) {
                         let rec = class.location.get_record_at_location(loc, None);
                         if !rec.is_empty() {
-                            answer.push(term)
+                            answer.push((loc, term.clone(), true))
+                        } else {
+                            answer.push((loc, term.clone(), false))
                         }
+                    } else {
+                        answer.push((loc, term.clone(), false))
                     }
                 }
                 EntityTerm(subject) => {
                     if let Some(entity) = self.entities.get(subject.as_ref()) {
                         let rec = entity.location.get_record_at_location(loc, None);
                         if !rec.is_empty() {
-                            answer.push(term)
+                            answer.push((loc, term.clone(), true))
+                        } else {
+                            answer.push((loc, term.clone(), false))
                         }
+                    } else {
+                        answer.push((loc, term.clone(), false))
                     }
                 }
             }

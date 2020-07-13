@@ -29,13 +29,13 @@ pub(in crate::agent) trait TimeOps: OpArgsOps {
             match arg {
                 OpArg::Time(arg) if arg.contains_payload() => {
                     if v.is_some() {
-                        panic!("can only set time value once")
+                        unreachable!("SIMAG: can only set time value once")
                     }
                     v = Some(arg.get_time_payload(assignments, value));
                 }
                 OpArg::Time(SinceVar(var)) => {
                     if v.is_some() {
-                        panic!("can only set time value once")
+                        unreachable!("SIMAG: can only set time value once")
                     }
                     if let Some(val) = assignments.get(&**var) {
                         v = Some((&**val).clone());

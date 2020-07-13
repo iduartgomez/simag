@@ -26,7 +26,6 @@ pub(in crate::agent) struct TimeCalcFn {
 }
 
 impl TimeCalcFn {
-    #[inline]
     fn new(other: &FuncDeclBorrowed, context: &mut ParseContext) -> Result<TimeCalcFn, ParseErrF> {
         if other.args.is_some() || other.op_args.is_none() {
             return Err(ParseErrF::WrongDef);
