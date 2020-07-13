@@ -342,10 +342,6 @@ impl Entity {
     }
 
     pub(in crate::agent::kb) fn add_belief(&self, belief: Arc<LogSentence>, parent: &str) {
-        if belief.has_move_func() {
-            self.move_beliefs.write().push(belief.clone());
-        }
-
         if let Some(mut ls) = self.beliefs.get_mut(parent) {
             ls.push(belief)
         } else {

@@ -333,7 +333,7 @@ impl<'rep> MoveInfTrial<'rep> {
         match self.obj {
             Movable::Entity(ent) => {
                 for sent in ent.move_beliefs.read().iter().rev() {
-                    // try unbifying from last sentence to first
+                    // try unifying from last sentence to first
                     add_rule_node(sent, &self.nodes);
                     if self.unification_trial(sent) {
                         // find out if this moved the obj
@@ -1001,7 +1001,7 @@ pub(in crate::agent::kb) fn meet_sent_requirements<'rep>(
             if results.contains_key(var) {
                 let v = results.get_mut(var).unwrap();
                 v.push(Arc::new(VarAssignment {
-                    name,
+                    name: GrTerminalKind::from(name),
                     classes: gr_memb,
                     funcs: gr_relations,
                 }))
@@ -1009,7 +1009,7 @@ pub(in crate::agent::kb) fn meet_sent_requirements<'rep>(
                 results.insert(
                     var,
                     vec![Arc::new(VarAssignment {
-                        name,
+                        name: GrTerminalKind::from(name),
                         classes: gr_memb,
                         funcs: gr_relations,
                     })],
@@ -1388,19 +1388,19 @@ fn args_iterator() {
     let z = Var::from("z");
 
     let a = Arc::new(VarAssignment {
-        name: "A",
+        name: GrTerminalKind::Class("A"),
         classes: HashMap::new(),
         funcs: HashMap::new(),
     });
 
     let b = Arc::new(VarAssignment {
-        name: "B",
+        name: GrTerminalKind::Class("B"),
         classes: HashMap::new(),
         funcs: HashMap::new(),
     });
 
     let c = Arc::new(VarAssignment {
-        name: "C",
+        name: GrTerminalKind::Class("C"),
         classes: HashMap::new(),
         funcs: HashMap::new(),
     });

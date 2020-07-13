@@ -1,6 +1,6 @@
 use std::iter::FromIterator;
 use std::str;
-use std::sync::Arc;
+use std::{ops::Deref, sync::Arc};
 
 use super::{errors::ParseErrF, logsent::ParseContext, parser::TerminalBorrowed, var::Var};
 
@@ -113,6 +113,17 @@ where
         match self {
             GrTerminalKind::Entity(s) => s.as_ref(),
             GrTerminalKind::Class(s) => s.as_ref(),
+        }
+    }
+}
+
+impl<'a> Deref for GrTerminalKind<&'a str> {
+    type Target = &'a str;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            GrTerminalKind::Entity(s) => s,
+            GrTerminalKind::Class(s) => s,
         }
     }
 }

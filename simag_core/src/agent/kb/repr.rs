@@ -1,4 +1,4 @@
-use std::collections::{hash_map::RandomState, HashMap};
+use std::collections::{hash_map::RandomState, HashMap, HashSet};
 use std::iter::FromIterator;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -360,8 +360,10 @@ impl Representation {
                         Predicate::FreeMembershipToClass(ref free) => {
                             if let Some(ls) = candidates.get(free.get_var_ref()) {
                                 for entity in ls {
-                                    let grfact =
-                                        Arc::new(GroundedMemb::from_free(free, entity.name));
+                                    let grfact = Arc::new(GroundedMemb::from_free(
+                                        free,
+                                        entity.name.as_ref(),
+                                    ));
                                     self.ask_processed(QueryInput::AskClassMember(grfact), 0, true)
                                         .unwrap();
                                 }
@@ -392,9 +394,11 @@ impl Representation {
             };
 
         let sent_req: SentVarReq = belief.get_lhs_predicates().into();
+        let mut assigned: HashSet<&str> =
+            HashSet::with_capacity(sent_req.size_hint().1.unwrap_or(0));
         for var_req in sent_req {
             if let Some(candidates) = meet_sent_requirements(self, &var_req) {
-                for var in candidates.keys() {
+                for (var, assign) in candidates.iter() {
                     let it = belief.get_rhs_predicates();
                     for pred in it.iter().filter(|x| x.contains(&**var)) {
                         match pred {
@@ -405,6 +409,25 @@ impl Representation {
                                 iter_func_candidates(func_decl, &candidates)
                             }
                             Assert::SpecialFunc(BuiltIns::Move(move_fn)) => {
+                                assign.iter().for_each(|a| {
+                                    let name = *a.name;
+                                    if assigned.get(name) == None {
+                                        // add this sent as move_fn to the potential candidates
+                                        match a.name {
+                                            GrTerminalKind::Entity(_) => {
+                                                if let Some(ent) = self.entities.get(name) {
+                                                    ent.move_beliefs.write().push(belief.clone());
+                                                }
+                                            }
+                                            GrTerminalKind::Class(_) => {
+                                                if let Some(cls) = self.classes.get(name) {
+                                                    cls.move_beliefs.write().push(belief.clone());
+                                                }
+                                            }
+                                        }
+                                        assigned.insert(name);
+                                    }
+                                });
                                 if let Some(mapped) = ArgsProduct::product(candidates.clone()) {
                                     for args in mapped {
                                         let args: HashMap<_, _, RandomState> =

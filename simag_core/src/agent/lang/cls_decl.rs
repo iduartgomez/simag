@@ -337,7 +337,7 @@ impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
             let grfact = match *a {
                 Predicate::FreeMembershipToClass(ref free) => {
                     if let Some(entity) = assignments.as_ref().unwrap().get(&*free.term) {
-                        GroundedMemb::from_free(free, entity.name)
+                        GroundedMemb::from_free(free, &*entity.name)
                     } else {
                         break;
                     }
