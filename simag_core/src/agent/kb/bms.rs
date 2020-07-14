@@ -8,7 +8,7 @@ use std::cmp::Ordering as CmpOrdering;
 use std::mem;
 use std::{
     collections::HashMap,
-    convert::TryInto,
+    convert::TryFrom,
     marker::PhantomData,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -132,15 +132,35 @@ impl Into<BmsWrapper<RecordHistory>> for BmsWrapper<IsTimeData> {
 pub(in crate::agent) struct RecordHistory;
 impl BmsKind for RecordHistory {}
 
-impl TryInto<BmsWrapper<IsTimeData>> for &BmsWrapper<RecordHistory> {
+impl<T: BmsKind> AsRef<BmsWrapper<T>> for BmsWrapper<T> {
+    fn as_ref(&self) -> &BmsWrapper<T> {
+        self
+    }
+}
+
+impl TryFrom<&BmsWrapper<RecordHistory>> for BmsWrapper<IsTimeData> {
     type Error = ();
 
-    fn try_into(self) -> Result<BmsWrapper<IsTimeData>, Self::Error> {
+    fn try_from(value: &BmsWrapper<RecordHistory>) -> Result<Self, Self::Error> {
         // FIXME: check that invariants hold
         Ok(BmsWrapper {
-            records: RwLock::new((&*self.records.read()).clone()),
-            pred: self.pred,
-            overwrite: AtomicBool::new(self.overwrite.load(Ordering::Acquire)),
+            records: RwLock::new((&*value.records.read()).clone()),
+            pred: value.pred,
+            overwrite: AtomicBool::new(value.overwrite.load(Ordering::Acquire)),
+            _kind: PhantomData,
+        })
+    }
+}
+
+impl TryFrom<&BmsWrapper<RecordHistory>> for BmsWrapper<IsSpatialData> {
+    type Error = ();
+
+    fn try_from(value: &BmsWrapper<RecordHistory>) -> Result<Self, Self::Error> {
+        // FIXME: check that invariants hold
+        Ok(BmsWrapper {
+            records: RwLock::new((&*value.records.read()).clone()),
+            pred: value.pred,
+            overwrite: AtomicBool::new(value.overwrite.load(Ordering::Acquire)),
             _kind: PhantomData,
         })
     }
@@ -250,7 +270,7 @@ impl BmsWrapper<RecordHistory> {
             (sent_id, at_time)
         } else {
             unreachable!(format!(
-                "SIMAG - {}:{} - unreachable: can't rollback records which were not produced",
+                "SIMAG - {}:{} - can't rollback records which were not produced",
                 file!(),
                 line!()
             ))
@@ -593,7 +613,7 @@ impl BmsWrapper<IsTimeData> {
     /// as `unknown`.
     ///
     /// This operation is meant to be used when asserting new facts.
-    pub fn merge_from_until(&mut self, until: &Self) -> Result<(), errors::BmsError> {
+    pub fn merge_since_until(&mut self, until: &Self) -> Result<(), errors::BmsError> {
         let mut self_records = self.records.write();
         let other_records = until.records.read();
 
@@ -606,10 +626,10 @@ impl BmsWrapper<IsTimeData> {
         }
 
         let until = other_records.get(0).unwrap();
-        let from = self_records.get_mut(0).unwrap();
+        let since = self_records.get_mut(0).unwrap();
 
         let mut until = until.clone();
-        if until.time < from.time {
+        if until.time < since.time {
             return Err(errors::BmsError::IllegalMerge(
                 "First time variable assignment can't be older than second".to_string(),
             ));
@@ -641,11 +661,11 @@ impl BmsWrapper<IsTimeData> {
         }
     }
 
-    pub fn merge(
+    pub fn merge_spatial_data(
         self,
         spatial_data: BmsWrapper<IsSpatialData>,
     ) -> Result<BmsWrapper<RecordHistory>, ()> {
-        spatial_data.merge(self)
+        spatial_data.merge_time_data(self)
     }
 }
 
@@ -681,7 +701,10 @@ impl BmsWrapper<IsSpatialData> {
     ///
     /// In order for the merge to function the following conditions must hold:
     /// - Both of the wrappers must be of the same length.
-    pub fn merge(self, time_data: BmsWrapper<IsTimeData>) -> Result<BmsWrapper<RecordHistory>, ()> {
+    pub fn merge_time_data(
+        self,
+        time_data: BmsWrapper<IsTimeData>,
+    ) -> Result<BmsWrapper<RecordHistory>, ()> {
         let overwrite = AtomicBool::new(
             self.overwrite.load(Ordering::Acquire) || time_data.overwrite.load(Ordering::Acquire),
         );
@@ -735,6 +758,30 @@ impl BmsWrapper<IsSpatialData> {
             records,
             _kind: PhantomData,
         })
+    }
+
+    /// Merge an other spatial wrapper with this one, this represents a movement between two positions
+    /// for the owner of the wrapper. The 'from' portion is this object, the other is the 'to' portion.
+    ///
+    /// This operation is meant to be used with the `move` operation.
+    pub fn merge_from_to(&mut self, to: &Self) -> Result<(), errors::BmsError> {
+        let mut self_records = self.records.write();
+        let other_records = to.records.read();
+
+        if self_records.is_empty() || other_records.is_empty() {
+            return Err(errors::BmsError::EmptyRecordList);
+        } else if self_records.len() > 1 || other_records.len() > 1 {
+            return Err(errors::BmsError::IllegalMerge(
+                "More than one record found".to_string(),
+            ));
+        }
+
+        let to = other_records.get(0).unwrap();
+
+        let mut to = to.clone();
+        to.value = None;
+        self_records.push(to);
+        Ok(())
     }
 }
 
@@ -801,7 +848,9 @@ pub(in crate::agent) fn build_declaration_bms(
     let time_data = cls_decl.get_own_time_data(&ta, None);
     let la = HashMap::new();
     let loc_data = cls_decl.get_own_spatial_data(&la)?;
-    let f_bms = loc_data.merge(time_data).map_err(|_| ParseErrF::WrongDef)?;
+    let f_bms = loc_data
+        .merge_time_data(time_data)
+        .map_err(|_| ParseErrF::WrongDef)?;
 
     Ok(cls_decl.into_iter().map(move |mut a| {
         let val = a.get_value();

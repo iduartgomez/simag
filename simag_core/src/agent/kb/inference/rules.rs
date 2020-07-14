@@ -126,8 +126,12 @@ pub(in crate::agent::kb) fn rules_inference_rollback(
             _ => num_iters += 1,
         }
         if num_iters >= MAX_ITERATIONS {
-            // Safety break guarantee; this should be unreachable
-            unreachable!("SIMAG - inference/rules.rs: Reached max number of iterations")
+            // Safety break guarantee
+            unreachable!(format!(
+                "SIMAG - {}:{}: Reached max number of iterations",
+                file!(),
+                line!()
+            ))
         }
     }
 }

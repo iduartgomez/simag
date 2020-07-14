@@ -10,7 +10,7 @@ use super::{
     *,
 };
 use crate::agent::kb::{
-    bms::{BmsWrapper, IsSpatialData, IsTimeData, OverwriteBms},
+    bms::{BmsWrapper, IsSpatialData, IsTimeData, OverwriteBms, RecordHistory},
     repr::Representation,
     VarAssignment,
 };
@@ -78,7 +78,7 @@ impl<'a> TryFrom<(&ClassDeclBorrowed<'a>, &mut ParseContext)> for ClassDecl {
     }
 }
 
-impl<'a> ClassDecl {
+impl ClassDecl {
     pub fn get_args(&self) -> &[Predicate] {
         &self.args
     }
@@ -150,20 +150,15 @@ impl<'a> ClassDecl {
         }
         Ok(())
     }
-}
 
-impl OpArgsOps for ClassDecl {
-    fn get_op_args(&self) -> Option<&[common::OpArg]> {
-        self.op_args.as_deref()
-    }
-}
-
-impl TimeOps for ClassDecl {
-    fn get_times(
+    fn get_assignment<T>(
         &self,
         agent: &Representation,
         var_assign: Option<&HashMap<&Var, &VarAssignment>>,
-    ) -> Option<Arc<BmsWrapper<IsTimeData>>> {
+    ) -> Option<Arc<T>>
+    where
+        T: for<'a> TryFrom<&'a BmsWrapper<RecordHistory>>,
+    {
         let arg = &self.args[0];
         match *arg {
             Predicate::FreeMembershipToClass(ref free) => {
@@ -174,7 +169,7 @@ impl TimeOps for ClassDecl {
                             return grounded.bms.as_ref().map(|bms| {
                                 Arc::new((&**bms).try_into().unwrap_or_else(|_| {
                                     unreachable!(
-                                        "SIMAG - {}:{} - unreachable: illegal conversion",
+                                        "SIMAG - {}:{}: illegal conversion",
                                         file!(),
                                         line!()
                                     )
@@ -191,15 +186,10 @@ impl TimeOps for ClassDecl {
             Predicate::GroundedMemb(ref compare) => {
                 let entity = agent.get_obj_from_class(self.get_name(), &compare.term);
                 if let Some(grounded) = entity {
-                    // if *grounded == *compare {
                     if grounded.compare_ignoring_times(compare) {
                         return grounded.bms.as_ref().map(|bms| {
                             Arc::new((&**bms).try_into().unwrap_or_else(|_| {
-                                unreachable!(
-                                    "SIMAG - {}:{} - unreachable: illegal conversion",
-                                    file!(),
-                                    line!()
-                                )
+                                unreachable!("SIMAG - {}:{}: illegal conversion", file!(), line!())
                             }))
                         });
                     }
@@ -210,6 +200,22 @@ impl TimeOps for ClassDecl {
             _ => return None, // this path won't be taken in any program
         }
         None
+    }
+}
+
+impl OpArgsOps for ClassDecl {
+    fn get_op_args(&self) -> Option<&[common::OpArg]> {
+        self.op_args.as_deref()
+    }
+}
+
+impl TimeOps for ClassDecl {
+    fn get_times(
+        &self,
+        agent: &Representation,
+        var_assign: Option<&HashMap<&Var, &VarAssignment>>,
+    ) -> Option<Arc<BmsWrapper<IsTimeData>>> {
+        self.get_assignment(agent, var_assign)
     }
 
     fn get_time_payload(&self, value: Option<f32>) -> Option<BmsWrapper<IsTimeData>> {
@@ -232,6 +238,14 @@ impl SpatialOps for ClassDecl {
             }
         }
         None
+    }
+
+    fn get_location(
+        &self,
+        agent: &Representation,
+        var_assign: Option<&HashMap<&Var, &VarAssignment>>,
+    ) -> Option<Arc<BmsWrapper<IsSpatialData>>> {
+        self.get_assignment(agent, var_assign)
     }
 }
 

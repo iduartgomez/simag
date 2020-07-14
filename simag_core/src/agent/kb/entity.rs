@@ -47,7 +47,7 @@ pub(crate) struct Entity {
     relations: DashMap<String, Vec<Arc<GroundedFunc>>>,
     beliefs: DashMap<String, Vec<Arc<LogSentence>>>,
     pub(super) move_beliefs: RwLock<Vec<Arc<LogSentence>>>,
-    pub(super) location: BmsWrapper<RecordHistory>,
+    pub(in crate::agent) location: BmsWrapper<RecordHistory>,
 }
 
 impl Entity {

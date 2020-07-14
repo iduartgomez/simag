@@ -13,7 +13,7 @@ use super::{
     spatial_semantics::{SpatialArg, SpatialFnErr},
     time_semantics::{TimeArg, TimeFn, TimeFnErr, TimeOps},
     var::Var,
-    BuiltIns, GroundedFunc, GroundedMemb, Point, Terminal,
+    BuiltIns, GroundedFunc, GroundedMemb, Point, SpatialOps, Terminal,
 };
 use crate::agent::{
     kb::bms::{BmsWrapper, HasBms, IsSpatialData, IsTimeData},
@@ -433,6 +433,28 @@ impl Assert {
     }
 
     #[inline]
+    pub fn get_loc_decl(&self, var: &Var) -> bool {
+        match *self {
+            Assert::FuncDecl(ref f) => f.get_loc_decl(var),
+            Assert::ClassDecl(ref c) => c.get_loc_decl(var),
+            Assert::SpecialFunc(_) => false,
+        }
+    }
+
+    #[inline]
+    pub fn get_location(
+        &self,
+        agent: &Representation,
+        var_assign: Option<&HashMap<&Var, &VarAssignment>>,
+    ) -> Option<Arc<BmsWrapper<IsSpatialData>>> {
+        match *self {
+            Assert::FuncDecl(ref f) => f.get_location(agent, var_assign),
+            Assert::ClassDecl(ref c) => c.get_location(agent, var_assign),
+            Assert::SpecialFunc(_) => None,
+        }
+    }
+
+    #[inline]
     pub fn is_class(&self) -> bool {
         match *self {
             Assert::FuncDecl(_) | Assert::SpecialFunc(_) => false,
@@ -516,9 +538,11 @@ impl Assert {
         match self {
             Assert::FuncDecl(f) => f.substitute(agent, assignments, time_assign, context),
             Assert::ClassDecl(c) => c.substitute(agent, assignments, time_assign, context),
-            Assert::SpecialFunc(BuiltIns::Move(move_fn)) => move_fn.substitute(agent, assignments, loc_assign, context),
+            Assert::SpecialFunc(BuiltIns::Move(move_fn)) => {
+                move_fn.substitute(agent, assignments, time_assign, loc_assign, context)
+            }
             Assert::SpecialFunc(_) => unreachable!(format!(
-                "SIMAG - {}:{} - unreachable: implication cannot have any other than `move` buil-in func",
+                "SIMAG - {}:{}: implication cannot have any other than `move` buil-in func",
                 file!(),
                 line!()
             )),

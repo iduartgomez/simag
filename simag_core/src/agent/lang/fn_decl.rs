@@ -12,7 +12,7 @@ use super::{
     *,
 };
 use crate::agent::{
-    kb::bms::{BmsWrapper, IsSpatialData, IsTimeData, OverwriteBms},
+    kb::bms::{BmsWrapper, IsSpatialData, IsTimeData, OverwriteBms, RecordHistory},
     kb::{repr::Representation, VarAssignment},
 };
 
@@ -37,7 +37,7 @@ impl<'a> TryFrom<(&FuncDeclBorrowed<'a>, &mut ParseContext)> for FuncDecl {
     }
 }
 
-impl<'a> FuncDecl {
+impl FuncDecl {
     pub fn is_grounded(&self) -> bool {
         if !self.parent_is_grounded() {
             return false;
@@ -100,7 +100,7 @@ impl<'a> FuncDecl {
         id
     }
 
-    fn decl_relational_fn(
+    fn decl_relational_fn<'a>(
         other: &FuncDeclBorrowed<'a>,
         context: &mut ParseContext,
         name: Terminal,
@@ -205,6 +205,51 @@ impl<'a> FuncDecl {
         }
         Ok(())
     }
+
+    fn get_assignment<T>(
+        &self,
+        agent: &Representation,
+        var_assign: Option<&HashMap<&Var, &VarAssignment>>,
+    ) -> Option<Arc<T>>
+    where
+        T: for<'a> TryFrom<&'a BmsWrapper<RecordHistory>>,
+    {
+        if self.is_grounded() {
+            let sbj = self.args.as_ref().unwrap();
+            let grfunc = self.clone().into();
+            if let Some(relation) = agent.get_relationship(&grfunc, sbj[0].get_name()) {
+                Some(Arc::new((&*relation.bms).try_into().unwrap_or_else(|_| {
+                    unreachable!("SIMAG - {}:{}: illegal conversion", file!(), line!())
+                })))
+            } else {
+                None
+            }
+        } else {
+            var_assign?;
+            let f = HashMap::new();
+            if let Ok(grfunc) = GroundedFunc::from_free(self, var_assign, &f) {
+                for arg in self.get_args() {
+                    if let Predicate::FreeMembershipToClass(ref arg) = *arg {
+                        let assignments = var_assign.as_ref().unwrap();
+                        if let Some(entity) = assignments.get(&*arg.term) {
+                            if let Some(current) = entity.get_relationship(&grfunc) {
+                                return Some(Arc::new((&*current.bms).try_into().unwrap_or_else(
+                                    |_| {
+                                        unreachable!(
+                                            "SIMAG - {}:{}: illegal conversion",
+                                            file!(),
+                                            line!()
+                                        )
+                                    },
+                                )));
+                            }
+                        }
+                    }
+                }
+            }
+            None
+        }
+    }
 }
 
 impl Into<GroundedFunc> for FuncDecl {
@@ -254,12 +299,8 @@ impl Into<GroundedFunc> for FuncDecl {
                     OpArg::Time(DeclTime(TimeFn::Interval(t0, t1))) => {
                         let mut t0 = BmsWrapper::<IsTimeData>::new(Some(t0), val);
                         let t1 = &BmsWrapper::<IsTimeData>::new(Some(t1), None);
-                        t0.merge_from_until(t1).unwrap_or_else(|_| {
-                            unreachable!(
-                                "SIMAG - {}:{} - unreachable: illegal merge",
-                                file!(),
-                                line!()
-                            )
+                        t0.merge_since_until(t1).unwrap_or_else(|_| {
+                            unreachable!("SIMAG - {}:{}: illegal merge", file!(), line!())
                         });
                         time_data = Some(t0)
                     }
@@ -282,7 +323,7 @@ impl Into<GroundedFunc> for FuncDecl {
             BmsWrapper::<IsTimeData>::new(None, val)
         };
         let final_bms = if let Some(loc) = spatial_data {
-            time_data.merge(loc).unwrap()
+            time_data.merge_spatial_data(loc).unwrap()
         } else {
             time_data.into()
         };
@@ -301,51 +342,23 @@ impl OpArgsOps for FuncDecl {
     }
 }
 
+impl SpatialOps for FuncDecl {
+    fn get_location(
+        &self,
+        agent: &Representation,
+        var_assign: Option<&HashMap<&Var, &VarAssignment>>,
+    ) -> Option<Arc<BmsWrapper<IsSpatialData>>> {
+        self.get_assignment(agent, var_assign)
+    }
+}
+
 impl TimeOps for FuncDecl {
     fn get_times(
         &self,
         agent: &Representation,
         var_assign: Option<&HashMap<&Var, &VarAssignment>>,
     ) -> Option<Arc<BmsWrapper<IsTimeData>>> {
-        if self.is_grounded() {
-            let sbj = self.args.as_ref().unwrap();
-            let grfunc = self.clone().into();
-            if let Some(relation) = agent.get_relationship(&grfunc, sbj[0].get_name()) {
-                Some(Arc::new((&*relation.bms).try_into().unwrap_or_else(|_| {
-                    unreachable!(
-                        "SIMAG - {}:{} - unreachable: illegal conversion",
-                        file!(),
-                        line!()
-                    )
-                })))
-            } else {
-                None
-            }
-        } else {
-            var_assign?;
-            let f = HashMap::new();
-            if let Ok(grfunc) = GroundedFunc::from_free(self, var_assign, &f) {
-                for arg in self.get_args() {
-                    if let Predicate::FreeMembershipToClass(ref arg) = *arg {
-                        let assignments = var_assign.as_ref().unwrap();
-                        if let Some(entity) = assignments.get(&*arg.term) {
-                            if let Some(current) = entity.get_relationship(&grfunc) {
-                                return Some(Arc::new((&*current.bms).try_into().unwrap_or_else(
-                                    |_| {
-                                        unreachable!(
-                                            "SIMAG - {}:{} - unreachable: illegal conversion",
-                                            file!(),
-                                            line!()
-                                        )
-                                    },
-                                )));
-                            }
-                        }
-                    }
-                }
-            }
-            None
-        }
+        self.get_assignment(agent, var_assign)
     }
 }
 

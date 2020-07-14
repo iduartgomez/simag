@@ -86,7 +86,7 @@ impl<'a> Terminal {
             var.clone()
         } else {
             unreachable!(format!(
-                "SIMAG - {}:{} - called `get_var` on a non-var term",
+                "SIMAG - {}:{}: called `get_var` on a non-var term",
                 file!(),
                 line!()
             ))

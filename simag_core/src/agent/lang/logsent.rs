@@ -100,14 +100,13 @@ impl<'a> LogSentence {
         mut context: T,
     ) -> T {
         let root = &self.particles[self.root];
-        let time_assign = {
+        let (time_assign, loc_assign) = {
             if !self.vars.is_empty() {
-                self.get_time_assignments(agent, assignments)
+                self.get_assignments(agent, assignments)
             } else {
-                HashMap::with_capacity(0)
+                (HashMap::with_capacity(0), HashMap::with_capacity(0))
             }
         };
-        let loc_assign = HashMap::new();
         #[cfg(debug_assertions)]
         {
             log::trace!(
@@ -243,21 +242,17 @@ impl<'a> LogSentence {
         LhsPreds::new(&self.particles[next], self)
     }
 
-    pub fn has_move_func(&self) -> bool {
-        for p in &self.predicates.1 {
-            if let Assert::SpecialFunc(BuiltIns::Move(_)) = self.particles[*p].pred_ref() {
-                return true;
-            }
-        }
-        false
-    }
-
-    fn get_time_assignments(
+    #[allow(clippy::type_complexity)]
+    fn get_assignments(
         &self,
         agent: &Representation,
         var_assign: Option<&HashMap<&Var, &VarAssignment>>,
-    ) -> HashMap<&Var, Arc<BmsWrapper<IsTimeData>>> {
+    ) -> (
+        HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
+        HashMap<&Var, Arc<BmsWrapper<IsSpatialData>>>,
+    ) {
         let mut time_assign = HashMap::new();
+        let mut loc_assign = HashMap::new();
         'outer: for var in &self.vars {
             match var.kind {
                 VarKind::Time => {
@@ -265,10 +260,9 @@ impl<'a> LogSentence {
                         let pred = self.particles[*pred].pred_ref();
                         if pred.get_time_decl(&*var) {
                             let times = pred.get_times(agent, var_assign);
-                            if times.is_none() {
-                                continue 'outer;
+                            if let Some(time) = times {
+                                time_assign.insert(&**var, time);
                             }
-                            time_assign.insert(&**var, times.unwrap());
                             continue 'outer;
                         }
                     }
@@ -277,10 +271,23 @@ impl<'a> LogSentence {
                     let times = Arc::new(var.get_time());
                     time_assign.insert(&**var, times);
                 }
+                VarKind::Location => {
+                    for pred in &self.predicates.0 {
+                        let pred = self.particles[*pred].pred_ref();
+                        if pred.get_loc_decl(&*var) {
+                            let location = pred.get_location(agent, var_assign);
+                            if let Some(loc) = location {
+                                loc_assign.insert(&**var, loc);
+                            }
+                            continue 'outer;
+                        }
+                    }
+                }
+                VarKind::SpatialDecl => todo!(),
                 _ => {}
             }
         }
-        time_assign
+        (time_assign, loc_assign)
     }
 
     /// Classify the kind of sentence and checks that is well formed.

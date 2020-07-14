@@ -31,7 +31,7 @@ pub(in crate::agent) struct Class {
     pub(super) move_beliefs: RwLock<Vec<Arc<LogSentence>>>,
     pub rules: RwLock<Vec<Arc<LogSentence>>>,
     pub(in crate::agent::kb) members: RwLock<Vec<ClassMember>>,
-    pub(in crate::agent::kb) location: BmsWrapper<RecordHistory>,
+    pub(in crate::agent) location: BmsWrapper<RecordHistory>,
 }
 
 impl Class {

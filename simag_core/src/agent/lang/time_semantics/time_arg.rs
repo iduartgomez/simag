@@ -44,12 +44,8 @@ impl TimeArg {
             DeclTime(TimeFn::Interval(time0, time1)) => {
                 let mut t0 = BmsWrapper::<IsTimeData>::new(Some(*time0), value);
                 let t1 = &BmsWrapper::<IsTimeData>::new(Some(*time1), None);
-                t0.merge_from_until(t1).unwrap_or_else(|_| {
-                    unreachable!(
-                        "SIMAG - {}:{} - unreachable: illegal merge",
-                        file!(),
-                        line!()
-                    )
+                t0.merge_since_until(t1).unwrap_or_else(|_| {
+                    unreachable!("SIMAG - {}:{}: illegal merge", file!(), line!())
                 });
                 t0
             }
@@ -58,7 +54,7 @@ impl TimeArg {
                 assignment.clone()
             }
             _ => unreachable!(format!(
-                "SIMAG - {}:{} - unreachable: can't get time payload from a free variable",
+                "SIMAG - {}:{}: can't get time payload from a free variable",
                 file!(),
                 line!()
             )),
@@ -78,7 +74,7 @@ impl TimeArg {
             SinceVarUntilVar(var0, var1) => {
                 let mut var0_time = var0.get_time();
                 let var1_time = var1.get_time();
-                var0_time.merge_from_until(&var1_time)?;
+                var0_time.merge_since_until(&var1_time)?;
                 let mut assignment = DeclTime(TimeFn::from_bms(&var0_time)?);
                 std::mem::swap(&mut assignment, self);
             }
@@ -108,6 +104,16 @@ impl TimeArg {
                 id
             }
             _ => unimplemented!(),
+        }
+    }
+
+    pub fn is_interval(&self) -> bool {
+        match self {
+            SinceTimeUntilTime(_, _)
+            | SinceTimeUntilVar(_, _)
+            | SinceVarUntilTime(_, _)
+            | SinceVarUntilVar(_, _) => true,
+            _ => false,
         }
     }
 }

@@ -1,10 +1,10 @@
 use std::convert::TryFrom;
 use std::{collections::HashMap, sync::Arc};
 
-use super::SpatialArg;
+use super::{Point, SpatialArg};
 use crate::agent::{
     kb::{
-        bms::{BmsWrapper, IsSpatialData},
+        bms::{BmsWrapper, IsSpatialData, IsTimeData, RecordHistory},
         VarAssignment,
     },
     lang::{
@@ -12,11 +12,12 @@ use crate::agent::{
         logsent::ParseContext,
         parser::{FuncDeclBorrowed, TerminalBorrowed},
         time_semantics::TimeArg,
-        ProofResContext, Terminal, Var,
+        GrTerminalKind, ProofResContext, Terminal, Var,
     },
     ParseErrF, Representation,
 };
 use smallvec::SmallVec;
+use SpatialArg::*;
 
 #[derive(Debug, Clone)]
 pub(in crate::agent) struct MoveFn {
@@ -61,8 +62,14 @@ impl MoveFn {
                 }
             }
         }
+
         vars.shrink_to_fit();
         if let Some(spatial_arg) = spatial_arg {
+            if let Some(time_arg) = &time_arg {
+                if time_arg.is_interval() && !spatial_arg.has_origin() {
+                    return Err(ParseErrF::WrongDef);
+                }
+            }
             Ok(MoveFn {
                 vars,
                 spatial_arg,
@@ -88,13 +95,102 @@ impl MoveFn {
 
     pub fn substitute<T: ProofResContext>(
         &self,
-        _agent: &Representation,
-        _assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        _loc_assign: &HashMap<&Var, Arc<BmsWrapper<IsSpatialData>>>,
-        _context: &mut T,
+        agent: &Representation,
+        assignments: Option<&HashMap<&Var, &VarAssignment>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
+        loc_assign: &HashMap<&Var, Arc<BmsWrapper<IsSpatialData>>>,
+        context: &mut T,
     ) {
-        // register the moved objects
-        todo!()
+        let add_rec = |bms: &BmsWrapper<RecordHistory>, loc: BmsWrapper<IsSpatialData>| {
+            if let Some(time_arg) = &self.time_arg {
+                let t = time_arg.get_time_payload(time_assign, None);
+                let new = t.merge_spatial_data(loc).unwrap();
+                todo!()
+            } else {
+                bms;
+                todo!()
+            }
+        };
+
+        if let Some(time_arg) = &self.time_arg {
+            let assign = time_arg.get_time_payload(time_assign, None);
+        }
+
+        let loc = match &self.spatial_arg {
+            FromVarToVar(v0, v1) => {
+                let mut l0 = (&*loc_assign[&**v0]).clone();
+                let l1 = &loc_assign[&**v1];
+                if l0.merge_from_to(l1).is_ok() {
+                    Ok(l0)
+                } else {
+                    Err(())
+                }
+            }
+            FromVarToVal(v0, l1) => {
+                let mut l0 = (&*loc_assign[&**v0]).clone();
+                let l1 = BmsWrapper::<IsSpatialData>::new(Some(l1.clone()));
+                if l0.merge_from_to(&l1).is_ok() {
+                    Ok(l0)
+                } else {
+                    Err(())
+                }
+            }
+            FromValToVar(l0, v1) => {
+                let mut l0 = BmsWrapper::<IsSpatialData>::new(Some(l0.clone()));
+                let l1 = &loc_assign[&**v1];
+                if l0.merge_from_to(&l1).is_ok() {
+                    Ok(l0)
+                } else {
+                    Err(())
+                }
+            }
+            FromValToVal(l0, l1) => {
+                let mut l0 = BmsWrapper::<IsSpatialData>::new(Some(l0.clone()));
+                let l1 = BmsWrapper::<IsSpatialData>::new(Some(l1.clone()));
+                if l0.merge_from_to(&l1).is_ok() {
+                    Ok(l0)
+                } else {
+                    Err(())
+                }
+            }
+            ToVar(v0) => {
+                let l0 = &loc_assign[&**v0];
+                Ok((&**l0).clone())
+            }
+            ToVal(l0) => Ok(BmsWrapper::<IsSpatialData>::new(Some(l0.clone()))),
+            _ => Err(()),
+        };
+
+        if let Some(assignments) = assignments {
+            let loc = loc.unwrap_or_else(|_| {
+                unreachable!(
+                    "SIMAG - {}:{}: location not assigned in move fn",
+                    file!(),
+                    line!()
+                )
+            });
+
+            for var in &self.vars {
+                let assigned = assignments[&**var];
+                match assigned.name {
+                    GrTerminalKind::Class(cls) => {
+                        let c = agent.classes.get(cls).unwrap();
+                        add_rec(&c.location, loc.clone());
+                    }
+                    GrTerminalKind::Entity(ent) => {
+                        let e = agent.entities.get(ent).unwrap();
+                        add_rec(&e.location, loc.clone());
+                    }
+                }
+            }
+        } else {
+            let (_l0, l1) = match &self.spatial_arg {
+                FromValToVal(l0, l1) => (Some(l0.clone()), l1.clone()),
+                ToVal(l0) => (None, l0.clone()),
+                _ => unreachable!(),
+            };
+            todo!()
+        }
     }
 }
 

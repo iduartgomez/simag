@@ -1209,7 +1209,7 @@ impl QueryProcessed {
                     }
                 }
                 (Some(times), Some(locs)) => {
-                    let merged = times.merge(locs)?;
+                    let merged = times.merge_spatial_data(locs)?;
                     if let Some(bms) = query.get_bms() {
                         bms.overwrite_data(merged)?;
                     }

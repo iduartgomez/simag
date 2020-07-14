@@ -27,7 +27,17 @@ use SpatialArg::*;
 
 impl SpatialArg {
     pub fn generate_uid(&self) -> Vec<u8> {
+        // FIXME
         vec![0]
+    }
+
+    pub fn has_origin(&self) -> bool {
+        match self {
+            FromVarToVar(_, _) | FromVarToVal(_, _) | FromValToVar(_, _) | FromValToVal(_, _) => {
+                true
+            }
+            _ => false,
+        }
     }
 }
 
