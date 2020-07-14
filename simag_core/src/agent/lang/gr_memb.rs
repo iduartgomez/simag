@@ -48,10 +48,10 @@ impl GroundedMemb {
             let t_bms = BmsWrapper::<RecordHistory>::new();
             if let Some(times) = times {
                 for (time, val) in times {
-                    t_bms.new_record(Some(time), None, val, None);
+                    t_bms.add_new_record(Some(time), None, val, None);
                 }
             } else {
-                t_bms.new_record(None, None, Some(val as f32), None);
+                t_bms.add_new_record(None, None, Some(val as f32), None);
             }
             t_bms
         };
@@ -153,7 +153,7 @@ impl GroundedMemb {
                 bms.update(&GroundedRef::Class(self), agent, data_bms, was_produced)
             } else {
                 let data_bms = BmsWrapper::<RecordHistory>::new();
-                data_bms.new_record(None, None, new_val, None);
+                data_bms.add_new_record(None, None, new_val, None);
                 bms.update(&GroundedRef::Class(self), agent, &data_bms, was_produced)
             }
         }
@@ -167,7 +167,7 @@ impl GroundedMemb {
         let bms;
         let val = if free.value.is_some() {
             let t_bms = BmsWrapper::<RecordHistory>::new();
-            t_bms.new_record(None, None, free.value, None);
+            t_bms.add_new_record(None, None, free.value, None);
             bms = Some(Arc::new(t_bms));
             Some(free.value.unwrap())
         } else {

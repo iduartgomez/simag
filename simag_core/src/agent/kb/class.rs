@@ -55,7 +55,7 @@ impl Class {
         was_produced: Option<(u64, Time)>,
     ) {
         self.location
-            .new_record(None, Some(loc), None, was_produced);
+            .add_new_record(None, Some(loc), None, was_produced);
     }
 
     pub(in crate::agent::kb) fn belongs_to_class(

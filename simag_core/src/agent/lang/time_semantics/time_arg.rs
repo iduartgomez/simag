@@ -37,21 +37,34 @@ impl TimeArg {
         value: Option<f32>,
     ) -> BmsWrapper<IsTimeData> {
         match self {
-            DeclTime(TimeFn::Since(payload)) => {
-                BmsWrapper::<IsTimeData>::new(Some(*payload), value)
-            }
-            DeclTime(TimeFn::Now) => BmsWrapper::<IsTimeData>::new(None, value),
-            DeclTime(TimeFn::Interval(time0, time1)) => {
-                let mut t0 = BmsWrapper::<IsTimeData>::new(Some(*time0), value);
-                let t1 = &BmsWrapper::<IsTimeData>::new(Some(*time1), None);
-                t0.merge_since_until(t1).unwrap_or_else(|_| {
-                    unreachable!("SIMAG - {}:{}: illegal merge", file!(), line!())
-                });
-                t0
-            }
+            DeclTime(time_fn) => time_fn.payload_from_time_arg(value),
             SinceVar(var) => {
                 let assignment = &**(assignments.get(&**var).unwrap());
                 assignment.clone()
+            }
+            SinceVarUntilVar(v0, v1) => {
+                let mut v0 = (&**assignments.get(&**v0).unwrap()).clone();
+                let v1 = &**(assignments.get(&**v1).unwrap());
+                v0.merge_since_until(v1).unwrap();
+                v0
+            }
+            SinceVarUntilTime(v0, t1) => {
+                let mut v0 = (&**assignments.get(&**v0).unwrap()).clone();
+                let t1 = t1.payload_from_time_arg(value);
+                v0.merge_since_until(&t1).unwrap();
+                v0
+            }
+            SinceTimeUntilVar(t0, v1) => {
+                let mut t0 = t0.payload_from_time_arg(value);
+                let v1 = (&**assignments.get(&**v1).unwrap()).clone();
+                t0.merge_since_until(&v1).unwrap();
+                t0
+            }
+            SinceTimeUntilTime(t0, t1) => {
+                let mut t0 = t0.payload_from_time_arg(value);
+                let t1 = t1.payload_from_time_arg(value);
+                t0.merge_since_until(&t1).unwrap();
+                t0
             }
             _ => unreachable!(format!(
                 "SIMAG - {}:{}: can't get time payload from a free variable",
@@ -319,6 +332,22 @@ impl TimeFn {
             TimeFn::ThisTime => id.push(4),
         }
         id
+    }
+
+    fn payload_from_time_arg(&self, value: Option<f32>) -> BmsWrapper<IsTimeData> {
+        match self {
+            TimeFn::Since(payload) => BmsWrapper::<IsTimeData>::new(Some(*payload), value),
+            TimeFn::Now => BmsWrapper::<IsTimeData>::new(None, value),
+            TimeFn::Interval(time0, time1) => {
+                let mut t0 = BmsWrapper::<IsTimeData>::new(Some(*time0), value);
+                let t1 = &BmsWrapper::<IsTimeData>::new(Some(*time1), None);
+                t0.merge_since_until(t1).unwrap_or_else(|_| {
+                    unreachable!("SIMAG - {}:{}: illegal merge", file!(), line!())
+                });
+                t0
+            }
+            _ => unreachable!(),
+        }
     }
 }
 

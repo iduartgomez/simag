@@ -335,13 +335,14 @@ impl BmsWrapper<RecordHistory> {
     }
 
     /// Add a new record to this BMS.
-    pub fn new_record(
+    pub fn add_new_record(
         &self,
         time: Option<Time>,
         location: Option<Point>,
         value: Option<f32>,
         was_produced: Option<(SentID, Time)>,
     ) {
+        let mut records = self.records.write();
         let production_time = match was_produced {
             Some((_, production_time)) => Some(production_time),
             None => None,
@@ -359,14 +360,14 @@ impl BmsWrapper<RecordHistory> {
             value,
             was_produced,
         };
-        let mut records = self.records.write();
         records.push(record);
+        records.sort_by(|a, b| a.time.cmp(&b.time));
     }
 
-    fn add_entry(&self, produced: Grounded, with_val: Option<f32>) {
+    fn add_produced_entry(&self, produced: Grounded, with_val: Option<f32>) {
         let mut records = self.records.write();
         let record = records.last_mut().unwrap();
-        record.add_entry((produced, with_val));
+        record.add_produced_entry((produced, with_val));
     }
 
     /// Look for all the changes that were produced, before an update,
@@ -415,7 +416,7 @@ impl BmsWrapper<RecordHistory> {
                                 }
                             }
                             func.update_value(value);
-                            bms.new_record(time, loc, value, None);
+                            bms.add_new_record(time, loc, value, None);
                         }
                     }
                 }
@@ -453,7 +454,7 @@ impl BmsWrapper<RecordHistory> {
                             }
 
                             cls.update_value(value);
-                            bms.new_record(time, loc, value, None);
+                            bms.add_new_record(time, loc, value, None);
                         }
                     }
                 }
@@ -499,7 +500,7 @@ impl BmsWrapper<RecordHistory> {
 
         // create a new record with the new data
         owner.update_value(up_rec_value);
-        self.new_record(Some(up_rec_date), up_rec_loc, up_rec_value, was_produced);
+        self.add_new_record(Some(up_rec_date), up_rec_loc, up_rec_value, was_produced);
 
         // check if there are any inconsistencies with the knowledge produced with
         // the previous value
@@ -817,7 +818,7 @@ pub(in crate::agent) struct BmsRecord {
 }
 
 impl BmsRecord {
-    fn add_entry(&mut self, entry: (Grounded, Option<f32>)) {
+    fn add_produced_entry(&mut self, entry: (Grounded, Option<f32>)) {
         self.produced.push(entry);
     }
 }
@@ -830,12 +831,15 @@ pub(in crate::agent) fn update_producers<C: ProofResContext>(owner: &Grounded, c
             Grounded::Class(ref cls) => {
                 let cls = cls.upgrade().unwrap();
                 let value = cls.get_value();
-                cls.bms.as_ref().unwrap().add_entry(owner.clone(), value);
+                cls.bms
+                    .as_ref()
+                    .unwrap()
+                    .add_produced_entry(owner.clone(), value);
             }
             Grounded::Function(ref func) => {
                 let func = func.upgrade().unwrap();
                 let value = func.get_value();
-                func.bms.add_entry(owner.clone(), value);
+                func.bms.add_produced_entry(owner.clone(), value);
             }
         }
     }
@@ -871,7 +875,43 @@ pub(in crate::agent) fn build_declaration_bms(
     }))
 }
 
-mod errors {
+/// Adds location data produced from a move fn into a bms.
+pub(in crate::agent) fn add_loc_from_move_fn<C: ProofResContext>(
+    context: &C,
+    bms: &BmsWrapper<RecordHistory>,
+    loc_data: BmsWrapper<RecordHistory>,
+) {
+    // extract records from loc_data:
+    for rec in loc_data.records.into_inner() {
+        let BmsRecord { time, location, .. } = rec;
+        bms.add_new_record(
+            Some(time),
+            location,
+            None,
+            Some((context.get_id(), context.get_production_time())),
+        )
+    }
+}
+
+/// Adds location data produced from a move fn into a bms, w/o any time data.
+pub(in crate::agent) fn add_loc_from_spatial_data<C: ProofResContext>(
+    context: &C,
+    bms: &BmsWrapper<RecordHistory>,
+    loc_data: BmsWrapper<IsSpatialData>,
+) {
+    // extract records from loc_data:
+    for rec in loc_data.records.into_inner() {
+        let BmsRecord { time, location, .. } = rec;
+        bms.add_new_record(
+            Some(time),
+            location,
+            None,
+            Some((context.get_id(), context.get_production_time())),
+        )
+    }
+}
+
+pub(in crate::agent) mod errors {
     #[derive(Debug, PartialEq)]
     pub enum BmsError {
         IllegalMerge(String),
@@ -908,7 +948,7 @@ mod test {
 
         let fol = "
             (run[$Pancho=1])
-            (let x in 
+            (let x in
              ((run[x=1] and dog[x=1]) := fat[x=0]))
         ";
         rep.tell(fol).unwrap();
@@ -918,12 +958,6 @@ mod test {
         assert_eq!(answ1.unwrap().get_results_single(), Some(true));
         let answ2 = rep.ask("(sad[$Pancho=0])");
         assert_eq!(answ2.unwrap().get_results_single(), None);
-    }
-
-    #[test]
-    #[ignore]
-    fn bms_maybe_rollback() {
-        todo!()
     }
 
     #[test]

@@ -1,10 +1,13 @@
 use std::convert::TryFrom;
 use std::{collections::HashMap, sync::Arc};
 
-use super::{Point, SpatialArg};
+use super::SpatialArg;
 use crate::agent::{
     kb::{
-        bms::{BmsWrapper, IsSpatialData, IsTimeData, RecordHistory},
+        bms::{
+            add_loc_from_move_fn, add_loc_from_spatial_data, BmsWrapper, IsSpatialData, IsTimeData,
+            RecordHistory,
+        },
         VarAssignment,
     },
     lang::{
@@ -105,16 +108,11 @@ impl MoveFn {
             if let Some(time_arg) = &self.time_arg {
                 let t = time_arg.get_time_payload(time_assign, None);
                 let new = t.merge_spatial_data(loc).unwrap();
-                todo!()
+                add_loc_from_move_fn(context, bms, new);
             } else {
-                bms;
-                todo!()
+                add_loc_from_spatial_data(context, bms, loc);
             }
         };
-
-        if let Some(time_arg) = &self.time_arg {
-            let assign = time_arg.get_time_payload(time_assign, None);
-        }
 
         let loc = match &self.spatial_arg {
             FromVarToVar(v0, v1) => {
@@ -184,7 +182,7 @@ impl MoveFn {
                 }
             }
         } else {
-            let (_l0, l1) = match &self.spatial_arg {
+            let (_l0, _l1) = match &self.spatial_arg {
                 FromValToVal(l0, l1) => (Some(l0.clone()), l1.clone()),
                 ToVal(l0) => (None, l0.clone()),
                 _ => unreachable!(),
