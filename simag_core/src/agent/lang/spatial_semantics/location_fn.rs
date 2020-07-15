@@ -28,7 +28,8 @@ enum ObjLocation {
 use ObjLocation::*;
 
 impl<T: AsRef<str>> LocFn<T> {
-    pub fn generate_id(&self) -> Vec<u8> {
+    pub fn generate_uid(&self) -> Vec<u8> {
+        // FIXME
         todo!()
     }
 

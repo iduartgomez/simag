@@ -66,9 +66,11 @@ impl TimeCalcFn {
 
     pub fn generate_uid(&self) -> Vec<u8> {
         let mut uid = TIME_CALC_FN.to_vec();
+        uid.push(b'<');
         uid.extend(self.var0.generate_uid());
         self.op.generate_uid(&mut uid);
         uid.extend(self.var1.generate_uid());
+        uid.push(b'>');
         uid
     }
 

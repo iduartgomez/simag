@@ -205,8 +205,8 @@ impl FreeMembershipToClass {
     }
 
     fn generate_uid(&self) -> Vec<u8> {
-        let mut id: Vec<u8> = vec![];
-        let mut var = format!("{:?}", &*self.term as *const Var).into_bytes();
+        let mut id = Vec::from_iter(b"free_memb_cls<".iter().cloned());
+        let mut var = self.term.generate_uid();
         id.append(&mut var);
         if let Some(value) = self.value {
             let mut id_2 = format!("{}", value).into_bytes();
@@ -216,6 +216,7 @@ impl FreeMembershipToClass {
             cmp.generate_uid(&mut id);
         }
         id.append(&mut self.parent.generate_uid());
+        id.push(b'>');
         id
     }
 
@@ -303,7 +304,7 @@ impl FreeClassMembership {
     }
 
     fn generate_uid(&self) -> Vec<u8> {
-        let mut id: Vec<u8> = vec![];
+        let mut id = Vec::from_iter(b"free_cls_memb<".iter().cloned());
         id.append(&mut Vec::from(self.term.as_bytes()));
         if let Some(ref val) = self.value {
             let mut id_2 = format!("{}", *val).into_bytes();
@@ -314,6 +315,7 @@ impl FreeClassMembership {
         }
         let mut var = format!("{:?}", &*self.parent as *const Var).into_bytes();
         id.append(&mut var);
+        id.push(b'>');
         id
     }
 
@@ -681,7 +683,7 @@ impl<'a> ConstraintValue {
             ConstraintValue::Terminal(t) => t.generate_uid(),
             ConstraintValue::String(s) => Vec::from_iter(s.as_bytes().iter().cloned()),
             ConstraintValue::TimePayload(t) => t.generate_uid(),
-            ConstraintValue::SpatialPayload(_) => vec![0], // FIXME
+            ConstraintValue::SpatialPayload(p) => p.generate_uid(),
         }
     }
 

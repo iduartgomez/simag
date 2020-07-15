@@ -102,7 +102,8 @@ impl TimeArg {
     }
 
     pub fn generate_uid(&self) -> Vec<u8> {
-        match self {
+        let mut id = Vec::from(b"time_arg<".as_ref());
+        let other = match self {
             AssignThisToVar(var) => var.generate_uid(),
             DeclTime(decl) => decl.generate_uid(),
             SinceVar(var) => var.generate_uid(),
@@ -117,7 +118,10 @@ impl TimeArg {
                 id
             }
             _ => unimplemented!(),
-        }
+        };
+        id.extend(other);
+        id.push(b'>');
+        id
     }
 
     pub fn is_interval(&self) -> bool {

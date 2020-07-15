@@ -1,7 +1,7 @@
 use std::convert::TryFrom;
 use std::{collections::HashMap, sync::Arc};
 
-use super::{Point, SpatialArg};
+use super::SpatialArg;
 use crate::agent::{
     kb::{
         bms::{
@@ -93,7 +93,13 @@ impl MoveFn {
     }
 
     pub fn generate_uid(&self) -> Vec<u8> {
-        Vec::from(b"move".as_ref())
+        let mut id = Vec::from(b"move_fn<".as_ref());
+        for a in &self.vars {
+            id.extend(a.generate_uid());
+        }
+        id.extend(self.spatial_arg.generate_uid());
+        id.push(b'>');
+        id
     }
 
     pub fn get_location(

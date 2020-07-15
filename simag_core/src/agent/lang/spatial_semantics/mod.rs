@@ -17,6 +17,18 @@ pub(in crate::agent) use spatial_ops::SpatialOps;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(in crate::agent) struct Point(i64, i64, i64);
 
+impl Point {
+    pub fn generate_uid(&self) -> Vec<u8> {
+        let mut repr: Vec<u8> = Vec::with_capacity(std::mem::size_of::<i64>() * 3);
+        repr.extend(b"point<");
+        repr.extend(&self.0.to_le_bytes());
+        repr.extend(&self.0.to_le_bytes());
+        repr.extend(&self.0.to_le_bytes());
+        repr.push(b'>');
+        repr
+    }
+}
+
 impl TryFrom<&str> for Point {
     type Error = ParseErrF;
 

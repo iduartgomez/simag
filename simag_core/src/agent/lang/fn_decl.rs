@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
-use std::sync::Arc;
+use std::{iter::FromIterator, sync::Arc};
 
 use super::{
     common::*,
@@ -83,7 +83,7 @@ impl FuncDecl {
     }
 
     pub(in crate::agent::lang) fn generate_uid(&self) -> Vec<u8> {
-        let mut id = vec![];
+        let mut id = Vec::from_iter(b"func_decl<".iter().cloned());
         id.append(&mut self.name.generate_uid());
         if let Some(ref args) = self.args {
             for a in args {
@@ -97,6 +97,7 @@ impl FuncDecl {
                 id.append(&mut id_2)
             }
         }
+        id.push(b'>');
         id
     }
 

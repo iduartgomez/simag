@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
-use std::sync::Arc;
+use std::{iter::FromIterator, sync::Arc};
 
 use super::{
     common::*,
@@ -101,7 +101,7 @@ impl ClassDecl {
     }
 
     pub(in crate::agent::lang) fn generate_uid(&self) -> Vec<u8> {
-        let mut id = vec![];
+        let mut id = Vec::from_iter(b"cls_decl<".iter().cloned());
         id.append(&mut self.name.generate_uid());
         for a in &self.args {
             let mut id_2 = a.generate_uid();
@@ -113,6 +113,7 @@ impl ClassDecl {
                 id.append(&mut id_2)
             }
         }
+        id.push(b'>');
         id
     }
 

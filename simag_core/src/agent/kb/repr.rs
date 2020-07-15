@@ -680,7 +680,6 @@ impl Representation {
         &self,
         func: &FuncDecl,
     ) -> HashMap<&str, Vec<Arc<GroundedFunc>>> {
-        // FIXME: return iteraror avoid collection with drain
         let mut res = HashMap::new();
         for (pos, arg) in func.get_args().iter().enumerate() {
             if !arg.is_var() {

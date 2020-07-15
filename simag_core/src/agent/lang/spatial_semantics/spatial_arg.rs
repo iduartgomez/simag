@@ -1,4 +1,4 @@
-use std::{convert::TryFrom, sync::Arc};
+use std::{convert::TryFrom, iter::FromIterator, sync::Arc};
 
 use super::{Point, SpatialFnErr};
 use crate::agent::{
@@ -27,8 +27,56 @@ use SpatialArg::*;
 
 impl SpatialArg {
     pub fn generate_uid(&self) -> Vec<u8> {
-        // FIXME
-        vec![0]
+        let mut d = Vec::from_iter(b"spatial_arg".iter().cloned());
+        let rest = match self {
+            AssignThisToVar(v) => {
+                d.extend(b"_0<");
+                v.generate_uid()
+            }
+            DeclLocation(p) => {
+                d.extend(b"_1<");
+                p.generate_uid()
+            }
+            FromVarToVar(v0, v1) => {
+                d.extend(b"_2<");
+                let mut v0 = v0.generate_uid();
+                let v1 = v1.generate_uid();
+                v0.extend(v1);
+                v0
+            }
+            FromVarToVal(v0, v1) => {
+                d.extend(b"_3<");
+                let mut v0 = v0.generate_uid();
+                let v1 = v1.generate_uid();
+                v0.extend(v1);
+                v0
+            }
+            FromValToVar(v0, v1) => {
+                d.extend(b"_4<");
+                let mut v0 = v0.generate_uid();
+                let v1 = v1.generate_uid();
+                v0.extend(v1);
+                v0
+            }
+            FromValToVal(v0, v1) => {
+                d.extend(b"_5<");
+                let mut v0 = v0.generate_uid();
+                let v1 = v1.generate_uid();
+                v0.extend(v1);
+                v0
+            }
+            ToVar(v0) => {
+                d.extend(b"_6<");
+                v0.generate_uid()
+            }
+            ToVal(p) => {
+                d.extend(b"_7<");
+                p.generate_uid()
+            }
+        };
+        d.extend(rest);
+        d.push(b'>');
+        d
     }
 
     pub fn has_origin(&self) -> bool {

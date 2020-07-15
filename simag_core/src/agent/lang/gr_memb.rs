@@ -102,7 +102,7 @@ impl GroundedMemb {
     }
 
     pub(in crate::agent::lang) fn generate_uid(&self) -> Vec<u8> {
-        let mut id: Vec<u8> = vec![];
+        let mut id = Vec::from(b"gr_memb<".as_ref());
         let term_str: &str = (&self.term).into();
         id.append(&mut Vec::from(term_str.as_bytes()));
         if let Some(ref cmp) = self.operator {
@@ -113,6 +113,7 @@ impl GroundedMemb {
             id.append(&mut id_2);
         }
         id.append(&mut Vec::from(self.parent.as_bytes()));
+        id.push(b'>');
         id
     }
 
@@ -207,7 +208,6 @@ impl GroundedMemb {
 
     /// An statement is a time interval if there are only two time records and the
     /// last one is none.
-    // FIXME: this is error prone, encode if is a time interval at the type level when the bms is first created?
     pub fn is_time_interval(&self) -> bool {
         if let Some(bms) = &self.bms {
             bms.record_len() == 2 && bms.get_last_value().0.is_none()
