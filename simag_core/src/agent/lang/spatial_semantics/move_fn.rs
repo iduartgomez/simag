@@ -1,7 +1,7 @@
 use std::convert::TryFrom;
 use std::{collections::HashMap, sync::Arc};
 
-use super::SpatialArg;
+use super::{Point, SpatialArg};
 use crate::agent::{
     kb::{
         bms::{
@@ -96,25 +96,11 @@ impl MoveFn {
         Vec::from(b"move".as_ref())
     }
 
-    pub fn substitute<T: ProofResContext>(
+    pub fn get_location(
         &self,
-        agent: &Representation,
-        assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         loc_assign: &HashMap<&Var, Arc<BmsWrapper<IsSpatialData>>>,
-        context: &mut T,
-    ) {
-        let add_rec = |bms: &BmsWrapper<RecordHistory>, loc: BmsWrapper<IsSpatialData>| {
-            if let Some(time_arg) = &self.time_arg {
-                let t = time_arg.get_time_payload(time_assign, None);
-                let new = t.merge_spatial_data(loc).unwrap();
-                add_loc_from_move_fn(context, bms, new);
-            } else {
-                add_loc_from_spatial_data(context, bms, loc);
-            }
-        };
-
-        let loc = match &self.spatial_arg {
+    ) -> Result<BmsWrapper<IsSpatialData>, ()> {
+        match &self.spatial_arg {
             FromVarToVar(v0, v1) => {
                 let mut l0 = (&*loc_assign[&**v0]).clone();
                 let l1 = &loc_assign[&**v1];
@@ -157,10 +143,29 @@ impl MoveFn {
             }
             ToVal(l0) => Ok(BmsWrapper::<IsSpatialData>::new(Some(l0.clone()))),
             _ => Err(()),
+        }
+    }
+
+    pub fn substitute<T: ProofResContext>(
+        &self,
+        agent: &Representation,
+        assignments: Option<&HashMap<&Var, &VarAssignment>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
+        loc_assign: &HashMap<&Var, Arc<BmsWrapper<IsSpatialData>>>,
+        context: &mut T,
+    ) {
+        let add_rec = |bms: &BmsWrapper<RecordHistory>, loc: BmsWrapper<IsSpatialData>| {
+            if let Some(time_arg) = &self.time_arg {
+                let t = time_arg.get_time_payload(time_assign, None);
+                let new = t.merge_spatial_data(loc).unwrap();
+                add_loc_from_move_fn(context, bms, new);
+            } else {
+                add_loc_from_spatial_data(context, bms, loc);
+            }
         };
 
         if let Some(assignments) = assignments {
-            let loc = loc.unwrap_or_else(|_| {
+            let loc = self.get_location(loc_assign).unwrap_or_else(|_| {
                 unreachable!(
                     "SIMAG - {}:{}: location not assigned in move fn",
                     file!(),

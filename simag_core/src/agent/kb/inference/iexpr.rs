@@ -304,7 +304,18 @@ impl<'rep> Inference<'rep> {
                                 self.results.add_objs_by_loc(trial.unify().into_iter())
                             }
                         }
-                        GrTerminalKind::Class(cls) => todo!(),
+                        GrTerminalKind::Class(cls) => {
+                            if let Some(cls) = self.kb.classes.get(cls.as_str()) {
+                                let trial = MoveInfTrial {
+                                    kb: self.kb,
+                                    obj: Movable::Class(&*cls),
+                                    term: obj,
+                                    nodes: DashMap::new(),
+                                    loc: *point,
+                                };
+                                self.results.add_objs_by_loc(trial.unify().into_iter())
+                            }
+                        }
                     }
                 }
             }

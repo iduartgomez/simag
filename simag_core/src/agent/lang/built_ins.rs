@@ -58,7 +58,7 @@ impl<T: AsRef<str>> BuiltIns<T> {
         match self {
             BuiltIns::TimeCalculus(f) => Some(f.time_resolution(time_assign)),
             BuiltIns::Location(f) => Some(f.loc_resolution(loc_assign)),
-            BuiltIns::Move(_) => None, // makes no sense in this context
+            BuiltIns::Move(_) => unreachable!(), // makes no sense in this context
         }
     }
 }

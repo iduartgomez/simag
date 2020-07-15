@@ -28,7 +28,7 @@ pub(super) use self::logsent::{LogSentence, ProofResContext, SentID, SentVarReq}
 pub(super) use self::parser::Parser;
 pub(super) use self::parser::{Operator, ParseTree};
 pub(super) use self::skolem::Skolem;
-pub(super) use self::spatial_semantics::{LocFn, SpatialOps};
+pub(super) use self::spatial_semantics::{LocFn, MoveFn, SpatialOps};
 pub(super) use self::terminal::{GrTerminalKind, Terminal};
 pub(super) use self::time_semantics::TimeOps;
 pub(super) use self::var::{Var, VarKind};

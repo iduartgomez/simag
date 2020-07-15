@@ -64,6 +64,15 @@ impl<T: AsRef<str>> LocFn<T> {
     }
 }
 
+impl<T: AsRef<str>> From<(GrTerminalKind<T>, Point)> for LocFn<T> {
+    fn from(input: (GrTerminalKind<T>, Point)) -> Self {
+        let (term, loc) = input;
+        LocFn {
+            locations: vec![(Arc::new(term), ObjLocation::Reified(loc))],
+        }
+    }
+}
+
 impl<'a> std::convert::TryFrom<(&'a FuncDeclBorrowed<'a>, &'a mut ParseContext)> for LocFn<String> {
     type Error = ParseErrF;
 

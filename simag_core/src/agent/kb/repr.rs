@@ -1,4 +1,4 @@
-use std::collections::{hash_map::RandomState, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -17,8 +17,8 @@ use crate::agent::kb::{
 use crate::agent::lang::{
     Assert, BuiltIns, ClassDecl, FreeClassMembership, FuncDecl, GrTerminalKind,
     GrTerminalKind::{Class as ClassTerm, Entity as EntityTerm},
-    GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ParseErrF, ParseTree, Parser, Point,
-    Predicate, ProofResContext, SentVarReq, Var,
+    GroundedFunc, GroundedMemb, GroundedRef, LocFn, LogSentence, MoveFn, ParseErrF, ParseTree,
+    Parser, Point, Predicate, ProofResContext, SentVarReq, Var,
 };
 
 // TODO: find better solution for self-referential borrows escaping self method scopes
@@ -408,37 +408,77 @@ impl Representation {
                             Assert::FuncDecl(ref func_decl) => {
                                 iter_func_candidates(func_decl, &candidates)
                             }
-                            Assert::SpecialFunc(BuiltIns::Move(move_fn)) => {
-                                assign.iter().for_each(|a| {
-                                    let name = *a.name;
-                                    if assigned.get(name) == None {
-                                        // add this sent as move_fn to the potential candidates
-                                        match a.name {
-                                            GrTerminalKind::Entity(_) => {
-                                                if let Some(ent) = self.entities.get(name) {
-                                                    ent.move_beliefs.write().push(belief.clone());
-                                                }
-                                            }
-                                            GrTerminalKind::Class(_) => {
-                                                if let Some(cls) = self.classes.get(name) {
-                                                    cls.move_beliefs.write().push(belief.clone());
-                                                }
-                                            }
-                                        }
-                                        assigned.insert(name);
-                                    }
-                                });
-                                if let Some(mapped) = ArgsProduct::product(candidates.clone()) {
-                                    for args in mapped {
-                                        let args: HashMap<_, _, RandomState> =
-                                            HashMap::from_iter(args.iter().map(|(v, a)| (*v, &*a)));
-                                        // FIXME: get theoretical destination loc from the move fn
-                                        // ask if the obj is in that location
-                                    }
-                                }
-                            }
+                            Assert::SpecialFunc(BuiltIns::Move(move_fn)) => self
+                                .iter_move_candidates(
+                                    belief,
+                                    move_fn,
+                                    assign,
+                                    &candidates,
+                                    &mut assigned,
+                                ),
                             Assert::SpecialFunc(_) => {}
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    fn iter_move_candidates<'a, 'b: 'a>(
+        &self,
+        belief: &Arc<LogSentence>,
+        move_fn: &MoveFn,
+        assign: &[Arc<VarAssignment<'b>>],
+        candidates: &HashMap<&Var, Vec<Arc<VarAssignment>>>,
+        assigned: &'a mut HashSet<&'b str>,
+    ) {
+        assign.iter().for_each(|a| {
+            let name = *a.name;
+            if assigned.get(name) == None {
+                // add this sent as move_fn to the potential candidates
+                match a.name {
+                    GrTerminalKind::Entity(_) => {
+                        if let Some(ent) = self.entities.get(name) {
+                            ent.move_beliefs.write().push(belief.clone());
+                        }
+                    }
+                    GrTerminalKind::Class(_) => {
+                        if let Some(cls) = self.classes.get(name) {
+                            cls.move_beliefs.write().push(belief.clone());
+                        }
+                    }
+                }
+                assigned.insert(name);
+            }
+        });
+        if let Some(mapped) = ArgsProduct::product(candidates.clone()) {
+            let mut pos: Option<Point> = None;
+            for args in mapped {
+                let args = HashMap::from_iter(args.iter().map(|(v, a)| (*v, &**a)));
+                for arg in args
+                    .values()
+                    .map(|v| GrTerminalKind::from((*v.name).to_owned()))
+                {
+                    if let Some(pos) = &pos {
+                        // ask if the obj is in that location
+                        self.ask_processed(
+                            QueryInput::AskLocation(LocFn::from((arg, pos.clone()))),
+                            0,
+                            true,
+                        )
+                        .unwrap();
+                    } else {
+                        // fetch the location the first time
+                        let (_, loc_assign) = belief.get_assignments(self, Some(&args));
+                        let locs = move_fn.get_location(&loc_assign).unwrap();
+                        let loc = locs.get_last_value().1.unwrap();
+                        pos = Some(loc.clone());
+                        self.ask_processed(
+                            QueryInput::AskLocation(LocFn::from((arg, loc))),
+                            0,
+                            true,
+                        )
+                        .unwrap();
                     }
                 }
             }

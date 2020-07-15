@@ -24,7 +24,7 @@ use super::{
     gr_memb::GroundedMemb,
     parser::{ASTNode, AssertBorrowed, LogicOperator, Scope, VarDeclBorrowed},
     time_semantics::TimeArg::*,
-    BuiltIns, ParseErrF, Skolem, Time, Var, VarKind,
+    ParseErrF, Skolem, Time, Var, VarKind,
 };
 use crate::agent::{
     kb::bms::{BmsWrapper, IsSpatialData, IsTimeData},
@@ -243,7 +243,7 @@ impl<'a> LogSentence {
     }
 
     #[allow(clippy::type_complexity)]
-    fn get_assignments(
+    pub(in crate::agent) fn get_assignments(
         &self,
         agent: &Representation,
         var_assign: Option<&HashMap<&Var, &VarAssignment>>,
