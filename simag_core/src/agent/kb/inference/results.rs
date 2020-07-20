@@ -90,15 +90,15 @@ impl<'rep> InfResults<'rep> {
 
     pub fn add_objs_by_loc<'a: 'b, 'b>(
         &'b self,
-        objs: impl Iterator<Item = (&'a Point, Arc<GrTerminalKind<String>>, bool)>,
+        objs: impl Iterator<Item = (&'a Point, Arc<GrTerminalKind<String>>, Option<bool>)>,
     ) {
         for (loc, obj, val) in objs {
             if let Some(mut entries) = self.objs_by_loc.get_mut(loc) {
-                entries.insert(LocResult(obj, val));
+                entries.insert(LocResult(obj, val.unwrap_or_else(|| false)));
             } else {
                 self.objs_by_loc.insert(loc.clone(), {
                     let mut hs = HashSet::new();
-                    hs.insert(LocResult(obj, val));
+                    hs.insert(LocResult(obj, val.unwrap_or_else(|| false)));
                     hs
                 });
             }

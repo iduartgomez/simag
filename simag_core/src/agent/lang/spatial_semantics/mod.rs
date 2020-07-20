@@ -15,9 +15,13 @@ pub(super) use spatial_arg::SpatialArg;
 pub(in crate::agent) use spatial_ops::SpatialOps;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(in crate::agent) struct Point(i64, i64, i64);
+pub struct Point(i64, i64, i64);
 
 impl Point {
+    pub fn new(x: i64, y: i64, z: i64) -> Self {
+        Point(x, y, z)
+    }
+
     pub fn generate_uid(&self) -> Vec<u8> {
         let mut repr: Vec<u8> = Vec::with_capacity(std::mem::size_of::<i64>() * 3);
         repr.extend(b"point<");

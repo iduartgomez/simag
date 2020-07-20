@@ -84,10 +84,12 @@ impl<'a> std::convert::TryFrom<(&'a VarBorrowed<'a>, &'a ParseContext)> for Var 
             }
             (def, Some(val)) if def.0 == b"location" => match val {
                 UnconstraintArg::String(slice) => {
-                    let time = Point::try_from(*slice)?;
+                    let loc = Point::try_from(*slice)?;
                     kind = VarKind::SpatialDecl;
-                    (TypeDef::Location, Some(ConstraintValue::SpatialPayload));
-                    todo!();
+                    (
+                        TypeDef::Location,
+                        Some(ConstraintValue::SpatialPayload(loc)),
+                    )
                 }
                 _ => return Err(TimeFnErr::InsufArgs.into()),
             },

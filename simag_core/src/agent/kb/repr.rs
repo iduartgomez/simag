@@ -726,7 +726,7 @@ impl Representation {
     pub(super) fn find_objs_by_loc<'a, T: AsRef<str> + 'a>(
         &self,
         objects: impl Iterator<Item = (&'a Arc<GrTerminalKind<T>>, &'a Point)>,
-    ) -> Vec<(&'a Point, Arc<GrTerminalKind<T>>, bool)> {
+    ) -> Vec<(&'a Point, Arc<GrTerminalKind<T>>, Option<bool>)> {
         let mut answer = vec![];
         for (term, loc) in objects {
             match &**term {
@@ -734,24 +734,24 @@ impl Representation {
                     if let Some(class) = self.classes.get(class_name.as_ref()) {
                         let rec = class.location.get_record_at_location(loc, None);
                         if !rec.is_empty() {
-                            answer.push((loc, term.clone(), true))
+                            answer.push((loc, term.clone(), Some(true)))
                         } else {
-                            answer.push((loc, term.clone(), false))
+                            answer.push((loc, term.clone(), Some(false)))
                         }
                     } else {
-                        answer.push((loc, term.clone(), false))
+                        answer.push((loc, term.clone(), None))
                     }
                 }
                 EntityTerm(subject) => {
                     if let Some(entity) = self.entities.get(subject.as_ref()) {
                         let rec = entity.location.get_record_at_location(loc, None);
                         if !rec.is_empty() {
-                            answer.push((loc, term.clone(), true))
+                            answer.push((loc, term.clone(), Some(true)))
                         } else {
-                            answer.push((loc, term.clone(), false))
+                            answer.push((loc, term.clone(), Some(false)))
                         }
                     } else {
-                        answer.push((loc, term.clone(), false))
+                        answer.push((loc, term.clone(), None))
                     }
                 }
             }
@@ -828,6 +828,10 @@ impl<'a> Answer<'a> {
     #[allow(dead_code)]
     pub(super) fn get_relationships(&self) -> HashMap<ObjName<'a>, Vec<&'a GroundedFunc>> {
         self.0.get_relationships()
+    }
+
+    pub fn get_located_objects(&self) -> HashMap<Point, Vec<ObjName<'a>>> {
+        todo!()
     }
 }
 

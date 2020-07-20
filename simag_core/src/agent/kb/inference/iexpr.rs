@@ -284,12 +284,13 @@ impl<'rep> Inference<'rep> {
 
             {
                 let not_retrieved_objs = objs.iter().filter_map(|(loc, term, was_located)| {
-                    if !was_located {
+                    if let Some(true) = was_located {
                         Some((loc, term))
                     } else {
                         None
                     }
                 });
+
                 for (point, obj) in not_retrieved_objs {
                     match &**obj {
                         GrTerminalKind::Entity(ent) => {
@@ -301,7 +302,7 @@ impl<'rep> Inference<'rep> {
                                     nodes: DashMap::new(),
                                     loc: *point,
                                 };
-                                self.results.add_objs_by_loc(trial.unify().into_iter())
+                                self.results.add_objs_by_loc(trial.unify().into_iter());
                             }
                         }
                         GrTerminalKind::Class(cls) => {
@@ -313,14 +314,16 @@ impl<'rep> Inference<'rep> {
                                     nodes: DashMap::new(),
                                     loc: *point,
                                 };
-                                self.results.add_objs_by_loc(trial.unify().into_iter())
+                                self.results.add_objs_by_loc(trial.unify().into_iter());
                             }
                         }
                     }
                 }
             }
 
-            let initially_retrieved = objs.into_iter().filter(|(_, _, res)| *res);
+            let initially_retrieved =
+                objs.into_iter()
+                    .filter(|(_, _, res)| if let Some(true) = res { true } else { false });
             self.results.add_objs_by_loc(initially_retrieved);
         });
     }
@@ -340,32 +343,50 @@ enum Movable<'rep> {
 }
 
 impl<'rep> MoveInfTrial<'rep> {
-    fn unify(self) -> Option<(&'rep Point, Arc<GrTerminalKind<String>>, bool)> {
+    fn unify(self) -> Option<(&'rep Point, Arc<GrTerminalKind<String>>, Option<bool>)> {
         match self.obj {
             Movable::Entity(ent) => {
                 for sent in ent.move_beliefs.read().iter().rev() {
-                    // try unifying from last sentence to first
-                    add_rule_node(sent, &self.nodes);
-                    if self.unification_trial(sent) {
-                        // find out if this moved the obj
-                        let it = std::iter::once((self.term, self.loc));
-                        if let Some(res) = self
-                            .kb
-                            .find_objs_by_loc(it)
-                            .into_iter()
-                            .find(|(_, _, res)| *res)
-                        {
-                            return Some(res);
-                        }
+                    let trial = self.unification_trial(sent);
+                    if trial.is_some() {
+                        return trial;
                     }
                 }
             }
-            _ => todo!(),
+            Movable::Class(cls) => {
+                for sent in cls.move_beliefs.read().iter().rev() {
+                    let trial = self.unification_trial(sent);
+                    if trial.is_some() {
+                        return trial;
+                    }
+                }
+            }
         }
         None
     }
 
-    fn unification_trial(&self, sent: &Arc<LogSentence>) -> bool {
+    fn unification_trial(
+        &self,
+        sent: &Arc<LogSentence>,
+    ) -> Option<(&'rep Point, Arc<GrTerminalKind<String>>, Option<bool>)> {
+        // try unifying from last sentence to first
+        add_rule_node(sent, &self.nodes);
+        if self.run_trial(sent) {
+            // find out if this moved the obj
+            let it = std::iter::once((self.term, self.loc));
+            if let Some(res) = self
+                .kb
+                .find_objs_by_loc(it)
+                .into_iter()
+                .find(|(_, _, res)| res.is_some())
+            {
+                return Some(res);
+            }
+        }
+        None
+    }
+
+    fn run_trial(&self, sent: &Arc<LogSentence>) -> bool {
         let sent_req: SentVarReq = sent.get_lhs_predicates().into();
         for var_requirements in sent_req {
             if let Some(assignments) = meet_sent_requirements(self.kb, &var_requirements) {
