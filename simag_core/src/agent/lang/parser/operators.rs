@@ -19,20 +19,20 @@ pub(in crate::agent) enum Operator {
     /// used whenever a time value is assigned in a declaration from `this`
     TimeAssignment,
 
-    // space operators:
+    // spatial operators:
     /// used for asserting some time variants holds
     // From,
     To,
     FromTo,
     /// assign a location at declaration time
     At,
-    /// used whenever a space value is assigned in a declaration from `this`
-    SpaceAssignment,
+    /// used whenever a spatial value is assigned in a declaration from `this`
+    SpatialAssignment,
 }
 
 pub(super) enum OperatorKind {
     TimeFn,
-    SpaceFn,
+    SpatialFn,
 }
 
 pub(super) fn second_operand(
@@ -49,7 +49,7 @@ pub(super) fn second_operand(
                 Some((Operator::Since, UnconstraintArg::String(EMPTY)))
             }
         }
-        OperatorKind::SpaceFn => {
+        OperatorKind::SpatialFn => {
             if let Some(term) = t {
                 // from <a> to <b>
                 Some((Operator::FromTo, term))
@@ -70,7 +70,7 @@ impl Operator {
             b"<=" => Ok((EMPTY, Operator::LessEqual)),
             b">=" => Ok((EMPTY, Operator::MoreEqual)),
             b"at" => Ok((EMPTY, Operator::At)),
-            _ => Err(nom::Err::Error(ParseErrB::IsNotOperator(c))),
+            _ => Err(nom::Err::Error(ParseErrB::NotOperator(c))),
         }
     }
 
@@ -125,7 +125,7 @@ impl Operator {
             Operator::Until => id.push(6),
             Operator::Since => id.push(7),
             Operator::SinceUntil => id.push(8),
-            Operator::SpaceAssignment => id.push(10),
+            Operator::SpatialAssignment => id.push(10),
             Operator::To => id.push(11),
             Operator::FromTo => id.push(12),
             Operator::At => id.push(13),
@@ -145,7 +145,7 @@ impl std::fmt::Display for Operator {
             Operator::Until => write!(f, "<-"),
             Operator::Since => write!(f, "->"),
             Operator::SinceUntil => write!(f, "<->"),
-            Operator::SpaceAssignment => write!(f, "@"),
+            Operator::SpatialAssignment => write!(f, "@"),
             Operator::To => write!(f, "->"),
             Operator::FromTo => write!(f, "<->"),
             Operator::At => write!(f, "@"),
@@ -177,7 +177,7 @@ impl LogicOperator {
             Ok((rest, OR_OP)) => Ok((rest, LogicOperator::Or)),
             Ok((rest, IFF_OP)) => Ok((rest, LogicOperator::Biconditional)),
             Ok((rest, IMPL_OP)) => Ok((rest, LogicOperator::Implication)),
-            _ => Err(nom::Err::Error(ParseErrB::IsNotOperator(i))),
+            _ => Err(nom::Err::Error(ParseErrB::NotOperator(i))),
         }
     }
 

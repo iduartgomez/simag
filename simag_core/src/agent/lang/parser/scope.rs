@@ -60,11 +60,12 @@ pub(super) fn sentence(input: &[u8]) -> IResult<&[u8], ASTNode> {
 
     if let Ok((rest, (decl, op, next))) = lhs(i) {
         // is lhs
-        if let Ok((_, decl)) = declaration(vars, decl, op, next, true) {
-            node = decl;
-            next_input = rest;
-        } else {
-            panic!()
+        match declaration(vars, decl, op, next, true) {
+            Ok((_, decl)) => {
+                node = decl;
+                next_input = rest;
+            }
+            Err(err) => return Err(err),
         }
     } else if let Ok((rest, (decl, op, next))) = rhs(i) {
         // is rhs

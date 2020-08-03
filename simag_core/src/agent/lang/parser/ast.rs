@@ -1,9 +1,12 @@
+use std::convert::TryFrom;
+
 use super::{AssertBorrowed, LogicOperator, ParseErrF, Scope};
 use crate::agent::lang::{
     cls_decl::ClassDecl,
     common::Assert,
     fn_decl::FuncDecl,
     logsent::{ParseContext, SentKind},
+    spatial_semantics::LocFn,
     LogSentence,
 };
 
@@ -79,18 +82,27 @@ impl<'a> ASTNode<'a> {
             ASTNode::Assert(ref decl) => match *decl {
                 // perform potential variable substitution
                 AssertBorrowed::ClassDecl(ref decl) => {
-                    let mut cls = ClassDecl::from(decl, context)?;
+                    let mut cls = ClassDecl::try_from((decl, &mut *context))?;
                     if context.in_assertion && context.is_tell {
                         cls.var_substitution()?;
                     }
                     Ok(Some(ParseTree::Assertion(vec![Assert::ClassDecl(cls)])))
                 }
                 AssertBorrowed::FuncDecl(ref decl) => {
-                    let mut func = FuncDecl::from(decl, context)?;
-                    if context.in_assertion && context.is_tell {
-                        func.var_substitution()?;
+                    match FuncDecl::try_from((decl, &mut *context)) {
+                        Ok(mut func) => {
+                            if context.in_assertion && context.is_tell {
+                                func.var_substitution()?;
+                            }
+                            Ok(Some(ParseTree::Assertion(vec![Assert::FuncDecl(func)])))
+                        }
+                        Err(_) => {
+                            let func = LocFn::try_from((decl, &mut *context))?;
+                            Ok(Some(ParseTree::Assertion(vec![Assert::SpecialFunc(
+                                func.into(),
+                            )])))
+                        }
                     }
-                    Ok(Some(ParseTree::Assertion(vec![Assert::FuncDecl(func)])))
                 }
             },
             ASTNode::Chain(ref multi_decl) => {
@@ -112,6 +124,10 @@ impl<'a> ASTNode<'a> {
                 Ok(Some(ParseTree::Assertion(v0)))
             }
             ASTNode::Scope(ref node) => {
+                match node.logic_op {
+                    None | Some(LogicOperator::And) => {}
+                    _ => return Err(ParseErrF::WrongDef),
+                }
                 let a: Result<Option<ParseTree>, ParseErrF> = (**node).is_assertion(context);
                 match a {
                     Err(err) => Err(err),

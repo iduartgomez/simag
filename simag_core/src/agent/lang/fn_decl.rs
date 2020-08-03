@@ -1,17 +1,18 @@
 use std::collections::HashMap;
-use std::convert::TryFrom;
-use std::sync::{atomic::AtomicBool, Arc};
+use std::convert::{TryFrom, TryInto};
+use std::{iter::FromIterator, sync::Arc};
 
 use super::{
     common::*,
     logsent::{LogSentResolution, ParseContext},
     parser::{FuncDeclBorrowed, FuncVariants},
+    spatial_semantics::SpatialArg,
     time_semantics::{TimeArg::*, TimeFn, TimeOps},
     var::Var,
     *,
 };
 use crate::agent::{
-    kb::bms::{BmsWrapper, ReplaceMode},
+    kb::bms::{BmsWrapper, IsSpatialData, IsTimeData, OverwriteBms, RecordHistory},
     kb::{repr::Representation, VarAssignment},
 };
 
@@ -23,86 +24,20 @@ pub(in crate::agent) struct FuncDecl {
     pub variant: FuncVariants,
 }
 
-impl<'a> FuncDecl {
-    pub fn from(
-        other: &FuncDeclBorrowed<'a>,
-        context: &mut ParseContext,
-    ) -> Result<FuncDecl, ParseErrF> {
+impl<'a> TryFrom<(&FuncDeclBorrowed<'a>, &mut ParseContext)> for FuncDecl {
+    type Error = ParseErrF;
+
+    fn try_from(input: (&FuncDeclBorrowed, &mut ParseContext)) -> Result<Self, Self::Error> {
+        let (other, context) = input;
         let func_name = Terminal::from(&other.name, context)?;
         match other.variant {
             FuncVariants::Relational => FuncDecl::decl_relational_fn(other, context, func_name),
-            FuncVariants::NonRelational => {
-                FuncDecl::decl_nonrelational_fn(other, context, func_name)
-            }
+            _ => Err(ParseErrF::WrongDef), // only built-in funcs can be non-relational; parsed before this
         }
     }
+}
 
-    /// Assumes all arguments are grounded and converts to a GroundedFunc (panics otherwise).
-    pub fn into_grounded(self) -> GroundedFunc {
-        let FuncDecl {
-            name,
-            args,
-            op_args,
-            ..
-        } = self;
-        let name = match name {
-            Terminal::GroundedTerm(name) => name,
-            Terminal::FreeTerm(_) => unreachable!(),
-        };
-        let mut first = None;
-        let mut second = None;
-        let mut third = None;
-        let mut val = None;
-        let mut args = args.unwrap();
-        for (i, a) in args.drain(..).enumerate() {
-            let mut n_a = match a {
-                Predicate::GroundedMemb(term) => term,
-                Predicate::FreeClsMemb(_) | Predicate::FreeClassMembership(_) => unreachable!(),
-            };
-            n_a.bms = None;
-            if i == 0 {
-                val = n_a.get_value();
-                first = Some(n_a);
-            } else if i == 1 {
-                second = Some(n_a);
-            } else {
-                third = Some(n_a);
-            }
-        }
-        let mut time_data = BmsWrapper::new(false);
-        let mut ow = false;
-        if let Some(mut oargs) = op_args {
-            for arg in oargs.drain(..) {
-                match arg {
-                    OpArg::Time(DeclTime(TimeFn::Since(time))) => {
-                        time_data.new_record(Some(time), val, None);
-                    }
-                    OpArg::Time(DeclTime(TimeFn::Interval(t0, t1))) => {
-                        time_data.new_record(Some(t0), val, None);
-                        time_data.new_record(Some(t1), None, None);
-                    }
-                    OpArg::Time(DeclTime(TimeFn::Now)) => {
-                        time_data.new_record(Some(Utc::now()), val, None);
-                    }
-                    OpArg::OverWrite => {
-                        ow = true;
-                    }
-                    _ => {}
-                }
-            }
-        }
-        if time_data.record_len() == 0 {
-            time_data.new_record(None, val, None);
-        }
-        time_data.overwrite = AtomicBool::new(ow);
-        GroundedFunc {
-            name,
-            args: [first.unwrap(), second.unwrap()],
-            third,
-            bms: Arc::new(time_data),
-        }
-    }
-
+impl FuncDecl {
     pub fn is_grounded(&self) -> bool {
         if !self.parent_is_grounded() {
             return false;
@@ -148,7 +83,7 @@ impl<'a> FuncDecl {
     }
 
     pub(in crate::agent::lang) fn generate_uid(&self) -> Vec<u8> {
-        let mut id = vec![];
+        let mut id = Vec::from_iter(b"func_decl<".iter().cloned());
         id.append(&mut self.name.generate_uid());
         if let Some(ref args) = self.args {
             for a in args {
@@ -162,10 +97,11 @@ impl<'a> FuncDecl {
                 id.append(&mut id_2)
             }
         }
+        id.push(b'>');
         id
     }
 
-    fn decl_relational_fn(
+    fn decl_relational_fn<'a>(
         other: &FuncDeclBorrowed<'a>,
         context: &mut ParseContext,
         name: Terminal,
@@ -173,8 +109,29 @@ impl<'a> FuncDecl {
         let op_args = match other.op_args {
             Some(ref oargs) => {
                 let mut v0 = Vec::with_capacity(oargs.len());
+                let mut found_time_arg = false;
+                let mut found_spatial_arg = false;
                 for e in oargs {
                     let a = OpArg::try_from((e, &*context))?;
+                    match a {
+                        OpArg::Spatial(_) => {
+                            if found_spatial_arg {
+                                // only one allowed
+                                return Err(ParseErrF::WrongArgNumb);
+                            } else {
+                                found_spatial_arg = true
+                            }
+                        }
+                        OpArg::Time(_) => {
+                            if found_time_arg {
+                                // only one allowed
+                                return Err(ParseErrF::WrongArgNumb);
+                            } else {
+                                found_time_arg = true
+                            }
+                        }
+                        _ => {}
+                    }
                     v0.push(a);
                 }
                 Some(v0)
@@ -188,7 +145,7 @@ impl<'a> FuncDecl {
             }
             let mut vars = 0;
             for (i, a) in oargs.iter().enumerate() {
-                let pred = Predicate::from(a, context, &name, true)?;
+                let pred = Predicate::from(a, context, &name, Some(i))?;
                 if pred.has_uval() && (i == 1 || i == 2) {
                     return Err(ParseErrF::RFuncWrongArgs);
                 }
@@ -212,37 +169,10 @@ impl<'a> FuncDecl {
         })
     }
 
-    fn decl_nonrelational_fn(
-        other: &FuncDeclBorrowed<'a>,
-        context: &mut ParseContext,
-        name: Terminal,
-    ) -> Result<FuncDecl, ParseErrF> {
-        let op_args = match other.op_args {
-            Some(ref oargs) => {
-                let mut v0 = Vec::with_capacity(oargs.len());
-                for e in oargs {
-                    let a = match OpArg::try_from((e, &*context)) {
-                        Err(err) => return Err(err),
-                        Ok(a) => a,
-                    };
-                    v0.push(a);
-                }
-                Some(v0)
-            }
-            None => None,
-        };
-        Ok(FuncDecl {
-            name,
-            args: None,
-            op_args,
-            variant: FuncVariants::NonRelational,
-        })
-    }
-
     pub(in crate::agent::lang) fn contains_var(&self, var: &Var) -> bool {
         if self.args.is_some() {
             for a in self.args.as_ref().unwrap() {
-                if let Predicate::FreeClsMemb(ref term) = *a {
+                if let Predicate::FreeMembershipToClass(ref term) = *a {
                     if &*term.term == var {
                         return true;
                     }
@@ -276,25 +206,22 @@ impl<'a> FuncDecl {
         }
         Ok(())
     }
-}
 
-impl OpArgsOps for FuncDecl {
-    fn get_op_args(&self) -> Option<&[common::OpArg]> {
-        self.op_args.as_deref()
-    }
-}
-
-impl TimeOps for FuncDecl {
-    fn get_times(
+    fn get_assignment<T>(
         &self,
         agent: &Representation,
         var_assign: Option<&HashMap<&Var, &VarAssignment>>,
-    ) -> Option<Arc<BmsWrapper>> {
+    ) -> Option<Arc<T>>
+    where
+        T: for<'a> TryFrom<&'a BmsWrapper<RecordHistory>>,
+    {
         if self.is_grounded() {
             let sbj = self.args.as_ref().unwrap();
-            let grfunc = self.clone().into_grounded();
+            let grfunc = self.clone().into();
             if let Some(relation) = agent.get_relationship(&grfunc, sbj[0].get_name()) {
-                Some(relation.bms.clone())
+                Some(Arc::new((&*relation.bms).try_into().unwrap_or_else(|_| {
+                    unreachable!("SIMAG - {}:{}: illegal conversion", file!(), line!())
+                })))
             } else {
                 None
             }
@@ -303,11 +230,19 @@ impl TimeOps for FuncDecl {
             let f = HashMap::new();
             if let Ok(grfunc) = GroundedFunc::from_free(self, var_assign, &f) {
                 for arg in self.get_args() {
-                    if let Predicate::FreeClsMemb(ref arg) = *arg {
+                    if let Predicate::FreeMembershipToClass(ref arg) = *arg {
                         let assignments = var_assign.as_ref().unwrap();
                         if let Some(entity) = assignments.get(&*arg.term) {
                             if let Some(current) = entity.get_relationship(&grfunc) {
-                                return Some(current.bms.clone());
+                                return Some(Arc::new((&*current.bms).try_into().unwrap_or_else(
+                                    |_| {
+                                        unreachable!(
+                                            "SIMAG - {}:{}: illegal conversion",
+                                            file!(),
+                                            line!()
+                                        )
+                                    },
+                                )));
                             }
                         }
                     }
@@ -318,6 +253,116 @@ impl TimeOps for FuncDecl {
     }
 }
 
+impl Into<GroundedFunc> for FuncDecl {
+    /// Assumes all arguments are grounded and converts to a GroundedFunc (panics otherwise).
+    fn into(self) -> GroundedFunc {
+        let FuncDecl {
+            name,
+            args,
+            op_args,
+            ..
+        } = self;
+        let name = match name {
+            Terminal::GroundedTerm(name) => name,
+            Terminal::FreeTerm(_) => unreachable!(),
+        };
+        let mut first = None;
+        let mut second = None;
+        let mut third = None;
+        let mut val = None;
+        let mut args = args.unwrap();
+        for (i, a) in args.drain(..).enumerate() {
+            let mut n_a = match a {
+                Predicate::GroundedMemb(term) => term,
+                Predicate::FreeMembershipToClass(_) | Predicate::FreeClassMembership(_) => {
+                    unreachable!()
+                }
+            };
+            n_a.bms = None;
+            if i == 0 {
+                val = n_a.get_value();
+                first = Some(n_a);
+            } else if i == 1 {
+                second = Some(n_a);
+            } else {
+                third = Some(n_a);
+            }
+        }
+        let mut time_data = None;
+        let mut spatial_data = None;
+        let mut ow = false;
+        if let Some(mut oargs) = op_args {
+            for arg in oargs.drain(..) {
+                match arg {
+                    OpArg::Time(DeclTime(TimeFn::Since(time))) => {
+                        time_data = Some(BmsWrapper::<IsTimeData>::new(Some(time), val));
+                    }
+                    OpArg::Time(DeclTime(TimeFn::Interval(t0, t1))) => {
+                        let mut t0 = BmsWrapper::<IsTimeData>::new(Some(t0), val);
+                        let t1 = &BmsWrapper::<IsTimeData>::new(Some(t1), None);
+                        t0.merge_since_until(t1).unwrap_or_else(|_| {
+                            unreachable!("SIMAG - {}:{}: illegal merge", file!(), line!())
+                        });
+                        time_data = Some(t0)
+                    }
+                    OpArg::Time(DeclTime(TimeFn::Now)) => {
+                        time_data = Some(BmsWrapper::<IsTimeData>::new(None, val));
+                    }
+                    OpArg::Spatial(SpatialArg::DeclLocation(loc)) => {
+                        spatial_data = Some(BmsWrapper::<IsSpatialData>::new(Some(loc)));
+                    }
+                    OpArg::OverWrite => {
+                        ow = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let time_data = if let Some(time) = time_data {
+            time
+        } else {
+            BmsWrapper::<IsTimeData>::new(None, val)
+        };
+        let final_bms = if let Some(loc) = spatial_data {
+            time_data.merge_spatial_data(loc).unwrap()
+        } else {
+            time_data.into()
+        };
+        GroundedFunc {
+            name,
+            args: [first.unwrap(), second.unwrap()],
+            third,
+            bms: Arc::new(final_bms.with_ow_val(ow)),
+        }
+    }
+}
+
+impl OpArgsOps for FuncDecl {
+    fn get_op_args(&self) -> Option<&[common::OpArg]> {
+        self.op_args.as_deref()
+    }
+}
+
+impl SpatialOps for FuncDecl {
+    fn get_location(
+        &self,
+        agent: &Representation,
+        var_assign: Option<&HashMap<&Var, &VarAssignment>>,
+    ) -> Option<Arc<BmsWrapper<IsSpatialData>>> {
+        self.get_assignment(agent, var_assign)
+    }
+}
+
+impl TimeOps for FuncDecl {
+    fn get_times(
+        &self,
+        agent: &Representation,
+        var_assign: Option<&HashMap<&Var, &VarAssignment>>,
+    ) -> Option<Arc<BmsWrapper<IsTimeData>>> {
+        self.get_assignment(agent, var_assign)
+    }
+}
+
 impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
     /// Compares two relational functions, if they include free terms variable values
     /// assignments must be provided or will return None or panic in worst case.
@@ -325,12 +370,12 @@ impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
     ) -> Option<bool> {
         if self.is_grounded() {
             let sbj = self.args.as_ref().unwrap();
-            let grfunc = self.clone().into_grounded();
+            let grfunc = self.clone().into();
             if context.compare_relation(&grfunc) {
                 let cmp = context.has_relationship(&grfunc);
                 if let Some(false) = cmp {
@@ -346,7 +391,7 @@ impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
             let assigned = assignments?;
             if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, time_assign) {
                 for arg in self.get_args() {
-                    if let Predicate::FreeClsMemb(ref arg) = *arg {
+                    if let Predicate::FreeMembershipToClass(ref arg) = *arg {
                         if let Some(entity) = assigned.get(&*arg.term) {
                             if let Some(current) = entity.get_relationship(&grfunc) {
                                 let a = Grounded::Function(Arc::downgrade(&current.clone()));
@@ -356,7 +401,7 @@ impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
                                 {
                                     context.set_newest_grfact(time);
                                 }
-                                if **current != grfunc {
+                                if !current.compare_ignoring_times(&grfunc) {
                                     return Some(false);
                                 } else {
                                     return Some(true);
@@ -374,13 +419,13 @@ impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
     ) {
         if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, time_assign) {
             let time_data = self.get_own_time_data(time_assign, None);
-            time_data.replace_value(grfunc.get_value(), ReplaceMode::Substitute);
-            grfunc.bms.overwrite_data(&time_data);
+            time_data.replace_value(grfunc.get_value());
+            grfunc.bms.overwrite_data(time_data.into()).unwrap();
             #[cfg(debug_assertions)]
             {
                 log::trace!("Correct substitution found, updating: {:?}", grfunc);

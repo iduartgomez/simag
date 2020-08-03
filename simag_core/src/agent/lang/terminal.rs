@@ -1,6 +1,6 @@
 use std::iter::FromIterator;
 use std::str;
-use std::sync::Arc;
+use std::{ops::Deref, sync::Arc};
 
 use super::{errors::ParseErrF, logsent::ParseContext, parser::TerminalBorrowed, var::Var};
 
@@ -85,8 +85,8 @@ impl<'a> Terminal {
         if let Terminal::FreeTerm(ref var) = *self {
             var.clone()
         } else {
-            panic!(format!(
-                "SIMAG - {}:{} - called `get_var` on a non-var term",
+            unreachable!(format!(
+                "SIMAG - {}:{}: called `get_var` on a non-var term",
                 file!(),
                 line!()
             ))
@@ -117,7 +117,18 @@ where
     }
 }
 
-impl<'a, T> From<T> for GrTerminalKind<T>
+impl<'a> Deref for GrTerminalKind<&'a str> {
+    type Target = &'a str;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            GrTerminalKind::Entity(s) => s,
+            GrTerminalKind::Class(s) => s,
+        }
+    }
+}
+
+impl<T> From<T> for GrTerminalKind<T>
 where
     T: AsRef<str>,
 {
@@ -126,6 +137,19 @@ where
             GrTerminalKind::Entity(s)
         } else {
             GrTerminalKind::Class(s)
+        }
+    }
+}
+
+impl From<&[u8]> for GrTerminalKind<String> {
+    fn from(s: &[u8]) -> GrTerminalKind<String> {
+        unsafe {
+            // safety: this is always safe as parser only receives valid utf-8 str
+            if s.starts_with(b"$") {
+                GrTerminalKind::Entity(str::from_utf8_unchecked(s).to_owned())
+            } else {
+                GrTerminalKind::Class(str::from_utf8_unchecked(s).to_owned())
+            }
         }
     }
 }

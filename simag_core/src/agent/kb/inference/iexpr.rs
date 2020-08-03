@@ -17,14 +17,18 @@ use std::sync::{
 };
 
 use crate::agent::kb::{
+    bms::{HasBms, OverwriteBms},
+    class::Class,
+    entity::Entity,
     inference::results::{GroundedResults, InfResults},
     repr::{Answer, Representation},
     VarAssignment,
 };
 use crate::agent::lang::{
-    Assert, ClassDecl, FreeClassMembership, FreeClsMemb, FuncDecl, Grounded, GroundedFunc,
-    GroundedMemb, LogSentence, ParseTree, Predicate, ProofResContext, SentID, SentVarReq, Terminal,
-    Time, TimeOps, Var, VarKind,
+    Assert, BuiltIns, ClassDecl, FreeClassMembership, FreeMembershipToClass, FuncDecl,
+    GrTerminalKind, Grounded, GroundedFunc, GroundedMemb, LocFn, LogSentence, ParseTree, Point,
+    Predicate, ProofResContext, SentID, SentVarReq, SpatialOps, Terminal, Time, TimeOps, TypeDef,
+    Var,
 };
 use chrono::Utc;
 use dashmap::DashMap;
@@ -98,6 +102,10 @@ impl<'rep> Inference<'rep> {
         if !self.query.func_memb_query.is_empty() {
             self.tpool.install(|| self.query_func_memb());
         }
+
+        if !self.query.loc_query.is_empty() {
+            self.tpool.install(|| self.query_loc())
+        }
     }
 
     /// Find if a grounded class membership is true, false or unknown.
@@ -110,7 +118,7 @@ impl<'rep> Inference<'rep> {
                 for pred in preds {
                     let query = pred.get_parent();
                     let result = if !self.ignore_current {
-                        // FIXME: only checks for the current value, not for intervals
+                        // FIXME: only checks for the current value, not for time intervals
                         self.kb.class_membership_query(pred)
                     } else {
                         None
@@ -266,6 +274,147 @@ impl<'rep> Inference<'rep> {
                     }
                 }
             });
+    }
+
+    /// Find or asserts if objects are positioned in a specified location.
+    /// ie. (fn::location($John at '1.1.0'))
+    fn query_loc(&self) {
+        self.query.loc_query.par_iter().for_each(|loc_fn| {
+            // find out objects by location
+            let objs = self.kb.find_objs_by_loc(loc_fn.locate_objects());
+            {
+                let not_retrieved_objs =
+                    objs.iter()
+                        .filter_map(|(loc, term, was_located)| match was_located {
+                            Some(false) | None => Some((loc, term)),
+                            _ => None,
+                        });
+
+                for (point, obj) in not_retrieved_objs {
+                    match &**obj {
+                        GrTerminalKind::Entity(ent) => {
+                            if let Some(ent) = self.kb.entities.get(ent.as_str()) {
+                                let trial = MoveInfTrial {
+                                    kb: self.kb,
+                                    obj: Movable::Entity(&*ent),
+                                    term: obj,
+                                    nodes: DashMap::new(),
+                                    loc: *point,
+                                };
+                                self.results.add_objs_in_loc(trial.unify().into_iter());
+                            }
+                        }
+                        GrTerminalKind::Class(cls) => {
+                            if let Some(cls) = self.kb.classes.get(cls.as_str()) {
+                                let trial = MoveInfTrial {
+                                    kb: self.kb,
+                                    obj: Movable::Class(&*cls),
+                                    term: obj,
+                                    nodes: DashMap::new(),
+                                    loc: *point,
+                                };
+                                self.results.add_objs_in_loc(trial.unify().into_iter());
+                            }
+                        }
+                    }
+                }
+            }
+            let initially_retrieved =
+                objs.into_iter()
+                    .filter(|(_, _, res)| if let Some(true) = res { true } else { false });
+            self.results.add_objs_in_loc(initially_retrieved);
+
+            // find all objects which are in a location
+            loc_fn.free_locations().for_each(|(var, p)| {
+                let objs = self.kb.find_all_objs_in_loc(p);
+                self.results.add_objs_by_loc(p, var.clone(), objs);
+            })
+        });
+    }
+}
+
+struct MoveInfTrial<'rep> {
+    kb: &'rep Representation,
+    obj: Movable<'rep>,
+    term: &'rep Arc<GrTerminalKind<String>>,
+    loc: &'rep Point,
+    nodes: DashMap<&'rep str, Vec<ProofNode<'rep>>>,
+}
+
+enum Movable<'rep> {
+    Class(&'rep Class),
+    Entity(&'rep Entity),
+}
+
+impl<'rep> MoveInfTrial<'rep> {
+    #![allow(clippy::type_complexity)]
+
+    fn unify(self) -> Option<(&'rep Point, Arc<GrTerminalKind<String>>, Option<bool>)> {
+        match self.obj {
+            Movable::Entity(ent) => {
+                for sent in ent.move_beliefs.read().iter().rev() {
+                    let trial = self.unification_trial(sent);
+                    if trial.is_some() {
+                        return trial;
+                    }
+                }
+            }
+            Movable::Class(cls) => {
+                for sent in cls.move_beliefs.read().iter().rev() {
+                    let trial = self.unification_trial(sent);
+                    if trial.is_some() {
+                        return trial;
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn unification_trial(
+        &self,
+        sent: &Arc<LogSentence>,
+    ) -> Option<(&'rep Point, Arc<GrTerminalKind<String>>, Option<bool>)> {
+        // try unifying from last sentence to first
+        add_rule_node(sent, &self.nodes);
+        if self.run_trial(sent) {
+            // find out if this moved the obj
+            let it = std::iter::once((self.term, self.loc));
+            if let Some(res) = self
+                .kb
+                .find_objs_by_loc(it)
+                .into_iter()
+                .find(|(_, _, res)| res.is_some())
+            {
+                return Some(res);
+            }
+        }
+        None
+    }
+
+    fn run_trial(&self, sent: &Arc<LogSentence>) -> bool {
+        let sent_req: SentVarReq = sent.get_lhs_predicates().into();
+        for var_requirements in sent_req {
+            if let Some(assignments) = meet_sent_requirements(self.kb, &var_requirements) {
+                if let Some(mapped) = ArgsProduct::product(assignments) {
+                    for args in mapped {
+                        let args: ProofArgs = ProofArgs::new(args);
+                        let n_args = &args.as_proof_input();
+                        let mut antecedents = vec![];
+                        for p in sent.get_all_lhs_predicates() {
+                            antecedents.push(p.get_name())
+                        }
+                        let node = ProofNode::new(sent, antecedents);
+                        let context = IExprResult::new(args.clone(), &node);
+                        let solved_proof = node.proof.solve(self.kb, Some(n_args), context);
+                        if solved_proof.result.is_some() {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
     }
 }
 
@@ -517,7 +666,6 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
             // the proofs are tried in order of addition to the KB
 
             if let Some(nodes) = self.nodes.get(parent) {
-                // if let Some(nodes) = self.nodes.get(parent) {
                 // the node for each rule is stored in an efficient sorted list
                 // by rule creation datetime, from newest to oldest
                 // as the newest rules take precedence
@@ -661,7 +809,7 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
             if !is_func {
                 let query_cls = self.actv.get_cls();
                 if query_cls.comparable(&gt) {
-                    let val = query_cls == &gt;
+                    let val = query_cls.compare_ignoring_times(&gt);
                     let d = &self.results.grounded_queries;
                     let mut gr_results_dict = {
                         if d.contains_key(self.actv.get_pred()) {
@@ -706,7 +854,7 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
             if is_func {
                 let query_func = self.actv.get_func();
                 if query_func.comparable(&gf) {
-                    let val = query_func == &gf;
+                    let val = query_func.compare_ignoring_times(&gf);
                     let d = &self.results.grounded_queries;
                     let mut gr_results_dict = {
                         if d.contains_key(self.actv.get_pred()) {
@@ -768,29 +916,33 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
                     }
                 };
                 for sent in comp.difference(&rules) {
-                    let mut antecedents = vec![];
-                    for p in sent.get_all_lhs_predicates() {
-                        let p = unsafe { &*(p as *const Assert) as &'rep Assert };
-                        antecedents.push(p.get_name())
-                    }
-                    let node = ProofNode::new(sent, antecedents);
-                    for pred in sent.get_rhs_predicates() {
-                        let pred = unsafe { &*(pred as *const Assert) as &'rep Assert };
-                        let name = pred.get_name();
-                        let mut ls = self.nodes.entry(name).or_insert_with(Vec::new);
-                        if ls
-                            .iter()
-                            .map(|x| x.proof.id)
-                            .find(|x| *x == sent.id)
-                            .is_none()
-                        {
-                            ls.push(node.clone());
-                        }
-                        ls.sort_by(|a, b| a.proof.created.cmp(&b.proof.created).reverse());
-                    }
+                    add_rule_node(sent, &self.nodes);
                 }
             }
         }
+    }
+}
+
+fn add_rule_node<'rep>(sent: &Arc<LogSentence>, nodes: &DashMap<&'rep str, Vec<ProofNode<'rep>>>) {
+    let mut antecedents = vec![];
+    for p in sent.get_all_lhs_predicates() {
+        let p = unsafe { &*(p as *const Assert) as &'rep Assert };
+        antecedents.push(p.get_name())
+    }
+    let node = ProofNode::new(sent, antecedents);
+    for pred in sent.get_rhs_predicates() {
+        let pred = unsafe { &*(pred as *const Assert) as &'rep Assert };
+        let name = pred.get_name();
+        let mut ls = nodes.entry(name).or_insert_with(Vec::new);
+        if ls
+            .iter()
+            .map(|x| x.proof.id)
+            .find(|x| *x == sent.id)
+            .is_none()
+        {
+            ls.push(node.clone());
+        }
+        ls.sort_by(|a, b| a.proof.created.cmp(&b.proof.created).reverse());
     }
 }
 
@@ -803,8 +955,8 @@ pub(in crate::agent::kb) fn meet_sent_requirements<'rep>(
         if asserts.is_empty() {
             continue;
         }
-        match var.kind {
-            VarKind::Time | VarKind::TimeDecl => continue,
+        match var.ty {
+            TypeDef::Time | TypeDef::TimeDecl | TypeDef::Location | TypeDef::LocDecl => continue,
             _ => {}
         }
         let mut cl = Vec::new();
@@ -887,7 +1039,7 @@ pub(in crate::agent::kb) fn meet_sent_requirements<'rep>(
             if results.contains_key(var) {
                 let v = results.get_mut(var).unwrap();
                 v.push(Arc::new(VarAssignment {
-                    name,
+                    name: GrTerminalKind::from(name),
                     classes: gr_memb,
                     funcs: gr_relations,
                 }))
@@ -895,7 +1047,7 @@ pub(in crate::agent::kb) fn meet_sent_requirements<'rep>(
                 results.insert(
                     var,
                     vec![Arc::new(VarAssignment {
-                        name,
+                        name: GrTerminalKind::from(name),
                         classes: gr_memb,
                         funcs: gr_relations,
                     })],
@@ -1048,17 +1200,19 @@ impl<'rep> Hash for ProofNode<'rep> {
 pub(in crate::agent) enum QueryInput {
     AskRelationalFunc(Arc<GroundedFunc>),
     AskClassMember(Arc<GroundedMemb>),
+    AskLocation(LocFn<String>),
     ManyQueries(VecDeque<ParseTree>),
 }
 
 #[derive(Debug)]
 pub(in crate::agent::kb) struct QueryProcessed {
-    cls_queries_free: HashMap<Arc<Var>, Vec<FreeClsMemb>>,
+    cls_queries_free: HashMap<Arc<Var>, Vec<FreeMembershipToClass>>,
     cls_queries_grounded: HashMap<String, Vec<Arc<GroundedMemb>>>,
     cls_memb_query: HashMap<Arc<Var>, Vec<FreeClassMembership>>,
     func_queries_free: HashMap<Arc<Var>, Vec<Arc<FuncDecl>>>,
     func_queries_grounded: Vec<Arc<GroundedFunc>>,
     func_memb_query: HashMap<Arc<Var>, Vec<Arc<FuncDecl>>>,
+    loc_query: Vec<LocFn<String>>,
 }
 
 impl QueryProcessed {
@@ -1068,12 +1222,41 @@ impl QueryProcessed {
             cls_queries_grounded: HashMap::new(),
             cls_memb_query: HashMap::new(),
             func_queries_free: HashMap::new(),
-            func_queries_grounded: vec![],
+            func_queries_grounded: Vec::new(),
             func_memb_query: HashMap::new(),
+            loc_query: Vec::new(),
         }
     }
 
     fn get_query(mut self, prequery: QueryInput) -> Result<QueryProcessed, ()> {
+        fn build_query_bms<T>(cdecl: &ClassDecl, query: &T) -> Result<(), ()>
+        where
+            T: HasBms,
+        {
+            let locs = cdecl.get_spatial_payload();
+            let times = cdecl.get_time_payload(query.get_value());
+            match (times, locs) {
+                (Some(times), None) => {
+                    if let Some(bms) = query.get_bms() {
+                        bms.overwrite_data(times.into())?;
+                    }
+                }
+                (None, Some(locs)) => {
+                    if let Some(bms) = query.get_bms() {
+                        bms.overwrite_loc_data(locs)?;
+                    }
+                }
+                (Some(times), Some(locs)) => {
+                    let merged = times.merge_spatial_data(locs)?;
+                    if let Some(bms) = query.get_bms() {
+                        bms.overwrite_data(merged)?;
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+
         fn assert_memb(query: &mut QueryProcessed, mut cdecl: Arc<ClassDecl>) -> Result<(), ()> {
             for a in Arc::get_mut(&mut cdecl).ok_or_else(|| ())?.get_args_mut() {
                 if let Predicate::GroundedMemb(t) = a {
@@ -1086,15 +1269,11 @@ impl QueryProcessed {
                 Terminal::GroundedTerm(_) => {
                     for a in cdecl.get_args() {
                         match a {
-                            Predicate::FreeClsMemb(t) => {
+                            Predicate::FreeMembershipToClass(t) => {
                                 query.push_to_clsquery_free(t.get_var(), t.clone());
                             }
                             Predicate::GroundedMemb(t) => {
-                                if let Some(times) = cdecl.get_time_payload(t.get_value()) {
-                                    if let Some(bms) = t.bms.as_ref() {
-                                        bms.overwrite_data(&times)
-                                    };
-                                }
+                                build_query_bms(&*cdecl, t)?;
                                 let cls: &str = t.get_name().into();
                                 query
                                     .push_to_clsquery_grounded(cls.to_owned(), Arc::new(t.clone()));
@@ -1107,9 +1286,7 @@ impl QueryProcessed {
                     for a in cdecl.get_args() {
                         match a {
                             Predicate::FreeClassMembership(t) => {
-                                if let Some(times) = cdecl.get_time_payload(None) {
-                                    t.overwrite_time_data(&times);
-                                }
+                                build_query_bms(&*cdecl, t)?;
                                 query.ask_class_memb(t.clone());
                             }
                             _ => return Err(()), // should not happen ever
@@ -1124,12 +1301,12 @@ impl QueryProcessed {
             match *fdecl.get_parent() {
                 Terminal::GroundedTerm(_) => {
                     if fdecl.is_grounded() {
-                        let mut fgr = Arc::try_unwrap(fdecl).map_err(|_| ())?.into_grounded();
+                        let mut fgr: GroundedFunc = Arc::try_unwrap(fdecl).map_err(|_| ())?.into();
                         Arc::get_mut(&mut fgr.bms).unwrap().of_predicate();
                         query.push_to_fnquery_grounded(fgr);
                     } else {
                         for a in fdecl.get_args() {
-                            if let Predicate::FreeClsMemb(ref t) = *a {
+                            if let Predicate::FreeMembershipToClass(ref t) = *a {
                                 query.push_to_fnquery_free(t.get_var(), fdecl.clone());
                             }
                         }
@@ -1148,6 +1325,7 @@ impl QueryProcessed {
             QueryInput::AskRelationalFunc(fdecl) => {
                 self.func_queries_grounded.push(fdecl);
             }
+            QueryInput::AskLocation(loc_fn) => self.loc_query.push(loc_fn),
             QueryInput::ManyQueries(trees) => {
                 for parsetree in trees {
                     match parsetree {
@@ -1161,6 +1339,9 @@ impl QueryProcessed {
                                     Assert::FuncDecl(fdecl) => {
                                         let fdecl = Arc::new(fdecl);
                                         assert_rel(&mut self, fdecl)?;
+                                    }
+                                    Assert::SpecialFunc(BuiltIns::Location(loc_fn)) => {
+                                        self.loc_query.push(loc_fn)
                                     }
                                     _ => unreachable!(),
                                 }
@@ -1199,7 +1380,7 @@ impl QueryProcessed {
     }
 
     #[inline]
-    fn push_to_clsquery_free(&mut self, term: Arc<Var>, cls: FreeClsMemb) {
+    fn push_to_clsquery_free(&mut self, term: Arc<Var>, cls: FreeMembershipToClass) {
         self.cls_queries_free
             .entry(term)
             .or_insert_with(Vec::new)
@@ -1245,19 +1426,19 @@ fn args_iterator() {
     let z = Var::from("z");
 
     let a = Arc::new(VarAssignment {
-        name: "A",
+        name: GrTerminalKind::Class("A"),
         classes: HashMap::new(),
         funcs: HashMap::new(),
     });
 
     let b = Arc::new(VarAssignment {
-        name: "B",
+        name: GrTerminalKind::Class("B"),
         classes: HashMap::new(),
         funcs: HashMap::new(),
     });
 
     let c = Arc::new(VarAssignment {
-        name: "C",
+        name: GrTerminalKind::Class("C"),
         classes: HashMap::new(),
         funcs: HashMap::new(),
     });

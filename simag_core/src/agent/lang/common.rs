@@ -10,40 +10,44 @@ use super::{
     fn_decl::FuncDecl,
     logsent::{LogSentResolution, ParseContext, ProofResContext},
     parser::{ArgBorrowed, Number, OpArgBorrowed, Operator, UVal, UnconstraintArg},
-    space_semantics::{SpaceArg, SpaceFnErr},
+    spatial_semantics::{SpatialArg, SpatialFnErr},
     time_semantics::{TimeArg, TimeFn, TimeFnErr, TimeOps},
     var::Var,
-    BuiltIns, GroundedFunc, GroundedMemb, Terminal,
+    BuiltIns, GroundedFunc, GroundedMemb, Point, SpatialOps, Terminal,
 };
 use crate::agent::{
-    kb::bms::BmsWrapper,
+    kb::bms::{BmsWrapper, HasBms, IsSpatialData, IsTimeData},
     kb::{repr::Representation, VarAssignment},
 };
 use crate::FLOAT_EQ_ULPS;
 use float_cmp::ApproxEqUlps;
-use parking_lot::RwLock;
 
 // Predicate types:
 
 #[derive(Debug, Clone)]
 pub(in crate::agent) enum Predicate {
-    FreeClsMemb(FreeClsMemb),
+    /// (let x in some[x])
+    FreeMembershipToClass(FreeMembershipToClass),
+    /// abc[$def=1]
     GroundedMemb(GroundedMemb),
+    /// (let x in x[$Lucy>0.5])
     FreeClassMembership(FreeClassMembership),
 }
 
 impl<'a> Predicate {
+    /// # Args
+    /// - is_func: whether this predicate is a func declaration or not; and the argument number in case it is.
     pub(in crate::agent::lang) fn from(
         arg: &'a ArgBorrowed<'a>,
         context: &'a mut ParseContext,
         name: &'a Terminal,
-        is_func: bool,
+        is_func: Option<usize>,
     ) -> Result<Predicate, ParseErrF> {
         if name.is_grounded() {
             match Terminal::from(&arg.term, context) {
                 Ok(Terminal::FreeTerm(ft)) => {
-                    let t = FreeClsMemb::try_new(ft, arg.uval, name)?;
-                    Ok(Predicate::FreeClsMemb(t))
+                    let t = FreeMembershipToClass::try_new(ft, arg.uval, name)?;
+                    Ok(Predicate::FreeMembershipToClass(t))
                 }
                 Ok(Terminal::GroundedTerm(gt)) => {
                     let t = GroundedMemb::try_new(
@@ -52,6 +56,7 @@ impl<'a> Predicate {
                         name.get_name().to_string(),
                         None,
                         context,
+                        is_func,
                     )?;
                     Ok(Predicate::GroundedMemb(t))
                 }
@@ -62,10 +67,10 @@ impl<'a> Predicate {
                 return Err(ParseErrF::ClassIsVar);
             }
             match Terminal::from(&arg.term, context) {
-                Ok(Terminal::FreeTerm(_)) if !is_func => Err(ParseErrF::BothAreVars),
+                Ok(Terminal::FreeTerm(_)) if is_func.is_none() => Err(ParseErrF::BothAreVars),
                 Ok(Terminal::FreeTerm(ft)) => {
-                    let t = FreeClsMemb::try_new(ft, arg.uval, name)?;
-                    Ok(Predicate::FreeClsMemb(t))
+                    let t = FreeMembershipToClass::try_new(ft, arg.uval, name)?;
+                    Ok(Predicate::FreeMembershipToClass(t))
                 }
                 Ok(Terminal::GroundedTerm(gt)) => {
                     let t = FreeClassMembership::try_new(gt, arg.uval, name)?;
@@ -79,7 +84,7 @@ impl<'a> Predicate {
     #[inline]
     pub fn is_var(&self) -> bool {
         match *self {
-            Predicate::FreeClsMemb(_) => true,
+            Predicate::FreeMembershipToClass(_) => true,
             _ => false,
         }
     }
@@ -96,7 +101,7 @@ impl<'a> Predicate {
                     (None, None)
                 }
             }
-            Predicate::FreeClsMemb(ref t) => {
+            Predicate::FreeMembershipToClass(ref t) => {
                 if t.value.is_some() {
                     let val = *t.value.as_ref().unwrap();
                     let op = *t.operator.as_ref().unwrap();
@@ -117,27 +122,19 @@ impl<'a> Predicate {
         }
     }
 
-    pub(in crate::agent::lang) fn replace_uval(&mut self, val: f32) {
-        match self {
-            Predicate::FreeClsMemb(ref mut t) => t.value = Some(val),
-            Predicate::GroundedMemb(ref mut t) => t.value = RwLock::new(Some(val)),
-            Predicate::FreeClassMembership(ref mut t) => t.value = Some(val),
-        }
-    }
-
     #[inline]
     pub fn get_name(&self) -> &str {
         match *self {
             Predicate::GroundedMemb(ref t) => t.get_name().into(),
             Predicate::FreeClassMembership(ref t) => &t.term,
-            Predicate::FreeClsMemb(_) => unreachable!(),
+            Predicate::FreeMembershipToClass(_) => unreachable!(),
         }
     }
 
     #[inline]
     pub(in crate::agent::lang) fn generate_uid(&self) -> Vec<u8> {
         match *self {
-            Predicate::FreeClsMemb(ref t) => t.generate_uid(),
+            Predicate::FreeMembershipToClass(ref t) => t.generate_uid(),
             Predicate::GroundedMemb(ref t) => t.generate_uid(),
             Predicate::FreeClassMembership(ref t) => t.generate_uid(),
         }
@@ -146,7 +143,7 @@ impl<'a> Predicate {
     pub fn has_uval(&self) -> bool {
         match *self {
             Predicate::GroundedMemb(ref t) => t.value.read().is_some(),
-            Predicate::FreeClsMemb(ref t) => t.value.is_some(),
+            Predicate::FreeMembershipToClass(ref t) => t.value.is_some(),
             Predicate::FreeClassMembership(ref t) => t.value.is_some(),
         }
     }
@@ -183,22 +180,23 @@ impl<'a> GroundedRef<'a> {
 
 // Free types:
 
+/// (let x in some[x])
 #[derive(Debug, Clone)]
-pub(in crate::agent) struct FreeClsMemb {
+pub(in crate::agent) struct FreeMembershipToClass {
     pub(in crate::agent::lang) term: Arc<Var>,
     pub(in crate::agent::lang) value: Option<f32>,
     pub(in crate::agent::lang) operator: Option<Operator>,
     pub(in crate::agent::lang) parent: Terminal,
 }
 
-impl FreeClsMemb {
+impl FreeMembershipToClass {
     fn try_new(
         term: Arc<Var>,
         uval: Option<UVal>,
         parent: &Terminal,
-    ) -> Result<FreeClsMemb, ParseErrF> {
+    ) -> Result<FreeMembershipToClass, ParseErrF> {
         let (val, op) = match_uval(uval)?;
-        Ok(FreeClsMemb {
+        Ok(FreeMembershipToClass {
             term,
             value: val,
             operator: op,
@@ -207,8 +205,8 @@ impl FreeClsMemb {
     }
 
     fn generate_uid(&self) -> Vec<u8> {
-        let mut id: Vec<u8> = vec![];
-        let mut var = format!("{:?}", &*self.term as *const Var).into_bytes();
+        let mut id = Vec::from_iter(b"free_memb_cls<".iter().cloned());
+        let mut var = self.term.generate_uid();
         id.append(&mut var);
         if let Some(value) = self.value {
             let mut id_2 = format!("{}", value).into_bytes();
@@ -218,6 +216,7 @@ impl FreeClsMemb {
             cmp.generate_uid(&mut id);
         }
         id.append(&mut self.parent.generate_uid());
+        id.push(b'>');
         id
     }
 
@@ -277,14 +276,14 @@ impl FreeClsMemb {
     }
 }
 
-/// Reified object, free class belongship. Ie: x[$Lucy,u>0.5]
+/// Reified object, free class belongship. Ie: x[$Lucy>0.5]
 #[derive(Debug, Clone)]
 pub(in crate::agent) struct FreeClassMembership {
     term: String,
     pub(in crate::agent::lang) value: Option<f32>,
     operator: Option<Operator>,
     parent: Arc<Var>,
-    pub times: BmsWrapper,
+    times: BmsWrapper<IsTimeData>,
 }
 
 impl FreeClassMembership {
@@ -293,20 +292,19 @@ impl FreeClassMembership {
         uval: Option<UVal>,
         parent: &Terminal,
     ) -> Result<FreeClassMembership, ParseErrF> {
+        //TODO: should be able to take op_args
         let (val, op) = match_uval(uval)?;
-        let t_bms = BmsWrapper::new(false);
-        t_bms.new_record(None, val, None);
         Ok(FreeClassMembership {
             term,
             value: val,
             operator: op,
             parent: parent.get_var(),
-            times: t_bms,
+            times: BmsWrapper::<IsTimeData>::new(None, val),
         })
     }
 
     fn generate_uid(&self) -> Vec<u8> {
-        let mut id: Vec<u8> = vec![];
+        let mut id = Vec::from_iter(b"free_cls_memb<".iter().cloned());
         id.append(&mut Vec::from(self.term.as_bytes()));
         if let Some(ref val) = self.value {
             let mut id_2 = format!("{}", *val).into_bytes();
@@ -317,6 +315,7 @@ impl FreeClassMembership {
         }
         let mut var = format!("{:?}", &*self.parent as *const Var).into_bytes();
         id.append(&mut var);
+        id.push(b'>');
         id
     }
 
@@ -342,10 +341,6 @@ impl FreeClassMembership {
         }
     }
 
-    pub fn overwrite_time_data(&self, data: &BmsWrapper) {
-        self.times.overwrite_data(data);
-    }
-
     #[inline]
     pub fn get_name(&self) -> &str {
         &self.term
@@ -354,6 +349,18 @@ impl FreeClassMembership {
     #[inline]
     pub fn get_var(&self) -> Arc<Var> {
         self.parent.clone()
+    }
+}
+
+impl HasBms for FreeClassMembership {
+    type BmsType = BmsWrapper<IsTimeData>;
+
+    fn get_bms(&self) -> Option<&Self::BmsType> {
+        Some(&self.times)
+    }
+
+    fn get_value(&self) -> Option<f32> {
+        self.value
     }
 }
 
@@ -419,10 +426,32 @@ impl Assert {
         &self,
         agent: &Representation,
         var_assign: Option<&HashMap<&Var, &VarAssignment>>,
-    ) -> Option<Arc<BmsWrapper>> {
+    ) -> Option<Arc<BmsWrapper<IsTimeData>>> {
         match *self {
             Assert::FuncDecl(ref f) => f.get_times(agent, var_assign),
             Assert::ClassDecl(ref c) => c.get_times(agent, var_assign),
+            Assert::SpecialFunc(_) => None,
+        }
+    }
+
+    #[inline]
+    pub fn get_loc_decl(&self, var: &Var) -> bool {
+        match *self {
+            Assert::FuncDecl(ref f) => f.get_loc_decl(var),
+            Assert::ClassDecl(ref c) => c.get_loc_decl(var),
+            Assert::SpecialFunc(_) => false,
+        }
+    }
+
+    #[inline]
+    pub fn get_location(
+        &self,
+        agent: &Representation,
+        var_assign: Option<&HashMap<&Var, &VarAssignment>>,
+    ) -> Option<Arc<BmsWrapper<IsSpatialData>>> {
+        match *self {
+            Assert::FuncDecl(ref f) => f.get_location(agent, var_assign),
+            Assert::ClassDecl(ref c) => c.get_location(agent, var_assign),
             Assert::SpecialFunc(_) => None,
         }
     }
@@ -442,7 +471,8 @@ impl Assert {
             Assert::ClassDecl(c) => c.contains_var(var),
             Assert::SpecialFunc(builtins) => match builtins {
                 BuiltIns::TimeCalculus(f) => f.contains_var(var),
-                BuiltIns::MoveFn(f) => f.contains_var(var),
+                BuiltIns::Move(f) => f.contains_var(var),
+                BuiltIns::Location(f) => f.contains_var(var),
             },
         }
     }
@@ -487,13 +517,14 @@ impl Assert {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
+        loc_assign: &HashMap<&Var, Arc<BmsWrapper<IsSpatialData>>>,
         context: &mut T,
     ) -> Option<bool> {
         match self {
             Assert::FuncDecl(f) => f.grounded_eq(agent, assignments, time_assign, context),
             Assert::ClassDecl(c) => c.grounded_eq(agent, assignments, time_assign, context),
-            Assert::SpecialFunc(f) => f.grounded_eq(time_assign),
+            Assert::SpecialFunc(f) => f.grounded_eq(time_assign, loc_assign),
         }
     }
 
@@ -502,13 +533,21 @@ impl Assert {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
+        loc_assign: &HashMap<&Var, Arc<BmsWrapper<IsSpatialData>>>,
         context: &mut T,
     ) {
-        match *self {
-            Assert::FuncDecl(ref f) => f.substitute(agent, assignments, time_assign, context),
-            Assert::ClassDecl(ref c) => c.substitute(agent, assignments, time_assign, context),
-            Assert::SpecialFunc(_) => todo!(),
+        match self {
+            Assert::FuncDecl(f) => f.substitute(agent, assignments, time_assign, context),
+            Assert::ClassDecl(c) => c.substitute(agent, assignments, time_assign, context),
+            Assert::SpecialFunc(BuiltIns::Move(move_fn)) => {
+                move_fn.substitute(agent, assignments, time_assign, loc_assign, context)
+            }
+            Assert::SpecialFunc(_) => unreachable!(format!(
+                "SIMAG - {}:{}: implication cannot have any other than `move` buil-in func",
+                file!(),
+                line!()
+            )),
         }
     }
 
@@ -528,7 +567,7 @@ pub(in crate::agent) enum OpArg {
     /// Generic optional argument which includes one binding value and optionally a second operand to compare against
     Generic(ConstraintValue, Option<(Operator, ConstraintValue)>),
     Time(TimeArg),
-    Space(SpaceArg),
+    Spatial(SpatialArg),
     OverWrite,
 }
 
@@ -543,10 +582,10 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for OpArg {
             _ => {}
         }
 
-        match SpaceArg::try_from(input) {
-            Ok(arg) => return Ok(OpArg::Space(arg)),
-            Err(ParseErrF::SpaceFnErr(SpaceFnErr::WrongDef)) => {
-                return Err(ParseErrF::SpaceFnErr(SpaceFnErr::WrongDef))
+        match SpatialArg::try_from(input) {
+            Ok(arg) => return Ok(OpArg::Spatial(arg)),
+            Err(ParseErrF::SpatialFnErr(SpatialFnErr::WrongDef)) => {
+                return Err(ParseErrF::SpatialFnErr(SpatialFnErr::WrongDef))
             }
             _ => {}
         }
@@ -594,7 +633,7 @@ impl<'a> OpArg {
                 id
             }
             OpArg::Time(time_arg) => time_arg.generate_uid(),
-            OpArg::Space(space_arg) => space_arg.generate_uid(),
+            OpArg::Spatial(spatial_arg) => spatial_arg.generate_uid(),
             OpArg::OverWrite => vec![5],
         }
     }
@@ -614,7 +653,7 @@ pub(in crate::agent) enum ConstraintValue {
     Terminal(Terminal),
     String(String),
     TimePayload(TimeFn),
-    SpacePayload,
+    SpatialPayload(Point),
 }
 
 impl<'a> TryFrom<(&'a UnconstraintArg<'a>, &'a ParseContext)> for ConstraintValue {
@@ -630,7 +669,7 @@ impl<'a> TryFrom<(&'a UnconstraintArg<'a>, &'a ParseContext)> for ConstraintValu
                 String::from_utf8_lossy(slice).into_owned(),
             )),
             UnconstraintArg::Keyword(b"time") => Ok(ConstraintValue::TimePayload(TimeFn::ThisTime)),
-            UnconstraintArg::Keyword(b"space") => Ok(ConstraintValue::SpacePayload),
+            UnconstraintArg::Keyword(b"location") => todo!(),
             UnconstraintArg::Keyword(kw) => Err(ParseErrF::ReservedKW(
                 str::from_utf8(kw).unwrap().to_owned(),
             )),
@@ -644,7 +683,7 @@ impl<'a> ConstraintValue {
             ConstraintValue::Terminal(t) => t.generate_uid(),
             ConstraintValue::String(s) => Vec::from_iter(s.as_bytes().iter().cloned()),
             ConstraintValue::TimePayload(t) => t.generate_uid(),
-            ConstraintValue::SpacePayload => vec![0], // FIXME
+            ConstraintValue::SpatialPayload(p) => p.generate_uid(),
         }
     }
 

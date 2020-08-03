@@ -2,12 +2,12 @@ use super::{
     common::ConstraintValue,
     logsent::ParseContext,
     parser::{TerminalBorrowed, UnconstraintArg, VarBorrowed},
-    space_semantics::Point,
+    spatial_semantics::Point,
     time_semantics::{TimeFn, TimeFnErr},
     typedef::TypeDef,
     Operator, ParseErrF,
 };
-use crate::agent::kb::bms::BmsWrapper;
+use crate::agent::kb::bms::{BmsWrapper, IsTimeData};
 use std::convert::TryFrom;
 
 /// Variable equality is bassed on physical address, to compare term equality use the
@@ -15,8 +15,7 @@ use std::convert::TryFrom;
 #[derive(Clone)]
 pub(in crate::agent) struct Var {
     pub name: String,
-    pub kind: VarKind,
-    ty: TypeDef,
+    pub ty: TypeDef,
     assigned_val: Option<ConstraintValue>,
 }
 
@@ -24,36 +23,8 @@ impl<'a> From<&'a str> for Var {
     fn from(name: &'a str) -> Self {
         Var {
             name: name.to_owned(),
-            kind: VarKind::Normal,
             ty: TypeDef::Erased,
             assigned_val: None,
-        }
-    }
-}
-
-#[derive(Clone, PartialEq)]
-pub(in crate::agent) enum VarKind {
-    Normal,
-    Time,
-    TimeDecl,
-    Space,
-    SpaceDecl,
-}
-
-impl std::fmt::Debug for VarKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", self)
-    }
-}
-
-impl std::fmt::Display for VarKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            VarKind::Normal => write!(f, "Normal"),
-            VarKind::Time => write!(f, "Time"),
-            VarKind::TimeDecl => write!(f, "TimeDecl"),
-            VarKind::Space => write!(f, "Space"),
-            VarKind::SpaceDecl => write!(f, "SpaceDecl"),
         }
     }
 }
@@ -68,33 +39,23 @@ impl<'a> std::convert::TryFrom<(&'a VarBorrowed<'a>, &'a ParseContext)> for Var 
             ref val,
         } = input.0;
 
-        let mut kind = VarKind::Normal;
         let (ty, assigned_val) = match (ty, val) {
             (def, Some(val)) if def.0 == b"time" => match val {
                 UnconstraintArg::String(slice) => {
                     let time = TimeFn::from_str(slice, Operator::Since)?;
-                    kind = VarKind::TimeDecl;
-                    (TypeDef::Time, Some(ConstraintValue::TimePayload(time)))
+                    (TypeDef::TimeDecl, Some(ConstraintValue::TimePayload(time)))
                 }
                 _ => return Err(TimeFnErr::InsufArgs.into()),
             },
-            (def, None) if def.0 == b"time" => {
-                kind = VarKind::Time;
-                (TypeDef::Time, None)
-            }
-            (def, Some(val)) if def.0 == b"space" => match val {
+            (def, None) if def.0 == b"time" => (TypeDef::Time, None),
+            (def, Some(val)) if def.0 == b"location" => match val {
                 UnconstraintArg::String(slice) => {
-                    let time = Point::try_from(*slice)?;
-                    kind = VarKind::SpaceDecl;
-                    (TypeDef::Space, Some(ConstraintValue::SpacePayload));
-                    todo!();
+                    let loc = Point::try_from(*slice)?;
+                    (TypeDef::LocDecl, Some(ConstraintValue::SpatialPayload(loc)))
                 }
                 _ => return Err(TimeFnErr::InsufArgs.into()),
             },
-            (def, None) if def.0 == b"space" => {
-                kind = VarKind::Space;
-                (TypeDef::Space, None)
-            }
+            (def, None) if def.0 == b"location" => (TypeDef::Location, None),
             (_, None) => (TypeDef::Erased, None),
             _ => return Err(ParseErrF::TypeUnsupported),
         };
@@ -105,7 +66,6 @@ impl<'a> std::convert::TryFrom<(&'a VarBorrowed<'a>, &'a ParseContext)> for Var 
         }
         Ok(Var {
             name,
-            kind,
             ty,
             assigned_val,
         })
@@ -113,7 +73,7 @@ impl<'a> std::convert::TryFrom<(&'a VarBorrowed<'a>, &'a ParseContext)> for Var 
 }
 
 impl Var {
-    pub fn get_times(&self) -> BmsWrapper {
+    pub fn get_time(&self) -> BmsWrapper<IsTimeData> {
         self.assigned_val
             .as_ref()
             .map(|arg| TimeFn::try_from(arg).unwrap())
@@ -121,9 +81,13 @@ impl Var {
             .get_time_payload(None)
     }
 
+    pub fn get_location(&self) -> Point {
+        todo!()
+    }
+
     pub fn is_time_var(&self) -> bool {
-        match self.kind {
-            VarKind::Time | VarKind::TimeDecl => true,
+        match self.ty {
+            TypeDef::Time | TypeDef::TimeDecl => true,
             _ => false,
         }
     }
@@ -162,9 +126,9 @@ impl std::fmt::Display for Var {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         if let Some(a) = &self.assigned_val {
             let a = format!("{:?}", a);
-            write!(f, "{}: {} = {}", self.name, self.kind, a)
+            write!(f, "{}: {} = {}", self.name, self.ty, a)
         } else {
-            write!(f, "{}: {}", self.name, self.kind)
+            write!(f, "{}: {}", self.name, self.ty)
         }
     }
 }

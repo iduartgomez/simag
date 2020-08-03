@@ -4,15 +4,15 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use float_cmp::ApproxEqUlps;
 
-use crate::agent::kb::{
-    bms::BmsWrapper,
-    repr::{lookahead_rules, Representation},
-};
+use super::bms;
+use crate::agent::kb::repr::{lookahead_rules, Representation};
 use crate::agent::lang::{
     FreeClassMembership, Grounded, GroundedFunc, GroundedMemb, GroundedRef, LogSentence, Operator,
-    Predicate, ProofResContext,
+    Point, Predicate, ProofResContext, Time,
 };
 use crate::FLOAT_EQ_ULPS;
+use bms::{BmsWrapper, RecordHistory};
+use parking_lot::RwLock;
 
 /// An entity is a singleton, the unique member of it's own class.
 ///
@@ -46,6 +46,8 @@ pub(crate) struct Entity {
     classes: DashMap<String, Arc<GroundedMemb>>,
     relations: DashMap<String, Vec<Arc<GroundedFunc>>>,
     beliefs: DashMap<String, Vec<Arc<LogSentence>>>,
+    pub(super) move_beliefs: RwLock<Vec<Arc<LogSentence>>>,
+    pub(in crate::agent) location: BmsWrapper<RecordHistory>,
 }
 
 impl Entity {
@@ -55,7 +57,19 @@ impl Entity {
             classes: DashMap::new(),
             relations: DashMap::new(),
             beliefs: DashMap::new(),
+            move_beliefs: RwLock::new(Vec::new()),
+            location: BmsWrapper::<RecordHistory>::new(),
         }
+    }
+
+    /// Updates this class location.
+    pub(in crate::agent::kb) fn with_location(
+        &self,
+        loc: Point,
+        was_produced: Option<(u64, Time)>,
+    ) {
+        self.location
+            .add_new_record(None, Some(loc), None, was_produced);
     }
 
     pub(in crate::agent::kb) fn belongs_to_class(
@@ -117,10 +131,7 @@ impl Entity {
                     &*grounded,
                     Some((context.get_id(), context.get_production_time())),
                 );
-                BmsWrapper::update_producers(
-                    &Grounded::Class(Arc::downgrade(&current.clone())),
-                    context,
-                );
+                bms::update_producers(&Grounded::Class(Arc::downgrade(&current.clone())), context);
             } else {
                 #[cfg(debug_assertions)]
                 {
@@ -137,10 +148,7 @@ impl Entity {
             if let Some(context) = context {
                 let bms = grounded.bms.as_ref().unwrap();
                 bms.set_last_rec_producer(Some((context.get_id(), context.get_production_time())));
-                BmsWrapper::update_producers(
-                    &Grounded::Class(Arc::downgrade(&grounded.clone())),
-                    context,
-                );
+                bms::update_producers(&Grounded::Class(Arc::downgrade(&grounded.clone())), context);
             }
             #[cfg(debug_assertions)]
             {
@@ -273,7 +281,7 @@ impl Entity {
                                 &*func,
                                 Some((context.get_id(), context.get_production_time())),
                             );
-                            BmsWrapper::update_producers(
+                            bms::update_producers(
                                 &Grounded::Function(Arc::downgrade(&f.clone())),
                                 context,
                             );
@@ -307,7 +315,7 @@ impl Entity {
                         context.get_id(),
                         context.get_production_time(),
                     )));
-                    BmsWrapper::update_producers(
+                    bms::update_producers(
                         &Grounded::Function(Arc::downgrade(&func.clone())),
                         context,
                     );
@@ -322,10 +330,7 @@ impl Entity {
             if let Some(context) = context {
                 func.bms
                     .set_last_rec_producer(Some((context.get_id(), context.get_production_time())));
-                BmsWrapper::update_producers(
-                    &Grounded::Function(Arc::downgrade(&func.clone())),
-                    context,
-                );
+                bms::update_producers(&Grounded::Function(Arc::downgrade(&func.clone())), context);
             }
             #[cfg(debug_assertions)]
             {

@@ -5,15 +5,14 @@ use dashmap::DashMap;
 use float_cmp::ApproxEqUlps;
 use parking_lot::RwLock;
 
-use crate::agent::kb::{
-    bms::BmsWrapper,
-    repr::{lookahead_rules, Representation},
-};
+use super::bms;
+use crate::agent::kb::repr::{lookahead_rules, Representation};
 use crate::agent::lang::{
-    FreeClassMembership, FreeClsMemb, FuncDecl, Grounded, GroundedFunc, GroundedMemb, GroundedRef,
-    LogSentence, Operator, Predicate, ProofResContext,
+    FreeClassMembership, FreeMembershipToClass, FuncDecl, Grounded, GroundedFunc, GroundedMemb,
+    GroundedRef, LogSentence, Operator, Point, Predicate, ProofResContext, Time,
 };
 use crate::FLOAT_EQ_ULPS;
+use bms::{BmsWrapper, RecordHistory};
 
 /// A class is a set of entities that share some properties.
 /// It can be a subset of others supersets, and viceversa.
@@ -29,8 +28,10 @@ pub(in crate::agent) struct Class {
     classes: DashMap<String, Arc<GroundedMemb>>,
     relations: DashMap<String, Vec<Arc<GroundedFunc>>>,
     pub beliefs: DashMap<String, Vec<Arc<LogSentence>>>,
+    pub(super) move_beliefs: RwLock<Vec<Arc<LogSentence>>>,
     pub rules: RwLock<Vec<Arc<LogSentence>>>,
     pub(in crate::agent::kb) members: RwLock<Vec<ClassMember>>,
+    pub(in crate::agent) location: BmsWrapper<RecordHistory>,
 }
 
 impl Class {
@@ -40,9 +41,21 @@ impl Class {
             classes: DashMap::new(),
             relations: DashMap::new(),
             beliefs: DashMap::new(),
+            move_beliefs: RwLock::new(Vec::new()),
             rules: RwLock::new(Vec::new()),
             members: RwLock::new(Vec::new()),
+            location: BmsWrapper::<RecordHistory>::new(),
         }
+    }
+
+    /// Updates this class location.
+    pub(in crate::agent::kb) fn with_location(
+        &self,
+        loc: Point,
+        was_produced: Option<(u64, Time)>,
+    ) {
+        self.location
+            .add_new_record(None, Some(loc), None, was_produced);
     }
 
     pub(in crate::agent::kb) fn belongs_to_class(
@@ -98,10 +111,7 @@ impl Class {
                     &*grounded,
                     Some((context.get_id(), context.get_production_time())),
                 );
-                BmsWrapper::update_producers(
-                    &Grounded::Class(Arc::downgrade(&current.clone())),
-                    context,
-                );
+                bms::update_producers(&Grounded::Class(Arc::downgrade(&current.clone())), context);
             } else {
                 current.update(agent, &*grounded, None);
             }
@@ -110,10 +120,7 @@ impl Class {
             if let Some(context) = context {
                 let bms = grounded.bms.as_ref().unwrap();
                 bms.set_last_rec_producer(Some((context.get_id(), context.get_production_time())));
-                BmsWrapper::update_producers(
-                    &Grounded::Class(Arc::downgrade(&grounded.clone())),
-                    context,
-                );
+                bms::update_producers(&Grounded::Class(Arc::downgrade(&grounded.clone())), context);
             }
             self.classes.insert(name.to_string(), grounded.clone());
             true
@@ -125,7 +132,7 @@ impl Class {
         self.members.write().push(member);
     }
 
-    pub fn get_members(&self, comp: &FreeClsMemb) -> Vec<Arc<GroundedMemb>> {
+    pub fn get_members(&self, comp: &FreeMembershipToClass) -> Vec<Arc<GroundedMemb>> {
         let lock = self.members.read();
         lock.iter()
             .map(|x| x.unwrap_memb())
@@ -307,7 +314,7 @@ impl Class {
                                 &*func,
                                 Some((context.get_id(), context.get_production_time())),
                             );
-                            BmsWrapper::update_producers(
+                            bms::update_producers(
                                 &Grounded::Function(Arc::downgrade(&f.clone())),
                                 context,
                             );
@@ -325,7 +332,7 @@ impl Class {
                         context.get_id(),
                         context.get_production_time(),
                     )));
-                    BmsWrapper::update_producers(
+                    bms::update_producers(
                         &Grounded::Function(Arc::downgrade(&func.clone())),
                         context,
                     );
@@ -340,10 +347,7 @@ impl Class {
             if let Some(context) = context {
                 func.bms
                     .set_last_rec_producer(Some((context.get_id(), context.get_production_time())));
-                BmsWrapper::update_producers(
-                    &Grounded::Function(Arc::downgrade(&func.clone())),
-                    context,
-                );
+                bms::update_producers(&Grounded::Function(Arc::downgrade(&func.clone())), context);
             }
             self.relations.insert(name.to_string(), vec![func.clone()]);
             true

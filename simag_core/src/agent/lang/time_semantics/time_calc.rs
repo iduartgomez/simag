@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::TimeFnErr;
 use crate::agent::{
-    kb::bms::BmsWrapper,
+    kb::bms::{BmsWrapper, IsTimeData},
     lang::{
         built_ins::TIME_CALC_FN,
         common::OpArg,
@@ -19,15 +19,14 @@ use chrono::Duration;
 
 /// Special built-in function for time calculus.
 #[derive(Debug, Clone)]
-pub(in crate::agent) struct TimeCalc {
+pub(in crate::agent) struct TimeCalcFn {
     var0: Arc<Var>,
     var1: Arc<Var>,
     op: Operator,
 }
 
-impl TimeCalc {
-    #[inline]
-    fn new(other: &FuncDeclBorrowed, context: &mut ParseContext) -> Result<TimeCalc, ParseErrF> {
+impl TimeCalcFn {
+    fn new(other: &FuncDeclBorrowed, context: &mut ParseContext) -> Result<TimeCalcFn, ParseErrF> {
         if other.args.is_some() || other.op_args.is_none() {
             return Err(ParseErrF::WrongDef);
         }
@@ -50,7 +49,7 @@ impl TimeCalc {
                     _ => return Err(TimeFnErr::InsufArgs.into()),
                 };
 
-                Ok(TimeCalc { var0, var1, op })
+                Ok(TimeCalcFn { var0, var1, op })
             }
             None => Err(TimeFnErr::InsufArgs.into()),
         }
@@ -67,13 +66,18 @@ impl TimeCalc {
 
     pub fn generate_uid(&self) -> Vec<u8> {
         let mut uid = TIME_CALC_FN.to_vec();
+        uid.push(b'<');
         uid.extend(self.var0.generate_uid());
         self.op.generate_uid(&mut uid);
         uid.extend(self.var1.generate_uid());
+        uid.push(b'>');
         uid
     }
 
-    pub fn time_resolution(&self, assignments: &HashMap<&Var, Arc<BmsWrapper>>) -> bool {
+    pub fn time_resolution(
+        &self,
+        assignments: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
+    ) -> bool {
         let arg0 = assignments.get(&*self.var0).unwrap().get_last_date();
         let arg1 = assignments.get(&*self.var1).unwrap().get_last_date();
 
@@ -103,14 +107,14 @@ impl TimeCalc {
     }
 }
 
-impl<'a> std::convert::TryFrom<(&'a FuncDeclBorrowed<'a>, &'a mut ParseContext)> for TimeCalc {
+impl<'a> std::convert::TryFrom<(&'a FuncDeclBorrowed<'a>, &'a mut ParseContext)> for TimeCalcFn {
     type Error = ParseErrF;
 
     fn try_from(decl: (&'a FuncDeclBorrowed, &mut ParseContext)) -> Result<Self, Self::Error> {
         let (other, context) = decl;
 
         if let TerminalBorrowed(TIME_CALC_FN) = other.name {
-            Self::new(other, context)
+            TimeCalcFn::new(other, context)
         } else {
             Err(ParseErrF::NotBuiltin)
         }

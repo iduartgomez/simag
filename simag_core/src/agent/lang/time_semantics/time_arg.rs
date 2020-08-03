@@ -3,7 +3,7 @@ use std::convert::TryFrom;
 use std::sync::Arc;
 
 use super::*;
-use crate::agent::kb::bms::BmsWrapper;
+use crate::agent::kb::bms::{BmsWrapper, IsTimeData};
 use crate::agent::lang::{common::ConstraintValue, logsent::ParseContext, parser::Operator, *};
 use chrono::{DateTime, Utc};
 use parser::OpArgBorrowed;
@@ -33,32 +33,45 @@ impl TimeArg {
 
     pub fn get_time_payload(
         &self,
-        assignments: &HashMap<&Var, Arc<BmsWrapper>>,
+        assignments: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         value: Option<f32>,
-    ) -> BmsWrapper {
-        let bms = BmsWrapper::new(false);
+    ) -> BmsWrapper<IsTimeData> {
         match self {
-            DeclTime(TimeFn::Since(payload)) => {
-                bms.new_record(Some(*payload), value, None);
-            }
-            DeclTime(TimeFn::Now) => {
-                bms.new_record(None, value, None);
-            }
-            DeclTime(TimeFn::Interval(time0, time1)) => {
-                bms.new_record(Some(*time0), value, None);
-                bms.new_record(Some(*time1), None, None);
-            }
+            DeclTime(time_fn) => time_fn.payload_from_time_arg(value),
             SinceVar(var) => {
                 let assignment = &**(assignments.get(&**var).unwrap());
-                return assignment.clone();
+                assignment.clone()
+            }
+            SinceVarUntilVar(v0, v1) => {
+                let mut v0 = (&**assignments.get(&**v0).unwrap()).clone();
+                let v1 = &**(assignments.get(&**v1).unwrap());
+                v0.merge_since_until(v1).unwrap();
+                v0
+            }
+            SinceVarUntilTime(v0, t1) => {
+                let mut v0 = (&**assignments.get(&**v0).unwrap()).clone();
+                let t1 = t1.payload_from_time_arg(value);
+                v0.merge_since_until(&t1).unwrap();
+                v0
+            }
+            SinceTimeUntilVar(t0, v1) => {
+                let mut t0 = t0.payload_from_time_arg(value);
+                let v1 = (&**assignments.get(&**v1).unwrap()).clone();
+                t0.merge_since_until(&v1).unwrap();
+                t0
+            }
+            SinceTimeUntilTime(t0, t1) => {
+                let mut t0 = t0.payload_from_time_arg(value);
+                let t1 = t1.payload_from_time_arg(value);
+                t0.merge_since_until(&t1).unwrap();
+                t0
             }
             _ => unreachable!(format!(
-                "SIMAG - {}:{} - unreachable: can't get time payload from a free variable",
+                "SIMAG - {}:{}: can't get time payload from a free variable",
                 file!(),
                 line!()
             )),
         }
-        bms
     }
 
     pub fn contains_var(&self, var: &Var) -> bool {
@@ -72,14 +85,14 @@ impl TimeArg {
     pub fn var_substitution(&mut self) -> Result<(), ParseErrF> {
         match self {
             SinceVarUntilVar(var0, var1) => {
-                let mut var0_time = var0.get_times();
-                let var1_time = var1.get_times();
-                var0_time.merge_from_until(&var1_time)?;
+                let mut var0_time = var0.get_time();
+                let var1_time = var1.get_time();
+                var0_time.merge_since_until(&var1_time)?;
                 let mut assignment = DeclTime(TimeFn::from_bms(&var0_time)?);
                 std::mem::swap(&mut assignment, self);
             }
             SinceVar(var0) => {
-                let var0_time = var0.get_times();
+                let var0_time = var0.get_time();
                 let mut assignment = DeclTime(TimeFn::from_bms(&var0_time)?);
                 std::mem::swap(&mut assignment, self);
             }
@@ -89,7 +102,8 @@ impl TimeArg {
     }
 
     pub fn generate_uid(&self) -> Vec<u8> {
-        match self {
+        let mut id = Vec::from(b"time_arg<".as_ref());
+        let other = match self {
             AssignThisToVar(var) => var.generate_uid(),
             DeclTime(decl) => decl.generate_uid(),
             SinceVar(var) => var.generate_uid(),
@@ -104,6 +118,19 @@ impl TimeArg {
                 id
             }
             _ => unimplemented!(),
+        };
+        id.extend(other);
+        id.push(b'>');
+        id
+    }
+
+    pub fn is_interval(&self) -> bool {
+        match self {
+            SinceTimeUntilTime(_, _)
+            | SinceTimeUntilVar(_, _)
+            | SinceVarUntilTime(_, _)
+            | SinceVarUntilVar(_, _) => true,
+            _ => false,
         }
     }
 }
@@ -132,7 +159,7 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for TimeArg {
                 var0 = Some(val.get_var());
                 None
             }
-            Ok(ConstraintValue::SpacePayload) => return Err(TimeFnErr::IsNotVar.into()),
+            Ok(ConstraintValue::SpatialPayload(_)) => return Err(TimeFnErr::IsNotVar.into()),
             Err(err) => return Err(err),
         };
 
@@ -273,28 +300,20 @@ impl TimeFn {
         }
     }
 
-    /// Get a time interval from a bmswrapper, ie. created with the
-    /// merge_from_until method.
-    pub fn from_bms(rec: &BmsWrapper) -> Result<TimeFn, ParseErrF> {
-        let values: Vec<_> = rec.iter_values().map(|(t, _)| t).collect();
-        if values.len() != 2 {
-            return Err(ParseErrF::TimeFnErr(TimeFnErr::WrongDef));
-        }
-        Ok(TimeFn::Interval(values[0], values[1]))
+    /// Get a time interval from a bmswrapper, e.g. created with the merge_from_until method.
+    pub fn from_bms(rec: &BmsWrapper<IsTimeData>) -> Result<TimeFn, ParseErrF> {
+        let values = rec
+            .get_time_interval()
+            .map_err(|_| ParseErrF::TimeFnErr(TimeFnErr::WrongDef))?;
+        Ok(TimeFn::Interval(values[0].0, values[1].0))
     }
 
-    pub fn get_time_payload(&self, value: Option<f32>) -> BmsWrapper {
-        let bms = BmsWrapper::new(false);
+    pub fn get_time_payload(&self, value: Option<f32>) -> BmsWrapper<IsTimeData> {
         match *self {
-            TimeFn::Since(ref payload) => {
-                bms.new_record(Some(*payload), value, None);
-            }
-            TimeFn::Now => {
-                bms.new_record(None, value, None);
-            }
+            TimeFn::Since(ref payload) => BmsWrapper::<IsTimeData>::new(Some(*payload), value),
+            TimeFn::Now => BmsWrapper::<IsTimeData>::new(None, value),
             _ => unreachable!(),
         }
-        bms
     }
 
     pub fn generate_uid(&self) -> Vec<u8> {
@@ -317,6 +336,22 @@ impl TimeFn {
             TimeFn::ThisTime => id.push(4),
         }
         id
+    }
+
+    fn payload_from_time_arg(&self, value: Option<f32>) -> BmsWrapper<IsTimeData> {
+        match self {
+            TimeFn::Since(payload) => BmsWrapper::<IsTimeData>::new(Some(*payload), value),
+            TimeFn::Now => BmsWrapper::<IsTimeData>::new(None, value),
+            TimeFn::Interval(time0, time1) => {
+                let mut t0 = BmsWrapper::<IsTimeData>::new(Some(*time0), value);
+                let t1 = &BmsWrapper::<IsTimeData>::new(Some(*time1), None);
+                t0.merge_since_until(t1).unwrap_or_else(|_| {
+                    unreachable!("SIMAG - {}:{}: illegal merge", file!(), line!())
+                });
+                t0
+            }
+            _ => unreachable!(),
+        }
     }
 }
 

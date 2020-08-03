@@ -1,13 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use dashmap::DashMap;
 
-use super::entity::Entity;
+use super::{bms::build_declaration_bms, entity::Entity};
 use crate::agent::kb::{
-    bms::ReplaceMode,
     class::*,
     inference::{
         meet_sent_requirements, ArgsProduct, GroundedResult, IExprResult, InfResults, Inference,
@@ -16,10 +15,10 @@ use crate::agent::kb::{
     VarAssignment,
 };
 use crate::agent::lang::{
-    Assert, ClassDecl, FreeClassMembership, FuncDecl, GrTerminalKind,
+    Assert, BuiltIns, ClassDecl, FreeClassMembership, FuncDecl, GrTerminalKind,
     GrTerminalKind::{Class as ClassTerm, Entity as EntityTerm},
-    GroundedFunc, GroundedMemb, GroundedRef, LogSentence, ParseErrF, ParseTree, Parser, Predicate,
-    ProofResContext, SentVarReq, TimeOps, Var,
+    GroundedFunc, GroundedMemb, GroundedRef, LocFn, LogSentence, MoveFn, ParseErrF, ParseTree,
+    Parser, Point, Predicate, ProofResContext, SentVarReq, Var,
 };
 
 // TODO: find better solution for self-referential borrows escaping self method scopes
@@ -95,27 +94,22 @@ impl Representation {
                     ParseTree::Assertion(assertions) => {
                         for assertion in assertions {
                             match assertion {
-                                Assert::ClassDecl(cls_decl) => {
-                                    let f = HashMap::new();
-                                    let time_data = cls_decl.get_own_time_data(&f, None);
-                                    for a in cls_decl {
-                                        let t = time_data.clone();
-                                        t.replace_value(a.get_value(), ReplaceMode::Tell);
-                                        if let Some(bms) = a.bms.as_ref() {
-                                            bms.overwrite_data(&t);
-                                            if a.is_time_interval() {
-                                                a.update_value(None);
-                                            }
-                                        };
-                                        let x: Option<&IExprResult> = None;
-                                        self.up_membership(&Arc::new(a), x)
-                                    }
-                                }
+                                Assert::ClassDecl(cls_decl) => build_declaration_bms(cls_decl)
+                                    .map_err(|err| vec![err])?
+                                    .for_each(|decl| {
+                                        self.up_membership(&Arc::new(decl), None::<&IExprResult>)
+                                    }),
                                 Assert::FuncDecl(func_decl) => {
-                                    let a = Arc::new(func_decl.into_grounded());
-                                    let x: Option<&IExprResult> = None;
-                                    self.up_relation(&a, x)
+                                    let a = Arc::new(func_decl.into());
+                                    self.up_relation(&a, None::<&IExprResult>)
                                 }
+                                Assert::SpecialFunc(BuiltIns::Location(loc_fn)) => self
+                                    .upsert_objects_with_loc(loc_fn.objects_to_update().flat_map(
+                                        |(obj, loc)| match Arc::try_unwrap(obj) {
+                                            Ok(t) => Some((t, loc)),
+                                            _ => None,
+                                        },
+                                    )),
                                 _ => return Err(vec![ParseErrF::WrongDef]),
                             }
                         }
@@ -208,6 +202,31 @@ impl Representation {
         }
     }
 
+    fn upsert_objects_with_loc(&self, objs: impl Iterator<Item = (GrTerminalKind<String>, Point)>) {
+        for (term, loc) in objs {
+            match term {
+                ClassTerm(class_name) => {
+                    if let Some(class) = self.classes.get(&class_name) {
+                        (*class).with_location(loc, None);
+                    } else {
+                        let class = Class::new(class_name, ClassKind::Membership);
+                        class.with_location(loc, None);
+                        self.classes.insert(class.name.clone(), class);
+                    }
+                }
+                EntityTerm(subject) => {
+                    if let Some(entity) = self.entities.get(&subject) {
+                        (*entity).with_location(loc, None);
+                    } else {
+                        let entity = Entity::new(subject);
+                        entity.with_location(loc, None);
+                        self.entities.insert(entity.name.clone(), entity);
+                    }
+                }
+            }
+        }
+    }
+
     pub(in crate::agent) fn up_relation<T: ProofResContext>(
         &self,
         assert: &Arc<GroundedFunc>,
@@ -279,7 +298,7 @@ impl Representation {
                 class.add_belief(belief.clone(), name);
                 repr.classes.insert(subject.to_string(), class);
             }
-        };
+        }
 
         for p in belief.get_all_predicates() {
             match *p {
@@ -338,11 +357,13 @@ impl Representation {
             |cls_decl: &ClassDecl, candidates: &HashMap<&Var, Vec<Arc<VarAssignment>>>| {
                 for a in cls_decl.get_args() {
                     match *a {
-                        Predicate::FreeClsMemb(ref free) => {
+                        Predicate::FreeMembershipToClass(ref free) => {
                             if let Some(ls) = candidates.get(free.get_var_ref()) {
                                 for entity in ls {
-                                    let grfact =
-                                        Arc::new(GroundedMemb::from_free(free, entity.name));
+                                    let grfact = Arc::new(GroundedMemb::from_free(
+                                        free,
+                                        entity.name.as_ref(),
+                                    ));
                                     self.ask_processed(QueryInput::AskClassMember(grfact), 0, true)
                                         .unwrap();
                                 }
@@ -352,6 +373,7 @@ impl Representation {
                     }
                 }
             };
+
         let iter_func_candidates =
             |func_decl: &FuncDecl, candidates: &HashMap<&Var, Vec<Arc<VarAssignment>>>| {
                 let mapped = ArgsProduct::product(candidates.clone());
@@ -372,20 +394,91 @@ impl Representation {
             };
 
         let sent_req: SentVarReq = belief.get_lhs_predicates().into();
+        let mut assigned: HashSet<&str> =
+            HashSet::with_capacity(sent_req.size_hint().1.unwrap_or(0));
         for var_req in sent_req {
             if let Some(candidates) = meet_sent_requirements(self, &var_req) {
-                for var in candidates.keys() {
+                for (var, assign) in candidates.iter() {
                     let it = belief.get_rhs_predicates();
                     for pred in it.iter().filter(|x| x.contains(&**var)) {
-                        match **pred {
+                        match pred {
                             Assert::ClassDecl(ref cls_decl) => {
                                 iter_cls_candidates(cls_decl, &candidates)
                             }
                             Assert::FuncDecl(ref func_decl) => {
                                 iter_func_candidates(func_decl, &candidates)
                             }
+                            Assert::SpecialFunc(BuiltIns::Move(move_fn)) => self
+                                .iter_move_candidates(
+                                    belief,
+                                    move_fn,
+                                    assign,
+                                    &candidates,
+                                    &mut assigned,
+                                ),
                             Assert::SpecialFunc(_) => {}
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    fn iter_move_candidates<'a, 'b: 'a>(
+        &self,
+        belief: &Arc<LogSentence>,
+        move_fn: &MoveFn,
+        assign: &[Arc<VarAssignment<'b>>],
+        candidates: &HashMap<&Var, Vec<Arc<VarAssignment>>>,
+        assigned: &'a mut HashSet<&'b str>,
+    ) {
+        assign.iter().for_each(|a| {
+            let name = *a.name;
+            if assigned.get(name) == None {
+                // add this sent as move_fn to the potential candidates
+                match a.name {
+                    GrTerminalKind::Entity(_) => {
+                        if let Some(ent) = self.entities.get(name) {
+                            ent.move_beliefs.write().push(belief.clone());
+                        }
+                    }
+                    GrTerminalKind::Class(_) => {
+                        if let Some(cls) = self.classes.get(name) {
+                            cls.move_beliefs.write().push(belief.clone());
+                        }
+                    }
+                }
+                assigned.insert(name);
+            }
+        });
+        if let Some(mapped) = ArgsProduct::product(candidates.clone()) {
+            let mut pos: Option<Point> = None;
+            for args in mapped {
+                let args = HashMap::from_iter(args.iter().map(|(v, a)| (*v, &**a)));
+                for arg in args
+                    .values()
+                    .map(|v| GrTerminalKind::from((*v.name).to_owned()))
+                {
+                    if let Some(pos) = &pos {
+                        // ask if the obj is in that location
+                        self.ask_processed(
+                            QueryInput::AskLocation(LocFn::from((arg, pos.clone()))),
+                            0,
+                            true,
+                        )
+                        .unwrap();
+                    } else {
+                        // fetch the location the first time
+                        let (_, loc_assign) = belief.get_assignments(self, Some(&args));
+                        let locs = move_fn.get_location(&loc_assign).unwrap();
+                        let loc = locs.get_last_value().1.unwrap();
+                        pos = Some(loc.clone());
+                        self.ask_processed(
+                            QueryInput::AskLocation(LocFn::from((arg, loc))),
+                            0,
+                            true,
+                        )
+                        .unwrap();
                     }
                 }
             }
@@ -505,14 +598,14 @@ impl Representation {
             EntityTerm(subject) => {
                 if let Some(entity) = self.entities.get(subject) {
                     if let Some(current) = entity.belongs_to_class(pred.get_parent(), true) {
-                        return current.compare_at_time_intervals(pred);
+                        return current.compare(pred);
                     }
                 }
             }
             ClassTerm(class_name) => {
                 if let Some(class) = self.classes.get(class_name) {
                     if let Some(current) = class.belongs_to_class(pred.get_parent(), true) {
-                        return current.compare_at_time_intervals(pred);
+                        return current.compare(pred);
                     }
                 }
             }
@@ -545,12 +638,12 @@ impl Representation {
         if let EntityTerm(subject_name) = subject.into() {
             if let Some(entity) = self.entities.get(subject_name) {
                 if let Some(current) = entity.has_relationship(pred) {
-                    return current.compare_at_time_intervals(pred);
+                    return current.compare(pred);
                 }
             }
         } else if let Some(class) = self.classes.get(subject) {
             if let Some(current) = class.has_relationship(pred) {
-                return current.compare_at_time_intervals(pred);
+                return current.compare(pred);
             }
         }
         None
@@ -564,7 +657,7 @@ impl Representation {
         if let EntityTerm(subject_name) = subject.into() {
             if let Some(entity) = self.entities.get(subject_name) {
                 if let Some(current) = entity.has_relationship(pred) {
-                    if *current == *pred {
+                    if current.compare_ignoring_times(pred) {
                         return Some(current);
                     } else {
                         return None;
@@ -573,7 +666,7 @@ impl Representation {
             }
         } else if let Some(class) = self.classes.get(subject) {
             if let Some(current) = class.has_relationship(pred) {
-                if *current == *pred {
+                if current.compare_ignoring_times(pred) {
                     return Some(current);
                 } else {
                     return None;
@@ -587,7 +680,6 @@ impl Representation {
         &self,
         func: &FuncDecl,
     ) -> HashMap<&str, Vec<Arc<GroundedFunc>>> {
-        // FIXME: return iteraror avoid collection with drain
         let mut res = HashMap::new();
         for (pos, arg) in func.get_args().iter().enumerate() {
             if !arg.is_var() {
@@ -629,6 +721,72 @@ impl Representation {
     pub fn clear(&mut self) {
         self.entities.clear();
         self.classes.clear();
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub(super) fn find_objs_by_loc<'a, T: AsRef<str> + 'a>(
+        &self,
+        objects: impl Iterator<Item = (&'a Arc<GrTerminalKind<T>>, &'a Point)>,
+    ) -> Vec<(&'a Point, Arc<GrTerminalKind<T>>, Option<bool>)> {
+        let mut answer = vec![];
+        for (term, loc) in objects {
+            match &**term {
+                ClassTerm(class_name) => {
+                    if let Some(class) = self.classes.get(class_name.as_ref()) {
+                        let rec = class.location.get_record_at_location(loc, None);
+                        if !rec.is_empty() {
+                            answer.push((loc, term.clone(), Some(true)))
+                        } else {
+                            answer.push((loc, term.clone(), Some(false)))
+                        }
+                    } else {
+                        answer.push((loc, term.clone(), None))
+                    }
+                }
+                EntityTerm(subject) => {
+                    if let Some(entity) = self.entities.get(subject.as_ref()) {
+                        let rec = entity.location.get_record_at_location(loc, None);
+                        if !rec.is_empty() {
+                            answer.push((loc, term.clone(), Some(true)))
+                        } else {
+                            answer.push((loc, term.clone(), Some(false)))
+                        }
+                    } else {
+                        answer.push((loc, term.clone(), None))
+                    }
+                }
+            }
+        }
+        answer
+    }
+
+    pub(super) fn find_all_objs_in_loc<'a>(&self, loc: &'a Point) -> Vec<GrTerminalKind<String>> {
+        let mut answer = vec![];
+        for class in &self.classes {
+            if class
+                .location
+                .get_record_at_location(loc, None)
+                .into_iter()
+                .next()
+                .flatten()
+                .is_some()
+            {
+                answer.push(GrTerminalKind::Class(class.key().to_owned()));
+            }
+        }
+        for entity in &self.entities {
+            if entity
+                .location
+                .get_record_at_location(loc, None)
+                .into_iter()
+                .next()
+                .flatten()
+                .is_some()
+            {
+                answer.push(GrTerminalKind::Entity(entity.key().to_owned()));
+            }
+        }
+        answer
     }
 }
 
@@ -700,6 +858,10 @@ impl<'a> Answer<'a> {
     #[allow(dead_code)]
     pub(super) fn get_relationships(&self) -> HashMap<ObjName<'a>, Vec<&'a GroundedFunc>> {
         self.0.get_relationships()
+    }
+
+    pub fn get_located_objects(&self) -> HashMap<Point, Vec<ObjName<'a>>> {
+        self.0.get_located_objects()
     }
 }
 

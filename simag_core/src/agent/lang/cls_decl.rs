@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::convert::TryFrom;
-use std::sync::Arc;
+use std::convert::{TryFrom, TryInto};
+use std::{iter::FromIterator, sync::Arc};
 
 use super::{
     common::*,
@@ -9,7 +9,12 @@ use super::{
     time_semantics::{TimeArg, TimeOps},
     *,
 };
-use crate::agent::kb::{bms::BmsWrapper, repr::Representation, VarAssignment};
+use crate::agent::kb::{
+    bms::{BmsWrapper, IsSpatialData, IsTimeData, OverwriteBms, RecordHistory},
+    repr::Representation,
+    VarAssignment,
+};
+use spatial_semantics::{SpatialArg, SpatialOps};
 
 #[derive(Debug, Clone)]
 pub(in crate::agent) struct ClassDecl {
@@ -18,17 +23,38 @@ pub(in crate::agent) struct ClassDecl {
     pub op_args: Option<Vec<OpArg>>,
 }
 
-impl<'a> ClassDecl {
-    pub fn from(
-        other: &ClassDeclBorrowed<'a>,
-        context: &mut ParseContext,
-    ) -> Result<ClassDecl, ParseErrF> {
+impl<'a> TryFrom<(&ClassDeclBorrowed<'a>, &mut ParseContext)> for ClassDecl {
+    type Error = ParseErrF;
+
+    fn try_from(input: (&ClassDeclBorrowed, &mut ParseContext)) -> Result<Self, Self::Error> {
+        let (other, context) = input;
         let class_name = Terminal::from(&other.name, context)?;
         let op_args = match other.op_args {
             Some(ref oargs) => {
                 let mut v0 = Vec::with_capacity(oargs.len());
+                let mut found_time_arg = false;
+                let mut found_spatial_arg = false;
                 for e in oargs {
                     let a = OpArg::try_from((e, &*context))?;
+                    match a {
+                        OpArg::Spatial(_) => {
+                            if found_spatial_arg {
+                                // only one allowed
+                                return Err(ParseErrF::WrongArgNumb);
+                            } else {
+                                found_spatial_arg = true
+                            }
+                        }
+                        OpArg::Time(_) => {
+                            if found_time_arg {
+                                // only one allowed
+                                return Err(ParseErrF::WrongArgNumb);
+                            } else {
+                                found_time_arg = true
+                            }
+                        }
+                        _ => {}
+                    }
                     v0.push(a);
                 }
                 Some(v0)
@@ -38,11 +64,7 @@ impl<'a> ClassDecl {
         let args = {
             let mut v0 = Vec::with_capacity(other.args.len());
             for arg in &other.args {
-                let mut pred = Predicate::from(arg, context, &class_name, false)?;
-                // if truth value was ellided, default to 1
-                if !pred.has_uval() {
-                    pred.replace_uval(1.0)
-                }
+                let pred = Predicate::from(arg, context, &class_name, None)?;
                 v0.push(pred);
             }
             v0
@@ -54,7 +76,9 @@ impl<'a> ClassDecl {
             op_args,
         })
     }
+}
 
+impl ClassDecl {
     pub fn get_args(&self) -> &[Predicate] {
         &self.args
     }
@@ -77,7 +101,7 @@ impl<'a> ClassDecl {
     }
 
     pub(in crate::agent::lang) fn generate_uid(&self) -> Vec<u8> {
-        let mut id = vec![];
+        let mut id = Vec::from_iter(b"cls_decl<".iter().cloned());
         id.append(&mut self.name.generate_uid());
         for a in &self.args {
             let mut id_2 = a.generate_uid();
@@ -89,13 +113,14 @@ impl<'a> ClassDecl {
                 id.append(&mut id_2)
             }
         }
+        id.push(b'>');
         id
     }
 
     pub(in crate::agent::lang) fn contains_var(&self, var: &Var) -> bool {
         for a in &self.args {
             match *a {
-                Predicate::FreeClsMemb(ref term) if &*term.term == var => return true,
+                Predicate::FreeMembershipToClass(ref term) if &*term.term == var => return true,
                 _ => continue,
             }
         }
@@ -126,6 +151,57 @@ impl<'a> ClassDecl {
         }
         Ok(())
     }
+
+    fn get_assignment<T>(
+        &self,
+        agent: &Representation,
+        var_assign: Option<&HashMap<&Var, &VarAssignment>>,
+    ) -> Option<Arc<T>>
+    where
+        T: for<'a> TryFrom<&'a BmsWrapper<RecordHistory>>,
+    {
+        let arg = &self.args[0];
+        match *arg {
+            Predicate::FreeMembershipToClass(ref free) => {
+                var_assign?;
+                if let Some(entity) = var_assign.as_ref().unwrap().get(&*free.term) {
+                    if let Some(grounded) = entity.get_class(free.parent.get_name()) {
+                        if free.grounded_eq(grounded) {
+                            return grounded.bms.as_ref().map(|bms| {
+                                Arc::new((&**bms).try_into().unwrap_or_else(|_| {
+                                    unreachable!(
+                                        "SIMAG - {}:{}: illegal conversion",
+                                        file!(),
+                                        line!()
+                                    )
+                                }))
+                            });
+                        }
+                    } else {
+                        return None;
+                    }
+                } else {
+                    return None;
+                }
+            }
+            Predicate::GroundedMemb(ref compare) => {
+                let entity = agent.get_obj_from_class(self.get_name(), &compare.term);
+                if let Some(grounded) = entity {
+                    if grounded.compare_ignoring_times(compare) {
+                        return grounded.bms.as_ref().map(|bms| {
+                            Arc::new((&**bms).try_into().unwrap_or_else(|_| {
+                                unreachable!("SIMAG - {}:{}: illegal conversion", file!(), line!())
+                            }))
+                        });
+                    }
+                } else {
+                    return None;
+                }
+            }
+            _ => return None, // this path won't be taken in any program
+        }
+        None
+    }
 }
 
 impl OpArgsOps for ClassDecl {
@@ -139,39 +215,11 @@ impl TimeOps for ClassDecl {
         &self,
         agent: &Representation,
         var_assign: Option<&HashMap<&Var, &VarAssignment>>,
-    ) -> Option<Arc<BmsWrapper>> {
-        let arg = &self.args[0];
-        match *arg {
-            Predicate::FreeClsMemb(ref free) => {
-                var_assign?;
-                if let Some(entity) = var_assign.as_ref().unwrap().get(&*free.term) {
-                    if let Some(grounded) = entity.get_class(free.parent.get_name()) {
-                        if free.grounded_eq(grounded) {
-                            return grounded.bms.clone();
-                        }
-                    } else {
-                        return None;
-                    }
-                } else {
-                    return None;
-                }
-            }
-            Predicate::GroundedMemb(ref compare) => {
-                let entity = agent.get_obj_from_class(self.get_name(), &compare.term);
-                if let Some(grounded) = entity {
-                    if *grounded == *compare {
-                        return grounded.bms.clone();
-                    }
-                } else {
-                    return None;
-                }
-            }
-            _ => return None, // this path won't be taken in any program
-        }
-        None
+    ) -> Option<Arc<BmsWrapper<IsTimeData>>> {
+        self.get_assignment(agent, var_assign)
     }
 
-    fn get_time_payload(&self, value: Option<f32>) -> Option<BmsWrapper> {
+    fn get_time_payload(&self, value: Option<f32>) -> Option<BmsWrapper<IsTimeData>> {
         self.op_args.as_ref()?;
         for arg in self.op_args.as_ref().unwrap() {
             if let OpArg::Time(TimeArg::DeclTime(ref decl)) = *arg {
@@ -179,6 +227,26 @@ impl TimeOps for ClassDecl {
             }
         }
         None
+    }
+}
+
+impl SpatialOps for ClassDecl {
+    fn get_spatial_payload(&self) -> Option<BmsWrapper<IsSpatialData>> {
+        self.op_args.as_ref()?;
+        for arg in self.op_args.as_ref().unwrap() {
+            if let OpArg::Spatial(SpatialArg::DeclLocation(loc)) = arg {
+                return Some(BmsWrapper::<IsSpatialData>::new(Some(loc.clone())));
+            }
+        }
+        None
+    }
+
+    fn get_location(
+        &self,
+        agent: &Representation,
+        var_assign: Option<&HashMap<&Var, &VarAssignment>>,
+    ) -> Option<Arc<BmsWrapper<IsSpatialData>>> {
+        self.get_assignment(agent, var_assign)
     }
 }
 
@@ -206,12 +274,12 @@ impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        _: &HashMap<&Var, Arc<BmsWrapper>>,
+        _: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
     ) -> Option<bool> {
         for a in &self.args {
             match *a {
-                Predicate::FreeClsMemb(ref free) => {
+                Predicate::FreeMembershipToClass(ref free) => {
                     assignments?;
                     if let Some(entity) = assignments.as_ref().unwrap().get(&*free.term) {
                         if let Some(current) = entity.get_class(free.parent.get_name()) {
@@ -258,7 +326,7 @@ impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
                             {
                                 context.set_newest_grfact(time);
                             }
-                            if *current != *compare {
+                            if !current.compare_ignoring_times(compare) {
                                 return Some(false);
                             }
                         } else {
@@ -276,17 +344,15 @@ impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
         &self,
         agent: &Representation,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
         context: &mut T,
     ) {
-        use crate::agent::kb::bms::ReplaceMode;
-
         let time_data = self.get_own_time_data(time_assign, None);
         for a in &self.args {
             let grfact = match *a {
-                Predicate::FreeClsMemb(ref free) => {
+                Predicate::FreeMembershipToClass(ref free) => {
                     if let Some(entity) = assignments.as_ref().unwrap().get(&*free.term) {
-                        GroundedMemb::from_free(free, entity.name)
+                        GroundedMemb::from_free(free, &*entity.name)
                     } else {
                         break;
                     }
@@ -295,9 +361,9 @@ impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
                 _ => return, // this path won't be taken in any program
             };
             let t = time_data.clone();
-            t.replace_value(grfact.get_value(), ReplaceMode::Substitute);
+            t.replace_value(grfact.get_value());
             if let Some(bms) = grfact.bms.as_ref() {
-                bms.overwrite_data(&t)
+                bms.overwrite_data(t.into()).unwrap();
             };
             #[cfg(debug_assertions)]
             {

@@ -1,6 +1,3 @@
-use super::{FreeClsMemb, GroundedRef};
-use float_cmp::ApproxEqUlps;
-use parking_lot::RwLock;
 use std::str;
 use std::sync::Arc;
 
@@ -8,10 +5,15 @@ use super::{
     errors::ParseErrF,
     logsent::{ParseContext, SentID},
     parser::{Number, Operator, UVal},
-    GrTerminalKind, Time,
+    FreeMembershipToClass, GrTerminalKind, GroundedRef, Time,
 };
-use crate::agent::{kb::bms::BmsWrapper, kb::repr::Representation};
+use crate::agent::{
+    kb::bms::{BmsWrapper, HasBms, RecordHistory},
+    kb::repr::Representation,
+};
 use crate::FLOAT_EQ_ULPS;
+use float_cmp::ApproxEqUlps;
+use parking_lot::RwLock;
 
 /// Grounded membership of an entity to a class.
 ///
@@ -22,7 +24,7 @@ pub(in crate::agent) struct GroundedMemb {
     pub(in crate::agent::lang) value: RwLock<Option<f32>>,
     pub(in crate::agent::lang) operator: Option<Operator>,
     pub(in crate::agent::lang) parent: String,
-    pub bms: Option<Arc<BmsWrapper>>,
+    pub bms: Option<Arc<BmsWrapper<RecordHistory>>>,
 }
 
 impl GroundedMemb {
@@ -36,24 +38,30 @@ impl GroundedMemb {
         parent: String,
         times: Option<Vec<(Time, Option<f32>)>>,
         context: &ParseContext,
+        is_func: Option<usize>,
     ) -> Result<GroundedMemb, ParseErrF> {
-        let val;
-        let op;
-        let bms;
+        let mut val = None;
+        let mut op = None;
+        let mut bms = None;
+
+        let make_bms = |val: f32| -> BmsWrapper<RecordHistory> {
+            let t_bms = BmsWrapper::<RecordHistory>::new();
+            if let Some(times) = times {
+                for (time, val) in times {
+                    t_bms.add_new_record(Some(time), None, val, None);
+                }
+            } else {
+                t_bms.add_new_record(None, None, Some(val as f32), None);
+            }
+            t_bms
+        };
+
         if let Some(uval) = uval {
             let UVal { val: val0, op: op0 } = uval;
             val = Some(match val0 {
                 Number::UnsignedInteger(val) => {
                     if val == 0 || val == 1 {
-                        let t_bms = BmsWrapper::new(false);
-                        if let Some(times) = times {
-                            for (time, val) in times {
-                                t_bms.new_record(Some(time), val, None);
-                            }
-                        } else {
-                            t_bms.new_record(None, Some(val as f32), None);
-                        }
-                        bms = Some(Arc::new(t_bms));
+                        bms = Some(Arc::new(make_bms(val as f32)));
                         val as f32
                     } else {
                         return Err(ParseErrF::IUVal(val as f32));
@@ -61,15 +69,7 @@ impl GroundedMemb {
                 }
                 Number::UnsignedFloat(val) => {
                     if val >= 0. && val <= 1. {
-                        let t_bms = BmsWrapper::new(false);
-                        if let Some(times) = times {
-                            for (time, val) in times {
-                                t_bms.new_record(Some(time), val, None);
-                            }
-                        } else {
-                            t_bms.new_record(None, Some(val as f32), None);
-                        }
-                        bms = Some(Arc::new(t_bms));
+                        bms = Some(Arc::new(make_bms(val)));
                         val
                     } else {
                         return Err(ParseErrF::IUVal(val as f32));
@@ -86,11 +86,12 @@ impl GroundedMemb {
             } else {
                 op = Some(op0);
             }
-        } else {
-            val = None;
-            op = None;
-            bms = None;
+        } else if is_func.filter(|x| *x == 0).is_some() || is_func.is_none() {
+            op = Some(Operator::Equal);
+            val = Some(1.0);
+            bms = Some(Arc::new(make_bms(1.0)));
         }
+
         Ok(GroundedMemb {
             term: term.into(),
             value: RwLock::new(val),
@@ -101,7 +102,7 @@ impl GroundedMemb {
     }
 
     pub(in crate::agent::lang) fn generate_uid(&self) -> Vec<u8> {
-        let mut id: Vec<u8> = vec![];
+        let mut id = Vec::from(b"gr_memb<".as_ref());
         let term_str: &str = (&self.term).into();
         id.append(&mut Vec::from(term_str.as_bytes()));
         if let Some(ref cmp) = self.operator {
@@ -112,6 +113,7 @@ impl GroundedMemb {
             id.append(&mut id_2);
         }
         id.append(&mut Vec::from(self.parent.as_bytes()));
+        id.push(b'>');
         id
     }
 
@@ -151,8 +153,8 @@ impl GroundedMemb {
                 let data_bms = data.bms.as_ref().unwrap();
                 bms.update(&GroundedRef::Class(self), agent, data_bms, was_produced)
             } else {
-                let data_bms = BmsWrapper::new(false);
-                data_bms.new_record(None, new_val, None);
+                let data_bms = BmsWrapper::<RecordHistory>::new();
+                data_bms.add_new_record(None, None, new_val, None);
                 bms.update(&GroundedRef::Class(self), agent, &data_bms, was_produced)
             }
         }
@@ -162,11 +164,11 @@ impl GroundedMemb {
         *self.value.write() = val;
     }
 
-    pub fn from_free(free: &FreeClsMemb, assignment: &str) -> GroundedMemb {
+    pub fn from_free(free: &FreeMembershipToClass, assignment: &str) -> GroundedMemb {
         let bms;
         let val = if free.value.is_some() {
-            let t_bms = BmsWrapper::new(false);
-            t_bms.new_record(None, free.value, None);
+            let t_bms = BmsWrapper::<RecordHistory>::new();
+            t_bms.add_new_record(None, None, free.value, None);
             bms = Some(Arc::new(t_bms));
             Some(free.value.unwrap())
         } else {
@@ -206,10 +208,9 @@ impl GroundedMemb {
 
     /// An statement is a time interval if there are only two time records and the
     /// last one is none.
-    // FIXME: this is error prone, encode if is a time interval at the type level when the bms is first created?
     pub fn is_time_interval(&self) -> bool {
         if let Some(bms) = &self.bms {
-            bms.record_len() == 2 && bms.get_last_value().is_none()
+            bms.record_len() == 2 && bms.get_last_value().0.is_none()
         } else {
             false
         }
@@ -264,9 +265,9 @@ impl GroundedMemb {
 
     /// Compare if a grounded membership is true at the times stated by the pred
     #[allow(unused_variables)]
-    pub fn compare_at_time_intervals(&self, pred: &GroundedMemb) -> Option<bool> {
+    pub fn compare(&self, pred: &GroundedMemb) -> Option<bool> {
         if pred.bms.is_none() {
-            return Some(self == pred);
+            return Some(self.compare_ignoring_times(pred));
         }
         let self_bms = &**self.bms.as_ref().unwrap();
         let pred_bms = &**pred.bms.as_ref().unwrap();
@@ -278,24 +279,25 @@ impl GroundedMemb {
             let op_rhs = self.operator.unwrap();
             let op_lhs = pred.operator.unwrap();
             let time_pred = pred_bms.get_last_date();
-            let val_lhs = pred_bms.get_last_value();
-            let val_rhs = if time_pred < *time {
+            let (val_lhs, loc_lhs) = pred_bms.get_last_value();
+            let (val_rhs, loc_rhs) = if time_pred < *time {
                 self_bms.get_record_at_time(time_pred)
             } else {
                 self_bms.get_last_value()
             };
             val_rhs?;
+            if loc_lhs != loc_rhs {
+                return Some(false);
+            }
             Some(Self::compare_two_grounded_eq(
                 val_lhs, val_rhs, op_lhs, op_rhs,
             ))
         } else {
-            Some(self == pred)
+            Some(self.compare_ignoring_times(pred))
         }
     }
-}
 
-impl std::cmp::PartialEq for GroundedMemb {
-    fn eq(&self, other: &GroundedMemb) -> bool {
+    pub(in crate::agent) fn compare_ignoring_times(&self, other: &GroundedMemb) -> bool {
         if self.term != other.term || self.parent != other.parent {
             return false;
         }
@@ -339,11 +341,11 @@ impl std::fmt::Display for GroundedMemb {
         let comp_op = if let Some(op) = self.operator {
             format!("{}", op)
         } else {
-            "".to_owned()
+            " ? ".to_owned()
         };
         let (value, time) = if let Some(ref bms) = self.bms {
             (
-                bms.get_last_value(),
+                bms.get_last_value().0,
                 format!(" @ `{}` ", bms.get_last_date()),
             )
         } else {
@@ -354,5 +356,17 @@ impl std::fmt::Display for GroundedMemb {
             "GrMemb {{ {}[{}{}{:?}{}] }}",
             self.parent, self.term, comp_op, value, time
         )
+    }
+}
+
+impl HasBms for GroundedMemb {
+    type BmsType = BmsWrapper<RecordHistory>;
+
+    fn get_bms(&self) -> Option<&Self::BmsType> {
+        self.bms.as_ref().map(|bms| &**bms)
+    }
+
+    fn get_value(&self) -> Option<f32> {
+        self.get_value()
     }
 }

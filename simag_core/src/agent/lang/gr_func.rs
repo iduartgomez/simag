@@ -1,4 +1,3 @@
-use super::GroundedMemb;
 use std::collections::HashMap;
 use std::str;
 use std::sync::Arc;
@@ -7,10 +6,10 @@ use super::{
     common::{GroundedRef, Predicate},
     fn_decl::FuncDecl,
     logsent::SentID,
-    Terminal, TimeOps, Var,
+    GroundedMemb, Terminal, TimeOps, Var,
 };
 use crate::agent::{
-    kb::bms::BmsWrapper,
+    kb::bms::{BmsWrapper, IsTimeData, RecordHistory},
     kb::{repr::Representation, VarAssignment},
     lang::Time,
 };
@@ -24,19 +23,20 @@ pub(in crate::agent) struct GroundedFunc {
     pub(in crate::agent::lang) name: String,
     pub(in crate::agent::lang) args: [GroundedMemb; 2],
     pub(in crate::agent::lang) third: Option<GroundedMemb>,
-    pub bms: Arc<BmsWrapper>,
+    pub bms: Arc<BmsWrapper<RecordHistory>>,
 }
 
 impl GroundedFunc {
     #[allow(unused_variables)]
-    pub fn compare_at_time_intervals(&self, pred: &GroundedFunc) -> Option<bool> {
+    pub fn compare(&self, pred: &GroundedFunc) -> Option<bool> {
         // block both BMS for the duration of the comparison
         let self_lock = &*self.bms.acquire_read_lock();
         let pred_lock = &*pred.bms.acquire_read_lock();
+
         if let Some(time) = pred.bms.is_predicate() {
             let time_pred = pred.bms.get_last_date();
-            let val_lhs = pred.bms.get_last_value();
-            let val_rhs = if time_pred < *time {
+            let (val_lhs, loc_lhs) = pred.bms.get_last_value();
+            let (val_rhs, loc_rhs) = if time_pred < *time {
                 self.bms.get_record_at_time(time_pred)
             } else {
                 self.bms.get_last_value()
@@ -44,25 +44,57 @@ impl GroundedFunc {
             let op_rhs = self.args[0].operator.unwrap();
             let op_lhs = pred.args[0].operator.unwrap();
             val_rhs?;
+            if loc_lhs != loc_rhs {
+                return Some(false);
+            }
+            match (&self.third, &pred.third) {
+                (Some(arg0), Some(arg1)) => {
+                    if arg0.compare_ignoring_times(arg1) {
+                        return Some(false);
+                    }
+                }
+                (None, None) => {}
+                _ => return Some(false),
+            };
             if !(self.name == pred.name
-                && self.third == pred.third
                 && self.args[0].term == pred.args[0].term
                 && self.args[1].term == pred.args[1].term)
             {
                 return Some(false);
             }
+
             Some(GroundedMemb::compare_two_grounded_eq(
                 val_lhs, val_rhs, op_lhs, op_rhs,
             ))
         } else {
-            Some(self == pred)
+            Some(self.compare_ignoring_times(pred))
         }
+    }
+
+    pub(in crate::agent) fn compare_ignoring_times(&self, other: &GroundedFunc) -> bool {
+        if self.name != other.name {
+            return false;
+        }
+
+        for (a, b) in (&self.args)
+            .iter()
+            .chain(self.third.as_ref())
+            .zip(other.args.iter().chain(other.third.as_ref()))
+        {
+            match (a, b) {
+                (arg0, arg1) if !arg0.compare_ignoring_times(arg1) => {
+                    return false;
+                }
+                _ => {}
+            }
+        }
+        true
     }
 
     pub fn from_free(
         free: &FuncDecl,
         assignments: Option<&HashMap<&Var, &VarAssignment>>,
-        time_assign: &HashMap<&Var, Arc<BmsWrapper>>,
+        time_assign: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
     ) -> Result<GroundedFunc, ()> {
         if !free.variant.is_relational() || free.args.as_ref().unwrap().len() < 2 {
             return Err(());
@@ -78,14 +110,14 @@ impl GroundedFunc {
         let mut value = None;
         for (i, a) in free.args.as_ref().unwrap().iter().enumerate() {
             let n_a = match *a {
-                Predicate::FreeClsMemb(ref free) => {
+                Predicate::FreeMembershipToClass(ref free) => {
                     let assigned = if let Some(assignments) = assignments {
                         assignments
                     } else {
                         return Err(());
                     };
                     if let Some(entity) = assigned.get(&*free.term) {
-                        GroundedMemb::from_free(free, entity.name)
+                        GroundedMemb::from_free(free, &*entity.name)
                     } else {
                         return Err(());
                     }
@@ -107,7 +139,7 @@ impl GroundedFunc {
             name,
             args: [first.unwrap(), second.unwrap()],
             third,
-            bms: Arc::new(time_data),
+            bms: Arc::new(time_data.into()),
         })
     }
 
@@ -218,14 +250,6 @@ impl std::clone::Clone for GroundedFunc {
         }
     }
 }
-
-impl std::cmp::PartialEq for GroundedFunc {
-    fn eq(&self, other: &GroundedFunc) -> bool {
-        self.name == other.name && self.args == other.args && self.third == other.third
-    }
-}
-
-impl std::cmp::Eq for GroundedFunc {}
 
 impl std::fmt::Debug for GroundedFunc {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {

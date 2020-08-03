@@ -12,13 +12,13 @@ pub(super) mod repr;
 #[cfg(test)]
 mod test;
 
-use super::lang::{GroundedFunc, GroundedMemb};
+use super::lang::{GrTerminalKind, GroundedFunc, GroundedMemb};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub(in crate::agent) struct VarAssignment<'rep> {
-    pub name: &'rep str,
+    pub name: GrTerminalKind<&'rep str>,
     classes: HashMap<&'rep str, Arc<GroundedMemb>>,
     funcs: HashMap<&'rep str, Vec<Arc<GroundedFunc>>>,
 }

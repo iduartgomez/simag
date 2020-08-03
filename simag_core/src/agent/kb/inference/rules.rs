@@ -88,7 +88,7 @@ pub(in crate::agent::kb) fn rules_inference_rollback(
             }
         } else {
             let func = p.unwrap_fn_as_ref();
-            let cmp = func.clone().into_grounded();
+            let cmp = func.clone().into();
             if let Some(grfunc) = agent.get_relationship(&cmp, cmp.get_arg_name(1)) {
                 gr_funcs.push(grfunc);
             }
@@ -126,8 +126,12 @@ pub(in crate::agent::kb) fn rules_inference_rollback(
             _ => num_iters += 1,
         }
         if num_iters >= MAX_ITERATIONS {
-            // Safety break guarantee; this should be unreachable
-            unreachable!("SIMAG - inference/rules.rs: Reached max number of iterations")
+            // Safety break guarantee
+            unreachable!(format!(
+                "SIMAG - {}:{}: Reached max number of iterations",
+                file!(),
+                line!()
+            ))
         }
     }
 }
@@ -279,14 +283,14 @@ impl<'a> ProofResContext for RuleResContext<'a> {
     fn has_relationship(&self, func: &GroundedFunc) -> Option<bool> {
         match self.cmp_pred {
             Some(GroundedRef::Class(_)) | None => None,
-            Some(GroundedRef::Function(cmp)) => Some(cmp == func),
+            Some(GroundedRef::Function(cmp)) => Some(cmp.compare_ignoring_times(func)),
         }
     }
 
     fn has_cls_memb(&self, cls: &GroundedMemb) -> Option<bool> {
         match self.cmp_pred {
             Some(GroundedRef::Function(_)) | None => None,
-            Some(GroundedRef::Class(cmp)) => Some(cmp == cls),
+            Some(GroundedRef::Class(cmp)) => Some(cmp.compare_ignoring_times(cls)),
         }
     }
 }

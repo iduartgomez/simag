@@ -205,7 +205,7 @@ fn time_pred() {
 }
 
 #[test]
-fn space_pred() {
+fn spatial_pred() {
     let s0 = b"sleep(where 'x0.y0.z0' is this.loc)[$Mary]";
     let s0_res = class_decl(s0);
     assert_done_or_err!(s0_res);
@@ -214,7 +214,10 @@ fn space_pred() {
         s0_res.op_args.as_ref().unwrap(),
         &vec![OpArgBorrowed {
             term: UnconstraintArg::String(b"x0.y0.z0"),
-            comp: Some((Operator::SpaceAssignment, UnconstraintArg::Keyword(b"loc"))),
+            comp: Some((
+                Operator::SpatialAssignment,
+                UnconstraintArg::Keyword(b"loc")
+            )),
         }]
     );
 
@@ -226,7 +229,10 @@ fn space_pred() {
         s1_res.op_args.as_ref().unwrap(),
         &vec![OpArgBorrowed {
             term: UnconstraintArg::Terminal(b"l1"),
-            comp: Some((Operator::SpaceAssignment, UnconstraintArg::Keyword(b"loc"))),
+            comp: Some((
+                Operator::SpatialAssignment,
+                UnconstraintArg::Keyword(b"loc")
+            )),
         }]
     );
 }
@@ -294,6 +300,8 @@ fn special_funcs() {
     let s9 = b"fn::move(from '0.0.0')[x]"; // is err
     let s9_res = func_decl(s9);
     assert!(s9_res.is_err());
+
+    let _s10 = b"(fn::location($John at '0.0.0'))";
 }
 
 #[test]
@@ -309,6 +317,33 @@ fn declare_record() {
     )";
     let result = record_decl(source);
     assert!(result.is_ok());
+    let stmt = match result.unwrap().1 {
+        ASTNode::Chain(nodes) => nodes
+            .into_iter()
+            .find(|decl| match decl {
+                ASTNode::Assert(decl) => match decl {
+                    AssertBorrowed::ClassDecl(cls) if cls.name == TerminalBorrowed(b"dog") => true,
+                    _ => false,
+                },
+                _ => false,
+            })
+            .unwrap(),
+        _ => panic!(),
+    };
+    match stmt {
+        ASTNode::Assert(AssertBorrowed::ClassDecl(cls)) => {
+            assert!(cls.args.len() == 1);
+            assert_eq!(
+                cls.args[0],
+                ArgBorrowed {
+                    term: TerminalBorrowed(b"$John"),
+                    uval: None
+                }
+            );
+            assert!(cls.op_args.unwrap().len() == 1);
+        }
+        _ => panic!(),
+    }
 
     let source = b"(
         [$John, $Mary] = {

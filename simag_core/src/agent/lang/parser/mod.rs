@@ -185,7 +185,7 @@ fn string(input: &[u8]) -> IResult<&[u8], &[u8]> {
     } else if input[0] == b'"' {
         delimited!(input, char!('"'), is_not!("\""), char!('"'))
     } else {
-        Err(nom::Err::Error(ParseErrB::IsNotStr(input)))
+        Err(nom::Err::Error(ParseErrB::NotStr(input)))
     }
 }
 
@@ -199,6 +199,12 @@ impl<'a> From<&'a [u8]> for TerminalBorrowed<'a> {
     }
 }
 
+impl<'a> PartialEq<&[u8]> for TerminalBorrowed<'a> {
+    fn eq(&self, other: &&[u8]) -> bool {
+        self.0 == *other
+    }
+}
+
 impl<'a> std::fmt::Debug for TerminalBorrowed<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "Term({})", str::from_utf8(self.0).unwrap())
@@ -207,7 +213,7 @@ impl<'a> std::fmt::Debug for TerminalBorrowed<'a> {
 
 fn terminal(input: &[u8]) -> IResult<&[u8], &[u8]> {
     if input.is_empty() {
-        return Err(nom::Err::Error(ParseErrB::NonTerminal(EMPTY, input)));
+        return Err(nom::Err::Error(ParseErrB::NotTerminal(EMPTY, input)));
     }
 
     let mut idx = 0_usize;
@@ -221,14 +227,14 @@ fn terminal(input: &[u8]) -> IResult<&[u8], &[u8]> {
         } else if idx > 0 {
             break;
         } else {
-            return Err(nom::Err::Error(ParseErrB::NonTerminal(
+            return Err(nom::Err::Error(ParseErrB::NotTerminal(
                 &input[i..],
                 &input[..i],
             )));
         }
     }
     if (input[0] == b'$' && input[1..idx].is_empty()) || super::reserved(&input[..idx]) {
-        Err(nom::Err::Error(ParseErrB::NonTerminal(
+        Err(nom::Err::Error(ParseErrB::NotTerminal(
             &input[idx..],
             &input[..idx],
         )))
@@ -239,11 +245,11 @@ fn terminal(input: &[u8]) -> IResult<&[u8], &[u8]> {
 
 fn is_keyword(input: &[u8]) -> IResult<&[u8], &[u8]> {
     match terminal(input) {
-        Err(nom::Err::Error(ParseErrB::NonTerminal(rest, kw))) => {
+        Err(nom::Err::Error(ParseErrB::NotTerminal(rest, kw))) => {
             if super::reserved(kw) {
                 Ok((rest, kw))
             } else {
-                Err(nom::Err::Error(ParseErrB::NonTerminal(rest, kw)))
+                Err(nom::Err::Error(ParseErrB::NotTerminal(rest, kw)))
             }
         }
         Err(err) => Err(err),
@@ -253,7 +259,7 @@ fn is_keyword(input: &[u8]) -> IResult<&[u8], &[u8]> {
 
 fn is_type(input: &[u8]) -> bool {
     match input {
-        b"time" | b"space" => true,
+        b"time" | b"location" => true,
         _ => false,
     }
 }
@@ -263,10 +269,10 @@ pub(in crate::agent) enum ParseErrB<'a, I = &'a [u8]> {
     Nom(I, nom::error::ErrorKind),
     SyntaxError,
     NotScope(&'a [u8]),
-    NonTerminal(&'a [u8], &'a [u8]),
-    IsNotStr(&'a [u8]),
-    IsNotNumber(&'a [u8]),
-    IsNotOperator(&'a [u8]),
+    NotTerminal(&'a [u8], &'a [u8]),
+    NotStr(&'a [u8]),
+    NotNumber(&'a [u8]),
+    NotOperator(&'a [u8]),
     NotSpecialFunc(&'a [u8]),
 }
 
@@ -288,9 +294,8 @@ impl<'a> fmt::Display for ParseErrB<'a> {
                 "syntax error, scope is invalid or not found:\n{}",
                 str::from_utf8(arr).unwrap()
             ),
-            ParseErrB::NonTerminal(_, arr) => format!(
-                "syntax error,
-                             illegal character in terminal position:\n{}",
+            ParseErrB::NotTerminal(_, arr) => format!(
+                "syntax error, illegal character in terminal position:\n{}",
                 str::from_utf8(arr).unwrap()
             ),
             _ => todo!(),
