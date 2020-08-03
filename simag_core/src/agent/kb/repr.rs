@@ -723,6 +723,7 @@ impl Representation {
         self.classes.clear();
     }
 
+    #[allow(clippy::type_complexity)]
     pub(super) fn find_objs_by_loc<'a, T: AsRef<str> + 'a>(
         &self,
         objects: impl Iterator<Item = (&'a Arc<GrTerminalKind<T>>, &'a Point)>,
@@ -754,6 +755,35 @@ impl Representation {
                         answer.push((loc, term.clone(), None))
                     }
                 }
+            }
+        }
+        answer
+    }
+
+    pub(super) fn find_all_objs_in_loc<'a>(&self, loc: &'a Point) -> Vec<GrTerminalKind<String>> {
+        let mut answer = vec![];
+        for class in &self.classes {
+            if class
+                .location
+                .get_record_at_location(loc, None)
+                .into_iter()
+                .next()
+                .flatten()
+                .is_some()
+            {
+                answer.push(GrTerminalKind::Class(class.key().to_owned()));
+            }
+        }
+        for entity in &self.entities {
+            if entity
+                .location
+                .get_record_at_location(loc, None)
+                .into_iter()
+                .next()
+                .flatten()
+                .is_some()
+            {
+                answer.push(GrTerminalKind::Entity(entity.key().to_owned()));
             }
         }
         answer
@@ -831,7 +861,7 @@ impl<'a> Answer<'a> {
     }
 
     pub fn get_located_objects(&self) -> HashMap<Point, Vec<ObjName<'a>>> {
-        todo!()
+        self.0.get_located_objects()
     }
 }
 

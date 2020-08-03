@@ -37,7 +37,7 @@ impl<T: AsRef<str>> BuiltIns<T> {
         match self {
             BuiltIns::TimeCalculus(f) => f.generate_uid(),
             BuiltIns::Move(f) => f.generate_uid(),
-            BuiltIns::Location(f) => f.generate_uid(),
+            BuiltIns::Location(_) => unreachable!(),
         }
     }
 

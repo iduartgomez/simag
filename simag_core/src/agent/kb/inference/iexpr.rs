@@ -27,8 +27,8 @@ use crate::agent::kb::{
 use crate::agent::lang::{
     Assert, BuiltIns, ClassDecl, FreeClassMembership, FreeMembershipToClass, FuncDecl,
     GrTerminalKind, Grounded, GroundedFunc, GroundedMemb, LocFn, LogSentence, ParseTree, Point,
-    Predicate, ProofResContext, SentID, SentVarReq, SpatialOps, Terminal, Time, TimeOps, Var,
-    VarKind,
+    Predicate, ProofResContext, SentID, SentVarReq, SpatialOps, Terminal, Time, TimeOps, TypeDef,
+    Var,
 };
 use chrono::Utc;
 use dashmap::DashMap;
@@ -280,16 +280,15 @@ impl<'rep> Inference<'rep> {
     /// ie. (fn::location($John at '1.1.0'))
     fn query_loc(&self) {
         self.query.loc_query.par_iter().for_each(|loc_fn| {
-            let objs = self.kb.find_objs_by_loc(loc_fn.iter());
-
+            // find out objects by location
+            let objs = self.kb.find_objs_by_loc(loc_fn.locate_objects());
             {
-                let not_retrieved_objs = objs.iter().filter_map(|(loc, term, was_located)| {
-                    if let Some(true) = was_located {
-                        Some((loc, term))
-                    } else {
-                        None
-                    }
-                });
+                let not_retrieved_objs =
+                    objs.iter()
+                        .filter_map(|(loc, term, was_located)| match was_located {
+                            Some(false) | None => Some((loc, term)),
+                            _ => None,
+                        });
 
                 for (point, obj) in not_retrieved_objs {
                     match &**obj {
@@ -302,7 +301,7 @@ impl<'rep> Inference<'rep> {
                                     nodes: DashMap::new(),
                                     loc: *point,
                                 };
-                                self.results.add_objs_by_loc(trial.unify().into_iter());
+                                self.results.add_objs_in_loc(trial.unify().into_iter());
                             }
                         }
                         GrTerminalKind::Class(cls) => {
@@ -314,17 +313,22 @@ impl<'rep> Inference<'rep> {
                                     nodes: DashMap::new(),
                                     loc: *point,
                                 };
-                                self.results.add_objs_by_loc(trial.unify().into_iter());
+                                self.results.add_objs_in_loc(trial.unify().into_iter());
                             }
                         }
                     }
                 }
             }
-
             let initially_retrieved =
                 objs.into_iter()
                     .filter(|(_, _, res)| if let Some(true) = res { true } else { false });
-            self.results.add_objs_by_loc(initially_retrieved);
+            self.results.add_objs_in_loc(initially_retrieved);
+
+            // find all objects which are in a location
+            loc_fn.free_locations().for_each(|(var, p)| {
+                let objs = self.kb.find_all_objs_in_loc(p);
+                self.results.add_objs_by_loc(p, var.clone(), objs);
+            })
         });
     }
 }
@@ -343,6 +347,8 @@ enum Movable<'rep> {
 }
 
 impl<'rep> MoveInfTrial<'rep> {
+    #![allow(clippy::type_complexity)]
+
     fn unify(self) -> Option<(&'rep Point, Arc<GrTerminalKind<String>>, Option<bool>)> {
         match self.obj {
             Movable::Entity(ent) => {
@@ -949,8 +955,8 @@ pub(in crate::agent::kb) fn meet_sent_requirements<'rep>(
         if asserts.is_empty() {
             continue;
         }
-        match var.kind {
-            VarKind::Time | VarKind::TimeDecl => continue,
+        match var.ty {
+            TypeDef::Time | TypeDef::TimeDecl | TypeDef::Location | TypeDef::LocDecl => continue,
             _ => {}
         }
         let mut cl = Vec::new();

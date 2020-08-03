@@ -24,7 +24,7 @@ use super::{
     gr_memb::GroundedMemb,
     parser::{ASTNode, AssertBorrowed, LogicOperator, Scope, VarDeclBorrowed},
     time_semantics::TimeArg::*,
-    ParseErrF, Skolem, Time, Var, VarKind,
+    ParseErrF, Skolem, Time, TypeDef, Var,
 };
 use crate::agent::{
     kb::bms::{BmsWrapper, IsSpatialData, IsTimeData},
@@ -254,8 +254,8 @@ impl<'a> LogSentence {
         let mut time_assign = HashMap::new();
         let mut loc_assign = HashMap::new();
         'outer: for var in &self.vars {
-            match var.kind {
-                VarKind::Time => {
+            match var.ty {
+                TypeDef::Time => {
                     for pred in &self.predicates.0 {
                         let pred = self.particles[*pred].pred_ref();
                         if pred.get_time_decl(&*var) {
@@ -267,11 +267,11 @@ impl<'a> LogSentence {
                         }
                     }
                 }
-                VarKind::TimeDecl => {
+                TypeDef::TimeDecl => {
                     let times = Arc::new(var.get_time());
                     time_assign.insert(&**var, times);
                 }
-                VarKind::Location => {
+                TypeDef::Location => {
                     for pred in &self.predicates.0 {
                         let pred = self.particles[*pred].pred_ref();
                         if pred.get_loc_decl(&*var) {
@@ -283,7 +283,7 @@ impl<'a> LogSentence {
                         }
                     }
                 }
-                VarKind::SpatialDecl => todo!(),
+                TypeDef::LocDecl => todo!(),
                 _ => {}
             }
         }
@@ -296,13 +296,13 @@ impl<'a> LogSentence {
             self.iexpr_op_arg_validation()?;
             if !self.vars.is_empty() || !self.skolem.is_empty() {
                 for var in &self.vars {
-                    match var.kind {
-                        VarKind::Normal => {}
-                        VarKind::TimeDecl | VarKind::Time => {
+                    match var.ty {
+                        TypeDef::Erased => {}
+                        TypeDef::TimeDecl | TypeDef::Time => {
                             self.has_time_vars += 1;
                             continue;
                         }
-                        VarKind::SpatialDecl | VarKind::Location => {
+                        TypeDef::LocDecl | TypeDef::Location => {
                             self.has_spatial_vars += 1;
                             continue;
                         }

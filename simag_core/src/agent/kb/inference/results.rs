@@ -14,6 +14,7 @@ pub type GroundedResult = Option<(bool, Option<Time>)>;
 pub type GroundedResults<'a> = HashMap<ObjName<'a>, GroundedResult>;
 type QueryResMemb<'a> = HashMap<ObjName<'a>, Vec<Arc<GroundedMemb>>>;
 type QueryResRels<'a> = HashMap<ObjName<'a>, Vec<Arc<GroundedFunc>>>;
+type LocationByVar = (Point, Arc<GrTerminalKind<String>>);
 
 /// A succesful query will return an `InfResult` which contains all the answer data.
 /// The data can be manipulated and filtered throught various methods returning
@@ -24,6 +25,7 @@ pub(in crate::agent::kb) struct InfResults<'rep> {
     membership: DashMap<Arc<Var>, QueryResMemb<'rep>>,
     relationships: DashMap<Arc<Var>, QueryResRels<'rep>>,
     objs_by_loc: DashMap<Point, HashSet<LocResult>>,
+    all_objs_in_loc: DashMap<LocationByVar, Vec<GrTerminalKind<String>>>,
     query: Arc<QueryProcessed>,
 }
 
@@ -51,6 +53,7 @@ impl<'rep> InfResults<'rep> {
             membership: DashMap::new(),
             relationships: DashMap::new(),
             objs_by_loc: DashMap::new(),
+            all_objs_in_loc: DashMap::new(),
             query,
         }
     }
@@ -88,7 +91,7 @@ impl<'rep> InfResults<'rep> {
             .insert(obj, res);
     }
 
-    pub fn add_objs_by_loc<'a: 'b, 'b>(
+    pub fn add_objs_in_loc<'a: 'b, 'b>(
         &'b self,
         objs: impl Iterator<Item = (&'a Point, Arc<GrTerminalKind<String>>, Option<bool>)>,
     ) {
@@ -103,6 +106,19 @@ impl<'rep> InfResults<'rep> {
                 });
             }
         }
+    }
+
+    pub fn add_objs_by_loc(
+        &self,
+        point: &Point,
+        var: Arc<GrTerminalKind<String>>,
+        objs: Vec<GrTerminalKind<String>>,
+    ) {
+        let mut curr_entries = self
+            .all_objs_in_loc
+            .entry((point.clone(), var))
+            .or_insert_with(|| Vec::with_capacity(objs.len()));
+        curr_entries.extend(objs.into_iter());
     }
 
     pub fn get_results_single(&self) -> Option<bool> {
@@ -191,5 +207,35 @@ impl<'rep> InfResults<'rep> {
                     .collect::<Vec<_>>(),
             )
         }))
+    }
+
+    pub fn get_located_objects(&self) -> HashMap<Point, Vec<ObjName<'rep>>> {
+        let mut located = HashMap::from_iter(self.objs_by_loc.iter().map(|e| {
+            let k = e.key();
+            let v: Vec<_> = e
+                .iter()
+                .filter_map(|e| {
+                    if e.1 {
+                        let obj = (&*e.0).into();
+                        Some(unsafe { std::mem::transmute::<&str, &'rep str>(obj) })
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            (k.clone(), v)
+        }));
+        self.all_objs_in_loc.iter().for_each(|entry| {
+            let (loc, _) = entry.key();
+            let in_loc = entry.value();
+            let entries = located.entry(loc.clone()).or_insert_with(Vec::new);
+            {
+                entries.extend(in_loc.iter().map(|obj| {
+                    let obj = (&*obj).into();
+                    unsafe { std::mem::transmute::<&str, &'rep str>(obj) }
+                }))
+            }
+        });
+        located
     }
 }

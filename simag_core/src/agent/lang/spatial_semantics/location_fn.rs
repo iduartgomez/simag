@@ -17,7 +17,8 @@ pub(in crate::agent) struct LocFn<T>
 where
     T: AsRef<str>,
 {
-    locations: Vec<(Arc<GrTerminalKind<T>>, ObjLocation)>,
+    /// (terminal, is_var?, location)
+    locations: Vec<(Arc<GrTerminalKind<T>>, bool, ObjLocation)>,
 }
 
 #[derive(Debug, Clone)]
@@ -28,13 +29,8 @@ enum ObjLocation {
 use ObjLocation::*;
 
 impl<T: AsRef<str>> LocFn<T> {
-    pub fn generate_uid(&self) -> Vec<u8> {
-        // FIXME
-        todo!()
-    }
-
     pub fn contains_var(&self, var: &Var) -> bool {
-        self.locations.iter().any(|e| match &e.1 {
+        self.locations.iter().any(|e| match &e.2 {
             ObjLocation::Free(c_var) => &**c_var == var,
             _ => false,
         })
@@ -51,15 +47,22 @@ impl<T: AsRef<str>> LocFn<T> {
     where
         T: 'static,
     {
-        self.locations.into_iter().filter_map(|(t, l)| match l {
+        self.locations.into_iter().filter_map(|(t, _, l)| match l {
             ObjLocation::Reified(loc) => Some((t, loc)),
             _ => None,
         })
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&Arc<GrTerminalKind<T>>, &Point)> {
-        self.locations.iter().filter_map(|(t, l)| match l {
-            ObjLocation::Reified(loc) => Some((t, loc)),
+    pub fn locate_objects(&self) -> impl Iterator<Item = (&Arc<GrTerminalKind<T>>, &Point)> {
+        self.locations.iter().filter_map(|(t, is_var, l)| match l {
+            ObjLocation::Reified(loc) if !is_var => Some((t, loc)),
+            _ => None,
+        })
+    }
+
+    pub fn free_locations(&self) -> impl Iterator<Item = (&Arc<GrTerminalKind<T>>, &Point)> {
+        self.locations.iter().filter_map(|(t, is_var, l)| match l {
+            ObjLocation::Reified(loc) if *is_var => Some((t, loc)),
             _ => None,
         })
     }
@@ -69,7 +72,7 @@ impl<T: AsRef<str>> From<(GrTerminalKind<T>, Point)> for LocFn<T> {
     fn from(input: (GrTerminalKind<T>, Point)) -> Self {
         let (term, loc) = input;
         LocFn {
-            locations: vec![(Arc::new(term), ObjLocation::Reified(loc))],
+            locations: vec![(Arc::new(term), false, ObjLocation::Reified(loc))],
         }
     }
 }
@@ -96,7 +99,14 @@ impl<'a> std::convert::TryFrom<(&'a FuncDeclBorrowed<'a>, &'a mut ParseContext)>
                         }
                     };
                     let term = GrTerminalKind::from(&**term);
-                    locations.push((Arc::new(term), loc));
+                    let mut is_var = false;
+                    for v in &context.vars {
+                        if v.name.as_str() == Into::<&str>::into(&term) {
+                            is_var = true;
+                            break;
+                        }
+                    }
+                    locations.push((Arc::new(term), is_var, loc));
                 } else {
                     return Err(ParseErrF::ToDo);
                 }

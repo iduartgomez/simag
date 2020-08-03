@@ -508,14 +508,14 @@ fn repr_inference_spatial_calc() {
     rep.tell(source).unwrap();
 
     // locate a concrete object at a given location right now
-    // let res = rep.ask("(fn::location($John at '1.1.0'))").unwrap();
-    // assert_eq!(res.get_results_single(), Some(true));
+    let res = rep.ask("(fn::location($John at '1.1.0'))").unwrap();
+    assert_eq!(res.get_results_single(), Some(true));
     let res = rep.ask("(fn::location($John at '0.0.0'))").unwrap();
     assert_eq!(res.get_results_single(), Some(false));
 
     // locate objects at a given location right now
-    // let res = rep.ask("(let x in fn::location(x at '1.1.0'))").unwrap();
-    // let answ = res.get_located_objects();
-    // assert!(answ.get(&Point::new(1, 1, 0)).is_some());
-    // assert!(answ.get(&Point::new(0, 0, 0)).is_none());
+    let res = rep.ask("(let x in fn::location(x at '1.1.0'))").unwrap();
+    let answ = res.get_located_objects();
+    assert!(answ.get(&Point::new(1, 1, 0)).is_some());
+    assert!(answ.get(&Point::new(0, 0, 0)).is_none());
 }

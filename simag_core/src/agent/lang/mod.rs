@@ -31,7 +31,8 @@ pub(super) use self::skolem::Skolem;
 pub(super) use self::spatial_semantics::{LocFn, MoveFn, SpatialOps};
 pub(super) use self::terminal::{GrTerminalKind, Terminal};
 pub(super) use self::time_semantics::TimeOps;
-pub(super) use self::var::{Var, VarKind};
+pub(super) use self::typedef::TypeDef;
+pub(super) use self::var::Var;
 use built_ins::{MOVE_FN, TIME_CALC_FN};
 pub(super) use spatial_semantics::Point;
 
