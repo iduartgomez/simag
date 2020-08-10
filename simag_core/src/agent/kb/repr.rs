@@ -546,7 +546,7 @@ impl Representation {
                         if f.get_value().is_some() {
                             for name in f.get_args_names() {
                                 let name = unsafe { std::mem::transmute::<&str, &'a str>(name) };
-                                let e: &mut Vec<_> = m.entry(name).or_insert_with(|| vec![]);
+                                let e: &mut Vec<_> = m.entry(name).or_insert_with(Vec::new);
                                 e.push(f.clone());
                             }
                         }
@@ -692,7 +692,7 @@ impl Representation {
                             // return type is: (&'a str, Arc<GrFunc>) where &'str lives as long as Arc<GrFunc>
                             // &'a str must NOT outlive (nor leak from) this Repr, this would be UB,
                             let rel = unsafe { &*(funcs[0].get_name() as *const str) };
-                            res.entry(rel).or_insert_with(|| vec![]).append(&mut funcs);
+                            res.entry(rel).or_insert_with(Vec::new).append(&mut funcs);
                         }
                     }
                 } else if let Some(class) = self.classes.get(arg.get_name()) {
@@ -703,7 +703,7 @@ impl Representation {
                         // return type is: (&'a str, Arc<GrFunc>) where &'str lives as long as Arc<GrFunc>
                         // &'a str must NOT outlive (nor leak from) this Repr, this would be UB,
                         let rel = unsafe { &*(funcs[0].get_name() as *const str) };
-                        res.entry(rel).or_insert_with(|| vec![]).append(&mut funcs);
+                        res.entry(rel).or_insert_with(Vec::new).append(&mut funcs);
                     }
                 }
             }

@@ -50,7 +50,6 @@ impl Default for Agent {
     }
 }
 
-#[derive(Debug)]
 struct ThreadManager {
     threads: usize,
 }
