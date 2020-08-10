@@ -363,7 +363,7 @@ impl HasBms for GroundedMemb {
     type BmsType = BmsWrapper<RecordHistory>;
 
     fn get_bms(&self) -> Option<&Self::BmsType> {
-        self.bms.as_ref().map(|bms| &**bms)
+        self.bms.as_deref()
     }
 
     fn get_value(&self) -> Option<f32> {

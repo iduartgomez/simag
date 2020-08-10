@@ -1418,11 +1418,10 @@ impl QueryProcessed {
 }
 
 #[test]
+#[allow(clippy::many_single_char_names)]
 fn args_iterator() {
     let x = Var::from("x");
-
     let y = Var::from("y");
-
     let z = Var::from("z");
 
     let a = Arc::new(VarAssignment {

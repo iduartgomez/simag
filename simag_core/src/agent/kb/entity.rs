@@ -193,32 +193,23 @@ impl Entity {
                     // &'a str must NOT outlive (nor leak from) this Repr, this would be UB,
                     let rel_name = unsafe { &*(f.get_name() as *const str) };
                     match op {
-                        None => res
-                            .entry(rel_name)
-                            .or_insert_with(|| vec![])
-                            .push(f.clone()),
+                        None => res.entry(rel_name).or_insert_with(Vec::new).push(f.clone()),
                         Some(Operator::Equal) => {
                             if f.get_value()
                                 .unwrap()
                                 .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
                             {
-                                res.entry(rel_name)
-                                    .or_insert_with(|| vec![])
-                                    .push(f.clone())
+                                res.entry(rel_name).or_insert_with(Vec::new).push(f.clone())
                             }
                         }
                         Some(Operator::More) => {
                             if *val.as_ref().unwrap() < f.get_value().unwrap() {
-                                res.entry(rel_name)
-                                    .or_insert_with(|| vec![])
-                                    .push(f.clone())
+                                res.entry(rel_name).or_insert_with(Vec::new).push(f.clone())
                             }
                         }
                         Some(Operator::Less) => {
                             if *val.as_ref().unwrap() > f.get_value().unwrap() {
-                                res.entry(rel_name)
-                                    .or_insert_with(|| vec![])
-                                    .push(f.clone())
+                                res.entry(rel_name).or_insert_with(Vec::new).push(f.clone())
                             }
                         }
                         Some(Operator::LessEqual) => {
@@ -227,9 +218,7 @@ impl Entity {
                                     .unwrap()
                                     .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
                             {
-                                res.entry(rel_name)
-                                    .or_insert_with(|| vec![])
-                                    .push(f.clone())
+                                res.entry(rel_name).or_insert_with(Vec::new).push(f.clone())
                             }
                         }
                         Some(Operator::MoreEqual) => {
@@ -238,9 +227,7 @@ impl Entity {
                                     .unwrap()
                                     .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
                             {
-                                res.entry(rel_name)
-                                    .or_insert_with(|| vec![])
-                                    .push(f.clone())
+                                res.entry(rel_name).or_insert_with(Vec::new).push(f.clone())
                             }
                         }
                         _ => unreachable!(),

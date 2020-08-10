@@ -169,32 +169,23 @@ impl Class {
                     let t = unsafe { &*(&**f as *const GroundedFunc) };
                     let rel_name = t.get_name();
                     match op {
-                        None => res
-                            .entry(rel_name)
-                            .or_insert_with(|| vec![])
-                            .push(f.clone()),
+                        None => res.entry(rel_name).or_insert_with(Vec::new).push(f.clone()),
                         Some(Operator::Equal) => {
                             if f.get_value()
                                 .unwrap()
                                 .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
                             {
-                                res.entry(rel_name)
-                                    .or_insert_with(|| vec![])
-                                    .push(f.clone())
+                                res.entry(rel_name).or_insert_with(Vec::new).push(f.clone())
                             }
                         }
                         Some(Operator::More) => {
                             if *val.as_ref().unwrap() < f.get_value().unwrap() {
-                                res.entry(rel_name)
-                                    .or_insert_with(|| vec![])
-                                    .push(f.clone())
+                                res.entry(rel_name).or_insert_with(Vec::new).push(f.clone())
                             }
                         }
                         Some(Operator::Less) => {
                             if *val.as_ref().unwrap() > f.get_value().unwrap() {
-                                res.entry(rel_name)
-                                    .or_insert_with(|| vec![])
-                                    .push(f.clone())
+                                res.entry(rel_name).or_insert_with(Vec::new).push(f.clone())
                             }
                         }
                         Some(Operator::LessEqual) => {
@@ -203,9 +194,7 @@ impl Class {
                                     .unwrap()
                                     .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
                             {
-                                res.entry(rel_name)
-                                    .or_insert_with(|| vec![])
-                                    .push(f.clone())
+                                res.entry(rel_name).or_insert_with(Vec::new).push(f.clone())
                             }
                         }
                         Some(Operator::MoreEqual) => {
@@ -214,9 +203,7 @@ impl Class {
                                     .unwrap()
                                     .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
                             {
-                                res.entry(rel_name)
-                                    .or_insert_with(|| vec![])
-                                    .push(f.clone())
+                                res.entry(rel_name).or_insert_with(Vec::new).push(f.clone())
                             }
                         }
                         _ => unreachable!(),
