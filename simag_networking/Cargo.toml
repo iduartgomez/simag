@@ -7,4 +7,5 @@ edition = "2018"
 [dependencies]
 simag_core = { path = "../simag_core" }
 config = "0.10"
-serde = "^1.0.0"
+libp2p = "^0.23.0"
+# serde = "^1.0.0"
