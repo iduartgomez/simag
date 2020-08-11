@@ -1,4 +1,4 @@
-pub(self) mod conf;
+pub(self) mod config;
 mod kb;
 mod lang;
 

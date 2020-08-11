@@ -54,7 +54,7 @@ impl Representation {
     pub fn new(threads: usize) -> Representation {
         #[cfg(debug_assertions)]
         {
-            crate::agent::conf::tracing::Logger::get_logger();
+            crate::agent::config::tracing::Logger::get_logger();
         }
 
         Representation {

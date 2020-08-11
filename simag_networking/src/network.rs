@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::CONF;
 use libp2p::{
     core::{muxing, upgrade},
     dns::DnsConfig,
@@ -29,7 +29,11 @@ impl Default for Network {
 
 impl Network {
     pub fn new(bootstrap: BootstrapInfo) -> std::io::Result<Network> {
-        let local_key = identity::Keypair::generate_ed25519();
+        let local_key = if let Some(key) = &CONF.local_peer_keypair {
+            identity::Keypair::Ed25519(key.clone())
+        } else {
+            identity::Keypair::generate_ed25519()
+        };
         let local_peer_id = PeerId::from(local_key.public());
         let builder = NetworkBuilder {
             local_key,
@@ -75,13 +79,13 @@ pub struct BootstrapInfo {
 
 impl BootstrapInfo {
     fn new() -> BootstrapInfo {
-        let conf = Config::load_conf().unwrap();
+        let conf = &CONF;
         let mut multi_addr = Multiaddr::with_capacity(2);
         multi_addr.push(Protocol::from(conf.bootstrap_ip));
         multi_addr.push(Protocol::Tcp(conf.bootstrap_port));
         BootstrapInfo {
             addr: multi_addr,
-            identifier: conf.bootstrap_id,
+            identifier: conf.bootstrap_id.clone(),
         }
     }
 }

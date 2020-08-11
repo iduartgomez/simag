@@ -1,9 +1,16 @@
-use libp2p::PeerId;
+use libp2p::{identity::ed25519::Keypair, PeerId};
+use once_cell::sync::Lazy;
 use std::{
     convert::TryFrom,
+    fs::File,
+    io::Read,
     net::{IpAddr, Ipv4Addr},
+    path::PathBuf,
     str::FromStr,
 };
+
+pub(crate) static CONF: Lazy<Config> =
+    Lazy::new(|| Config::load_conf().expect("Failed to load configuration"));
 
 const DEFAULT_BOOTSTRAP_PORT: u16 = 7800;
 #[cfg(debug_assertions)]
@@ -13,6 +20,7 @@ pub(crate) struct Config {
     pub bootstrap_ip: IpAddr,
     pub bootstrap_port: u16,
     pub bootstrap_id: PeerId,
+    pub local_peer_keypair: Option<Keypair>,
 }
 
 impl Config {
@@ -22,11 +30,27 @@ impl Config {
             .merge(config::Environment::with_prefix("SIMAG"))
             .unwrap();
 
+        let local_peer_keypair =
+            if let Ok(path_to_key) = settings.get_str("LOCAL_PEER_KEY_FILE").map(PathBuf::from) {
+                let mut key_file = File::open(&path_to_key).unwrap_or_else(|_| {
+                    panic!(
+                        "Failed to open key file: {}",
+                        &path_to_key.to_str().unwrap()
+                    )
+                });
+                let mut buf = Vec::new();
+                key_file.read_to_end(&mut buf).unwrap();
+                Some(Keypair::decode(&mut buf).map_err(|_| ())?)
+            } else {
+                None
+            };
+
         let (bootstrap_ip, bootstrap_port, bootstrap_id) = Config::get_bootstrap_host(&settings)?;
         Ok(Config {
             bootstrap_ip,
             bootstrap_port,
             bootstrap_id,
+            local_peer_keypair,
         })
     }
 
