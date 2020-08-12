@@ -1,4 +1,4 @@
-use libp2p::{identity::ed25519::Keypair, PeerId};
+use libp2p::{identity, PeerId};
 use once_cell::sync::Lazy;
 use std::{
     convert::TryFrom,
@@ -13,14 +13,12 @@ pub(crate) static CONF: Lazy<Config> =
     Lazy::new(|| Config::load_conf().expect("Failed to load configuration"));
 
 const DEFAULT_BOOTSTRAP_PORT: u16 = 7800;
-#[cfg(debug_assertions)]
-const DEFAULT_BOOTSTRAP_ID: &str = "QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ";
 
 pub(crate) struct Config {
     pub bootstrap_ip: IpAddr,
     pub bootstrap_port: u16,
-    pub bootstrap_id: PeerId,
-    pub local_peer_keypair: Option<Keypair>,
+    pub bootstrap_id: Option<PeerId>,
+    pub local_peer_keypair: Option<identity::ed25519::Keypair>,
 }
 
 impl Config {
@@ -31,7 +29,7 @@ impl Config {
             .unwrap();
 
         let local_peer_keypair =
-            if let Ok(path_to_key) = settings.get_str("LOCAL_PEER_KEY_FILE").map(PathBuf::from) {
+            if let Ok(path_to_key) = settings.get_str("local_peer_key_file").map(PathBuf::from) {
                 let mut key_file = File::open(&path_to_key).unwrap_or_else(|_| {
                     panic!(
                         "Failed to open key file: {}",
@@ -40,7 +38,7 @@ impl Config {
                 });
                 let mut buf = Vec::new();
                 key_file.read_to_end(&mut buf).unwrap();
-                Some(Keypair::decode(&mut buf).map_err(|_| ())?)
+                Some(identity::ed25519::Keypair::decode(&mut buf).map_err(|_| ())?)
             } else {
                 None
             };
@@ -54,10 +52,10 @@ impl Config {
         })
     }
 
-    fn get_bootstrap_host(settings: &config::Config) -> Result<(IpAddr, u16, PeerId), ()> {
+    fn get_bootstrap_host(settings: &config::Config) -> Result<(IpAddr, u16, Option<PeerId>), ()> {
         let bootstrap_ip = IpAddr::from_str(
             &settings
-                .get_str("BOOTSTRAP_HOST")
+                .get_str("bootstrap_host")
                 .unwrap_or_else(|_| format!("{}", Ipv4Addr::LOCALHOST)),
         )
         .map_err(|_err| ())?;
@@ -68,25 +66,13 @@ impl Config {
             .unwrap_or(Ok(DEFAULT_BOOTSTRAP_PORT))
             .map_err(|_err| ())?;
 
-        #[cfg(not(debug_assertions))]
-        let id_str = {
-            settings
-                .get_str("BOOTSTRAP_ID")
-                .expect("At least one public identifier is required to bootstrap the connection to the network.")
-        };
+        let id_str = settings
+            .get_str("bootstrap_id")
+            .ok()
+            .map(|id| id.parse().map_err(|_err| ()).ok())
+            .flatten();
 
-        #[cfg(debug_assertions)]
-        let id_str = {
-            settings
-                .get_str("BOOTSTRAP_ID")
-                .unwrap_or_else(|_| DEFAULT_BOOTSTRAP_ID.to_owned())
-        };
-
-        Ok((
-            bootstrap_ip,
-            bootstrap_port,
-            id_str.parse().map_err(|_err| ())?,
-        ))
+        Ok((bootstrap_ip, bootstrap_port, id_str))
     }
 }
 

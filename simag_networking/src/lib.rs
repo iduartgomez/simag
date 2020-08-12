@@ -2,4 +2,4 @@
 mod config;
 mod network;
 
-pub use network::Network;
+pub use network::{BootstrapPeer, Network};
