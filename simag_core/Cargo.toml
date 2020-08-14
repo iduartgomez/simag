@@ -5,16 +5,16 @@ authors = ["Ignacio Duart Gómez <iduartgomez@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+chrono = "0.4.11"
+dashmap = "3.11.4"
+env_logger = "0.7.1"
 float-cmp = "0.8.0"
 nom = { version = "6.0.0-alpha" }
-chrono = "0.4.11"
-rayon = "1.3.1"
 num_cpus = "^1.12.0"
 log = "0.4.8"
-dashmap = "3.11.4"
-parking_lot = "0.11"
 once_cell = "^1.3.0"
-env_logger = "0.7.1"
+parking_lot = "0.11"
+rayon = "1.3.1"
 smallvec = "1.4.0"
 
 simag_terminal = { path = "../simag_terminal" }
