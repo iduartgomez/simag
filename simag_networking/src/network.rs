@@ -18,7 +18,7 @@ use std::{collections::HashSet, io::Write, net::IpAddr};
 pub struct Network {
     id: PeerId,
     sent_queries: HashSet<kad::QueryId>,
-    swarm: Swarm<Behaviour>,
+    swarm: Swarm<NetBehaviour>,
 }
 
 impl Network {
@@ -78,11 +78,10 @@ impl Network {
                         eprintln!("Received: {}", msg);
                     }
                     match self.swarm.next_event().await {
-                        SwarmEvent::Behaviour(event) => {
-                            // let Behaviour { kad, identify } = event;
-                            // self.process_event(event);
-                            todo!()
-                        }
+                        SwarmEvent::Behaviour(event) => match event {
+                            NetEvent::Identify(_event) => {}
+                            NetEvent::KademliaEvent(event) => self.process_event(event),
+                        },
                         SwarmEvent::IncomingConnection {
                             local_addr,
                             send_back_addr,
@@ -128,12 +127,31 @@ impl Network {
 }
 
 #[derive(NetworkBehaviour)]
-struct Behaviour {
+#[behaviour(event_process = false)]
+#[behaviour(out_event = "NetEvent")]
+struct NetBehaviour {
     kad: kad::Kademlia<kad::store::MemoryStore>,
     identify: identify::Identify,
 }
 
-impl Behaviour {
+enum NetEvent {
+    KademliaEvent(kad::KademliaEvent),
+    Identify(identify::IdentifyEvent),
+}
+
+impl From<kad::KademliaEvent> for NetEvent {
+    fn from(event: kad::KademliaEvent) -> NetEvent {
+        Self::KademliaEvent(event)
+    }
+}
+
+impl From<identify::IdentifyEvent> for NetEvent {
+    fn from(event: identify::IdentifyEvent) -> NetEvent {
+        Self::Identify(event)
+    }
+}
+
+impl NetBehaviour {
     fn bootstrap(&mut self) -> kad::QueryId {
         self.kad
             .bootstrap()
@@ -141,13 +159,13 @@ impl Behaviour {
     }
 }
 
-impl NetworkBehaviourEventProcess<identify::IdentifyEvent> for Behaviour {
+impl NetworkBehaviourEventProcess<identify::IdentifyEvent> for NetBehaviour {
     fn inject_event(&mut self, event: identify::IdentifyEvent) {
         todo!()
     }
 }
 
-impl NetworkBehaviourEventProcess<kad::KademliaEvent> for Behaviour {
+impl NetworkBehaviourEventProcess<kad::KademliaEvent> for NetBehaviour {
     fn inject_event(&mut self, message: kad::KademliaEvent) {
         todo!()
     }
@@ -294,7 +312,7 @@ mod network_builder {
 
         pub fn configure_network(self) -> std::io::Result<Network> {
             let transport = self.set_transport()?;
-            let behav = Behaviour {
+            let behav = NetBehaviour {
                 kad: self.set_kademlia_dht(),
                 identify: identify::Identify::new(
                     "ipfs/0.1.0".to_owned(),
