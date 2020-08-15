@@ -4,7 +4,7 @@ use std::{
     convert::TryFrom,
     fs::File,
     io::Read,
-    net::{IpAddr, Ipv4Addr},
+    net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener},
     path::PathBuf,
     str::FromStr,
 };
@@ -76,19 +76,15 @@ impl Config {
     }
 }
 
-/*
-fn get_free_connection(ip: IpAddr) -> Result<(TcpListener, u16), error::NetworkError> {
-    // const FIRST_DYNAMIC_PORT: u16 = 49152;
-    // const LAST_DYNAMIC_PORT: u16 = 65535;
+pub(crate) fn get_free_port() -> Result<u16, ()> {
+    const FIRST_DYNAMIC_PORT: u16 = 49152;
+    const LAST_DYNAMIC_PORT: u16 = 65535;
 
-    let mut port = 0;
-    for n in 0..100 {
-        port = FIRST_DYNAMIC_PORT + n;
-        let bind_addr = SocketAddr::from((ip, port));
-        if let Ok(conn) = TcpListener::bind(bind_addr) {
-            return Ok((conn, port));
+    for port in FIRST_DYNAMIC_PORT..LAST_DYNAMIC_PORT {
+        let bind_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        if TcpListener::bind(bind_addr).is_ok() {
+            return Ok(port);
         }
     }
-    Err(error::NetworkError::FreePortNotFound(port, 100))
+    Err(())
 }
-*/

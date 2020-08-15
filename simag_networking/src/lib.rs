@@ -2,9 +2,9 @@
 mod config;
 mod network;
 
-pub use network::{BootstrapListener, Network};
+pub use network::{Network, Provider};
 
 pub mod prelude {
-    pub use super::{BootstrapListener, Network};
+    pub use super::{Network, Provider};
     pub use libp2p::identity::ed25519::Keypair;
 }
