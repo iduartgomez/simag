@@ -23,9 +23,9 @@ fn main() {
     // from the configuration variables/files:
     // let peer = Provider::default();
 
-    let network = Network::join_network(peer).unwrap();
+    let mut network = Network::join_network(peer).unwrap();
     println!("This network encoded peer id is: {}", network.get_peer_id());
-    while network.is_running().is_ok() {
+    while network.is_running() {
         // keep running
     }
 }

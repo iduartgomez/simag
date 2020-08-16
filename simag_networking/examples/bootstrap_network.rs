@@ -39,13 +39,13 @@ fn main() {
         Some(
             Provider::new()
                 .listening_ip(Ipv4Addr::LOCALHOST)
-                .listening_port(port)
+                .listening_port(7800)
                 .with_identifier(peer_id),
         )
     } else {
         None
     };
-    let network = Network::bootstrap(Ipv4Addr::LOCALHOST, port, peer, Some(key)).unwrap();
+    let mut network = Network::bootstrap(Ipv4Addr::LOCALHOST, port, peer, Some(key)).unwrap();
 
     // Uncommenting the following file would save the newly generated key to the specified path
     // (or an existing one if provided like in this example):
@@ -55,7 +55,8 @@ fn main() {
     println!("This network encoded peer id is: {}", network.get_peer_id());
 
     // A working network requires at least two listening nodes which have been bootstrapped.
-    while network.is_running().is_ok() {
+    while network.is_running() {
         // keep running
     }
+    println!("Shutted down");
 }

@@ -4,7 +4,7 @@ use std::{
     convert::TryFrom,
     fs::File,
     io::Read,
-    net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener},
+    net::{IpAddr, Ipv4Addr},
     path::PathBuf,
     str::FromStr,
 };
@@ -74,17 +74,4 @@ impl Config {
 
         Ok((bootstrap_ip, bootstrap_port, id_str))
     }
-}
-
-pub(crate) fn get_free_port() -> Result<u16, ()> {
-    const FIRST_DYNAMIC_PORT: u16 = 49152;
-    const LAST_DYNAMIC_PORT: u16 = 65535;
-
-    for port in FIRST_DYNAMIC_PORT..LAST_DYNAMIC_PORT {
-        let bind_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-        if TcpListener::bind(bind_addr).is_ok() {
-            return Ok(port);
-        }
-    }
-    Err(())
 }

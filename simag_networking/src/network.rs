@@ -1,16 +1,21 @@
-use crate::config::CONF;
-use crossbeam::{channel::bounded, Sender};
+use crate::{
+    config::CONF,
+    handle::{NetHandleAnsw, NetHandleCmd, NetworkHandle},
+};
+use crossbeam::{channel::bounded, Receiver, Sender};
 use libp2p::{
-    core,
+    core::{muxing, upgrade},
     dns::DnsConfig,
     identify, identity, kad, mplex,
     multiaddr::Protocol,
     noise,
-    swarm::{NetworkBehaviourEventProcess, SwarmEvent},
     tcp::TcpConfig,
     yamux, Multiaddr, NetworkBehaviour, PeerId, Swarm, Transport,
 };
-use std::{collections::HashSet, io::Write, net::IpAddr};
+use std::{collections::HashSet, net::IpAddr};
+
+const CURRENT_AGENT_VERSION: &str = "simag/0.1.0";
+const CURRENT_IDENTIFY_PROTO_VERSION: &str = "ipfs/0.1.0";
 
 /// A prepared network connection not yet running.
 /// This can be either the preparation of a network bootstrap node or a new peer
@@ -30,13 +35,14 @@ impl Network {
     /// - port: listening port.
     /// - peer: Optional connection to an already existing listener.
     /// - key: Optional identity key of this node; if it's not provided it will be either obtained
-    ///        from the configuration or generated
+    ///        from the configuration or generated.
     pub fn bootstrap<T: Into<IpAddr>>(
         ip: T,
         port: u16,
         peer: Option<Provider>,
         key: Option<identity::ed25519::Keypair>,
     ) -> std::io::Result<NetworkHandle> {
+        let peer_set = peer.is_some();
         let builder = network_builder::NetworkBuilder::new(peer, key);
         let local_key = builder.local_ed25519_key.clone();
         let mut network = builder.configure_network()?;
@@ -45,9 +51,13 @@ impl Network {
         bootstrap_addr.push(Protocol::from(ip.into()));
         bootstrap_addr.push(Protocol::Tcp(port));
         let _listener_id = Swarm::listen_on(&mut network.swarm, bootstrap_addr).unwrap();
+        if peer_set {
+            let bootstrap_query = network.swarm.bootstrap();
+            network.sent_queries.insert(bootstrap_query);
+        }
 
-        let sender = network.run_event_loop();
-        Ok(NetworkHandle { sender, local_key })
+        let (sender, rcv) = network.run_event_loop();
+        Ok(NetworkHandle::new(sender, rcv, local_key))
     }
 
     /// Join an existing network as a new or old node (if the identity was already registered).
@@ -56,58 +66,56 @@ impl Network {
         let local_key = builder.local_ed25519_key.clone();
         let mut network = builder.configure_network()?;
 
-        // let mut listening_addr = Multiaddr::with_capacity(2);
-        // listening_addr.push(Protocol::from(Ipv4Addr::LOCALHOST));
-        // listening_addr.push(Protocol::Tcp(get_free_port().unwrap()));
-        // let _listener_id = Swarm::listen_on(&mut swarm, listening_addr).unwrap();
-
         let bootstrap_query = network.swarm.bootstrap();
         network.sent_queries.insert(bootstrap_query);
 
-        let sender = network.run_event_loop();
-        Ok(NetworkHandle { sender, local_key })
+        let (sender, rcv) = network.run_event_loop();
+        Ok(NetworkHandle::new(sender, rcv, local_key))
     }
 
-    fn run_event_loop(mut self) -> Sender<String> {
-        let (sender, receiver) = bounded::<String>(100);
+    fn run_event_loop(mut self) -> (Sender<NetHandleCmd>, Receiver<NetHandleAnsw>) {
+        let (query_send, query_rcv) = bounded::<NetHandleCmd>(10);
+        let (answ_send, answ_rcv) = bounded::<NetHandleAnsw>(10);
         std::thread::spawn(|| {
             smol::run(async move {
                 eprintln!("Setting #{} event loop", &self.id);
                 loop {
-                    if let Ok(msg) = receiver.try_recv() {
-                        eprintln!("Received: {}", msg);
+                    while let Ok(msg) = query_rcv.try_recv() {
+                        // Clean up the message buffer
+                        match msg {
+                            NetHandleCmd::IsRunning(_id) => {}
+                            NetHandleCmd::Shutdown(id) => {
+                                answ_send
+                                    .send(NetHandleAnsw::HasShutdown { id, answ: true })
+                                    .expect("SIMAG: parent main thread may be dead");
+                                break;
+                            }
+                        }
                     }
-                    match self.swarm.next_event().await {
-                        SwarmEvent::Behaviour(event) => match event {
-                            NetEvent::Identify(_event) => {}
-                            NetEvent::KademliaEvent(event) => self.process_event(event),
-                        },
-                        SwarmEvent::IncomingConnection {
-                            local_addr,
-                            send_back_addr,
-                        } => {
-                            eprintln!("Connected at {}, callback {}", local_addr, send_back_addr);
-                        }
-                        SwarmEvent::UnreachableAddr {
+                    match self.swarm.next().await {
+                        NetEvent::KademliaEvent(event) => self.process_event(event),
+                        NetEvent::Identify(identify::IdentifyEvent::Received {
                             peer_id,
-                            address,
-                            attempts_remaining,
-                            ..
-                        } => {
+                            observed_addr,
+                            info,
+                        }) => {
                             eprintln!(
-                                "Connected by #{} from address {}; attempts remaining: {}",
-                                peer_id, address, attempts_remaining
+                                "Received info from {} with following addr: {}",
+                                peer_id, observed_addr
                             );
-                        }
-                        SwarmEvent::Dialing(id) => {
-                            eprintln!("Connected by #{}", id);
+                            if info.protocol_version == CURRENT_IDENTIFY_PROTO_VERSION
+                                && info.agent_version == CURRENT_AGENT_VERSION
+                                && info.protocols.iter().any(|p| p == "/ipfs/kad/1.0.0")
+                            {
+                                self.swarm.add_address(&peer_id, observed_addr);
+                            }
                         }
                         _ => {}
                     }
                 }
             })
         });
-        sender
+        (query_send, answ_rcv)
     }
 
     fn process_event(&mut self, event: kad::KademliaEvent) {
@@ -134,6 +142,28 @@ struct NetBehaviour {
     identify: identify::Identify,
 }
 
+impl NetBehaviour {
+    fn bootstrap(&mut self) -> kad::QueryId {
+        self.kad
+            .bootstrap()
+            .expect("At least one peer is required when bootstrapping.")
+    }
+}
+
+impl std::ops::DerefMut for NetBehaviour {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.kad
+    }
+}
+
+impl std::ops::Deref for NetBehaviour {
+    type Target = kad::Kademlia<kad::store::MemoryStore>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.kad
+    }
+}
+
 enum NetEvent {
     KademliaEvent(kad::KademliaEvent),
     Identify(identify::IdentifyEvent),
@@ -148,53 +178,6 @@ impl From<kad::KademliaEvent> for NetEvent {
 impl From<identify::IdentifyEvent> for NetEvent {
     fn from(event: identify::IdentifyEvent) -> NetEvent {
         Self::Identify(event)
-    }
-}
-
-impl NetBehaviour {
-    fn bootstrap(&mut self) -> kad::QueryId {
-        self.kad
-            .bootstrap()
-            .expect("At least one peer is required when bootstrapping.")
-    }
-}
-
-impl NetworkBehaviourEventProcess<identify::IdentifyEvent> for NetBehaviour {
-    fn inject_event(&mut self, event: identify::IdentifyEvent) {
-        todo!()
-    }
-}
-
-impl NetworkBehaviourEventProcess<kad::KademliaEvent> for NetBehaviour {
-    fn inject_event(&mut self, message: kad::KademliaEvent) {
-        todo!()
-    }
-}
-
-/// A handle to a running network connection.
-pub struct NetworkHandle {
-    sender: Sender<String>,
-    local_key: identity::ed25519::Keypair,
-}
-
-impl NetworkHandle {
-    /// Get this peer id encoded as a Base58 string.
-    pub fn get_peer_id(&self) -> String {
-        peer_id_from_ed25519(self.local_key.public()).to_base58()
-    }
-
-    /// Saves this peer secret key to a file in bytes. This file should be kept in a secure location.
-    pub fn save_secret_key<T: AsRef<std::path::Path>>(&self, path: T) -> std::io::Result<()> {
-        let enconded_key = self.local_key.encode().to_vec();
-        use std::fs::File;
-        let mut file = File::create(path.as_ref())?;
-        file.write_all(enconded_key.as_slice())
-    }
-
-    /// Returns Ok while the connection to the network still is running or Err if
-    /// it shutdowns.
-    pub fn is_running(&self) -> Result<(), ()> {
-        Ok(())
     }
 }
 
@@ -265,10 +248,6 @@ impl std::default::Default for Provider {
     }
 }
 
-fn peer_id_from_ed25519(key: identity::ed25519::PublicKey) -> PeerId {
-    PeerId::from_public_key(identity::PublicKey::Ed25519(key))
-}
-
 mod network_builder {
     use super::*;
 
@@ -285,8 +264,6 @@ mod network_builder {
     }
 
     impl NetworkBuilder {
-        const CURRENT_AGENT_VERSION: &'static str = "simag/0.1.0";
-
         pub fn new(
             remote_provider: Option<Provider>,
             key: Option<identity::ed25519::Keypair>,
@@ -311,12 +288,12 @@ mod network_builder {
         }
 
         pub fn configure_network(self) -> std::io::Result<Network> {
-            let transport = self.set_transport()?;
+            let transport = self.config_transport()?;
             let behav = NetBehaviour {
-                kad: self.set_kademlia_dht(),
+                kad: self.config_kademlia_dht(),
                 identify: identify::Identify::new(
-                    "ipfs/0.1.0".to_owned(),
-                    Self::CURRENT_AGENT_VERSION.to_owned(),
+                    CURRENT_IDENTIFY_PROTO_VERSION.to_owned(),
+                    CURRENT_AGENT_VERSION.to_owned(),
                     self.local_key.public(),
                 ),
             };
@@ -329,13 +306,13 @@ mod network_builder {
             })
         }
 
-        fn set_transport(
+        fn config_transport(
             &self,
         ) -> std::io::Result<
             impl Transport<
                     Output = (
                         PeerId,
-                        impl libp2p::core::muxing::StreamMuxer<
+                        impl muxing::StreamMuxer<
                                 OutboundSubstream = impl Send,
                                 Substream = impl Send,
                                 Error = impl Into<std::io::Error>,
@@ -354,17 +331,17 @@ mod network_builder {
 
             let tcp = TcpConfig::new().nodelay(true);
             Ok(DnsConfig::new(tcp)?
-                .upgrade(core::upgrade::Version::V1)
+                .upgrade(upgrade::Version::V1)
                 .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
-                .multiplex(core::upgrade::SelectUpgrade::new(
+                .multiplex(upgrade::SelectUpgrade::new(
                     yamux::Config::default(),
-                    mplex::MplexConfig::new(),
+                    mplex::MplexConfig::default(),
                 ))
-                .map(|(peer, muxer), _| (peer, core::muxing::StreamMuxerBox::new(muxer)))
+                .map(|(peer, muxer), _| (peer, muxing::StreamMuxerBox::new(muxer)))
                 .timeout(std::time::Duration::from_secs(20)))
         }
 
-        fn set_kademlia_dht(&self) -> kad::Kademlia<kad::store::MemoryStore> {
+        fn config_kademlia_dht(&self) -> kad::Kademlia<kad::store::MemoryStore> {
             let store = kad::store::MemoryStore::new(self.local_peer_id.clone());
             let mut kdm = kad::Kademlia::new(self.local_peer_id.clone(), store);
 
