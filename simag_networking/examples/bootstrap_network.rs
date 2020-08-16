@@ -51,6 +51,7 @@ fn main() {
     // A working network requires at least two listening nodes which have been bootstrapped.
     while network.is_running() {
         // keep running
+        // network.shutdown().unwrap();
     }
     println!("Shutted down");
 }

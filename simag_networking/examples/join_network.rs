@@ -29,5 +29,7 @@ fn main() {
     println!("This network encoded peer id is: {}", network.get_peer_id());
     while network.is_running() {
         // keep running
+        // network.shutdown().unwrap();
     }
+    println!("Shutted down");
 }

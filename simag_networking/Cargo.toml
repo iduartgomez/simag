@@ -13,6 +13,7 @@ once_cell = "^1.3.0"
 rand = { version = "0.7", optional = true }
 # serde = "^1.0.0"
 smol = "0.3.3"
+tokio = { version = "0.2", features = ["macros", "sync", "time"] }
 
 # internal:
 # simag_core = { path = "../simag_core" }

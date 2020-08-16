@@ -2,7 +2,7 @@ use crate::{
     config::CONF,
     handle::{NetHandleAnsw, NetHandleCmd, NetworkHandle},
 };
-use crossbeam::{channel::bounded, Receiver, Sender};
+// use crossbeam::{channel::bounded, Receiver, Sender, TryRecvError};
 use libp2p::{
     core::{muxing, upgrade},
     dns::DnsConfig,
@@ -12,7 +12,8 @@ use libp2p::{
     tcp::TcpConfig,
     yamux, Multiaddr, NetworkBehaviour, PeerId, Swarm, Transport,
 };
-use std::{collections::HashSet, net::IpAddr};
+use std::{collections::HashSet, net::IpAddr, time::Duration};
+use tokio::sync::mpsc::{channel, error::SendTimeoutError, Receiver, Sender};
 
 const CURRENT_AGENT_VERSION: &str = "simag/0.1.0";
 const CURRENT_IDENTIFY_PROTO_VERSION: &str = "ipfs/0.1.0";
@@ -31,44 +32,39 @@ impl Network {
         NetworkBuilder::new()
     }
 
+    async fn get_msg_from_cmd_buffer(
+        query_rcv: &mut Receiver<NetHandleCmd>,
+    ) -> Result<Option<NetHandleAnsw>, ()> {
+        match query_rcv.recv().await {
+            Some(NetHandleCmd::Shutdown(id)) => {
+                Ok(Some(NetHandleAnsw::HasShutdown { id, answ: true }))
+            }
+            Some(NetHandleCmd::IsRunning(_id)) => Ok(None),
+            None => Err(()),
+        }
+    }
+
     fn run_event_loop(mut self) -> (Sender<NetHandleCmd>, Receiver<NetHandleAnsw>) {
-        let (query_send, query_rcv) = bounded::<NetHandleCmd>(10);
-        let (answ_send, answ_rcv) = bounded::<NetHandleAnsw>(10);
+        let (query_send, mut query_rcv) = channel::<NetHandleCmd>(10);
+        let (mut answ_send, answ_rcv) = channel::<NetHandleAnsw>(10);
         std::thread::spawn(|| {
             smol::run(async move {
                 eprintln!("Setting #{} event loop", &self.id);
                 loop {
-                    while let Ok(msg) = query_rcv.try_recv() {
-                        // Clean up the message buffer
-                        match msg {
-                            NetHandleCmd::IsRunning(_id) => {}
-                            NetHandleCmd::Shutdown(id) => {
-                                answ_send
-                                    .send(NetHandleAnsw::HasShutdown { id, answ: true })
-                                    .expect("SIMAG: parent main thread may be dead");
-                                break;
+                    tokio::select! {
+                        answ = Network::get_msg_from_cmd_buffer(&mut query_rcv) => {
+                            match answ {
+                                Ok(Some(answ)) => if let Err(SendTimeoutError::Closed(_)) = answ_send
+                                    .send_timeout(answ, Duration::from_secs(10))
+                                    .await
+                                {
+                                    break
+                                },
+                                Err(()) => break,
+                                _ => {}
                             }
                         }
-                    }
-                    match self.swarm.next().await {
-                        NetEvent::KademliaEvent(event) => self.process_event(event),
-                        NetEvent::Identify(identify::IdentifyEvent::Received {
-                            peer_id,
-                            observed_addr,
-                            info,
-                        }) => {
-                            eprintln!(
-                                "Received info from {} with following addr: {}",
-                                peer_id, observed_addr
-                            );
-                            if info.protocol_version == CURRENT_IDENTIFY_PROTO_VERSION
-                                && info.agent_version == CURRENT_AGENT_VERSION
-                                && info.protocols.iter().any(|p| p == "/ipfs/kad/1.0.0")
-                            {
-                                self.swarm.add_address(&peer_id, observed_addr);
-                            }
-                        }
-                        _ => {}
+                        event = self.swarm.next() => self.process_event(event),
                     }
                 }
             })
@@ -76,7 +72,30 @@ impl Network {
         (query_send, answ_rcv)
     }
 
-    fn process_event(&mut self, event: kad::KademliaEvent) {
+    fn process_event(&mut self, event: NetEvent) {
+        match event {
+            NetEvent::KademliaEvent(event) => self.kad_event(event),
+            NetEvent::Identify(identify::IdentifyEvent::Received {
+                peer_id,
+                observed_addr,
+                info,
+            }) => {
+                eprintln!(
+                    "Received info from {} with following addr: {}",
+                    peer_id, observed_addr
+                );
+                if info.protocol_version == CURRENT_IDENTIFY_PROTO_VERSION
+                    && info.agent_version == CURRENT_AGENT_VERSION
+                    && info.protocols.iter().any(|p| p == "/ipfs/kad/1.0.0")
+                {
+                    self.swarm.add_address(&peer_id, observed_addr);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn kad_event(&mut self, event: kad::KademliaEvent) {
         eprintln!("\nPeer #{} received event:\n {:?}", self.id, event);
         match event {
             kad::KademliaEvent::QueryResult { result, id, .. } => {
@@ -217,7 +236,7 @@ impl std::default::Default for Provider {
 /// be listening but also try to connect to an existing peer.
 pub struct NetworkBuilder {
     /// ED25519 local peer private key.
-    pub(crate) local_ed25519_key: identity::ed25519::Keypair,
+    local_ed25519_key: identity::ed25519::Keypair,
     /// ED25519 local peer private key in generic format.
     local_key: identity::Keypair,
     /// The peer ID of this machine.

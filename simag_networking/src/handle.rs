@@ -1,10 +1,13 @@
-use crossbeam::{Receiver, Sender};
+// use crossbeam::{Receiver, Sender};
 use libp2p::{identity, PeerId};
 use std::{
     collections::HashMap,
     io::Write,
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
-    time::Duration,
+};
+use tokio::sync::mpsc::{
+    error::{TryRecvError, TrySendError},
+    Receiver, Sender,
 };
 
 /// A handle to a running network connection.
@@ -13,7 +16,7 @@ pub struct NetworkHandle {
     rcv: Receiver<NetHandleAnsw>,
     local_key: identity::ed25519::Keypair,
     pending: HashMap<usize, (NetHandleCmd, Option<NetHandleAnsw>)>,
-    current_message_id: AtomicUsize,
+    next_msg_id: AtomicUsize,
     is_dead: AtomicBool,
 }
 
@@ -28,7 +31,7 @@ impl NetworkHandle {
             rcv,
             local_key,
             pending: HashMap::new(),
-            current_message_id: AtomicUsize::default(),
+            next_msg_id: AtomicUsize::default(),
             is_dead: AtomicBool::new(false),
         }
     }
@@ -53,14 +56,14 @@ impl NetworkHandle {
         }
         self.clean_answer_buffer();
 
-        let msg_id = self.current_message_id.fetch_add(1, Ordering::SeqCst);
+        let msg_id = self.next_msg_id.fetch_add(1, Ordering::SeqCst);
         let msg = NetHandleCmd::IsRunning(msg_id);
         self.sender
-            .send_timeout(msg, Duration::from_secs(1))
+            .try_send(msg)
             .map(|_| true)
             .unwrap_or_else(|err| match err {
-                crossbeam::SendTimeoutError::Timeout(_) => true,
-                crossbeam::SendTimeoutError::Disconnected(_) => {
+                TrySendError::Full(_) => true,
+                TrySendError::Closed(_) => {
                     self.is_dead.store(true, Ordering::SeqCst);
                     false
                 }
@@ -80,14 +83,14 @@ impl NetworkHandle {
             return Ok(answ);
         }
 
-        let msg_id = self.current_message_id.fetch_add(1, Ordering::SeqCst);
+        let msg_id = self.next_msg_id.fetch_add(1, Ordering::SeqCst);
         let msg = NetHandleCmd::Shutdown(msg_id);
-        match self.sender.send_timeout(msg, Duration::from_secs(1)) {
+        match self.sender.try_send(msg) {
             Ok(()) => {}
-            Err(crossbeam::SendTimeoutError::Timeout(_)) => {
+            Err(TrySendError::Full(msg)) => {
                 self.pending.insert(msg_id, (msg, None));
             }
-            Err(crossbeam::SendTimeoutError::Disconnected(_)) => {
+            Err(TrySendError::Closed(_)) => {
                 self.is_dead.store(true, Ordering::SeqCst);
                 return Err(());
             }
@@ -124,11 +127,11 @@ impl NetworkHandle {
                         q.1 = Some(NetHandleAnsw::HasShutdown { id, answ })
                     }
                 }
-                Err(crossbeam::TryRecvError::Disconnected) => {
+                Err(TryRecvError::Closed) => {
                     self.is_dead.store(true, Ordering::SeqCst);
                     break;
                 }
-                Err(crossbeam::TryRecvError::Empty) => break,
+                Err(TryRecvError::Empty) => break,
             }
         }
     }
