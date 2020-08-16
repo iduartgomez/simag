@@ -22,8 +22,10 @@ fn main() {
     // The listener connection info can be also instanced through the default method
     // from the configuration variables/files:
     // let peer = Provider::default();
-
-    let mut network = Network::join_network(peer).unwrap();
+    let mut network = Network::configure_network()
+        .add_provider(peer)
+        .build()
+        .unwrap();
     println!("This network encoded peer id is: {}", network.get_peer_id());
     while network.is_running() {
         // keep running
