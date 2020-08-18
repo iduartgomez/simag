@@ -1,5 +1,4 @@
-use libp2p::PeerId;
-use simag_networking::{Network, Provider};
+use simag_networking::prelude::*;
 use std::net::Ipv4Addr;
 
 /// A Base58 enconded peer ID. Only used for testing pourpouses. The corresponding secret key can be found in
@@ -13,7 +12,7 @@ fn main() {
     /*
     std::env::set_var("SIMAG_BOOTSTRAP_ID", DEFAULT_BOOTSTRAP_ID);
     */
-    let peer_id: PeerId = DEFAULT_BOOTSTRAP_ID.parse().unwrap();
+    let peer_id = DEFAULT_BOOTSTRAP_ID.parse().unwrap();
     let peer = Provider::new()
         .listening_ip(Ipv4Addr::LOCALHOST)
         .listening_port(7800)
@@ -22,14 +21,22 @@ fn main() {
     // The listener connection info can be also instanced through the default method
     // from the configuration variables/files:
     // let peer = Provider::default();
-    let mut network = Network::configure_network()
+    let mut network = NetworkBuilder::configure_network()
         .add_provider(peer)
         .build()
         .unwrap();
     println!("This network encoded peer id is: {}", network.get_peer_id());
+
+    network.get(AgentKey {});
     while network.is_running() {
-        // keep running
-        // network.shutdown().unwrap();
+        if let Some(stats) = network.stats.get(&AgentKey {}) {
+            if stats.times_received > 0 {
+                println!("Received a resource at least once");
+                if network.shutdown().unwrap() {
+                    break;
+                }
+            }
+        }
     }
     println!("Shutted down");
 }

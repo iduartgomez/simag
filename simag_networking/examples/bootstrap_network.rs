@@ -21,7 +21,7 @@ fn main() {
     */
     // or while bootstrapping the network as an explicit optional parameter like below.
     let mut network = if std::env::args().nth(1).is_none() {
-        Network::configure_network()
+        NetworkBuilder::configure_network()
             .with_key(Keypair::decode(&mut ENCONDED_KEY1.to_vec()).unwrap())
             .with_ip(Ipv4Addr::LOCALHOST)
             .with_port(7800)
@@ -32,7 +32,7 @@ fn main() {
             .listening_ip(Ipv4Addr::LOCALHOST)
             .listening_port(7800)
             .with_identifier(KEY1_ID.parse().unwrap());
-        Network::configure_network()
+        NetworkBuilder::configure_network()
             .with_key(Keypair::decode(&mut ENCONDED_KEY2.to_vec()).unwrap())
             .with_ip(Ipv4Addr::LOCALHOST)
             .with_port(7801)
@@ -48,10 +48,16 @@ fn main() {
     // #1 This is the id that must be provided to other nodes that want to join the network.
     println!("This network encoded peer id is: {}", network.get_peer_id());
 
-    // A working network requires at least two listening nodes which have been bootstrapped.
+    network.put(AgentKey {});
     while network.is_running() {
-        // keep running
-        // network.shutdown().unwrap();
+        if let Some(stats) = network.stats.get(&AgentKey {}) {
+            if stats.times_served > 0 {
+                println!("Served a resource at least once");
+                if network.shutdown().unwrap() {
+                    break;
+                }
+            }
+        }
     }
     println!("Shutted down");
 }

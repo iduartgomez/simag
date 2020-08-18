@@ -2,7 +2,7 @@ use crate::{
     config::CONF,
     handle::{NetHandleAnsw, NetHandleCmd, NetworkHandle},
 };
-// use crossbeam::{channel::bounded, Receiver, Sender, TryRecvError};
+use kad::record::Key;
 use libp2p::{
     core::{muxing, upgrade},
     dns::DnsConfig,
@@ -12,59 +12,82 @@ use libp2p::{
     tcp::TcpConfig,
     yamux, Multiaddr, NetworkBehaviour, PeerId, Swarm, Transport,
 };
-use std::{collections::HashSet, net::IpAddr, time::Duration};
-use tokio::sync::mpsc::{channel, error::SendTimeoutError, Receiver, Sender};
+use std::{borrow::Borrow, collections::HashMap, net::IpAddr, time::Duration};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 const CURRENT_AGENT_VERSION: &str = "simag/0.1.0";
 const CURRENT_IDENTIFY_PROTO_VERSION: &str = "ipfs/0.1.0";
+const TIMEOUT: u64 = 10;
 
 /// A prepared network connection not yet running.
 /// This can be either the preparation of a network bootstrap node or a new peer
 /// connecting to an existing network.
-pub struct Network {
+pub(crate) struct Network<K>
+where
+    K: Borrow<[u8]> + Copy + Clone,
+{
     id: PeerId,
-    sent_queries: HashSet<kad::QueryId>,
+    sent_queries: HashMap<kad::QueryId, Option<NetHandleCmd<K>>>,
     swarm: Swarm<NetBehaviour>,
+    answ_queue: Vec<NetHandleAnsw<K>>,
 }
 
-impl Network {
-    pub fn configure_network() -> NetworkBuilder {
-        NetworkBuilder::new()
-    }
-
-    async fn get_msg_from_cmd_buffer(
-        query_rcv: &mut Receiver<NetHandleCmd>,
-    ) -> Result<Option<NetHandleAnsw>, ()> {
-        match query_rcv.recv().await {
-            Some(NetHandleCmd::Shutdown(id)) => {
-                Ok(Some(NetHandleAnsw::HasShutdown { id, answ: true }))
-            }
-            Some(NetHandleCmd::IsRunning(_id)) => Ok(None),
-            None => Err(()),
-        }
-    }
-
-    fn run_event_loop(mut self) -> (Sender<NetHandleCmd>, Receiver<NetHandleAnsw>) {
-        let (query_send, mut query_rcv) = channel::<NetHandleCmd>(10);
-        let (mut answ_send, answ_rcv) = channel::<NetHandleAnsw>(10);
+impl<K> Network<K>
+where
+    K: Borrow<[u8]> + Send + Clone + Copy + 'static,
+{
+    fn run_event_loop(mut self) -> (Sender<NetHandleCmd<K>>, Receiver<NetHandleAnsw<K>>) {
+        let (query_send, mut query_rcv) = channel::<NetHandleCmd<K>>(10);
+        let (mut answ_send, answ_rcv) = channel::<NetHandleAnsw<K>>(10);
         std::thread::spawn(|| {
             smol::run(async move {
                 eprintln!("Setting #{} event loop", &self.id);
-                loop {
+                let mut cmd_queue = Vec::with_capacity(1);
+                'main: loop {
                     tokio::select! {
-                        answ = Network::get_msg_from_cmd_buffer(&mut query_rcv) => {
-                            match answ {
-                                Ok(Some(answ)) => if let Err(SendTimeoutError::Closed(_)) = answ_send
-                                    .send_timeout(answ, Duration::from_secs(10))
-                                    .await
-                                {
-                                    break
-                                },
-                                Err(()) => break,
-                                _ => {}
+                        answ = Network::push_msg_into_cmd_buffer(&mut cmd_queue, &mut query_rcv) => {
+                            if let Err(()) = answ {
+                                break 'main;
                             }
                         }
                         event = self.swarm.next() => self.process_event(event),
+                    }
+                    while let Some(cmd) = cmd_queue.pop() {
+                        match cmd {
+                            NetHandleCmd::ProvideResource { id, key } => {
+                                let key = &key.borrow();
+                                let record = kad::Record {
+                                    key: Key::new(key),
+                                    value: b"hello world!".to_vec(),
+                                    publisher: Some(self.id.clone()),
+                                    expires: None,
+                                };
+                                let qid = self.swarm.put_record(record, kad::Quorum::One).unwrap();
+                                self.sent_queries.insert(qid, None);
+                                let qid = self.swarm.start_providing(Key::new(key)).unwrap();
+                                self.sent_queries.insert(qid, None);
+                                let answ = NetHandleAnsw::KeyAdded { id };
+                                self.answ_queue.push(answ);
+                            }
+                            NetHandleCmd::PullResource { id, key } => {
+                                let qid = self
+                                    .swarm
+                                    .get_record(&Key::new(&key.borrow()), kad::Quorum::One);
+                                self.sent_queries
+                                    .insert(qid, Some(NetHandleCmd::PullResource { id, key }));
+                            }
+                            NetHandleCmd::Shutdown(id) => {
+                                let answ = NetHandleAnsw::HasShutdown { id, answ: true };
+                                tokio::task::spawn(Network::return_and_finish(answ_send, answ));
+                                break 'main;
+                            }
+                            NetHandleCmd::IsRunning(_id) => {}
+                        }
+                    }
+                    while let Some(answ) = self.answ_queue.pop() {
+                        if let Err(()) = Network::return_answ(&mut answ_send, answ).await {
+                            break 'main;
+                        }
                     }
                 }
             })
@@ -72,9 +95,76 @@ impl Network {
         (query_send, answ_rcv)
     }
 
+    async fn push_msg_into_cmd_buffer(
+        cmd_queue: &mut Vec<NetHandleCmd<K>>,
+        query_rcv: &mut Receiver<NetHandleCmd<K>>,
+    ) -> Result<(), ()> {
+        match query_rcv.recv().await {
+            Some(cmd) => {
+                cmd_queue.push(cmd);
+                Ok(())
+            }
+            None => Err(()),
+        }
+    }
+
+    async fn return_answ(
+        sender: &mut Sender<NetHandleAnsw<K>>,
+        answ: NetHandleAnsw<K>,
+    ) -> Result<(), ()> {
+        if sender
+            .send_timeout(answ, Duration::from_secs(TIMEOUT))
+            .await
+            .is_err()
+        {
+            eprintln!("Network handle dropped!");
+            Err(())
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn return_and_finish(mut sender: Sender<NetHandleAnsw<K>>, answ: NetHandleAnsw<K>) {
+        if sender
+            .send_timeout(answ, Duration::from_secs(TIMEOUT))
+            .await
+            .is_err()
+        {
+            eprintln!("Network handle dropped!");
+        }
+    }
+
     fn process_event(&mut self, event: NetEvent) {
         match event {
-            NetEvent::KademliaEvent(event) => self.kad_event(event),
+            NetEvent::KademliaEvent(event) => {
+                eprintln!("\nPeer #{} received event:\n {:?}", self.id, event);
+                if let kad::KademliaEvent::QueryResult { result, id, .. } = event {
+                    match self.sent_queries.remove(&id) {
+                        Some(Some(NetHandleCmd::PullResource { id, key })) => {
+                            if let kad::QueryResult::GetRecord(Ok(kad::GetRecordOk {
+                                records,
+                                ..
+                            })) = result
+                            {
+                                for rec in records {
+                                    let kad::PeerRecord {
+                                        record: kad::Record { value, .. },
+                                        ..
+                                    } = rec;
+                                    eprintln!("{}", String::from_utf8(value).unwrap());
+                                    self.answ_queue.push(NetHandleAnsw::GotRecord { id, key });
+                                }
+                            }
+                        }
+                        Some(None) => {
+                            eprintln!("Got result from query id: {:?}", id);
+                        }
+                        _ => {
+                            eprintln!("Unrequested query!?");
+                        }
+                    }
+                }
+            }
             NetEvent::Identify(identify::IdentifyEvent::Received {
                 peer_id,
                 observed_addr,
@@ -92,21 +182,6 @@ impl Network {
                 }
             }
             _ => {}
-        }
-    }
-
-    fn kad_event(&mut self, event: kad::KademliaEvent) {
-        eprintln!("\nPeer #{} received event:\n {:?}", self.id, event);
-        match event {
-            kad::KademliaEvent::QueryResult { result, id, .. } => {
-                if self.sent_queries.remove(&id) {
-                    eprintln!("Got result from query id: {:?}", id);
-                }
-            }
-            kad::KademliaEvent::RoutablePeer { .. } => {}
-            kad::KademliaEvent::RoutingUpdated { .. } => {}
-            kad::KademliaEvent::UnroutablePeer { .. } => {}
-            kad::KademliaEvent::PendingRoutablePeer { .. } => {}
         }
     }
 }
@@ -224,16 +299,7 @@ impl std::default::Default for Provider {
         }
     }
 }
-/// When instancing a network you can either join an existing one or bootstrap a new network with a listener
-/// which will act as the initial provider. This initial peer will be listening at the provided port and assigned IP.
-/// If those are not free the instancing process will return an error.
-///
-/// In other to bootstrap a new network the following arguments are required to be provided to the builder:
-/// - ip: IP associated to the initial node.
-/// - port: listening port of the initial node.
-///
-/// If both are provided but also additional peers are added via the [add_provider] method, this node will
-/// be listening but also try to connect to an existing peer.
+
 pub struct NetworkBuilder {
     /// ED25519 local peer private key.
     local_ed25519_key: identity::ed25519::Keypair,
@@ -254,7 +320,17 @@ pub struct NetworkBuilder {
 }
 
 impl NetworkBuilder {
-    pub(super) fn new() -> NetworkBuilder {
+    /// When instancing a network you can either join an existing one or bootstrap a new network with a listener
+    /// which will act as the initial provider. This initial peer will be listening at the provided port and assigned IP.
+    /// If those are not free the instancing process will return an error.
+    ///
+    /// In other to bootstrap a new network the following arguments are required to be provided to the builder:
+    /// - ip: IP associated to the initial node.
+    /// - port: listening port of the initial node.
+    ///
+    /// If both are provided but also additional peers are added via the [add_provider] method, this node will
+    /// be listening but also try to connect to an existing peer.
+    pub fn configure_network() -> NetworkBuilder {
         let local_ed25519_key = if let Some(key) = &CONF.local_peer_keypair {
             key.clone()
         } else {
@@ -297,7 +373,7 @@ impl NetworkBuilder {
         self
     }
 
-    pub fn build(self) -> std::io::Result<NetworkHandle> {
+    pub fn build(self) -> std::io::Result<NetworkHandle<AgentKey>> {
         if (self.local_ip.is_none() || self.local_port.is_none())
             && self.remote_providers.is_empty()
         {
@@ -319,16 +395,17 @@ impl NetworkBuilder {
             Swarm::listen_on(&mut swarm, bootstrap_addr).unwrap();
         }
 
-        let mut sent_queries = HashSet::new();
+        let mut sent_queries = HashMap::new();
         if !self.remote_providers.is_empty() {
             let bootstrap_query = swarm.bootstrap();
-            sent_queries.insert(bootstrap_query);
+            sent_queries.insert(bootstrap_query, None);
         }
 
-        let network = Network {
+        let network: Network<AgentKey> = Network {
             swarm,
             sent_queries,
             id: self.local_peer_id,
+            answ_queue: Vec::with_capacity(1),
         };
         let (sender, rcv) = network.run_event_loop();
         Ok(NetworkHandle::new(sender, rcv, self.local_ed25519_key))
@@ -366,7 +443,7 @@ impl NetworkBuilder {
                 mplex::MplexConfig::default(),
             ))
             .map(|(peer, muxer), _| (peer, muxing::StreamMuxerBox::new(muxer)))
-            .timeout(std::time::Duration::from_secs(20)))
+            .timeout(std::time::Duration::from_secs(TIMEOUT)))
     }
 
     fn config_behaviour(&self) -> NetBehaviour {
@@ -389,5 +466,20 @@ impl NetworkBuilder {
                 self.local_key.public(),
             ),
         }
+    }
+}
+
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+pub struct AgentKey {}
+
+impl Borrow<[u8]> for AgentKey {
+    fn borrow(&self) -> &[u8] {
+        &[0, 1, 2, 3]
+    }
+}
+
+impl std::fmt::Display for AgentKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Key!")
     }
 }

@@ -1,29 +1,32 @@
 // use crossbeam::{Receiver, Sender};
 use libp2p::{identity, PeerId};
-use std::{
-    collections::HashMap,
-    io::Write,
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
-};
+use std::{borrow::Borrow, collections::HashMap, fs::File, hash::Hash, io::Write};
 use tokio::sync::mpsc::{
     error::{TryRecvError, TrySendError},
     Receiver, Sender,
 };
 
 /// A handle to a running network connection.
-pub struct NetworkHandle {
-    sender: Sender<NetHandleCmd>,
-    rcv: Receiver<NetHandleAnsw>,
+pub struct NetworkHandle<K>
+where
+    K: Borrow<[u8]> + Eq + Hash + Clone + Copy + std::fmt::Display,
+{
+    sender: Sender<NetHandleCmd<K>>,
+    rcv: Receiver<NetHandleAnsw<K>>,
     local_key: identity::ed25519::Keypair,
-    pending: HashMap<usize, (NetHandleCmd, Option<NetHandleAnsw>)>,
-    next_msg_id: AtomicUsize,
-    is_dead: AtomicBool,
+    pending: HashMap<usize, (NetHandleCmd<K>, Option<NetHandleAnsw<K>>)>,
+    next_msg_id: usize,
+    is_dead: bool,
+    pub stats: HashMap<K, KeyStats>,
 }
 
-impl NetworkHandle {
+impl<K> NetworkHandle<K>
+where
+    K: Borrow<[u8]> + Eq + Hash + Clone + Copy + std::fmt::Display,
+{
     pub(crate) fn new(
-        sender: Sender<NetHandleCmd>,
-        rcv: Receiver<NetHandleAnsw>,
+        sender: Sender<NetHandleCmd<K>>,
+        rcv: Receiver<NetHandleAnsw<K>>,
         local_key: identity::ed25519::Keypair,
     ) -> Self {
         NetworkHandle {
@@ -31,8 +34,28 @@ impl NetworkHandle {
             rcv,
             local_key,
             pending: HashMap::new(),
-            next_msg_id: AtomicUsize::default(),
-            is_dead: AtomicBool::new(false),
+            next_msg_id: 0,
+            is_dead: false,
+            stats: HashMap::new(),
+        }
+    }
+
+    /// Set this peer as a provider for a certain key.
+    pub fn put(&mut self, key: K) {
+        let id = self.next_id();
+        let msg = NetHandleCmd::ProvideResource { id, key };
+        self.pending.insert(id, (msg, None));
+        if smol::run(self.sender.send(msg)).is_err() {
+            panic!()
+        }
+    }
+
+    pub fn get(&mut self, key: K) {
+        let id = self.next_id();
+        let msg = NetHandleCmd::PullResource { id, key };
+        self.pending.insert(id, (msg, None));
+        if smol::run(self.sender.send(msg)).is_err() {
+            panic!()
         }
     }
 
@@ -44,19 +67,18 @@ impl NetworkHandle {
     /// Saves this peer secret key to a file in bytes. This file should be kept in a secure location.
     pub fn save_secret_key<T: AsRef<std::path::Path>>(&self, path: T) -> std::io::Result<()> {
         let enconded_key = self.local_key.encode().to_vec();
-        use std::fs::File;
         let mut file = File::create(path.as_ref())?;
         file.write_all(enconded_key.as_slice())
     }
 
     /// Returns Ok while the connection to the network still is running or Err if it has shutdown.
     pub fn is_running(&mut self) -> bool {
-        if self.is_dead.load(Ordering::SeqCst) {
+        if self.is_dead {
             return false;
         }
         self.clean_answer_buffer();
 
-        let msg_id = self.next_msg_id.fetch_add(1, Ordering::SeqCst);
+        let msg_id = self.next_id();
         let msg = NetHandleCmd::IsRunning(msg_id);
         self.sender
             .try_send(msg)
@@ -64,7 +86,7 @@ impl NetworkHandle {
             .unwrap_or_else(|err| match err {
                 TrySendError::Full(_) => true,
                 TrySendError::Closed(_) => {
-                    self.is_dead.store(true, Ordering::SeqCst);
+                    self.is_dead = true;
                     false
                 }
             })
@@ -75,7 +97,7 @@ impl NetworkHandle {
     ///
     /// The network may not shutdown inmediately if still is listening and waiting for any events.
     pub fn shutdown(&mut self) -> Result<bool, ()> {
-        if self.is_dead.load(Ordering::SeqCst) {
+        if self.is_dead {
             return Err(());
         }
         self.clean_answer_buffer();
@@ -83,7 +105,7 @@ impl NetworkHandle {
             return Ok(answ);
         }
 
-        let msg_id = self.next_msg_id.fetch_add(1, Ordering::SeqCst);
+        let msg_id = self.next_id();
         let msg = NetHandleCmd::Shutdown(msg_id);
         match self.sender.try_send(msg) {
             Ok(()) => {}
@@ -91,7 +113,7 @@ impl NetworkHandle {
                 self.pending.insert(msg_id, (msg, None));
             }
             Err(TrySendError::Closed(_)) => {
-                self.is_dead.store(true, Ordering::SeqCst);
+                self.is_dead = true;
                 return Err(());
             }
         }
@@ -127,25 +149,62 @@ impl NetworkHandle {
                         q.1 = Some(NetHandleAnsw::HasShutdown { id, answ })
                     }
                 }
+                Ok(NetHandleAnsw::KeyAdded { id }) => {
+                    if let Some((NetHandleCmd::ProvideResource { key, .. }, _)) =
+                        self.pending.remove(&id)
+                    {
+                        eprintln!("Added key #{}", key);
+                    } else {
+                        unreachable!()
+                    }
+                }
+                Ok(NetHandleAnsw::GotRecord { key, .. }) => {
+                    self.stats.entry(key).or_default().times_received += 1;
+                }
                 Err(TryRecvError::Closed) => {
-                    self.is_dead.store(true, Ordering::SeqCst);
+                    self.is_dead = true;
                     break;
                 }
                 Err(TryRecvError::Empty) => break,
             }
         }
     }
+
+    fn next_id(&mut self) -> usize {
+        let msg_id = self.next_msg_id;
+        self.next_msg_id += 1;
+        msg_id
+    }
+}
+
+#[derive(Default)]
+pub struct KeyStats {
+    pub times_served: usize,
+    pub times_received: usize,
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum NetHandleCmd {
+pub(crate) enum NetHandleCmd<K>
+where
+    K: Borrow<[u8]> + Clone + Copy,
+{
     /// query the network about current status
     IsRunning(usize),
+    /// put a resource in this node
+    ProvideResource { id: usize, key: K },
+    /// pull a resource in this node
+    PullResource { id: usize, key: K },
     /// issue a shutdown command
     Shutdown(usize),
 }
 
-pub(crate) enum NetHandleAnsw {
+#[derive(Clone, Copy)]
+pub(crate) enum NetHandleAnsw<K>
+where
+    K: Borrow<[u8]> + Clone + Copy,
+{
+    KeyAdded { id: usize },
+    GotRecord { id: usize, key: K },
     HasShutdown { id: usize, answ: bool },
 }
 
