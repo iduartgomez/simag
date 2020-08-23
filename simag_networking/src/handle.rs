@@ -44,7 +44,16 @@ where
     pub fn put(&mut self, key: K) {
         let id = self.next_id();
         let msg = NetHandleCmd::ProvideResource { id, key };
-        self.pending.insert(id, (msg, None));
+        self.pending.insert(id, (msg.clone(), None));
+        if smol::run(self.sender.send(msg)).is_err() {
+            panic!()
+        }
+    }
+
+    pub fn send_message(&mut self, value: Vec<u8>, peer: PeerId) {
+        let id = self.next_id();
+        let msg = NetHandleCmd::SendMessage { id, value, peer };
+        self.pending.insert(id, (msg.clone(), None));
         if smol::run(self.sender.send(msg)).is_err() {
             panic!()
         }
@@ -53,7 +62,7 @@ where
     pub fn get(&mut self, key: K) {
         let id = self.next_id();
         let msg = NetHandleCmd::PullResource { id, key };
-        self.pending.insert(id, (msg, None));
+        self.pending.insert(id, (msg.clone(), None));
         if smol::run(self.sender.send(msg)).is_err() {
             panic!()
         }
@@ -183,7 +192,7 @@ pub struct KeyStats {
     pub times_received: usize,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) enum NetHandleCmd<K>
 where
     K: Borrow<[u8]> + Clone + Copy,
@@ -196,6 +205,12 @@ where
     PullResource { id: usize, key: K },
     /// issue a shutdown command
     Shutdown(usize),
+    /// send a serialized message
+    SendMessage {
+        id: usize,
+        value: Vec<u8>,
+        peer: PeerId,
+    },
 }
 
 #[derive(Clone, Copy)]

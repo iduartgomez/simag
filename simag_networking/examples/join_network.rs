@@ -1,3 +1,4 @@
+use libp2p::PeerId;
 use simag_networking::prelude::*;
 use std::net::Ipv4Addr;
 
@@ -12,11 +13,11 @@ fn main() {
     /*
     std::env::set_var("SIMAG_BOOTSTRAP_ID", DEFAULT_BOOTSTRAP_ID);
     */
-    let peer_id = DEFAULT_BOOTSTRAP_ID.parse().unwrap();
+    let peer_id: PeerId = DEFAULT_BOOTSTRAP_ID.parse().unwrap();
     let peer = Provider::new()
         .listening_ip(Ipv4Addr::LOCALHOST)
         .listening_port(7800)
-        .with_identifier(peer_id);
+        .with_identifier(peer_id.clone());
 
     // The listener connection info can be also instanced through the default method
     // from the configuration variables/files:
@@ -28,14 +29,14 @@ fn main() {
     println!("This network encoded peer id is: {}", network.get_peer_id());
 
     network.get(AgentKey {});
+    network.send_message(b"awesome message!".to_vec(), peer_id);
     while network.is_running() {
         if let Some(stats) = network.stats.get(&AgentKey {}) {
-            if stats.times_received > 0 {
-                println!("Received a resource at least once");
-                if network.shutdown().unwrap() {
-                    break;
-                }
-            }
+            // if stats.times_received > 0 {
+            //     println!("Received a resource at least once");
+            //     network.shutdown().unwrap();
+            //     break;
+            // }
         }
     }
     println!("Shutted down");

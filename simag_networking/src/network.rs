@@ -1,6 +1,7 @@
 use crate::{
     config::CONF,
     handle::{NetHandleAnsw, NetHandleCmd, NetworkHandle},
+    stream::{self, STREAM_PROTOCOL},
 };
 use kad::record::Key;
 use libp2p::{
@@ -27,8 +28,8 @@ where
     K: Borrow<[u8]> + Copy + Clone,
 {
     id: PeerId,
-    sent_queries: HashMap<kad::QueryId, Option<NetHandleCmd<K>>>,
     swarm: Swarm<NetBehaviour>,
+    sent_kad_queries: HashMap<kad::QueryId, Option<NetHandleCmd<K>>>,
     answ_queue: Vec<NetHandleAnsw<K>>,
 }
 
@@ -50,7 +51,7 @@ where
                                 break 'main;
                             }
                         }
-                        event = self.swarm.next() => self.process_event(event),
+                        event = self.swarm.next() => self.process_event(event).await,
                     }
                     while let Some(cmd) = cmd_queue.pop() {
                         match cmd {
@@ -58,14 +59,14 @@ where
                                 let key = &key.borrow();
                                 let record = kad::Record {
                                     key: Key::new(key),
-                                    value: b"hello world!".to_vec(),
+                                    value: b"JOINED_GROUP".to_vec(),
                                     publisher: Some(self.id.clone()),
                                     expires: None,
                                 };
                                 let qid = self.swarm.put_record(record, kad::Quorum::One).unwrap();
-                                self.sent_queries.insert(qid, None);
+                                self.sent_kad_queries.insert(qid, None);
                                 let qid = self.swarm.start_providing(Key::new(key)).unwrap();
-                                self.sent_queries.insert(qid, None);
+                                self.sent_kad_queries.insert(qid, None);
                                 let answ = NetHandleAnsw::KeyAdded { id };
                                 self.answ_queue.push(answ);
                             }
@@ -73,12 +74,15 @@ where
                                 let qid = self
                                     .swarm
                                     .get_record(&Key::new(&key.borrow()), kad::Quorum::One);
-                                self.sent_queries
+                                self.sent_kad_queries
                                     .insert(qid, Some(NetHandleCmd::PullResource { id, key }));
+                            }
+                            NetHandleCmd::SendMessage { value, peer, .. } => {
+                                self.swarm.as_mut().send_message(&peer, value);
                             }
                             NetHandleCmd::Shutdown(id) => {
                                 let answ = NetHandleAnsw::HasShutdown { id, answ: true };
-                                tokio::task::spawn(Network::return_and_finish(answ_send, answ));
+                                Network::return_and_finish(answ_send, answ).await;
                                 break 'main;
                             }
                             NetHandleCmd::IsRunning(_id) => {}
@@ -134,12 +138,12 @@ where
         }
     }
 
-    fn process_event(&mut self, event: NetEvent) {
+    async fn process_event(&mut self, event: NetEvent) {
         match event {
             NetEvent::KademliaEvent(event) => {
                 eprintln!("\nPeer #{} received event:\n {:?}", self.id, event);
                 if let kad::KademliaEvent::QueryResult { result, id, .. } = event {
-                    match self.sent_queries.remove(&id) {
+                    match self.sent_kad_queries.remove(&id) {
                         Some(Some(NetHandleCmd::PullResource { id, key })) => {
                             if let kad::QueryResult::GetRecord(Ok(kad::GetRecordOk {
                                 records,
@@ -151,7 +155,10 @@ where
                                         record: kad::Record { value, .. },
                                         ..
                                     } = rec;
-                                    eprintln!("{}", String::from_utf8(value).unwrap());
+                                    eprintln!(
+                                        "RECEIVED KAD MSG: {}",
+                                        String::from_utf8(value).unwrap()
+                                    );
                                     self.answ_queue.push(NetHandleAnsw::GotRecord { id, key });
                                 }
                             }
@@ -159,27 +166,30 @@ where
                         Some(None) => {
                             eprintln!("Got result from query id: {:?}", id);
                         }
-                        _ => {
-                            eprintln!("Unrequested query!?");
-                        }
+                        _ => {}
                     }
                 }
             }
             NetEvent::Identify(identify::IdentifyEvent::Received {
                 peer_id,
-                observed_addr,
+                mut observed_addr,
                 info,
             }) => {
                 eprintln!(
                     "Received info from {} with following addr: {}",
                     peer_id, observed_addr
                 );
+                observed_addr.push(Protocol::P2p(peer_id.clone().into()));
                 if info.protocol_version == CURRENT_IDENTIFY_PROTO_VERSION
                     && info.agent_version == CURRENT_AGENT_VERSION
                     && info.protocols.iter().any(|p| p == "/ipfs/kad/1.0.0")
+                    && info.protocols.iter().any(|p| p == STREAM_PROTOCOL)
                 {
                     self.swarm.add_address(&peer_id, observed_addr);
                 }
+            }
+            NetEvent::Stream(stream::StreamEvent::MessageReceived(msg)) => {
+                eprintln!("Received: {}", String::from_utf8(msg).unwrap());
             }
             _ => {}
         }
@@ -192,6 +202,7 @@ where
 struct NetBehaviour {
     kad: kad::Kademlia<kad::store::MemoryStore>,
     identify: identify::Identify,
+    streams: stream::Stream,
 }
 
 impl NetBehaviour {
@@ -199,6 +210,12 @@ impl NetBehaviour {
         self.kad
             .bootstrap()
             .expect("At least one peer is required when bootstrapping.")
+    }
+}
+
+impl AsMut<stream::Stream> for NetBehaviour {
+    fn as_mut(&mut self) -> &mut stream::Stream {
+        &mut self.streams
     }
 }
 
@@ -219,6 +236,7 @@ impl std::ops::Deref for NetBehaviour {
 enum NetEvent {
     KademliaEvent(kad::KademliaEvent),
     Identify(identify::IdentifyEvent),
+    Stream(stream::StreamEvent),
 }
 
 impl From<kad::KademliaEvent> for NetEvent {
@@ -230,6 +248,12 @@ impl From<kad::KademliaEvent> for NetEvent {
 impl From<identify::IdentifyEvent> for NetEvent {
     fn from(event: identify::IdentifyEvent) -> NetEvent {
         Self::Identify(event)
+    }
+}
+
+impl From<stream::StreamEvent> for NetEvent {
+    fn from(event: stream::StreamEvent) -> NetEvent {
+        Self::Stream(event)
     }
 }
 
@@ -275,24 +299,14 @@ impl Provider {
     }
 }
 
-impl From<(Multiaddr, PeerId)> for Provider {
-    fn from(info: (Multiaddr, PeerId)) -> Self {
-        let (addr, identifier) = info;
-        Provider {
-            addr: Some(addr),
-            identifier: Some(identifier),
-        }
-    }
-}
-
 impl std::default::Default for Provider {
     fn default() -> Self {
         let conf = &CONF;
         let mut multi_addr = Multiaddr::with_capacity(2);
-        multi_addr.push(Protocol::from(conf.bootstrap_ip));
-        multi_addr.push(Protocol::Tcp(conf.bootstrap_port));
         let identifier = conf.bootstrap_id.clone()
             .expect("At least one public identifier is required to bootstrap the connection to the network.");
+        multi_addr.push(Protocol::from(conf.bootstrap_ip));
+        multi_addr.push(Protocol::Tcp(conf.bootstrap_port));
         Provider {
             addr: Some(multi_addr),
             identifier: Some(identifier),
@@ -403,7 +417,7 @@ impl NetworkBuilder {
 
         let network: Network<AgentKey> = Network {
             swarm,
-            sent_queries,
+            sent_kad_queries: sent_queries,
             id: self.local_peer_id,
             answ_queue: Vec::with_capacity(1),
         };
@@ -465,6 +479,7 @@ impl NetworkBuilder {
                 CURRENT_AGENT_VERSION.to_owned(),
                 self.local_key.public(),
             ),
+            streams: stream::Stream::new(),
         }
     }
 }
