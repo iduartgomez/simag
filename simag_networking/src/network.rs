@@ -23,22 +23,24 @@ const TIMEOUT: u64 = 10;
 /// A prepared network connection not yet running.
 /// This can be either the preparation of a network bootstrap node or a new peer
 /// connecting to an existing network.
-pub(crate) struct Network<K>
+pub(crate) struct Network<K, V>
 where
     K: Borrow<[u8]> + Copy + Clone,
+    V: Into<Vec<u8>>,
 {
     id: PeerId,
     swarm: Swarm<NetBehaviour>,
-    sent_kad_queries: HashMap<kad::QueryId, Option<NetHandleCmd<K>>>,
+    sent_kad_queries: HashMap<kad::QueryId, Option<NetHandleCmd<K, V>>>,
     answ_queue: Vec<NetHandleAnsw<K>>,
 }
 
-impl<K> Network<K>
+impl<K, V> Network<K, V>
 where
     K: Borrow<[u8]> + Send + Clone + Copy + 'static,
+    V: Into<Vec<u8>> + Send + 'static,
 {
-    fn run_event_loop(mut self) -> (Sender<NetHandleCmd<K>>, Receiver<NetHandleAnsw<K>>) {
-        let (query_send, mut query_rcv) = channel::<NetHandleCmd<K>>(10);
+    fn run_event_loop(mut self) -> (Sender<NetHandleCmd<K, V>>, Receiver<NetHandleAnsw<K>>) {
+        let (query_send, mut query_rcv) = channel::<NetHandleCmd<K, V>>(10);
         let (mut answ_send, answ_rcv) = channel::<NetHandleAnsw<K>>(10);
         std::thread::spawn(|| {
             smol::run(async move {
@@ -55,11 +57,11 @@ where
                     }
                     while let Some(cmd) = cmd_queue.pop() {
                         match cmd {
-                            NetHandleCmd::ProvideResource { id, key } => {
+                            NetHandleCmd::ProvideResource { id, key, value } => {
                                 let key = &key.borrow();
                                 let record = kad::Record {
                                     key: Key::new(key),
-                                    value: b"JOINED_GROUP".to_vec(),
+                                    value: value.into(),
                                     publisher: Some(self.id.clone()),
                                     expires: None,
                                 };
@@ -82,14 +84,14 @@ where
                             }
                             NetHandleCmd::Shutdown(id) => {
                                 let answ = NetHandleAnsw::HasShutdown { id, answ: true };
-                                Network::return_and_finish(answ_send, answ).await;
+                                Network::<_, V>::return_and_finish(answ_send, answ).await;
                                 break 'main;
                             }
                             NetHandleCmd::IsRunning(_id) => {}
                         }
                     }
                     while let Some(answ) = self.answ_queue.pop() {
-                        if let Err(()) = Network::return_answ(&mut answ_send, answ).await {
+                        if let Err(()) = Network::<_, V>::return_answ(&mut answ_send, answ).await {
                             break 'main;
                         }
                     }
@@ -100,8 +102,8 @@ where
     }
 
     async fn push_msg_into_cmd_buffer(
-        cmd_queue: &mut Vec<NetHandleCmd<K>>,
-        query_rcv: &mut Receiver<NetHandleCmd<K>>,
+        cmd_queue: &mut Vec<NetHandleCmd<K, V>>,
+        query_rcv: &mut Receiver<NetHandleCmd<K, V>>,
     ) -> Result<(), ()> {
         match query_rcv.recv().await {
             Some(cmd) => {
@@ -156,7 +158,7 @@ where
                                         ..
                                     } = rec;
                                     eprintln!(
-                                        "RECEIVED KAD MSG: {}",
+                                        "\nRECEIVED KAD MSG: {}",
                                         String::from_utf8(value).unwrap()
                                     );
                                     self.answ_queue.push(NetHandleAnsw::GotRecord { id, key });
@@ -185,13 +187,21 @@ where
                     && info.protocols.iter().any(|p| p == "/ipfs/kad/1.0.0")
                     && info.protocols.iter().any(|p| p == STREAM_PROTOCOL)
                 {
-                    self.swarm.add_address(&peer_id, observed_addr);
+                    self.swarm.add_address(&peer_id, observed_addr.clone());
+                    self.swarm.as_mut().add_address(&peer_id, observed_addr);
                 }
             }
-            NetEvent::Stream(stream::StreamEvent::MessageReceived(msg)) => {
-                eprintln!("Received: {}", String::from_utf8(msg).unwrap());
+            NetEvent::Stream(stream::StreamEvent::MessageReceived { msg, peer }) => {
+                eprintln!(
+                    "RECEIVED STREAMING MSG: {}",
+                    String::from_utf8(msg.clone()).unwrap()
+                );
+                self.answ_queue.push(NetHandleAnsw::RcvMsg { msg, peer });
             }
-            _ => {}
+            NetEvent::Stream(stream::StreamEvent::ConnectionError { peer, err }) => {
+                eprintln!("Connection error with peer: {}:\n{}", peer, err);
+            }
+            NetEvent::Identify(_) => {}
         }
     }
 }
@@ -387,7 +397,7 @@ impl NetworkBuilder {
         self
     }
 
-    pub fn build(self) -> std::io::Result<NetworkHandle<AgentKey>> {
+    pub fn build(self) -> std::io::Result<NetworkHandle<AgentKey, Vec<u8>>> {
         if (self.local_ip.is_none() || self.local_port.is_none())
             && self.remote_providers.is_empty()
         {
@@ -415,7 +425,7 @@ impl NetworkBuilder {
             sent_queries.insert(bootstrap_query, None);
         }
 
-        let network: Network<AgentKey> = Network {
+        let network: Network<AgentKey, Vec<u8>> = Network {
             swarm,
             sent_kad_queries: sent_queries,
             id: self.local_peer_id,
@@ -490,6 +500,12 @@ pub struct AgentKey {}
 impl Borrow<[u8]> for AgentKey {
     fn borrow(&self) -> &[u8] {
         &[0, 1, 2, 3]
+    }
+}
+
+impl From<&[u8]> for AgentKey {
+    fn from(_slice: &[u8]) -> Self {
+        AgentKey {}
     }
 }
 

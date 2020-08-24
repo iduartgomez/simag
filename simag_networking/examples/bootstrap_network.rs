@@ -48,15 +48,23 @@ fn main() {
     // #1 This is the id that must be provided to other nodes that want to join the network.
     println!("This network encoded peer id is: {}", network.get_peer_id());
 
-    network.put(AgentKey {});
+    network.put(AgentKey {}, b"Joined group!".to_vec());
+    let mut reply = false;
     while network.is_running() {
-        if let Some(stats) = network.stats.get(&AgentKey {}) {
+        if let Some(stats) = network.stats.for_key(&AgentKey {}) {
             if stats.times_served > 0 {
                 println!("Served a resource at least once");
                 if network.shutdown().unwrap() {
                     break;
                 }
             }
+        }
+        if !reply {
+            for (peer, amount) in network.stats.received_messages().to_owned() {
+                println!("Received {} messages from #{}", amount, peer);
+                network.send_message(b"Hai there!".to_vec(), peer.clone());
+            }
+            reply = true;
         }
     }
     println!("Shutted down");

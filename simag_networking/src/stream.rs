@@ -5,7 +5,7 @@
 //! kept alive as long as necessary in order to transfer data.
 //!
 //! `libp2p` then handles encryption and connection handling, while by using this protocol
-//! we relegate control of direct communication to the layer.
+//! we relegate control of direct communication to the top network abstraction.
 //!
 //! The protocol also has the following responsabilities:
 //! - propagating changes in the Identify and Kademlia protocols to this stream
@@ -14,13 +14,13 @@
 //!   handling authorization and automatic subscription/unsubscription on changing internal state.
 
 use futures_codec::BytesMut;
-use handler::{StreamHandler, StreamHandlerEvent};
+use handler::{StreamHandler, StreamHandlerEvent, StreamHandlerInEvent};
 use libp2p::{
     core::connection::ConnectionId,
     futures::{stream, AsyncRead, AsyncWrite, Sink},
     swarm::{
-        NegotiatedSubstream, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
-        ProtocolsHandler,
+        NegotiatedSubstream, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler,
+        PollParameters, ProtocolsHandler,
     },
     Multiaddr, PeerId,
 };
@@ -33,17 +33,22 @@ use std::{
 };
 
 pub(crate) const STREAM_PROTOCOL: &str = "/simag/stream/0.1.0";
-pub(crate) type ConnId = usize;
+const MAX_MSG_SIZE: usize = 4096;
 
 pub(crate) enum StreamEvent {
-    MessageReceived(Vec<u8>),
+    MessageReceived { peer: PeerId, msg: Vec<u8> },
+    ConnectionError { peer: PeerId, err: std::io::Error },
 }
 
 pub(crate) struct Stream {
     addresses: HashMap<PeerId, Vec<Multiaddr>>,
+    /// open connections to a peer;
+    /// never should have more than one inbound/outbound connection really
     open_conn: HashMap<PeerId, SmallVec<[StreamHandlerEvent; 2]>>,
     /// encoded messages pending to be sent to a given peer
     pending_messages: HashMap<PeerId, Vec<Vec<u8>>>,
+    /// pending messages to be sent to peer connection handlers
+    pending_handler_msg: Vec<(PeerId, StreamHandlerInEvent)>,
 }
 
 impl Stream {
@@ -52,6 +57,7 @@ impl Stream {
             addresses: HashMap::new(),
             open_conn: HashMap::new(),
             pending_messages: HashMap::new(),
+            pending_handler_msg: Vec::new(),
         }
     }
 
@@ -64,11 +70,21 @@ impl Stream {
         }
     }
 
+    pub fn add_address(&mut self, peer: &PeerId, address: Multiaddr) {
+        if let Some(queue) = self.addresses.get_mut(peer) {
+            queue.push(address);
+        } else {
+            let addrs = vec![address];
+            self.addresses.insert(peer.clone(), addrs);
+        }
+    }
+
+    #[inline]
     fn poll_send_msg(
         send_conn: &mut SimagStream<NegotiatedSubstream>,
         msg: Vec<u8>,
         cx: &mut Context,
-    ) {
+    ) -> Result<(), std::io::Error> {
         match Sink::poll_ready(Pin::new(send_conn), cx) {
             Poll::Ready(Ok(())) => match Sink::start_send(Pin::new(send_conn), msg) {
                 Ok(()) => loop {
@@ -77,27 +93,29 @@ impl Stream {
                         Poll::Ready(Ok(())) => {
                             break;
                         }
-                        Poll::Ready(Err(_err)) => panic!(),
+                        Poll::Ready(err) => return err,
                     }
                 },
-                Err(_) => panic!(),
+                Err(err) => return Err(err),
             },
             Poll::Pending => {}
-            Poll::Ready(Err(_err)) => panic!(),
+            Poll::Ready(err) => return err,
         }
+        Ok(())
     }
 
+    #[inline]
     fn poll_rcv_msg(
         rcv_conn: &mut SimagStream<NegotiatedSubstream>,
         cx: &mut Context,
-    ) -> Result<Option<Vec<u8>>, ()> {
-        loop {
-            match stream::Stream::poll_next(Pin::new(rcv_conn), cx) {
-                Poll::Ready(Some(Ok(msg))) => break Ok(Some(msg.into_iter().collect())),
-                Poll::Ready(Some(_err)) => break Err(()),
-                Poll::Ready(None) => break Ok(None),
-                Poll::Pending => {}
+    ) -> Result<Option<Vec<u8>>, std::io::Error> {
+        match stream::Stream::poll_next(Pin::new(rcv_conn), cx) {
+            Poll::Ready(Some(Ok(msg))) => {
+                // msg received
+                Ok(Some(msg.into_iter().collect()))
             }
+            Poll::Ready(Some(Err(err))) => Err(err),
+            Poll::Ready(None) | Poll::Pending => Ok(None),
         }
     }
 }
@@ -116,7 +134,6 @@ impl NetworkBehaviour for Stream {
 
     fn inject_connected(&mut self, peer_id: &PeerId) {
         eprintln!("Peer #{} connected", peer_id);
-        self.addresses.entry(peer_id.clone()).or_default();
         self.open_conn.entry(peer_id.clone()).or_default();
     }
 
@@ -141,7 +158,23 @@ impl NetworkBehaviour for Stream {
         _params: &mut impl PollParameters,
     ) -> Poll<NetworkBehaviourAction<<StreamHandler as ProtocolsHandler>::InEvent, StreamEvent>>
     {
+        if let Some((peer_id, event)) = self.pending_handler_msg.pop() {
+            return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
+                peer_id,
+                event,
+                handler: NotifyHandler::All,
+            });
+        }
+
         for (peer, open_conn) in &mut self.open_conn {
+            if open_conn.is_empty() {
+                return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
+                    peer_id: peer.clone(),
+                    event: StreamHandlerInEvent::RequestChannel,
+                    handler: NotifyHandler::Any,
+                });
+            }
+
             for conn in open_conn {
                 match conn {
                     StreamHandlerEvent::OutOpenChannel(ref mut send_conn) => {
@@ -149,18 +182,47 @@ impl NetworkBehaviour for Stream {
                             Some(pending) if !pending.is_empty() => {
                                 while let Some(msg) = pending.pop() {
                                     eprintln!("Output stream w/ peer: {}", peer);
-                                    Stream::poll_send_msg(send_conn, msg, cx);
-                                    eprintln!("Sent stream msg!");
+                                    if let Err(err) = Stream::poll_send_msg(send_conn, msg, cx) {
+                                        let ev = NetworkBehaviourAction::GenerateEvent(
+                                            StreamEvent::ConnectionError {
+                                                peer: peer.clone(),
+                                                err,
+                                            },
+                                        );
+                                        return Poll::Ready(ev);
+                                    }
+                                    self.pending_handler_msg.push((
+                                        peer.clone(),
+                                        StreamHandlerInEvent::RefreshConnection,
+                                    ));
                                 }
                             }
                             _ => {}
                         }
                     }
                     StreamHandlerEvent::InOpenChannel(ref mut rcv_conn) => {
-                        if let Some(msg) = Stream::poll_rcv_msg(rcv_conn, cx).unwrap() {
-                            return Poll::Ready(NetworkBehaviourAction::GenerateEvent(
-                                StreamEvent::MessageReceived(msg),
-                            ));
+                        match Stream::poll_rcv_msg(rcv_conn, cx) {
+                            Ok(Some(msg)) => {
+                                eprintln!("Input stream w/ peer: {}", peer);
+                                self.pending_handler_msg
+                                    .push((peer.clone(), StreamHandlerInEvent::RefreshConnection));
+                                return Poll::Ready(NetworkBehaviourAction::GenerateEvent(
+                                    StreamEvent::MessageReceived {
+                                        peer: peer.clone(),
+                                        msg,
+                                    },
+                                ));
+                            }
+                            Ok(None) => {}
+                            Err(err) => {
+                                let ev = NetworkBehaviourAction::GenerateEvent(
+                                    StreamEvent::ConnectionError {
+                                        peer: peer.clone(),
+                                        err,
+                                    },
+                                );
+                                return Poll::Ready(ev);
+                            }
                         }
                     }
                 }
@@ -232,7 +294,7 @@ pub(super) mod protocol {
 
     fn build_conn_stream<C: AsyncRead + AsyncWrite + Unpin>(incoming: C) -> SimagStream<C> {
         let mut codec = UviBytes::default();
-        codec.set_max_len(4096);
+        codec.set_max_len(MAX_MSG_SIZE);
 
         Framed::new(incoming, codec)
             .err_into()
@@ -257,12 +319,13 @@ pub(super) mod handler {
     pub enum StreamHandlerInEvent {
         /// A dialing peer is requesting an open channel
         RequestChannel,
+        RefreshConnection,
     }
 
     enum SubstreamState {
         OutPendingOpen,
         OutOpenChannel(SimagStream<NegotiatedSubstream>),
-        InOpenChannel(SimagStream<NegotiatedSubstream>, ConnId),
+        InOpenChannel(SimagStream<NegotiatedSubstream>),
     }
 
     pub(crate) struct StreamHandler {
@@ -272,11 +335,10 @@ pub(super) mod handler {
     }
 
     impl StreamHandler {
-        const KEEP_ALIVE: Duration = Duration::from_secs(10);
+        const KEEP_ALIVE: Duration = Duration::from_secs(30);
 
         pub fn new() -> StreamHandler {
-            let _keep_alive = swarm::KeepAlive::Until(Instant::now() + Self::KEEP_ALIVE);
-            let keep_alive = swarm::KeepAlive::Yes;
+            let keep_alive = swarm::KeepAlive::Until(Instant::now() + Self::KEEP_ALIVE);
             StreamHandler {
                 keep_alive,
                 events: SmallVec::new(),
@@ -309,17 +371,18 @@ pub(super) mod handler {
             &mut self,
             protocol: <Self::InboundProtocol as InboundUpgrade<NegotiatedSubstream>>::Output,
         ) {
-            let next_conn_id = self.next_connec_unique_id;
+            let _next_conn_id = self.next_connec_unique_id;
             self.next_connec_unique_id += 1;
-            self.events
-                .push(SubstreamState::InOpenChannel(protocol, next_conn_id));
+            self.events.push(SubstreamState::InOpenChannel(protocol));
         }
 
         fn inject_event(&mut self, event: Self::InEvent) {
-            // TODO: receive and process requests to join certain peers here
             match event {
                 StreamHandlerInEvent::RequestChannel => {
                     self.events.push(SubstreamState::OutPendingOpen);
+                }
+                StreamHandlerInEvent::RefreshConnection => {
+                    self.keep_alive = swarm::KeepAlive::Until(Instant::now() + Self::KEEP_ALIVE);
                 }
             }
         }
@@ -360,7 +423,7 @@ pub(super) mod handler {
                         };
                         return Poll::Ready(ev);
                     }
-                    SubstreamState::InOpenChannel(substream, conn_id) => {
+                    SubstreamState::InOpenChannel(substream) => {
                         let ev = swarm::ProtocolsHandlerEvent::Custom(
                             StreamHandlerEvent::InOpenChannel(substream),
                         );

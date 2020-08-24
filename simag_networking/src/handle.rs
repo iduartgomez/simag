@@ -1,31 +1,59 @@
 // use crossbeam::{Receiver, Sender};
 use libp2p::{identity, PeerId};
-use std::{borrow::Borrow, collections::HashMap, fs::File, hash::Hash, io::Write};
+use std::{borrow::Borrow, collections::HashMap, fmt::Display, fs::File, hash::Hash, io::Write};
 use tokio::sync::mpsc::{
     error::{TryRecvError, TrySendError},
     Receiver, Sender,
 };
 
+type MsgId = usize;
+
 /// A handle to a running network connection.
-pub struct NetworkHandle<K>
+pub struct NetworkHandle<K, V>
 where
-    K: Borrow<[u8]> + Eq + Hash + Clone + Copy + std::fmt::Display,
+    K: Borrow<[u8]> + Eq + Hash + Display,
+    V: Into<Vec<u8>>,
 {
-    sender: Sender<NetHandleCmd<K>>,
+    sender: Sender<NetHandleCmd<K, V>>,
     rcv: Receiver<NetHandleAnsw<K>>,
     local_key: identity::ed25519::Keypair,
-    pending: HashMap<usize, (NetHandleCmd<K>, Option<NetHandleAnsw<K>>)>,
-    next_msg_id: usize,
+    pending: HashMap<MsgId, PendingCmd<K>>,
+    next_msg_id: MsgId,
     is_dead: bool,
-    pub stats: HashMap<K, KeyStats>,
+    pub stats: NetworkStats<K>,
 }
 
-impl<K> NetworkHandle<K>
+pub struct NetworkStats<K: Hash + Eq> {
+    key_stats: HashMap<K, KeyStats>,
+    rcv_msgs: Vec<(PeerId, usize)>,
+}
+
+impl<K: Eq + Hash> Default for NetworkStats<K> {
+    fn default() -> Self {
+        NetworkStats {
+            key_stats: HashMap::new(),
+            rcv_msgs: Vec::new(),
+        }
+    }
+}
+
+impl<K: Eq + Hash> NetworkStats<K> {
+    pub fn for_key(&self, key: &K) -> Option<&KeyStats> {
+        self.key_stats.get(key)
+    }
+
+    pub fn received_messages(&self) -> &[(PeerId, usize)] {
+        &self.rcv_msgs
+    }
+}
+
+impl<K, V> NetworkHandle<K, V>
 where
-    K: Borrow<[u8]> + Eq + Hash + Clone + Copy + std::fmt::Display,
+    K: Borrow<[u8]> + Eq + Hash + Display + for<'r> From<&'r [u8]>,
+    V: Into<Vec<u8>>,
 {
     pub(crate) fn new(
-        sender: Sender<NetHandleCmd<K>>,
+        sender: Sender<NetHandleCmd<K, V>>,
         rcv: Receiver<NetHandleAnsw<K>>,
         local_key: identity::ed25519::Keypair,
     ) -> Self {
@@ -36,15 +64,21 @@ where
             pending: HashMap::new(),
             next_msg_id: 0,
             is_dead: false,
-            stats: HashMap::new(),
+            stats: NetworkStats::<K>::default(),
         }
     }
 
     /// Set this peer as a provider for a certain key.
-    pub fn put(&mut self, key: K) {
+    pub fn put(&mut self, key: K, value: V) {
         let id = self.next_id();
-        let msg = NetHandleCmd::ProvideResource { id, key };
-        self.pending.insert(id, (msg.clone(), None));
+        self.pending.insert(
+            id,
+            PendingCmd {
+                cmd: SentCmd::AddedKey(key.borrow().to_owned()),
+                answ: None,
+            },
+        );
+        let msg = NetHandleCmd::ProvideResource { id, key, value };
         if smol::run(self.sender.send(msg)).is_err() {
             panic!()
         }
@@ -53,7 +87,13 @@ where
     pub fn send_message(&mut self, value: Vec<u8>, peer: PeerId) {
         let id = self.next_id();
         let msg = NetHandleCmd::SendMessage { id, value, peer };
-        self.pending.insert(id, (msg.clone(), None));
+        self.pending.insert(
+            id,
+            PendingCmd {
+                cmd: SentCmd::SentMsg,
+                answ: None,
+            },
+        );
         if smol::run(self.sender.send(msg)).is_err() {
             panic!()
         }
@@ -61,8 +101,14 @@ where
 
     pub fn get(&mut self, key: K) {
         let id = self.next_id();
+        self.pending.insert(
+            id,
+            PendingCmd {
+                cmd: SentCmd::PullContent(key.borrow().to_owned()),
+                answ: None,
+            },
+        );
         let msg = NetHandleCmd::PullResource { id, key };
-        self.pending.insert(id, (msg.clone(), None));
         if smol::run(self.sender.send(msg)).is_err() {
             panic!()
         }
@@ -118,8 +164,14 @@ where
         let msg = NetHandleCmd::Shutdown(msg_id);
         match self.sender.try_send(msg) {
             Ok(()) => {}
-            Err(TrySendError::Full(msg)) => {
-                self.pending.insert(msg_id, (msg, None));
+            Err(TrySendError::Full(_msg)) => {
+                self.pending.insert(
+                    msg_id,
+                    PendingCmd {
+                        cmd: SentCmd::ShutDown,
+                        answ: None,
+                    },
+                );
             }
             Err(TrySendError::Closed(_)) => {
                 self.is_dead = true;
@@ -132,20 +184,17 @@ where
     }
 
     fn try_getting_shutdown_answ(&mut self) -> Result<bool, ()> {
-        match self.pending.values().find(|msg| {
-            if let (NetHandleCmd::Shutdown(_), _) = msg {
-                true
-            } else {
-                false
-            }
-        }) {
-            Some((NetHandleCmd::Shutdown(id), Some(NetHandleAnsw::HasShutdown { answ, .. }))) => {
+        match self.pending.values().find(|p| p.shutdown()) {
+            Some(PendingCmd {
+                cmd: SentCmd::ShutDown,
+                answ: Some(NetHandleAnsw::HasShutdown { id, answ }),
+            }) => {
                 let answ = *answ;
                 let id = *id;
                 self.pending.remove(&id.clone());
                 Ok(answ)
             }
-            Some((_, None)) => Ok(false),
+            Some(_) => Ok(false),
             _ => Err(()),
         }
     }
@@ -155,20 +204,33 @@ where
             match self.rcv.try_recv() {
                 Ok(NetHandleAnsw::HasShutdown { id, answ }) => {
                     if let Some(q) = self.pending.get_mut(&id) {
-                        q.1 = Some(NetHandleAnsw::HasShutdown { id, answ })
+                        q.answ = Some(NetHandleAnsw::HasShutdown { id, answ })
                     }
                 }
                 Ok(NetHandleAnsw::KeyAdded { id }) => {
-                    if let Some((NetHandleCmd::ProvideResource { key, .. }, _)) =
-                        self.pending.remove(&id)
+                    if let Some(PendingCmd {
+                        cmd: SentCmd::AddedKey(key),
+                        ..
+                    }) = self.pending.remove(&id)
                     {
-                        eprintln!("Added key #{}", key);
+                        eprintln!("Added key #{}", K::from(&key));
                     } else {
                         unreachable!()
                     }
                 }
                 Ok(NetHandleAnsw::GotRecord { key, .. }) => {
-                    self.stats.entry(key).or_default().times_received += 1;
+                    self.stats.key_stats.entry(key).or_default().times_received += 1;
+                }
+                Ok(NetHandleAnsw::RcvMsg { peer, msg }) => {
+                    eprintln!(
+                        "RECEIVED STREAMING MSG: {}",
+                        String::from_utf8(msg).unwrap()
+                    );
+                    if let Some(stats) = self.stats.rcv_msgs.iter_mut().find(|p| p.0 == peer) {
+                        stats.1 += 1;
+                    } else {
+                        self.stats.rcv_msgs.push((peer, 1));
+                    }
                 }
                 Err(TryRecvError::Closed) => {
                     self.is_dead = true;
@@ -192,15 +254,40 @@ pub struct KeyStats {
     pub times_received: usize,
 }
 
-#[derive(Clone)]
-pub(crate) enum NetHandleCmd<K>
+struct PendingCmd<K>
 where
-    K: Borrow<[u8]> + Clone + Copy,
+    K: Borrow<[u8]>,
+{
+    cmd: SentCmd,
+    answ: Option<NetHandleAnsw<K>>,
+}
+
+impl<K: Borrow<[u8]>> PendingCmd<K> {
+    fn shutdown(&self) -> bool {
+        match self.cmd {
+            SentCmd::ShutDown => true,
+            _ => false,
+        }
+    }
+}
+
+enum SentCmd {
+    AddedKey(Vec<u8>),
+    PullContent(Vec<u8>),
+    ShutDown,
+    SentMsg,
+}
+
+#[derive(Clone)]
+pub(crate) enum NetHandleCmd<K, V>
+where
+    K: Borrow<[u8]>,
+    V: Into<Vec<u8>>,
 {
     /// query the network about current status
     IsRunning(usize),
     /// put a resource in this node
-    ProvideResource { id: usize, key: K },
+    ProvideResource { id: usize, key: K, value: V },
     /// pull a resource in this node
     PullResource { id: usize, key: K },
     /// issue a shutdown command
@@ -213,14 +300,15 @@ where
     },
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) enum NetHandleAnsw<K>
 where
-    K: Borrow<[u8]> + Clone + Copy,
+    K: Borrow<[u8]>,
 {
     KeyAdded { id: usize },
     GotRecord { id: usize, key: K },
     HasShutdown { id: usize, answ: bool },
+    RcvMsg { peer: PeerId, msg: Vec<u8> },
 }
 
 fn peer_id_from_ed25519(key: identity::ed25519::PublicKey) -> PeerId {

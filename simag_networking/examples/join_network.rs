@@ -29,14 +29,17 @@ fn main() {
     println!("This network encoded peer id is: {}", network.get_peer_id());
 
     network.get(AgentKey {});
-    network.send_message(b"awesome message!".to_vec(), peer_id);
+    network.send_message(b"Awesome message!".to_vec(), peer_id);
+    let mut received = false;
     while network.is_running() {
-        if let Some(stats) = network.stats.get(&AgentKey {}) {
-            // if stats.times_received > 0 {
-            //     println!("Received a resource at least once");
-            //     network.shutdown().unwrap();
-            //     break;
-            // }
+        if let Some(stats) = network.stats.for_key(&AgentKey {}) {
+            if stats.times_received > 0 && !network.stats.received_messages().is_empty() {
+                if !received {
+                    println!("Received a resource at least once");
+                    received = true;
+                }
+                network.shutdown().unwrap();
+            }
         }
     }
     println!("Shutted down");
