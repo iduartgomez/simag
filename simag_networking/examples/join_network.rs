@@ -1,6 +1,6 @@
 use libp2p::PeerId;
 use simag_networking::prelude::*;
-use std::net::Ipv4Addr;
+use std::{collections::HashMap, net::Ipv4Addr};
 
 /// A Base58 enconded peer ID. Only used for testing pourpouses. The corresponding secret key can be found in
 /// the examples directory and is used in the bootstrap network example.
@@ -27,18 +27,34 @@ fn main() {
         .build()
         .unwrap();
     println!("This network encoded peer id is: {}", network.get_peer_id());
-
     network.get(AgentKey {});
-    network.send_message(b"Awesome message!".to_vec(), peer_id);
-    let mut received = false;
+    network.send_message(b"Read my awesome message!".to_vec(), peer_id);
+
+    let mut cnt: HashMap<_, usize> = HashMap::new();
+    let mut served = false;
     while network.is_running() {
         if let Some(stats) = network.stats.for_key(&AgentKey {}) {
-            if stats.times_received > 0 && !network.stats.received_messages().is_empty() {
-                if !received {
-                    println!("Received a resource at least once");
-                    received = true;
+            if stats.times_received > 0 && !served {
+                println!("Received a resource at least once");
+                served = true;
+            }
+        }
+
+        for (peer, amount) in network.stats.received_messages().to_owned() {
+            let current_amount = cnt.entry(peer.clone()).or_default();
+            if *current_amount < amount {
+                println!("Received {} messages from #{}", amount, peer);
+                *current_amount += 1;
+                if *current_amount < 10 {
+                    network.send_message(b"Hai back!".to_vec(), peer.clone());
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                } else {
+                    // network.shutdown().unwrap();
                 }
-                network.shutdown().unwrap();
+
+                if *current_amount % 2 == 0 {
+                    network.get(AgentKey {});
+                }
             }
         }
     }

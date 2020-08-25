@@ -13,7 +13,6 @@
 //! - openning subscription, multi-producer/multi-consumer, channels on-demand and
 //!   handling authorization and automatic subscription/unsubscription on changing internal state.
 
-use futures_codec::BytesMut;
 use handler::{StreamHandler, StreamHandlerEvent, StreamHandlerInEvent};
 use libp2p::{
     core::connection::ConnectionId,
@@ -181,7 +180,6 @@ impl NetworkBehaviour for Stream {
                         match self.pending_messages.get_mut(peer) {
                             Some(pending) if !pending.is_empty() => {
                                 while let Some(msg) = pending.pop() {
-                                    eprintln!("Output stream w/ peer: {}", peer);
                                     if let Err(err) = Stream::poll_send_msg(send_conn, msg, cx) {
                                         let ev = NetworkBehaviourAction::GenerateEvent(
                                             StreamEvent::ConnectionError {
@@ -191,10 +189,6 @@ impl NetworkBehaviour for Stream {
                                         );
                                         return Poll::Ready(ev);
                                     }
-                                    self.pending_handler_msg.push((
-                                        peer.clone(),
-                                        StreamHandlerInEvent::RefreshConnection,
-                                    ));
                                 }
                             }
                             _ => {}
@@ -203,9 +197,6 @@ impl NetworkBehaviour for Stream {
                     StreamHandlerEvent::InOpenChannel(ref mut rcv_conn) => {
                         match Stream::poll_rcv_msg(rcv_conn, cx) {
                             Ok(Some(msg)) => {
-                                eprintln!("Input stream w/ peer: {}", peer);
-                                self.pending_handler_msg
-                                    .push((peer.clone(), StreamHandlerInEvent::RefreshConnection));
                                 return Poll::Ready(NetworkBehaviourAction::GenerateEvent(
                                     StreamEvent::MessageReceived {
                                         peer: peer.clone(),
@@ -233,6 +224,147 @@ impl NetworkBehaviour for Stream {
     }
 }
 
+pub(super) mod handler {
+    use super::*;
+    use libp2p::{swarm, InboundUpgrade, OutboundUpgrade};
+    use protocol::StreamProtocol;
+
+    pub(crate) enum StreamHandlerEvent {
+        InOpenChannel(SimagStream<NegotiatedSubstream>),
+        OutOpenChannel(SimagStream<NegotiatedSubstream>),
+    }
+
+    #[derive(Clone)]
+    pub enum StreamHandlerInEvent {
+        /// A dialing peer is requesting an open channel
+        RequestChannel,
+    }
+
+    pub(super) enum SubstreamState {
+        OutPendingOpen,
+    }
+
+    pub(crate) struct StreamHandler {
+        keep_alive: swarm::KeepAlive,
+        /// (already activated, pending dispatch)
+        outbound_substream: (bool, Option<SimagStream<NegotiatedSubstream>>),
+        /// (already activated, pending dispatch)
+        inbound_substream: (bool, Option<SimagStream<NegotiatedSubstream>>),
+        events: Vec<SubstreamState>,
+    }
+
+    impl StreamHandler {
+        pub fn new() -> StreamHandler {
+            StreamHandler {
+                keep_alive: swarm::KeepAlive::Yes,
+                outbound_substream: (false, None),
+                inbound_substream: (false, None),
+                events: Vec::with_capacity(1),
+            }
+        }
+    }
+
+    impl ProtocolsHandler for StreamHandler {
+        type InEvent = StreamHandlerInEvent;
+        type OutEvent = StreamHandlerEvent;
+        type Error = std::io::Error;
+        type InboundProtocol = StreamProtocol;
+        type OutboundProtocol = StreamProtocol;
+        type OutboundOpenInfo = ();
+
+        fn listen_protocol(&self) -> swarm::SubstreamProtocol<Self::InboundProtocol> {
+            swarm::SubstreamProtocol::new(StreamProtocol)
+        }
+
+        fn inject_fully_negotiated_outbound(
+            &mut self,
+            substream: <Self::OutboundProtocol as OutboundUpgrade<NegotiatedSubstream>>::Output,
+            _info: Self::OutboundOpenInfo,
+        ) {
+            if let (false, None) = self.outbound_substream {
+                self.outbound_substream = (false, Some(substream));
+            }
+        }
+
+        fn inject_fully_negotiated_inbound(
+            &mut self,
+            substream: <Self::InboundProtocol as InboundUpgrade<NegotiatedSubstream>>::Output,
+        ) {
+            if let (false, None) = self.inbound_substream {
+                self.inbound_substream = (false, Some(substream));
+            }
+        }
+
+        fn inject_event(&mut self, event: Self::InEvent) {
+            match event {
+                StreamHandlerInEvent::RequestChannel => {
+                    self.events.push(SubstreamState::OutPendingOpen);
+                }
+            }
+        }
+
+        fn inject_dial_upgrade_error(
+            &mut self,
+            _info: Self::OutboundOpenInfo,
+            _error: swarm::ProtocolsHandlerUpgrErr<std::io::Error>,
+        ) {
+            self.keep_alive = swarm::KeepAlive::No;
+        }
+
+        fn connection_keep_alive(&self) -> swarm::KeepAlive {
+            self.keep_alive
+        }
+
+        fn poll(
+            &mut self,
+            _cx: &mut Context,
+        ) -> Poll<
+            swarm::ProtocolsHandlerEvent<
+                Self::OutboundProtocol,
+                Self::OutboundOpenInfo,
+                Self::OutEvent,
+                Self::Error,
+            >,
+        > {
+            if let Some(event) = self.events.pop() {
+                match event {
+                    SubstreamState::OutPendingOpen => {
+                        let ev = swarm::ProtocolsHandlerEvent::OutboundSubstreamRequest {
+                            protocol: swarm::SubstreamProtocol::new(StreamProtocol),
+                            info: (),
+                        };
+                        return Poll::Ready(ev);
+                    }
+                }
+            }
+
+            if !self.inbound_substream.0 && self.inbound_substream.1.is_some() {
+                if let (_, Some(substream)) =
+                    std::mem::replace(&mut self.inbound_substream, (true, None))
+                {
+                    let ev = swarm::ProtocolsHandlerEvent::Custom(
+                        StreamHandlerEvent::InOpenChannel(substream),
+                    );
+                    return Poll::Ready(ev);
+                }
+            }
+
+            if !self.outbound_substream.0 && self.outbound_substream.1.is_some() {
+                if let (_, Some(substream)) =
+                    std::mem::replace(&mut self.outbound_substream, (true, None))
+                {
+                    let ev = swarm::ProtocolsHandlerEvent::Custom(
+                        StreamHandlerEvent::OutOpenChannel(substream),
+                    );
+                    return Poll::Ready(ev);
+                }
+            }
+
+            Poll::Pending
+        }
+    }
+}
+
 pub(super) mod protocol {
     use super::*;
     use futures_codec::Framed;
@@ -240,20 +372,15 @@ pub(super) mod protocol {
     use std::io;
     use unsigned_varint::codec::UviBytes;
 
-    /// Composed stream with req and resp types.
-    type Stream<S, A, B> = stream::AndThen<
-        sink::With<
-            stream::ErrInto<Framed<S, UviBytes<io::Cursor<Vec<u8>>>>, io::Error>,
-            io::Cursor<Vec<u8>>,
-            A,
-            future::Ready<Result<io::Cursor<Vec<u8>>, io::Error>>,
-            fn(A) -> future::Ready<Result<io::Cursor<Vec<u8>>, io::Error>>,
-        >,
-        future::Ready<Result<B, io::Error>>,
-        fn(BytesMut) -> future::Ready<Result<B, io::Error>>,
+    type Stream<S> = sink::With<
+        Framed<S, UviBytes<io::Cursor<Vec<u8>>>>,
+        io::Cursor<Vec<u8>>,
+        Vec<u8>,
+        future::Ready<Result<io::Cursor<Vec<u8>>, io::Error>>,
+        fn(Vec<u8>) -> future::Ready<Result<io::Cursor<Vec<u8>>, io::Error>>,
     >;
 
-    pub(super) type SimagStream<S> = Stream<S, Vec<u8>, BytesMut>;
+    pub(super) type SimagStream<S> = Stream<S>;
 
     pub(crate) struct StreamProtocol;
 
@@ -295,150 +422,7 @@ pub(super) mod protocol {
     fn build_conn_stream<C: AsyncRead + AsyncWrite + Unpin>(incoming: C) -> SimagStream<C> {
         let mut codec = UviBytes::default();
         codec.set_max_len(MAX_MSG_SIZE);
-
         Framed::new(incoming, codec)
-            .err_into()
             .with::<_, _, fn(_) -> _, _>(|req| future::ok(io::Cursor::new(req)))
-            .and_then::<_, fn(_) -> _>(future::ok)
-    }
-}
-
-pub(super) mod handler {
-    use super::*;
-    use libp2p::{swarm, InboundUpgrade, OutboundUpgrade};
-    use protocol::StreamProtocol;
-    use smallvec::SmallVec;
-    use std::time::{Duration, Instant};
-
-    pub(crate) enum StreamHandlerEvent {
-        InOpenChannel(SimagStream<NegotiatedSubstream>),
-        OutOpenChannel(SimagStream<NegotiatedSubstream>),
-    }
-
-    #[derive(Clone)]
-    pub enum StreamHandlerInEvent {
-        /// A dialing peer is requesting an open channel
-        RequestChannel,
-        RefreshConnection,
-    }
-
-    enum SubstreamState {
-        OutPendingOpen,
-        OutOpenChannel(SimagStream<NegotiatedSubstream>),
-        InOpenChannel(SimagStream<NegotiatedSubstream>),
-    }
-
-    pub(crate) struct StreamHandler {
-        keep_alive: swarm::KeepAlive,
-        events: SmallVec<[SubstreamState; 2]>,
-        next_connec_unique_id: usize,
-    }
-
-    impl StreamHandler {
-        const KEEP_ALIVE: Duration = Duration::from_secs(30);
-
-        pub fn new() -> StreamHandler {
-            let keep_alive = swarm::KeepAlive::Until(Instant::now() + Self::KEEP_ALIVE);
-            StreamHandler {
-                keep_alive,
-                events: SmallVec::new(),
-                next_connec_unique_id: 0,
-            }
-        }
-    }
-
-    impl ProtocolsHandler for StreamHandler {
-        type InEvent = StreamHandlerInEvent;
-        type OutEvent = StreamHandlerEvent;
-        type Error = std::io::Error;
-        type InboundProtocol = StreamProtocol;
-        type OutboundProtocol = StreamProtocol;
-        type OutboundOpenInfo = ();
-
-        fn listen_protocol(&self) -> swarm::SubstreamProtocol<Self::InboundProtocol> {
-            swarm::SubstreamProtocol::new(StreamProtocol)
-        }
-
-        fn inject_fully_negotiated_outbound(
-            &mut self,
-            protocol: <Self::OutboundProtocol as OutboundUpgrade<NegotiatedSubstream>>::Output,
-            _info: Self::OutboundOpenInfo,
-        ) {
-            self.events.push(SubstreamState::OutOpenChannel(protocol));
-        }
-
-        fn inject_fully_negotiated_inbound(
-            &mut self,
-            protocol: <Self::InboundProtocol as InboundUpgrade<NegotiatedSubstream>>::Output,
-        ) {
-            let _next_conn_id = self.next_connec_unique_id;
-            self.next_connec_unique_id += 1;
-            self.events.push(SubstreamState::InOpenChannel(protocol));
-        }
-
-        fn inject_event(&mut self, event: Self::InEvent) {
-            match event {
-                StreamHandlerInEvent::RequestChannel => {
-                    self.events.push(SubstreamState::OutPendingOpen);
-                }
-                StreamHandlerInEvent::RefreshConnection => {
-                    self.keep_alive = swarm::KeepAlive::Until(Instant::now() + Self::KEEP_ALIVE);
-                }
-            }
-        }
-
-        fn inject_dial_upgrade_error(
-            &mut self,
-            _info: Self::OutboundOpenInfo,
-            _error: swarm::ProtocolsHandlerUpgrErr<std::io::Error>,
-        ) {
-            self.keep_alive = swarm::KeepAlive::No;
-        }
-
-        fn connection_keep_alive(&self) -> swarm::KeepAlive {
-            self.keep_alive
-        }
-
-        fn poll(
-            &mut self,
-            _cx: &mut Context,
-        ) -> Poll<
-            swarm::ProtocolsHandlerEvent<
-                Self::OutboundProtocol,
-                Self::OutboundOpenInfo,
-                Self::OutEvent,
-                Self::Error,
-            >,
-        > {
-            if self.events.is_empty() {
-                return Poll::Pending;
-            }
-
-            if let Some(event) = self.events.pop() {
-                match event {
-                    SubstreamState::OutPendingOpen => {
-                        let ev = swarm::ProtocolsHandlerEvent::OutboundSubstreamRequest {
-                            protocol: swarm::SubstreamProtocol::new(StreamProtocol),
-                            info: (),
-                        };
-                        return Poll::Ready(ev);
-                    }
-                    SubstreamState::InOpenChannel(substream) => {
-                        let ev = swarm::ProtocolsHandlerEvent::Custom(
-                            StreamHandlerEvent::InOpenChannel(substream),
-                        );
-                        return Poll::Ready(ev);
-                    }
-                    SubstreamState::OutOpenChannel(substream) => {
-                        let ev = swarm::ProtocolsHandlerEvent::Custom(
-                            StreamHandlerEvent::OutOpenChannel(substream),
-                        );
-                        return Poll::Ready(ev);
-                    }
-                }
-            }
-
-            Poll::Pending
-        }
     }
 }

@@ -1,6 +1,14 @@
 // use crossbeam::{Receiver, Sender};
+use crate::network::GlobalExecutor;
 use libp2p::{identity, PeerId};
-use std::{borrow::Borrow, collections::HashMap, fmt::Display, fs::File, hash::Hash, io::Write};
+use std::{
+    borrow::Borrow,
+    collections::HashMap,
+    fmt::{Debug, Display},
+    fs::File,
+    hash::Hash,
+    io::Write,
+};
 use tokio::sync::mpsc::{
     error::{TryRecvError, TrySendError},
     Receiver, Sender,
@@ -11,8 +19,8 @@ type MsgId = usize;
 /// A handle to a running network connection.
 pub struct NetworkHandle<K, V>
 where
-    K: Borrow<[u8]> + Eq + Hash + Display,
-    V: Into<Vec<u8>>,
+    K: Borrow<[u8]> + Eq + Hash + Display + Debug,
+    V: Into<Vec<u8>> + Debug,
 {
     sender: Sender<NetHandleCmd<K, V>>,
     rcv: Receiver<NetHandleAnsw<K>>,
@@ -49,8 +57,8 @@ impl<K: Eq + Hash> NetworkStats<K> {
 
 impl<K, V> NetworkHandle<K, V>
 where
-    K: Borrow<[u8]> + Eq + Hash + Display + for<'r> From<&'r [u8]>,
-    V: Into<Vec<u8>>,
+    K: Borrow<[u8]> + Eq + Hash + Display + Debug + for<'r> From<&'r [u8]>,
+    V: Into<Vec<u8>> + Debug,
 {
     pub(crate) fn new(
         sender: Sender<NetHandleCmd<K, V>>,
@@ -79,9 +87,7 @@ where
             },
         );
         let msg = NetHandleCmd::ProvideResource { id, key, value };
-        if smol::run(self.sender.send(msg)).is_err() {
-            panic!()
-        }
+        GlobalExecutor::block_on(self.sender.send(msg)).expect("failed sending message");
     }
 
     pub fn send_message(&mut self, value: Vec<u8>, peer: PeerId) {
@@ -94,9 +100,7 @@ where
                 answ: None,
             },
         );
-        if smol::run(self.sender.send(msg)).is_err() {
-            panic!()
-        }
+        GlobalExecutor::block_on(self.sender.send(msg)).expect("failed sending message");
     }
 
     pub fn get(&mut self, key: K) {
@@ -109,9 +113,7 @@ where
             },
         );
         let msg = NetHandleCmd::PullResource { id, key };
-        if smol::run(self.sender.send(msg)).is_err() {
-            panic!()
-        }
+        GlobalExecutor::block_on(self.sender.send(msg)).expect("failed sending message");
     }
 
     /// Get this peer id encoded as a Base58 string.
@@ -131,7 +133,7 @@ where
         if self.is_dead {
             return false;
         }
-        self.clean_answer_buffer();
+        self.process_answer_buffer();
 
         let msg_id = self.next_id();
         let msg = NetHandleCmd::IsRunning(msg_id);
@@ -155,7 +157,7 @@ where
         if self.is_dead {
             return Err(());
         }
-        self.clean_answer_buffer();
+        self.process_answer_buffer();
         if let Ok(answ) = self.try_getting_shutdown_answ() {
             return Ok(answ);
         }
@@ -179,7 +181,7 @@ where
             }
         }
 
-        self.clean_answer_buffer();
+        self.process_answer_buffer();
         Ok(self.try_getting_shutdown_answ().unwrap_or(false))
     }
 
@@ -199,7 +201,7 @@ where
         }
     }
 
-    fn clean_answer_buffer(&mut self) {
+    fn process_answer_buffer(&mut self) {
         loop {
             match self.rcv.try_recv() {
                 Ok(NetHandleAnsw::HasShutdown { id, answ }) => {
@@ -213,7 +215,7 @@ where
                         ..
                     }) = self.pending.remove(&id)
                     {
-                        eprintln!("Added key #{}", K::from(&key));
+                        eprintln!("Added key: {}", K::from(&key));
                     } else {
                         unreachable!()
                     }
@@ -278,11 +280,11 @@ enum SentCmd {
     SentMsg,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) enum NetHandleCmd<K, V>
 where
-    K: Borrow<[u8]>,
-    V: Into<Vec<u8>>,
+    K: Borrow<[u8]> + Debug,
+    V: Into<Vec<u8>> + Debug,
 {
     /// query the network about current status
     IsRunning(usize),

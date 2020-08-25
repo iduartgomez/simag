@@ -1,5 +1,5 @@
 use simag_networking::prelude::*;
-use std::net::Ipv4Addr;
+use std::{collections::HashMap, net::Ipv4Addr};
 
 const ENCONDED_KEY1: &[u8] = include_bytes!("key1");
 const ENCONDED_KEY2: &[u8] = include_bytes!("key2");
@@ -47,24 +47,28 @@ fn main() {
 
     // #1 This is the id that must be provided to other nodes that want to join the network.
     println!("This network encoded peer id is: {}", network.get_peer_id());
-
     network.put(AgentKey {}, b"Joined group!".to_vec());
-    let mut reply = false;
+
+    let mut cnt: HashMap<_, usize> = HashMap::new();
+    let mut served = false;
     while network.is_running() {
         if let Some(stats) = network.stats.for_key(&AgentKey {}) {
-            if stats.times_served > 0 {
+            if stats.times_served > 0 && !served {
                 println!("Served a resource at least once");
-                if network.shutdown().unwrap() {
-                    break;
-                }
+                served = false;
             }
         }
-        if !reply {
-            for (peer, amount) in network.stats.received_messages().to_owned() {
+
+        for (peer, amount) in network.stats.received_messages().to_owned() {
+            let current_amount = cnt.entry(peer.clone()).or_default();
+            if *current_amount < amount {
                 println!("Received {} messages from #{}", amount, peer);
-                network.send_message(b"Hai there!".to_vec(), peer.clone());
+                *current_amount += 1;
+                if *current_amount < 10 {
+                    network.send_message(b"Hai there!".to_vec(), peer.clone());
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
             }
-            reply = true;
         }
     }
     println!("Shutted down");
