@@ -132,12 +132,12 @@ impl NetworkBehaviour for Stream {
     }
 
     fn inject_connected(&mut self, peer_id: &PeerId) {
-        eprintln!("Peer #{} connected", peer_id);
+        log::debug!("Peer #{} connected", peer_id);
         self.open_conn.entry(peer_id.clone()).or_default();
     }
 
     fn inject_disconnected(&mut self, peer_id: &PeerId) {
-        eprintln!("Peer #{} disconnected", peer_id);
+        log::debug!("Peer #{} disconnected", peer_id);
         self.addresses.remove(peer_id);
         self.open_conn.remove(peer_id);
     }

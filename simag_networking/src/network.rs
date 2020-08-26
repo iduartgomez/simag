@@ -11,7 +11,7 @@ use libp2p::{
     multiaddr::Protocol,
     noise,
     swarm::SwarmBuilder,
-    tcp::TcpConfig,
+    tcp::TokioTcpConfig,
     yamux, Multiaddr, NetworkBehaviour, PeerId, Swarm, Transport,
 };
 use once_cell::sync::Lazy;
@@ -53,7 +53,7 @@ where
         let (query_send, mut query_rcv) = channel::<NetHandleCmd<K, V>>(10);
         let (mut answ_send, answ_rcv) = channel::<NetHandleAnsw<K>>(10);
         GlobalExecutor::spawn(async move {
-            eprintln!("Setting #{} event loop", &self.id);
+            log::debug!("Setting #{} event loop", &self.id);
             let mut cmd_queue = Vec::with_capacity(1);
             'main: loop {
                 tokio::select! {
@@ -131,7 +131,7 @@ where
             .await
             .is_err()
         {
-            eprintln!("Network handle dropped!");
+            log::debug!("Network handle dropped!");
             Err(())
         } else {
             Ok(())
@@ -144,14 +144,14 @@ where
             .await
             .is_err()
         {
-            eprintln!("Network handle dropped!");
+            log::debug!("Network handle dropped!");
         }
     }
 
     async fn process_event(&mut self, event: NetEvent) {
         match event {
             NetEvent::KademliaEvent(event) => {
-                // eprintln!("\nPeer #{} received event:\n {:?}", self.id, event);
+                // log::debug!("\nPeer #{} received event:\n {:?}", self.id, event);
                 if let kad::KademliaEvent::QueryResult { result, id, .. } = event {
                     if let Some(Some(NetHandleCmd::PullResource { id, key })) =
                         self.sent_kad_queries.remove(&id)
@@ -165,8 +165,8 @@ where
                                     record: kad::Record { value, .. },
                                     ..
                                 } = rec;
-                                eprintln!(
-                                    "RECEIVED KAD MSG: {}",
+                                log::debug!(
+                                    "Received kademlia msg: {}",
                                     String::from_utf8(value).unwrap()
                                 );
                                 self.answ_queue.push(NetHandleAnsw::GotRecord { id, key });
@@ -193,7 +193,7 @@ where
                 self.answ_queue.push(NetHandleAnsw::RcvMsg { msg, peer });
             }
             NetEvent::Stream(stream::StreamEvent::ConnectionError { peer, err }) => {
-                eprintln!("Connection error with peer: {}:\n{}", peer, err);
+                log::debug!("Connection error with peer: {}:\n{}", peer, err);
             }
             NetEvent::Identify(_) => {}
         }
@@ -460,7 +460,7 @@ impl NetworkBuilder {
             .into_authentic(&self.local_key)
             .expect("Signing libp2p-noise static DH keypair failed.");
 
-        let tcp = TcpConfig::new().nodelay(true);
+        let tcp = TokioTcpConfig::new().nodelay(true);
         Ok(DnsConfig::new(tcp)?
             .upgrade(upgrade::Version::V1)
             .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())

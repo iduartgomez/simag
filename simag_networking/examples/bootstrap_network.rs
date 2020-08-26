@@ -46,7 +46,7 @@ fn main() {
     // network.save_secret_key(secret_file).unwrap();
 
     // #1 This is the id that must be provided to other nodes that want to join the network.
-    println!("This network encoded peer id is: {}", network.get_peer_id());
+    log::info!("This network encoded peer id is: {}", network.get_peer_id());
     network.put(AgentKey {}, b"Joined group!".to_vec());
 
     let mut cnt: HashMap<_, usize> = HashMap::new();
@@ -54,7 +54,7 @@ fn main() {
     while network.is_running() {
         if let Some(stats) = network.stats.for_key(&AgentKey {}) {
             if stats.times_served > 0 && !served {
-                println!("Served a resource at least once");
+                log::info!("Served a resource at least once");
                 served = false;
             }
         }
@@ -62,14 +62,17 @@ fn main() {
         for (peer, amount) in network.stats.received_messages().to_owned() {
             let current_amount = cnt.entry(peer.clone()).or_default();
             if *current_amount < amount {
-                println!("Received {} messages from #{}", amount, peer);
+                log::info!("Received {} messages from #{}", amount, peer);
                 *current_amount += 1;
                 if *current_amount < 10 {
                     network.send_message(b"Hai there!".to_vec(), peer.clone());
-                    std::thread::sleep(std::time::Duration::from_millis(20));
+                } else {
+                    std::thread::sleep(std::time::Duration::from_secs(10));
+                    network.send_message(b"Bye!".to_vec(), peer.clone());
+                    log::info!("Sent goodbye message")
                 }
             }
         }
     }
-    println!("Shutted down");
+    log::info!("Shutted down");
 }

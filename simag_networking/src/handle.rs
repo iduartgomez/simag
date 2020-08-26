@@ -215,7 +215,7 @@ where
                         ..
                     }) = self.pending.remove(&id)
                     {
-                        eprintln!("Added key: {}", K::from(&key));
+                        log::debug!("Added key: {}", K::from(&key));
                     } else {
                         unreachable!()
                     }
@@ -224,8 +224,8 @@ where
                     self.stats.key_stats.entry(key).or_default().times_received += 1;
                 }
                 Ok(NetHandleAnsw::RcvMsg { peer, msg }) => {
-                    eprintln!(
-                        "RECEIVED STREAMING MSG: {}",
+                    log::debug!(
+                        "Received streaming msg: {}",
                         String::from_utf8(msg).unwrap()
                     );
                     if let Some(stats) = self.stats.rcv_msgs.iter_mut().find(|p| p.0 == peer) {

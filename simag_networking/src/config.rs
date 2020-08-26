@@ -19,10 +19,16 @@ pub(crate) struct Config {
     pub bootstrap_port: u16,
     pub bootstrap_id: Option<PeerId>,
     pub local_peer_keypair: Option<identity::ed25519::Keypair>,
+    pub log_level: log::LevelFilter,
 }
 
 impl Config {
     pub fn load_conf() -> Result<Config, ()> {
+        #[cfg(any(debug_assertions, test))]
+        {
+            self::tracing::Logger::get_logger();
+        }
+
         let mut settings = config::Config::new();
         settings
             .merge(config::Environment::with_prefix("SIMAG"))
@@ -49,6 +55,7 @@ impl Config {
             bootstrap_port,
             bootstrap_id,
             local_peer_keypair,
+            log_level: log::LevelFilter::Off,
         })
     }
 
@@ -74,4 +81,29 @@ impl Config {
 
         Ok((bootstrap_ip, bootstrap_port, id_str))
     }
+}
+
+pub(super) mod tracing {
+    use super::*;
+
+    #[derive(Clone, Copy)]
+    pub struct Logger;
+
+    impl Logger {
+        /// Get or initialize a logger
+        pub fn get_logger() -> &'static Logger {
+            Lazy::force(&LOGGER)
+        }
+    }
+
+    static LOGGER: Lazy<Logger> = Lazy::new(|| {
+        env_logger::builder()
+            .format_module_path(true)
+            .format_timestamp_nanos()
+            .target(env_logger::Target::Stderr)
+            .filter(None, log::LevelFilter::Debug)
+            .init();
+
+        Logger
+    });
 }
