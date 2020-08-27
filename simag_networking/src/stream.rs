@@ -43,11 +43,9 @@ pub(crate) struct Stream {
     addresses: HashMap<PeerId, Vec<Multiaddr>>,
     /// open connections to a peer;
     /// never should have more than one inbound/outbound connection really
-    open_conn: HashMap<PeerId, SmallVec<[StreamHandlerEvent; 2]>>,
+    open_conn: HashMap<PeerId, SmallVec<[StreamHandlerEvent; 3]>>,
     /// encoded messages pending to be sent to a given peer
     pending_messages: HashMap<PeerId, Vec<Vec<u8>>>,
-    /// pending messages to be sent to peer connection handlers
-    pending_handler_msg: Vec<(PeerId, StreamHandlerInEvent)>,
 }
 
 impl Stream {
@@ -56,7 +54,6 @@ impl Stream {
             addresses: HashMap::new(),
             open_conn: HashMap::new(),
             pending_messages: HashMap::new(),
-            pending_handler_msg: Vec::new(),
         }
     }
 
@@ -133,7 +130,10 @@ impl NetworkBehaviour for Stream {
 
     fn inject_connected(&mut self, peer_id: &PeerId) {
         log::debug!("Peer #{} connected", peer_id);
-        self.open_conn.entry(peer_id.clone()).or_default();
+        self.open_conn
+            .entry(peer_id.clone())
+            .or_default()
+            .push(StreamHandlerEvent::Requested(true));
     }
 
     fn inject_disconnected(&mut self, peer_id: &PeerId) {
@@ -146,9 +146,23 @@ impl NetworkBehaviour for Stream {
         &mut self,
         peer_id: PeerId,
         _connection: ConnectionId,
-        event: StreamHandlerEvent,
+        mut event: StreamHandlerEvent,
     ) {
-        self.open_conn.entry(peer_id).or_default().push(event);
+        let connections = self.open_conn.entry(peer_id).or_default();
+        let mut replaced = false;
+        for conn in connections.iter_mut() {
+            let same_type = (conn.inbound_request() && event.inbound_request())
+                || (conn.outbound_request() && event.outbound_request());
+            if same_type {
+                // replace the existing connection for the new one
+                event = std::mem::replace(conn, event);
+                replaced = true;
+                break;
+            }
+        }
+        if !replaced {
+            connections.push(event);
+        }
     }
 
     fn poll(
@@ -157,23 +171,7 @@ impl NetworkBehaviour for Stream {
         _params: &mut impl PollParameters,
     ) -> Poll<NetworkBehaviourAction<<StreamHandler as ProtocolsHandler>::InEvent, StreamEvent>>
     {
-        if let Some((peer_id, event)) = self.pending_handler_msg.pop() {
-            return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
-                peer_id,
-                event,
-                handler: NotifyHandler::All,
-            });
-        }
-
         for (peer, open_conn) in &mut self.open_conn {
-            if open_conn.is_empty() {
-                return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
-                    peer_id: peer.clone(),
-                    event: StreamHandlerInEvent::RequestChannel,
-                    handler: NotifyHandler::Any,
-                });
-            }
-
             for conn in open_conn {
                 match conn {
                     StreamHandlerEvent::OutOpenChannel(ref mut send_conn) => {
@@ -216,6 +214,16 @@ impl NetworkBehaviour for Stream {
                             }
                         }
                     }
+                    StreamHandlerEvent::Requested(requested) => {
+                        if *requested {
+                            *requested = false;
+                            return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
+                                peer_id: peer.clone(),
+                                event: StreamHandlerInEvent::RequestChannel,
+                                handler: NotifyHandler::Any,
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -224,7 +232,7 @@ impl NetworkBehaviour for Stream {
     }
 }
 
-pub(super) mod handler {
+mod handler {
     use super::*;
     use libp2p::{swarm, InboundUpgrade, OutboundUpgrade};
     use protocol::StreamProtocol;
@@ -232,6 +240,23 @@ pub(super) mod handler {
     pub(crate) enum StreamHandlerEvent {
         InOpenChannel(SimagStream<NegotiatedSubstream>),
         OutOpenChannel(SimagStream<NegotiatedSubstream>),
+        Requested(bool),
+    }
+
+    impl StreamHandlerEvent {
+        pub fn inbound_request(&self) -> bool {
+            match self {
+                Self::InOpenChannel(_) => true,
+                _ => false,
+            }
+        }
+
+        pub fn outbound_request(&self) -> bool {
+            match self {
+                Self::OutOpenChannel(_) => true,
+                _ => false,
+            }
+        }
     }
 
     #[derive(Clone)]
@@ -248,8 +273,8 @@ pub(super) mod handler {
         keep_alive: swarm::KeepAlive,
         /// (already activated, pending dispatch)
         outbound_substream: (bool, Option<SimagStream<NegotiatedSubstream>>),
-        /// (already activated, pending dispatch)
-        inbound_substream: (bool, Option<SimagStream<NegotiatedSubstream>>),
+        /// pending dispatch
+        inbound_substream: Option<SimagStream<NegotiatedSubstream>>,
         events: Vec<SubstreamState>,
     }
 
@@ -258,7 +283,7 @@ pub(super) mod handler {
             StreamHandler {
                 keep_alive: swarm::KeepAlive::Yes,
                 outbound_substream: (false, None),
-                inbound_substream: (false, None),
+                inbound_substream: None,
                 events: Vec::with_capacity(1),
             }
         }
@@ -290,9 +315,7 @@ pub(super) mod handler {
             &mut self,
             substream: <Self::InboundProtocol as InboundUpgrade<NegotiatedSubstream>>::Output,
         ) {
-            if let (false, None) = self.inbound_substream {
-                self.inbound_substream = (false, Some(substream));
-            }
+            self.inbound_substream = Some(substream);
         }
 
         fn inject_event(&mut self, event: Self::InEvent) {
@@ -338,10 +361,8 @@ pub(super) mod handler {
                 }
             }
 
-            if !self.inbound_substream.0 && self.inbound_substream.1.is_some() {
-                if let (_, Some(substream)) =
-                    std::mem::replace(&mut self.inbound_substream, (true, None))
-                {
+            if self.inbound_substream.is_some() {
+                if let Some(substream) = std::mem::replace(&mut self.inbound_substream, None) {
                     let ev = swarm::ProtocolsHandlerEvent::Custom(
                         StreamHandlerEvent::InOpenChannel(substream),
                     );
@@ -365,7 +386,7 @@ pub(super) mod handler {
     }
 }
 
-pub(super) mod protocol {
+mod protocol {
     use super::*;
     use futures_codec::Framed;
     use libp2p::{core::UpgradeInfo, futures::prelude::*, InboundUpgrade, OutboundUpgrade};
@@ -395,10 +416,10 @@ pub(super) mod protocol {
 
     impl<C> InboundUpgrade<C> for StreamProtocol
     where
-        C: AsyncRead + AsyncWrite + Unpin,
+        C: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
         type Output = SimagStream<C>;
-        type Error = std::io::Error;
+        type Error = io::Error;
         type Future = future::Ready<Result<Self::Output, Self::Error>>;
 
         fn upgrade_inbound(self, incoming: C, _: Self::Info) -> Self::Future {
@@ -411,7 +432,7 @@ pub(super) mod protocol {
         C: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
         type Output = SimagStream<C>;
-        type Error = std::io::Error;
+        type Error = io::Error;
         type Future = future::Ready<Result<Self::Output, Self::Error>>;
 
         fn upgrade_outbound(self, incoming: C, _: Self::Info) -> Self::Future {
@@ -424,5 +445,13 @@ pub(super) mod protocol {
         codec.set_max_len(MAX_MSG_SIZE);
         Framed::new(incoming, codec)
             .with::<_, _, fn(_) -> _, _>(|req| future::ok(io::Cursor::new(req)))
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    pub(crate) enum StreamRcp {
+        /// Open an individual channel with the remote
+        OpenChannel,
+        /// Close the individual channel with the remote
+        CloseChannel,
     }
 }

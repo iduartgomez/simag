@@ -224,7 +224,7 @@ where
                     self.stats.key_stats.entry(key).or_default().times_received += 1;
                 }
                 Ok(NetHandleAnsw::RcvMsg { peer, msg }) => {
-                    log::debug!(
+                    log::info!(
                         "Received streaming msg: {}",
                         String::from_utf8(msg).unwrap()
                     );

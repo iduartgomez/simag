@@ -3,6 +3,7 @@
 
 mod config;
 mod handle;
+mod message;
 mod network;
 mod stream;
 
