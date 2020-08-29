@@ -1,14 +1,7 @@
-// use crossbeam::{Receiver, Sender};
-use crate::network::GlobalExecutor;
+use crate::network::{GlobalExecutor, KadKey, KadValue};
 use libp2p::{identity, PeerId};
-use std::{
-    borrow::Borrow,
-    collections::HashMap,
-    fmt::{Debug, Display},
-    fs::File,
-    hash::Hash,
-    io::Write,
-};
+use serde::{de::DeserializeOwned, Serialize};
+use std::{borrow::Borrow, collections::HashMap, fmt::Debug, fs::File, hash::Hash, io::Write};
 use tokio::sync::mpsc::{
     error::{TryRecvError, TrySendError},
     Receiver, Sender,
@@ -17,52 +10,31 @@ use tokio::sync::mpsc::{
 type MsgId = usize;
 
 /// A handle to a running network connection.
-pub struct NetworkHandle<K, V>
+pub struct NetworkHandle<K, V, M>
 where
-    K: Borrow<[u8]> + Eq + Hash + Display + Debug,
-    V: Into<Vec<u8>> + Debug,
+    K: KadKey,
+    V: KadValue,
+    M: Serialize + DeserializeOwned,
 {
+    pub stats: NetworkStats<K>,
     sender: Sender<NetHandleCmd<K, V>>,
-    rcv: Receiver<NetHandleAnsw<K>>,
+    rcv: Receiver<NetHandleAnsw<K, M>>,
     local_key: identity::ed25519::Keypair,
-    pending: HashMap<MsgId, PendingCmd<K>>,
+    pending: HashMap<MsgId, PendingCmd<K, M>>,
     next_msg_id: MsgId,
     is_dead: bool,
-    pub stats: NetworkStats<K>,
+    rcv_msg: HashMap<PeerId, Vec<M>>,
 }
 
-pub struct NetworkStats<K: Hash + Eq> {
-    key_stats: HashMap<K, KeyStats>,
-    rcv_msgs: Vec<(PeerId, usize)>,
-}
-
-impl<K: Eq + Hash> Default for NetworkStats<K> {
-    fn default() -> Self {
-        NetworkStats {
-            key_stats: HashMap::new(),
-            rcv_msgs: Vec::new(),
-        }
-    }
-}
-
-impl<K: Eq + Hash> NetworkStats<K> {
-    pub fn for_key(&self, key: &K) -> Option<&KeyStats> {
-        self.key_stats.get(key)
-    }
-
-    pub fn received_messages(&self) -> &[(PeerId, usize)] {
-        &self.rcv_msgs
-    }
-}
-
-impl<K, V> NetworkHandle<K, V>
+impl<K, V, M> NetworkHandle<K, V, M>
 where
-    K: Borrow<[u8]> + Eq + Hash + Display + Debug + for<'r> From<&'r [u8]>,
-    V: Into<Vec<u8>> + Debug,
+    K: KadKey,
+    V: KadValue,
+    M: Serialize + DeserializeOwned + Debug + Send + 'static,
 {
     pub(crate) fn new(
         sender: Sender<NetHandleCmd<K, V>>,
-        rcv: Receiver<NetHandleAnsw<K>>,
+        rcv: Receiver<NetHandleAnsw<K, M>>,
         local_key: identity::ed25519::Keypair,
     ) -> Self {
         NetworkHandle {
@@ -73,6 +45,7 @@ where
             next_msg_id: 0,
             is_dead: false,
             stats: NetworkStats::<K>::default(),
+            rcv_msg: HashMap::new(),
         }
     }
 
@@ -90,9 +63,15 @@ where
         GlobalExecutor::block_on(self.sender.send(msg)).expect("failed sending message");
     }
 
-    pub fn send_message(&mut self, value: Vec<u8>, peer: PeerId) {
+    pub fn send_message(&mut self, value: M, peer: PeerId) {
         let id = self.next_id();
-        let msg = NetHandleCmd::SendMessage { id, value, peer };
+        let mut sender = self.sender.clone();
+        GlobalExecutor::spawn(async move {
+            let value = bincode::serialize(&value).map_err(|_| ())?;
+            let msg = NetHandleCmd::<K, V>::SendMessage { id, value, peer };
+            sender.send(msg).await.map_err(|_| ())?;
+            Ok::<_, ()>(())
+        });
         self.pending.insert(
             id,
             PendingCmd {
@@ -100,7 +79,6 @@ where
                 answ: None,
             },
         );
-        GlobalExecutor::block_on(self.sender.send(msg)).expect("failed sending message");
     }
 
     pub fn get(&mut self, key: K) {
@@ -215,7 +193,7 @@ where
                         ..
                     }) = self.pending.remove(&id)
                     {
-                        log::debug!("Added key: {}", K::from(&key));
+                        log::debug!("Added key: {:?}", K::from(&key));
                     } else {
                         unreachable!()
                     }
@@ -224,15 +202,13 @@ where
                     self.stats.key_stats.entry(key).or_default().times_received += 1;
                 }
                 Ok(NetHandleAnsw::RcvMsg { peer, msg }) => {
-                    log::debug!(
-                        "Received streaming msg: {}",
-                        String::from_utf8(msg).unwrap()
-                    );
+                    log::debug!("Received streaming msg from {}: {:?}", peer, msg);
                     if let Some(stats) = self.stats.rcv_msgs.iter_mut().find(|p| p.0 == peer) {
                         stats.1 += 1;
                     } else {
-                        self.stats.rcv_msgs.push((peer, 1));
+                        self.stats.rcv_msgs.push((peer.clone(), 1));
                     }
+                    self.rcv_msg.entry(peer).or_default().push(msg);
                 }
                 Err(TryRecvError::Closed) => {
                     self.is_dead = true;
@@ -250,21 +226,46 @@ where
     }
 }
 
+pub struct NetworkStats<K: Hash + Eq> {
+    key_stats: HashMap<K, KeyStats>,
+    rcv_msgs: Vec<(PeerId, usize)>,
+}
+
+impl<K: Eq + Hash> Default for NetworkStats<K> {
+    fn default() -> Self {
+        NetworkStats {
+            key_stats: HashMap::new(),
+            rcv_msgs: Vec::new(),
+        }
+    }
+}
+
+impl<K: Eq + Hash> NetworkStats<K> {
+    pub fn for_key(&self, key: &K) -> Option<&KeyStats> {
+        self.key_stats.get(key)
+    }
+
+    pub fn received_messages(&self) -> &[(PeerId, usize)] {
+        &self.rcv_msgs
+    }
+}
+
 #[derive(Default)]
 pub struct KeyStats {
     pub times_served: usize,
     pub times_received: usize,
 }
 
-struct PendingCmd<K>
+struct PendingCmd<K, M>
 where
     K: Borrow<[u8]>,
+    M: DeserializeOwned,
 {
     cmd: SentCmd,
-    answ: Option<NetHandleAnsw<K>>,
+    answ: Option<NetHandleAnsw<K, M>>,
 }
 
-impl<K: Borrow<[u8]>> PendingCmd<K> {
+impl<K: Borrow<[u8]>, M: DeserializeOwned> PendingCmd<K, M> {
     fn shutdown(&self) -> bool {
         match self.cmd {
             SentCmd::ShutDown => true,
@@ -284,7 +285,7 @@ enum SentCmd {
 pub(crate) enum NetHandleCmd<K, V>
 where
     K: Borrow<[u8]> + Debug,
-    V: Into<Vec<u8>> + Debug,
+    V: Serialize + Debug,
 {
     /// query the network about current status
     IsRunning(usize),
@@ -303,14 +304,15 @@ where
 }
 
 #[derive(Clone)]
-pub(crate) enum NetHandleAnsw<K>
+pub(crate) enum NetHandleAnsw<K, M>
 where
     K: Borrow<[u8]>,
+    M: DeserializeOwned,
 {
     KeyAdded { id: usize },
     GotRecord { id: usize, key: K },
     HasShutdown { id: usize, answ: bool },
-    RcvMsg { peer: PeerId, msg: Vec<u8> },
+    RcvMsg { peer: PeerId, msg: M },
 }
 
 fn peer_id_from_ed25519(key: identity::ed25519::PublicKey) -> PeerId {

@@ -24,16 +24,17 @@ fn main() {
     // let peer = Provider::default();
     let mut network = NetworkBuilder::configure_network()
         .add_provider(peer)
-        .build()
+        .build::<AgentKey, String, String>()
         .unwrap();
     println!("This network encoded peer id is: {}", network.get_peer_id());
-    network.get(AgentKey {});
-    network.send_message(b"Read my awesome message!".to_vec(), peer_id);
+    let key = AgentKey::new(0);
+    network.get(key);
+    network.send_message("Read my awesome message!".to_string(), peer_id);
 
     let mut cnt: HashMap<_, usize> = HashMap::new();
     let mut served = false;
     while network.is_running() {
-        if let Some(stats) = network.stats.for_key(&AgentKey {}) {
+        if let Some(stats) = network.stats.for_key(&key) {
             if stats.times_received > 0 && !served {
                 println!("Received a resource at least once");
                 served = true;
@@ -46,14 +47,14 @@ fn main() {
                 println!("Received {} messages from #{}", amount, peer);
                 *current_amount += 1;
                 if *current_amount < 10 {
-                    network.send_message(b"Hai back!".to_vec(), peer.clone());
+                    network.send_message("Hai back!".to_string(), peer.clone());
                     std::thread::sleep(std::time::Duration::from_millis(20));
                 } else {
                     // network.shutdown().unwrap();
                 }
 
                 if *current_amount % 2 == 0 {
-                    network.get(AgentKey {});
+                    network.get(key);
                 }
             }
         }

@@ -1,6 +1,7 @@
 use crate::{
     config::CONF,
     handle::{NetHandleAnsw, NetHandleCmd, NetworkHandle},
+    message::Message,
     stream_behaviour::{self, STREAM_PROTOCOL},
 };
 use kad::record::Key;
@@ -15,9 +16,10 @@ use libp2p::{
     yamux, Multiaddr, NetworkBehaviour, PeerId, Swarm, Transport,
 };
 use once_cell::sync::Lazy;
+use serde::{de::DeserializeOwned, Serialize};
 use std::{
-    borrow::Borrow, collections::HashMap, fmt::Debug, future::Future, net::IpAddr, pin::Pin,
-    time::Duration,
+    borrow::Borrow, collections::HashMap, fmt::Debug, future::Future, hash::Hash, net::IpAddr,
+    pin::Pin, time::Duration,
 };
 use tokio::{
     runtime::Runtime,
@@ -33,31 +35,34 @@ static ASYNC_RT: Lazy<Option<Runtime>> = Lazy::new(GlobalExecutor::build_async_e
 /// A prepared network connection not yet running.
 /// This can be either the preparation of a network bootstrap node or a new peer
 /// connecting to an existing network.
-pub(crate) struct Network<K, V>
+pub(crate) struct Network<K, V, M>
 where
-    K: Borrow<[u8]> + Copy + Clone + Debug,
-    V: Into<Vec<u8>> + Debug,
+    K: KadKey,
+    V: KadValue,
+    M: DeserializeOwned,
 {
     id: PeerId,
+    key: identity::Keypair,
     swarm: Swarm<NetBehaviour>,
     sent_kad_queries: HashMap<kad::QueryId, Option<NetHandleCmd<K, V>>>,
-    answ_queue: Vec<NetHandleAnsw<K>>,
+    answ_queue: Vec<NetHandleAnsw<K, M>>,
 }
 
-impl<K, V> Network<K, V>
+impl<K, V, M> Network<K, V, M>
 where
-    K: Borrow<[u8]> + Send + Clone + Copy + Debug + 'static,
-    V: Into<Vec<u8>> + Send + Debug + 'static,
+    K: KadKey,
+    V: KadValue,
+    M: DeserializeOwned + Send + 'static,
 {
-    fn run_event_loop(mut self) -> (Sender<NetHandleCmd<K, V>>, Receiver<NetHandleAnsw<K>>) {
+    fn run_event_loop(mut self) -> (Sender<NetHandleCmd<K, V>>, Receiver<NetHandleAnsw<K, M>>) {
         let (query_send, mut query_rcv) = channel::<NetHandleCmd<K, V>>(10);
-        let (mut answ_send, answ_rcv) = channel::<NetHandleAnsw<K>>(10);
+        let (mut answ_send, answ_rcv) = channel::<NetHandleAnsw<K, M>>(10);
         GlobalExecutor::spawn(async move {
             log::debug!("Setting #{} event loop", &self.id);
             let mut cmd_queue = Vec::with_capacity(1);
             'main: loop {
                 tokio::select! {
-                    answ = Network::push_msg_into_cmd_buffer(&mut cmd_queue, &mut query_rcv) => {
+                    answ = Network::<_, _, M>::push_msg_into_cmd_buffer(&mut cmd_queue, &mut query_rcv) => {
                         if let Err(()) = answ {
                             break 'main;
                         }
@@ -70,7 +75,7 @@ where
                             let key = &key.borrow();
                             let record = kad::Record {
                                 key: Key::new(key),
-                                value: value.into(),
+                                value: bincode::serialize(&value).unwrap(),
                                 publisher: Some(self.id.clone()),
                                 expires: None,
                             };
@@ -89,18 +94,26 @@ where
                                 .insert(qid, Some(NetHandleCmd::PullResource { id, key }));
                         }
                         NetHandleCmd::SendMessage { value, peer, .. } => {
-                            self.swarm.send_message(&peer, value);
+                            match Message::build(&value, &self.key, true) {
+                                Ok(msg) => {
+                                    self.swarm.send_message(&peer, msg);
+                                }
+                                Err(_) => {
+                                    log::error!("Failed building a message from data: {:?}", value);
+                                    break 'main;
+                                }
+                            }
                         }
                         NetHandleCmd::Shutdown(id) => {
                             let answ = NetHandleAnsw::HasShutdown { id, answ: true };
-                            Network::<_, V>::return_and_finish(answ_send, answ).await;
+                            Network::<_, V, M>::return_and_finish(answ_send, answ).await;
                             break 'main;
                         }
                         NetHandleCmd::IsRunning(_id) => {}
                     }
                 }
                 while let Some(answ) = self.answ_queue.pop() {
-                    if let Err(()) = Network::<_, V>::return_answ(&mut answ_send, answ).await {
+                    if let Err(()) = Network::<_, V, M>::return_answ(&mut answ_send, answ).await {
                         break 'main;
                     }
                 }
@@ -123,8 +136,8 @@ where
     }
 
     async fn return_answ(
-        sender: &mut Sender<NetHandleAnsw<K>>,
-        answ: NetHandleAnsw<K>,
+        sender: &mut Sender<NetHandleAnsw<K, M>>,
+        answ: NetHandleAnsw<K, M>,
     ) -> Result<(), ()> {
         if sender
             .send_timeout(answ, Duration::from_secs(TIMEOUT))
@@ -138,7 +151,7 @@ where
         }
     }
 
-    async fn return_and_finish(mut sender: Sender<NetHandleAnsw<K>>, answ: NetHandleAnsw<K>) {
+    async fn return_and_finish(mut sender: Sender<NetHandleAnsw<K, M>>, answ: NetHandleAnsw<K, M>) {
         if sender
             .send_timeout(answ, Duration::from_secs(TIMEOUT))
             .await
@@ -166,10 +179,13 @@ where
                                     ..
                                 } = rec;
                                 log::debug!(
-                                    "Received kademlia msg: {}",
-                                    String::from_utf8(value).unwrap()
+                                    "Received kademlia msg: {:?}",
+                                    bincode::deserialize::<V>(&value).unwrap()
                                 );
-                                self.answ_queue.push(NetHandleAnsw::GotRecord { id, key });
+                                self.answ_queue.push(NetHandleAnsw::GotRecord {
+                                    id,
+                                    key: key.clone(),
+                                });
                             }
                         }
                     }
@@ -190,6 +206,7 @@ where
                 }
             }
             NetEvent::Stream(stream_behaviour::StreamEvent::MessageReceived { msg, peer }) => {
+                let msg: M = bincode::deserialize(&msg).unwrap();
                 self.answ_queue.push(NetHandleAnsw::RcvMsg { msg, peer });
             }
             NetEvent::Stream(stream_behaviour::StreamEvent::ConnectionError { peer, err }) => {
@@ -216,7 +233,7 @@ impl NetBehaviour {
             .expect("At least one peer is required when bootstrapping.")
     }
 
-    fn send_message(&mut self, peer: &PeerId, msg: Vec<u8>) {
+    fn send_message(&mut self, peer: &PeerId, msg: Message) {
         self.streams.send_message(peer, msg);
     }
 
@@ -321,6 +338,20 @@ impl std::default::Default for Provider {
     }
 }
 
+pub trait KadKey:
+    Borrow<[u8]> + Eq + Hash + Debug + Clone + Send + for<'a> From<&'a [u8]> + 'static
+{
+}
+
+impl<T> KadKey for T where
+    T: Borrow<[u8]> + Eq + Hash + Debug + Clone + Send + for<'a> From<&'a [u8]> + 'static
+{
+}
+
+pub trait KadValue: Serialize + DeserializeOwned + Debug + Send + 'static {}
+
+impl<T> KadValue for T where T: Serialize + DeserializeOwned + Debug + Send + 'static {}
+
 pub struct NetworkBuilder {
     /// ED25519 local peer private key.
     local_ed25519_key: identity::ed25519::Keypair,
@@ -394,7 +425,12 @@ impl NetworkBuilder {
         self
     }
 
-    pub fn build(self) -> std::io::Result<NetworkHandle<AgentKey, Vec<u8>>> {
+    pub fn build<Key, Value, Message>(self) -> std::io::Result<NetworkHandle<Key, Value, Message>>
+    where
+        Key: KadKey,
+        Value: KadValue,
+        Message: Serialize + DeserializeOwned + Debug + Send + 'static,
+    {
         if (self.local_ip.is_none() || self.local_port.is_none())
             && self.remote_providers.is_empty()
         {
@@ -427,7 +463,8 @@ impl NetworkBuilder {
             sent_queries.insert(bootstrap_query, None);
         }
 
-        let network: Network<AgentKey, Vec<u8>> = Network {
+        let network: Network<Key, Value, Message> = Network {
+            key: self.local_key,
             swarm,
             sent_kad_queries: sent_queries,
             id: self.local_peer_id,
@@ -491,7 +528,7 @@ impl NetworkBuilder {
                 CURRENT_AGENT_VERSION.to_owned(),
                 self.local_key.public(),
             ),
-            streams: stream_behaviour::Stream::new(self.local_key.clone()),
+            streams: stream_behaviour::Stream::new(),
         }
     }
 }
@@ -528,7 +565,7 @@ impl GlobalExecutor {
         }
     }
 
-    fn spawn<R: Send + 'static>(f: impl Future<Output = R> + Send + 'static) {
+    pub fn spawn<R: Send + 'static>(f: impl Future<Output = R> + Send + 'static) {
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(f);
         } else if let Some(rt) = &*ASYNC_RT {
@@ -551,23 +588,39 @@ impl libp2p::core::Executor for GlobalExecutor {
     }
 }
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
-pub struct AgentKey {}
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+pub struct AgentKey {
+    id: [u8; std::mem::size_of::<u64>()],
+}
+
+impl Debug for AgentKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentKey")
+            .field("id", &u64::from_be_bytes(self.id))
+            .finish()
+    }
+}
+
+impl AgentKey {
+    pub fn new(id: u64) -> AgentKey {
+        let id = id.to_be_bytes();
+        AgentKey { id }
+    }
+}
 
 impl Borrow<[u8]> for AgentKey {
     fn borrow(&self) -> &[u8] {
-        &[0, 1, 2, 3]
+        &self.id
     }
 }
 
 impl From<&[u8]> for AgentKey {
-    fn from(_slice: &[u8]) -> Self {
-        AgentKey {}
-    }
-}
-
-impl std::fmt::Display for AgentKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Key!")
+    fn from(slice: &[u8]) -> Self {
+        if std::mem::size_of::<u64>() != slice.len() {
+            panic!("tried to construct an AgentKey from the wrong type");
+        }
+        let mut id = [0; std::mem::size_of::<u64>()];
+        id.copy_from_slice(slice);
+        AgentKey { id }
     }
 }

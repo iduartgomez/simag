@@ -25,7 +25,7 @@ fn main() {
             .with_key(Keypair::decode(&mut ENCONDED_KEY1.to_vec()).unwrap())
             .with_ip(Ipv4Addr::LOCALHOST)
             .with_port(7800)
-            .build()
+            .build::<AgentKey, String, String>()
             .unwrap()
     } else {
         let provider = Provider::new()
@@ -47,12 +47,13 @@ fn main() {
 
     // #1 This is the id that must be provided to other nodes that want to join the network.
     println!("This network encoded peer id is: {}", network.get_peer_id());
-    network.put(AgentKey {}, b"Joined group!".to_vec());
+    let key = AgentKey::new(0);
+    network.put(key, "Joined group!".to_string());
 
     let mut cnt: HashMap<_, usize> = HashMap::new();
     let mut served = false;
     while network.is_running() {
-        if let Some(stats) = network.stats.for_key(&AgentKey {}) {
+        if let Some(stats) = network.stats.for_key(&key) {
             if stats.times_served > 0 && !served {
                 println!("Served a resource at least once");
                 served = false;
@@ -64,10 +65,10 @@ fn main() {
             if *current_amount < amount {
                 println!("Received {} messages from #{}", amount, peer);
                 if *current_amount < 9 {
-                    network.send_message(b"Hai there!".to_vec(), peer.clone());
+                    network.send_message("Hai there!".to_string(), peer.clone());
                 } else {
                     std::thread::sleep(std::time::Duration::from_secs(6));
-                    network.send_message(b"Goooodbyyye!".to_vec(), peer.clone());
+                    network.send_message("Goooodbyyye!".to_string(), peer.clone());
                     println!("Sent goodbye message")
                 }
                 *current_amount += 1;

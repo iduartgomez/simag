@@ -18,7 +18,6 @@ use handler::{StreamHandler, StreamHandlerEvent, StreamHandlerInEvent};
 use libp2p::{
     core::connection::ConnectionId,
     futures::{stream, AsyncRead, AsyncWrite, Sink},
-    identity::Keypair,
     swarm::{
         NegotiatedSubstream, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler,
         PollParameters, ProtocolsHandler,
@@ -41,26 +40,24 @@ pub(crate) enum StreamEvent {
 }
 
 pub(crate) struct Stream {
-    key: Keypair,
     addresses: HashMap<PeerId, Vec<Multiaddr>>,
     /// open connections to a peer;
     /// never should have more than one inbound/outbound connection
     open_conn: HashMap<PeerId, SmallVec<[StreamHandlerEvent; 3]>>,
     /// encoded messages pending to be sent to a given peer
-    pending_messages: HashMap<PeerId, Vec<Vec<u8>>>,
+    pending_messages: HashMap<PeerId, Vec<Message>>,
 }
 
 impl Stream {
-    pub fn new(key: Keypair) -> Stream {
+    pub fn new() -> Stream {
         Stream {
-            key,
             addresses: HashMap::new(),
             open_conn: HashMap::new(),
             pending_messages: HashMap::new(),
         }
     }
 
-    pub fn send_message(&mut self, peer: &PeerId, msg: Vec<u8>) {
+    pub fn send_message(&mut self, peer: &PeerId, msg: Message) {
         if let Some(queue) = self.pending_messages.get_mut(peer) {
             queue.push(msg);
         } else {
@@ -198,8 +195,7 @@ impl NetworkBehaviour for Stream {
                         } else {
                             match self.pending_messages.get_mut(peer) {
                                 Some(pending) if !pending.is_empty() => {
-                                    while let Some(data) = pending.pop() {
-                                        let msg = Message::build(&data, &self.key, true).unwrap();
+                                    while let Some(msg) = pending.pop() {
                                         match Stream::poll_send_msg(channel, msg, cx) {
                                             Err(err) => {
                                                 let ev = NetworkBehaviourAction::GenerateEvent(
@@ -477,6 +473,3 @@ mod protocol {
         CloseChannel,
     }
 }
-
-#[cfg(test)]
-mod tests {}
