@@ -83,24 +83,19 @@ impl Stream {
         send_conn: &mut SimagStream<NegotiatedSubstream>,
         msg: Message,
         cx: &mut Context,
-    ) -> Result<(), std::io::Error> {
+    ) -> Result<bool, std::io::Error> {
         match Sink::poll_ready(Pin::new(send_conn), cx) {
             Poll::Ready(Ok(())) => match Sink::start_send(Pin::new(send_conn), msg) {
-                Ok(()) => loop {
-                    match Sink::poll_flush(Pin::new(send_conn), cx) {
-                        Poll::Pending => {}
-                        Poll::Ready(Ok(())) => {
-                            break;
-                        }
-                        Poll::Ready(err) => return err,
-                    }
+                Ok(()) => match Sink::poll_flush(Pin::new(send_conn), cx) {
+                    Poll::Pending => Ok(false),      /* not finished */
+                    Poll::Ready(Ok(())) => Ok(true), /* finished */
+                    Poll::Ready(Err(err)) => Err(err),
                 },
-                Err(err) => return Err(err),
+                Err(err) => Err(err),
             },
-            Poll::Pending => {}
-            Poll::Ready(err) => return err,
+            Poll::Pending => Ok(true), /* no message, so finished */
+            Poll::Ready(Err(err)) => Err(err),
         }
-        Ok(())
     }
 
     #[inline]
@@ -157,6 +152,11 @@ impl NetworkBehaviour for Stream {
             let same_type = (conn.inbound_request() && event.inbound_request())
                 || (conn.outbound_request() && event.outbound_request());
             if same_type {
+                if let StreamHandlerEvent::OutOpenChannel { flushing: true, .. } = conn {
+                    unreachable!(
+                        "tried to replace an outbound channel while flushing apending message"
+                    );
+                }
                 // replace the existing connection for the new one
                 event = std::mem::replace(conn, event);
                 replaced = true;
@@ -177,23 +177,46 @@ impl NetworkBehaviour for Stream {
         for (peer, open_conn) in &mut self.open_conn {
             for conn in open_conn {
                 match conn {
-                    StreamHandlerEvent::OutOpenChannel(ref mut send_conn) => {
-                        match self.pending_messages.get_mut(peer) {
-                            Some(pending) if !pending.is_empty() => {
-                                while let Some(data) = pending.pop() {
-                                    let msg = Message::build(&data, &self.key, true).unwrap();
-                                    if let Err(err) = Stream::poll_send_msg(send_conn, msg, cx) {
-                                        let ev = NetworkBehaviourAction::GenerateEvent(
-                                            StreamEvent::ConnectionError {
-                                                peer: peer.clone(),
-                                                err,
-                                            },
-                                        );
-                                        return Poll::Ready(ev);
-                                    }
+                    StreamHandlerEvent::OutOpenChannel {
+                        ref mut channel,
+                        ref mut flushing,
+                    } => {
+                        if *flushing {
+                            match Sink::poll_flush(Pin::new(channel), cx) {
+                                Poll::Pending => {}
+                                Poll::Ready(Ok(_)) => *flushing = false,
+                                Poll::Ready(Err(err)) => {
+                                    let ev = NetworkBehaviourAction::GenerateEvent(
+                                        StreamEvent::ConnectionError {
+                                            peer: peer.clone(),
+                                            err,
+                                        },
+                                    );
+                                    return Poll::Ready(ev);
                                 }
                             }
-                            _ => {}
+                        } else {
+                            match self.pending_messages.get_mut(peer) {
+                                Some(pending) if !pending.is_empty() => {
+                                    while let Some(data) = pending.pop() {
+                                        let msg = Message::build(&data, &self.key, true).unwrap();
+                                        match Stream::poll_send_msg(channel, msg, cx) {
+                                            Err(err) => {
+                                                let ev = NetworkBehaviourAction::GenerateEvent(
+                                                    StreamEvent::ConnectionError {
+                                                        peer: peer.clone(),
+                                                        err,
+                                                    },
+                                                );
+                                                return Poll::Ready(ev);
+                                            }
+                                            Ok(true) => *flushing = false,
+                                            Ok(false) => *flushing = true,
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
                         }
                     }
                     StreamHandlerEvent::InOpenChannel(ref mut rcv_conn) => {
@@ -243,7 +266,10 @@ mod handler {
 
     pub(crate) enum StreamHandlerEvent {
         InOpenChannel(SimagStream<NegotiatedSubstream>),
-        OutOpenChannel(SimagStream<NegotiatedSubstream>),
+        OutOpenChannel {
+            channel: SimagStream<NegotiatedSubstream>,
+            flushing: bool,
+        },
         Requested(bool),
     }
 
@@ -257,7 +283,7 @@ mod handler {
 
         pub fn outbound_request(&self) -> bool {
             match self {
-                Self::OutOpenChannel(_) => true,
+                Self::OutOpenChannel { .. } => true,
                 _ => false,
             }
         }
@@ -378,9 +404,11 @@ mod handler {
                 if let (_, Some(substream)) =
                     std::mem::replace(&mut self.outbound_substream, (true, None))
                 {
-                    let ev = swarm::ProtocolsHandlerEvent::Custom(
-                        StreamHandlerEvent::OutOpenChannel(substream),
-                    );
+                    let ev =
+                        swarm::ProtocolsHandlerEvent::Custom(StreamHandlerEvent::OutOpenChannel {
+                            channel: substream,
+                            flushing: false,
+                        });
                     return Poll::Ready(ev);
                 }
             }
@@ -392,11 +420,10 @@ mod handler {
 
 mod protocol {
     use super::*;
-    use crate::message::{MessageCodec, MAX_MSG_SIZE};
+    use crate::message::MessageCodec;
     use futures_codec::Framed;
     use libp2p::{core::UpgradeInfo, futures::prelude::*, InboundUpgrade, OutboundUpgrade};
     use std::io;
-    use unsigned_varint::codec::UviBytes;
 
     type Stream<S> = Framed<S, MessageCodec>;
     pub(super) type SimagStream<S> = Stream<S>;

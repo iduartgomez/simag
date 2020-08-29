@@ -165,7 +165,7 @@ where
                                     record: kad::Record { value, .. },
                                     ..
                                 } = rec;
-                                log::info!(
+                                log::debug!(
                                     "Received kademlia msg: {}",
                                     String::from_utf8(value).unwrap()
                                 );
