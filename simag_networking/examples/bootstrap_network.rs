@@ -63,11 +63,11 @@ fn main() {
             let current_amount = cnt.entry(peer.clone()).or_default();
             if *current_amount < amount {
                 println!("Received {} messages from #{}", amount, peer);
-                if *current_amount < 10 {
+                if *current_amount < 9 {
                     network.send_message(b"Hai there!".to_vec(), peer.clone());
                 } else {
-                    std::thread::sleep(std::time::Duration::from_secs(10));
-                    network.send_message(b"Bye!".to_vec(), peer.clone());
+                    std::thread::sleep(std::time::Duration::from_secs(6));
+                    network.send_message(b"Goooodbyyye!".to_vec(), peer.clone());
                     println!("Sent goodbye message")
                 }
                 *current_amount += 1;

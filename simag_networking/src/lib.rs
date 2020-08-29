@@ -5,7 +5,7 @@ mod config;
 mod handle;
 mod message;
 mod network;
-mod stream;
+mod stream_behaviour;
 
 pub use network::{NetworkBuilder, Provider};
 

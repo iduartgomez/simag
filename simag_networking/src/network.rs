@@ -1,7 +1,7 @@
 use crate::{
     config::CONF,
     handle::{NetHandleAnsw, NetHandleCmd, NetworkHandle},
-    stream::{self, STREAM_PROTOCOL},
+    stream_behaviour::{self, STREAM_PROTOCOL},
 };
 use kad::record::Key;
 use libp2p::{
@@ -26,7 +26,7 @@ use tokio::{
 
 const CURRENT_AGENT_VERSION: &str = "simag/0.1.0";
 const CURRENT_IDENTIFY_PROTO_VERSION: &str = "ipfs/0.1.0";
-const TIMEOUT: u64 = 10;
+const TIMEOUT: u64 = 5;
 
 static ASYNC_RT: Lazy<Option<Runtime>> = Lazy::new(GlobalExecutor::build_async_executor);
 
@@ -189,10 +189,10 @@ where
                     self.swarm.add_address(&peer_id, observed_addr);
                 }
             }
-            NetEvent::Stream(stream::StreamEvent::MessageReceived { msg, peer }) => {
+            NetEvent::Stream(stream_behaviour::StreamEvent::MessageReceived { msg, peer }) => {
                 self.answ_queue.push(NetHandleAnsw::RcvMsg { msg, peer });
             }
-            NetEvent::Stream(stream::StreamEvent::ConnectionError { peer, err }) => {
+            NetEvent::Stream(stream_behaviour::StreamEvent::ConnectionError { peer, err }) => {
                 log::debug!("Connection error with peer: {}:\n{}", peer, err);
             }
             NetEvent::Identify(_) => {}
@@ -206,7 +206,7 @@ where
 struct NetBehaviour {
     kad: kad::Kademlia<kad::store::MemoryStore>,
     identify: identify::Identify,
-    streams: stream::Stream,
+    streams: stream_behaviour::Stream,
 }
 
 impl NetBehaviour {
@@ -243,7 +243,7 @@ impl std::ops::Deref for NetBehaviour {
 enum NetEvent {
     KademliaEvent(kad::KademliaEvent),
     Identify(identify::IdentifyEvent),
-    Stream(stream::StreamEvent),
+    Stream(stream_behaviour::StreamEvent),
 }
 
 impl From<kad::KademliaEvent> for NetEvent {
@@ -258,8 +258,8 @@ impl From<identify::IdentifyEvent> for NetEvent {
     }
 }
 
-impl From<stream::StreamEvent> for NetEvent {
-    fn from(event: stream::StreamEvent) -> NetEvent {
+impl From<stream_behaviour::StreamEvent> for NetEvent {
+    fn from(event: stream_behaviour::StreamEvent) -> NetEvent {
         Self::Stream(event)
     }
 }
@@ -491,7 +491,7 @@ impl NetworkBuilder {
                 CURRENT_AGENT_VERSION.to_owned(),
                 self.local_key.public(),
             ),
-            streams: stream::Stream::new(),
+            streams: stream_behaviour::Stream::new(self.local_key.clone()),
         }
     }
 }

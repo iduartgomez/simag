@@ -13,10 +13,12 @@
 //! - openning subscription, multi-producer/multi-consumer, channels on-demand and
 //!   handling authorization and automatic subscription/unsubscription on changing internal state.
 
+use crate::message::Message;
 use handler::{StreamHandler, StreamHandlerEvent, StreamHandlerInEvent};
 use libp2p::{
     core::connection::ConnectionId,
     futures::{stream, AsyncRead, AsyncWrite, Sink},
+    identity::Keypair,
     swarm::{
         NegotiatedSubstream, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler,
         PollParameters, ProtocolsHandler,
@@ -32,7 +34,6 @@ use std::{
 };
 
 pub(crate) const STREAM_PROTOCOL: &str = "/simag/stream/0.1.0";
-const MAX_MSG_SIZE: usize = 4096;
 
 pub(crate) enum StreamEvent {
     MessageReceived { peer: PeerId, msg: Vec<u8> },
@@ -40,17 +41,19 @@ pub(crate) enum StreamEvent {
 }
 
 pub(crate) struct Stream {
+    key: Keypair,
     addresses: HashMap<PeerId, Vec<Multiaddr>>,
     /// open connections to a peer;
-    /// never should have more than one inbound/outbound connection really
+    /// never should have more than one inbound/outbound connection
     open_conn: HashMap<PeerId, SmallVec<[StreamHandlerEvent; 3]>>,
     /// encoded messages pending to be sent to a given peer
     pending_messages: HashMap<PeerId, Vec<Vec<u8>>>,
 }
 
 impl Stream {
-    pub fn new() -> Stream {
+    pub fn new(key: Keypair) -> Stream {
         Stream {
+            key,
             addresses: HashMap::new(),
             open_conn: HashMap::new(),
             pending_messages: HashMap::new(),
@@ -78,7 +81,7 @@ impl Stream {
     #[inline]
     fn poll_send_msg(
         send_conn: &mut SimagStream<NegotiatedSubstream>,
-        msg: Vec<u8>,
+        msg: Message,
         cx: &mut Context,
     ) -> Result<(), std::io::Error> {
         match Sink::poll_ready(Pin::new(send_conn), cx) {
@@ -108,7 +111,7 @@ impl Stream {
         match stream::Stream::poll_next(Pin::new(rcv_conn), cx) {
             Poll::Ready(Some(Ok(msg))) => {
                 // msg received
-                Ok(Some(msg.into_iter().collect()))
+                Ok(Some(msg.data))
             }
             Poll::Ready(Some(Err(err))) => Err(err),
             Poll::Ready(None) | Poll::Pending => Ok(None),
@@ -177,7 +180,8 @@ impl NetworkBehaviour for Stream {
                     StreamHandlerEvent::OutOpenChannel(ref mut send_conn) => {
                         match self.pending_messages.get_mut(peer) {
                             Some(pending) if !pending.is_empty() => {
-                                while let Some(msg) = pending.pop() {
+                                while let Some(data) = pending.pop() {
+                                    let msg = Message::build(&data, &self.key, true).unwrap();
                                     if let Err(err) = Stream::poll_send_msg(send_conn, msg, cx) {
                                         let ev = NetworkBehaviourAction::GenerateEvent(
                                             StreamEvent::ConnectionError {
@@ -388,19 +392,13 @@ mod handler {
 
 mod protocol {
     use super::*;
+    use crate::message::{MessageCodec, MAX_MSG_SIZE};
     use futures_codec::Framed;
     use libp2p::{core::UpgradeInfo, futures::prelude::*, InboundUpgrade, OutboundUpgrade};
     use std::io;
     use unsigned_varint::codec::UviBytes;
 
-    type Stream<S> = sink::With<
-        Framed<S, UviBytes<io::Cursor<Vec<u8>>>>,
-        io::Cursor<Vec<u8>>,
-        Vec<u8>,
-        future::Ready<Result<io::Cursor<Vec<u8>>, io::Error>>,
-        fn(Vec<u8>) -> future::Ready<Result<io::Cursor<Vec<u8>>, io::Error>>,
-    >;
-
+    type Stream<S> = Framed<S, MessageCodec>;
     pub(super) type SimagStream<S> = Stream<S>;
 
     pub(crate) struct StreamProtocol;
@@ -441,10 +439,7 @@ mod protocol {
     }
 
     fn build_conn_stream<C: AsyncRead + AsyncWrite + Unpin>(incoming: C) -> SimagStream<C> {
-        let mut codec = UviBytes::default();
-        codec.set_max_len(MAX_MSG_SIZE);
-        Framed::new(incoming, codec)
-            .with::<_, _, fn(_) -> _, _>(|req| future::ok(io::Cursor::new(req)))
+        Framed::new(incoming, MessageCodec::new(true))
     }
 
     #[derive(serde::Serialize, serde::Deserialize)]
@@ -455,3 +450,6 @@ mod protocol {
         CloseChannel,
     }
 }
+
+#[cfg(test)]
+mod tests {}
