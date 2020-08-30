@@ -3,16 +3,21 @@ use once_cell::sync::Lazy;
 use std::{
     convert::TryFrom,
     fs::File,
+    future::Future,
     io::Read,
     net::{IpAddr, Ipv4Addr},
     path::PathBuf,
+    pin::Pin,
     str::FromStr,
 };
-
-pub(crate) static CONF: Lazy<Config> =
-    Lazy::new(|| Config::load_conf().expect("Failed to load configuration"));
+use tokio::runtime::Runtime;
 
 const DEFAULT_BOOTSTRAP_PORT: u16 = 7800;
+pub(crate) static CONF: Lazy<Config> =
+    Lazy::new(|| Config::load_conf().expect("Failed to load configuration"));
+pub(crate) const PEER_TIMEOUT_SECS: u64 = 10;
+
+static ASYNC_RT: Lazy<Option<Runtime>> = Lazy::new(GlobalExecutor::build_async_executor);
 
 pub(crate) struct Config {
     pub bootstrap_ip: IpAddr,
@@ -80,6 +85,61 @@ impl Config {
             .flatten();
 
         Ok((bootstrap_ip, bootstrap_port, id_str))
+    }
+}
+
+pub(crate) struct GlobalExecutor;
+
+impl GlobalExecutor {
+    pub fn new() -> Self {
+        GlobalExecutor
+    }
+
+    fn build_async_executor() -> Option<Runtime> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            None
+        } else {
+            Some(
+                tokio::runtime::Builder::new()
+                    .threaded_scheduler()
+                    .enable_all()
+                    .thread_name("simag-nw-exec")
+                    .build()
+                    .expect("failed to build tokio runtime"),
+            )
+        }
+    }
+
+    pub fn block_on<R>(f: impl Future<Output = R>) -> R {
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.block_on(f)
+        } else if let Some(rt) = &*ASYNC_RT {
+            rt.handle().block_on(f)
+        } else {
+            unreachable!()
+        }
+    }
+
+    pub fn spawn<R: Send + 'static>(f: impl Future<Output = R> + Send + 'static) {
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(f);
+        } else if let Some(rt) = &*ASYNC_RT {
+            rt.spawn(f);
+        } else {
+            unreachable!()
+        }
+    }
+}
+
+impl libp2p::core::Executor for GlobalExecutor {
+    fn exec(&self, future: Pin<Box<dyn Future<Output = ()> + 'static + Send>>) {
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(future);
+        } else if let Some(rt) = &*ASYNC_RT {
+            rt.spawn(future);
+        } else {
+            unreachable!()
+        }
     }
 }
 

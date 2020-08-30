@@ -1,4 +1,7 @@
-use crate::network::{GlobalExecutor, KadKey, KadValue};
+use crate::{
+    config::GlobalExecutor,
+    network::{KadKey, KadValue},
+};
 use libp2p::{identity, PeerId};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{borrow::Borrow, collections::HashMap, fmt::Debug, fs::File, hash::Hash, io::Write};

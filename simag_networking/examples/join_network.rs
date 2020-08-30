@@ -51,7 +51,6 @@ fn main() {
                 *current_amount += 1;
                 if *current_amount < 10 {
                     network.send_message("Hai back!".to_string(), peer.clone());
-                    std::thread::sleep(std::time::Duration::from_millis(20));
                 } else {
                     // network.shutdown().unwrap();
                 }

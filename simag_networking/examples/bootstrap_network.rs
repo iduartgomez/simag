@@ -71,7 +71,6 @@ fn main() {
                 if *current_amount < 9 {
                     network.send_message("Hai there!".to_string(), peer.clone());
                 } else {
-                    std::thread::sleep(std::time::Duration::from_secs(6));
                     network.send_message("Goooodbyyye!".to_string(), peer.clone());
                     println!("Sent goodbye message")
                 }

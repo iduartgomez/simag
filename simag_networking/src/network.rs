@@ -1,5 +1,5 @@
 use crate::{
-    config::CONF,
+    config::{GlobalExecutor, CONF, PEER_TIMEOUT_SECS},
     handle::{NetHandleAnsw, NetHandleCmd, NetworkHandle},
     message::Message,
     stream_behaviour::{self, STREAM_PROTOCOL},
@@ -15,30 +15,22 @@ use libp2p::{
     tcp::TokioTcpConfig,
     yamux, Multiaddr, NetworkBehaviour, PeerId, Swarm, Transport,
 };
-use once_cell::sync::Lazy;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     borrow::Borrow,
     collections::HashMap,
     convert::{TryFrom, TryInto},
     fmt::Debug,
-    future::Future,
     hash::Hash,
     net::IpAddr,
-    pin::Pin,
     time::Duration,
 };
-use tokio::{
-    runtime::Runtime,
-    sync::mpsc::{channel, Receiver, Sender},
-};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use uuid::Uuid;
 
 const CURRENT_AGENT_VERSION: &str = "simag/0.1.0";
 const CURRENT_IDENTIFY_PROTO_VERSION: &str = "ipfs/0.1.0";
-const TIMEOUT: u64 = 5;
-
-static ASYNC_RT: Lazy<Option<Runtime>> = Lazy::new(GlobalExecutor::build_async_executor);
+const HANDLE_TIMEOUT_SECS: u64 = 5;
 
 /// A prepared network connection not yet running.
 /// This can be either the preparation of a network bootstrap node or a new peer
@@ -148,7 +140,7 @@ where
         answ: NetHandleAnsw<K, M>,
     ) -> Result<(), ()> {
         if sender
-            .send_timeout(answ, Duration::from_secs(TIMEOUT))
+            .send_timeout(answ, Duration::from_secs(HANDLE_TIMEOUT_SECS))
             .await
             .is_err()
         {
@@ -161,7 +153,7 @@ where
 
     async fn return_and_finish(mut sender: Sender<NetHandleAnsw<K, M>>, answ: NetHandleAnsw<K, M>) {
         if sender
-            .send_timeout(answ, Duration::from_secs(TIMEOUT))
+            .send_timeout(answ, Duration::from_secs(HANDLE_TIMEOUT_SECS))
             .await
             .is_err()
         {
@@ -528,7 +520,7 @@ impl NetworkBuilder {
                 mplex::MplexConfig::default(),
             ))
             .map(|(peer, muxer), _| (peer, muxing::StreamMuxerBox::new(muxer)))
-            .timeout(std::time::Duration::from_secs(TIMEOUT)))
+            .timeout(std::time::Duration::from_secs(PEER_TIMEOUT_SECS)))
     }
 
     fn config_behaviour(&self) -> NetBehaviour {
@@ -551,61 +543,6 @@ impl NetworkBuilder {
                 self.local_key.public(),
             ),
             streams: stream_behaviour::Stream::new(),
-        }
-    }
-}
-
-pub(crate) struct GlobalExecutor;
-
-impl GlobalExecutor {
-    fn new() -> Self {
-        GlobalExecutor
-    }
-
-    fn build_async_executor() -> Option<Runtime> {
-        if tokio::runtime::Handle::try_current().is_ok() {
-            None
-        } else {
-            Some(
-                tokio::runtime::Builder::new()
-                    .threaded_scheduler()
-                    .enable_all()
-                    .thread_name("simag-nw-exec")
-                    .build()
-                    .expect("failed to build tokio runtime"),
-            )
-        }
-    }
-
-    pub fn block_on<R>(f: impl Future<Output = R>) -> R {
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.block_on(f)
-        } else if let Some(rt) = &*ASYNC_RT {
-            rt.handle().block_on(f)
-        } else {
-            unreachable!()
-        }
-    }
-
-    pub fn spawn<R: Send + 'static>(f: impl Future<Output = R> + Send + 'static) {
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn(f);
-        } else if let Some(rt) = &*ASYNC_RT {
-            rt.spawn(f);
-        } else {
-            unreachable!()
-        }
-    }
-}
-
-impl libp2p::core::Executor for GlobalExecutor {
-    fn exec(&self, future: Pin<Box<dyn Future<Output = ()> + 'static + Send>>) {
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn(future);
-        } else if let Some(rt) = &*ASYNC_RT {
-            rt.spawn(future);
-        } else {
-            unreachable!()
         }
     }
 }

@@ -4,9 +4,6 @@
 //! the library network handling layer to send/receive data packets. The connection will be
 //! kept alive as long as necessary in order to transfer data.
 //!
-//! `libp2p` then handles encryption and connection handling, while by using this protocol
-//! we relegate control of direct communication to the top network abstraction.
-//!
 //! The protocol also has the following responsabilities:
 //! - propagating changes in the Identify and Kademlia protocols to this stream
 //!   (e.g. openning or closing new connections based on those protocols states).
@@ -27,7 +24,7 @@ use libp2p::{
 use protocol::SimagStream;
 use smallvec::SmallVec;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     pin::Pin,
     task::{Context, Poll},
 };
@@ -39,6 +36,9 @@ pub(crate) enum StreamEvent {
     ConnectionError { peer: PeerId, err: std::io::Error },
 }
 
+type NotifyKeepAlive = VecDeque<NetworkBehaviourAction<StreamHandlerInEvent, StreamEvent>>;
+type NotifyShutdown = VecDeque<NetworkBehaviourAction<StreamHandlerInEvent, StreamEvent>>;
+
 pub(crate) struct Stream {
     addresses: HashMap<PeerId, Vec<Multiaddr>>,
     /// open connections to a peer;
@@ -46,6 +46,10 @@ pub(crate) struct Stream {
     open_conn: HashMap<PeerId, SmallVec<[StreamHandlerEvent; 3]>>,
     /// encoded messages pending to be sent to a given peer
     pending_messages: HashMap<PeerId, Vec<Message>>,
+    // FIFO keep alive queue
+    notify_keepalive: NotifyKeepAlive,
+    // FIFO shutdown queue
+    notify_shutdown: NotifyShutdown,
 }
 
 impl Stream {
@@ -54,6 +58,8 @@ impl Stream {
             addresses: HashMap::new(),
             open_conn: HashMap::new(),
             pending_messages: HashMap::new(),
+            notify_keepalive: VecDeque::new(),
+            notify_shutdown: VecDeque::new(),
         }
     }
 
@@ -99,15 +105,34 @@ impl Stream {
     fn poll_rcv_msg(
         rcv_conn: &mut SimagStream<NegotiatedSubstream>,
         cx: &mut Context,
-    ) -> Result<Option<Vec<u8>>, std::io::Error> {
+    ) -> Result<(bool, Option<Vec<u8>>), std::io::Error> {
         match stream::Stream::poll_next(Pin::new(rcv_conn), cx) {
             Poll::Ready(Some(Ok(msg))) => {
                 // msg received
-                Ok(Some(msg.data))
+                Ok((false, Some(msg.data)))
             }
             Poll::Ready(Some(Err(err))) => Err(err),
-            Poll::Ready(None) | Poll::Pending => Ok(None),
+            Poll::Ready(None) | Poll::Pending => Ok((false, None)),
+            // Poll::Pending => Ok((true, None)),
         }
+    }
+
+    #[inline]
+    fn keep_alive(queue: &mut NotifyKeepAlive, peer: PeerId) {
+        queue.push_back(NetworkBehaviourAction::NotifyHandler {
+            peer_id: peer,
+            event: StreamHandlerInEvent::KeepAlive,
+            handler: NotifyHandler::All,
+        });
+    }
+
+    #[inline]
+    fn shutdown(queue: &mut NotifyShutdown, peer: PeerId, refresh: bool) {
+        queue.push_back(NetworkBehaviourAction::NotifyHandler {
+            peer_id: peer,
+            event: StreamHandlerInEvent::Finished(refresh),
+            handler: NotifyHandler::All,
+        });
     }
 }
 
@@ -150,9 +175,7 @@ impl NetworkBehaviour for Stream {
                 || (conn.outbound_request() && event.outbound_request());
             if same_type {
                 if let StreamHandlerEvent::OutOpenChannel { flushing: true, .. } = conn {
-                    unreachable!(
-                        "tried to replace an outbound channel while flushing apending message"
-                    );
+                    panic!("tried to replace an outbound channel while flushing apending message");
                 }
                 // replace the existing connection for the new one
                 event = std::mem::replace(conn, event);
@@ -171,6 +194,10 @@ impl NetworkBehaviour for Stream {
         _params: &mut impl PollParameters,
     ) -> Poll<NetworkBehaviourAction<<StreamHandler as ProtocolsHandler>::InEvent, StreamEvent>>
     {
+        if let Some(notification) = self.notify_keepalive.pop_front() {
+            return Poll::Ready(notification);
+        }
+
         for (peer, open_conn) in &mut self.open_conn {
             for conn in open_conn {
                 match conn {
@@ -180,9 +207,15 @@ impl NetworkBehaviour for Stream {
                     } => {
                         if *flushing {
                             match Sink::poll_flush(Pin::new(channel), cx) {
-                                Poll::Pending => {}
-                                Poll::Ready(Ok(_)) => *flushing = false,
+                                Poll::Pending => {
+                                    Self::keep_alive(&mut self.notify_keepalive, peer.clone());
+                                }
+                                Poll::Ready(Ok(_)) => {
+                                    Self::shutdown(&mut self.notify_shutdown, peer.clone(), true);
+                                    *flushing = false;
+                                }
                                 Poll::Ready(Err(err)) => {
+                                    Self::shutdown(&mut self.notify_shutdown, peer.clone(), true);
                                     let ev = NetworkBehaviourAction::GenerateEvent(
                                         StreamEvent::ConnectionError {
                                             peer: peer.clone(),
@@ -198,6 +231,11 @@ impl NetworkBehaviour for Stream {
                                     while let Some(msg) = pending.pop() {
                                         match Stream::poll_send_msg(channel, msg, cx) {
                                             Err(err) => {
+                                                Self::shutdown(
+                                                    &mut self.notify_shutdown,
+                                                    peer.clone(),
+                                                    true,
+                                                );
                                                 let ev = NetworkBehaviourAction::GenerateEvent(
                                                     StreamEvent::ConnectionError {
                                                         peer: peer.clone(),
@@ -206,8 +244,22 @@ impl NetworkBehaviour for Stream {
                                                 );
                                                 return Poll::Ready(ev);
                                             }
-                                            Ok(true) => *flushing = false,
-                                            Ok(false) => *flushing = true,
+                                            Ok(done) => {
+                                                if done {
+                                                    Self::shutdown(
+                                                        &mut self.notify_shutdown,
+                                                        peer.clone(),
+                                                        true,
+                                                    );
+                                                    *flushing = false
+                                                } else {
+                                                    Self::keep_alive(
+                                                        &mut self.notify_keepalive,
+                                                        peer.clone(),
+                                                    );
+                                                    *flushing = true;
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -217,7 +269,8 @@ impl NetworkBehaviour for Stream {
                     }
                     StreamHandlerEvent::InOpenChannel(ref mut rcv_conn) => {
                         match Stream::poll_rcv_msg(rcv_conn, cx) {
-                            Ok(Some(msg)) => {
+                            Ok((_pending, Some(msg))) => {
+                                Self::shutdown(&mut self.notify_shutdown, peer.clone(), true);
                                 return Poll::Ready(NetworkBehaviourAction::GenerateEvent(
                                     StreamEvent::MessageReceived {
                                         peer: peer.clone(),
@@ -225,7 +278,13 @@ impl NetworkBehaviour for Stream {
                                     },
                                 ));
                             }
-                            Ok(None) => {}
+                            Ok((pending, None)) => {
+                                if pending {
+                                    Self::keep_alive(&mut self.notify_keepalive, peer.clone());
+                                } else {
+                                    Self::shutdown(&mut self.notify_shutdown, peer.clone(), false);
+                                }
+                            }
                             Err(err) => {
                                 let ev = NetworkBehaviourAction::GenerateEvent(
                                     StreamEvent::ConnectionError {
@@ -251,14 +310,21 @@ impl NetworkBehaviour for Stream {
             }
         }
 
+        if let Some(notification) = self.notify_shutdown.pop_front() {
+            return Poll::Ready(notification);
+        }
+
         Poll::Pending
     }
 }
 
 mod handler {
     use super::*;
+    use crate::config::PEER_TIMEOUT_SECS;
     use libp2p::{swarm, InboundUpgrade, OutboundUpgrade};
     use protocol::StreamProtocol;
+    use std::time::{Duration, Instant};
+    use swarm::KeepAlive;
 
     pub(crate) enum StreamHandlerEvent {
         InOpenChannel(SimagStream<NegotiatedSubstream>),
@@ -289,10 +355,14 @@ mod handler {
     pub enum StreamHandlerInEvent {
         /// A dialing peer is requesting an open channel
         RequestChannel,
+        Finished(bool),
+        KeepAlive,
     }
 
     pub(super) enum SubstreamState {
         OutPendingOpen,
+        Timeout(bool),
+        KeepAlive,
     }
 
     pub(crate) struct StreamHandler {
@@ -302,15 +372,18 @@ mod handler {
         /// pending dispatch
         inbound_substream: Option<SimagStream<NegotiatedSubstream>>,
         events: Vec<SubstreamState>,
+        active: bool,
     }
 
     impl StreamHandler {
         pub fn new() -> StreamHandler {
+            let keep_alive = Instant::now() + Duration::from_secs(PEER_TIMEOUT_SECS);
             StreamHandler {
-                keep_alive: swarm::KeepAlive::Yes,
+                keep_alive: swarm::KeepAlive::Until(keep_alive),
                 outbound_substream: (false, None),
                 inbound_substream: None,
                 events: Vec::with_capacity(1),
+                active: false,
             }
         }
     }
@@ -349,6 +422,10 @@ mod handler {
                 StreamHandlerInEvent::RequestChannel => {
                     self.events.push(SubstreamState::OutPendingOpen);
                 }
+                StreamHandlerInEvent::Finished(refresh) => {
+                    self.events.push(SubstreamState::Timeout(refresh))
+                }
+                StreamHandlerInEvent::KeepAlive => self.events.push(SubstreamState::KeepAlive),
             }
         }
 
@@ -361,7 +438,11 @@ mod handler {
         }
 
         fn connection_keep_alive(&self) -> swarm::KeepAlive {
-            self.keep_alive
+            if self.active {
+                KeepAlive::Yes
+            } else {
+                self.keep_alive
+            }
         }
 
         fn poll(
@@ -383,6 +464,18 @@ mod handler {
                             info: (),
                         };
                         return Poll::Ready(ev);
+                    }
+                    SubstreamState::KeepAlive => {
+                        self.active = true;
+                    }
+                    SubstreamState::Timeout(refresh) => {
+                        if refresh {
+                            let keep_alive = KeepAlive::Until(
+                                Instant::now() + Duration::from_secs(PEER_TIMEOUT_SECS),
+                            );
+                            self.keep_alive = keep_alive;
+                        }
+                        self.active = false;
                     }
                 }
             }
