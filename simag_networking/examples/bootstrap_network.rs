@@ -1,5 +1,6 @@
 use simag_networking::prelude::*;
 use std::{collections::HashMap, net::Ipv4Addr};
+use uuid::Uuid;
 
 const ENCONDED_KEY1: &[u8] = include_bytes!("key1");
 const ENCONDED_KEY2: &[u8] = include_bytes!("key2");
@@ -47,7 +48,10 @@ fn main() {
 
     // #1 This is the id that must be provided to other nodes that want to join the network.
     println!("This network encoded peer id is: {}", network.get_peer_id());
-    let key = AgentKey::new(0);
+    let key = AgentKey::unique(Uuid::new_v5(
+        &Uuid::NAMESPACE_URL,
+        b"resource://example".as_ref(),
+    ));
     network.put(key, "Joined group!".to_string());
 
     let mut cnt: HashMap<_, usize> = HashMap::new();

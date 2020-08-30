@@ -193,7 +193,7 @@ where
                         ..
                     }) = self.pending.remove(&id)
                     {
-                        log::debug!("Added key: {:?}", K::from(&key));
+                        log::debug!("Added key: {:?}", K::try_from(&key).unwrap());
                     } else {
                         unreachable!()
                     }

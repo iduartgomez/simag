@@ -18,13 +18,21 @@ use libp2p::{
 use once_cell::sync::Lazy;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
-    borrow::Borrow, collections::HashMap, fmt::Debug, future::Future, hash::Hash, net::IpAddr,
-    pin::Pin, time::Duration,
+    borrow::Borrow,
+    collections::HashMap,
+    convert::{TryFrom, TryInto},
+    fmt::Debug,
+    future::Future,
+    hash::Hash,
+    net::IpAddr,
+    pin::Pin,
+    time::Duration,
 };
 use tokio::{
     runtime::Runtime,
     sync::mpsc::{channel, Receiver, Sender},
 };
+use uuid::Uuid;
 
 const CURRENT_AGENT_VERSION: &str = "simag/0.1.0";
 const CURRENT_IDENTIFY_PROTO_VERSION: &str = "ipfs/0.1.0";
@@ -196,12 +204,12 @@ where
                 mut observed_addr,
                 info,
             }) => {
-                observed_addr.push(Protocol::P2p(peer_id.clone().into()));
                 if info.protocol_version == CURRENT_IDENTIFY_PROTO_VERSION
                     && info.agent_version == CURRENT_AGENT_VERSION
                     && info.protocols.iter().any(|p| p == "/ipfs/kad/1.0.0")
                     && info.protocols.iter().any(|p| p == STREAM_PROTOCOL)
                 {
+                    observed_addr.push(Protocol::P2p(peer_id.clone().into()));
                     self.swarm.add_address(&peer_id, observed_addr);
                 }
             }
@@ -339,12 +347,26 @@ impl std::default::Default for Provider {
 }
 
 pub trait KadKey:
-    Borrow<[u8]> + Eq + Hash + Debug + Clone + Send + for<'a> From<&'a [u8]> + 'static
+    Borrow<[u8]>
+    + Eq
+    + Hash
+    + Debug
+    + Clone
+    + Send
+    + for<'a> TryFrom<&'a [u8], Error = std::io::Error>
+    + 'static
 {
 }
 
 impl<T> KadKey for T where
-    T: Borrow<[u8]> + Eq + Hash + Debug + Clone + Send + for<'a> From<&'a [u8]> + 'static
+    T: Borrow<[u8]>
+        + Eq
+        + Hash
+        + Debug
+        + Clone
+        + Send
+        + for<'a> TryFrom<&'a [u8], Error = std::io::Error>
+        + 'static
 {
 }
 
@@ -588,39 +610,97 @@ impl libp2p::core::Executor for GlobalExecutor {
     }
 }
 
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
+#[repr(u8)]
+enum AgentKeyKind {
+    UniqueId = 0,
+    GroupId = 1,
+}
+
+impl TryFrom<u8> for AgentKeyKind {
+    type Error = std::io::Error;
+    fn try_from(variant: u8) -> std::io::Result<AgentKeyKind> {
+        match variant {
+            0 => Ok(AgentKeyKind::UniqueId),
+            1 => Ok(AgentKeyKind::GroupId),
+            _ => Err(std::io::ErrorKind::InvalidInput.into()),
+        }
+    }
+}
+
+/// Agent keys are the default simag network resource representation.
+///
+/// An agent key has two different variants that represent two different kinds of resources:
+/// - A unique agent identifier, a self identifier for a given agent. Since agents own
+///   their own process and are binded to a single peer (independently of multiple agents being
+///   ran in a single host), each peer should have at most one (permanent) identifier binded
+///   to a single agent at creation time. This id must be unique across the whole network.
+/// - A group identifier, an agent can pertain to a number of groups, this can be determined by
+///   a given peer owning this resource (key) in the Kadmelia DHT.
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
 pub struct AgentKey {
-    id: [u8; std::mem::size_of::<u64>()],
+    key: [u8; AgentKey::KIND_SIZE + AgentKey::KEY_SIZE],
 }
 
 impl Debug for AgentKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AgentKey")
-            .field("id", &u64::from_be_bytes(self.id))
+            .field("kind", &AgentKeyKind::try_from(self.key[0]).unwrap())
+            .field(
+                "id",
+                &Uuid::from_u128(u128::from_be_bytes(self.key[1..].try_into().unwrap())),
+            )
             .finish()
     }
 }
 
 impl AgentKey {
-    pub fn new(id: u64) -> AgentKey {
-        let id = id.to_be_bytes();
-        AgentKey { id }
+    const KIND_SIZE: usize = 1;
+    const KEY_SIZE: usize = std::mem::size_of::<u128>();
+
+    /// This key represents a group resource kind.
+    pub fn group(id: Uuid) -> AgentKey {
+        let id = id.as_u128().to_be_bytes();
+        let kind = AgentKeyKind::GroupId as u8;
+        let mut key = [0; Self::KEY_SIZE + Self::KIND_SIZE];
+        (&mut key[1..]).copy_from_slice(&id);
+        key[0] = kind;
+        AgentKey { key }
+    }
+
+    pub fn unique(id: Uuid) -> AgentKey {
+        let id = id.as_u128().to_be_bytes();
+        let kind = AgentKeyKind::UniqueId as u8;
+        let mut key = [0; Self::KEY_SIZE + Self::KIND_SIZE];
+        (&mut key[1..]).copy_from_slice(&id);
+        key[0] = kind;
+        AgentKey { key }
     }
 }
 
 impl Borrow<[u8]> for AgentKey {
     fn borrow(&self) -> &[u8] {
-        &self.id
+        &self.key
     }
 }
 
-impl From<&[u8]> for AgentKey {
-    fn from(slice: &[u8]) -> Self {
-        if std::mem::size_of::<u64>() != slice.len() {
-            panic!("tried to construct an AgentKey from the wrong type");
+impl TryFrom<&[u8]> for AgentKey {
+    type Error = std::io::Error;
+    fn try_from(slice: &[u8]) -> std::io::Result<Self> {
+        if Self::KEY_SIZE + Self::KIND_SIZE != slice.len() {
+            return Err(std::io::ErrorKind::InvalidInput.into());
         }
-        let mut id = [0; std::mem::size_of::<u64>()];
-        id.copy_from_slice(slice);
-        AgentKey { id }
+        // validate the kind byte
+        let _kind = AgentKeyKind::try_from(slice[0])?;
+        // validate that is a valid uuid
+        let _uuid = Uuid::from_u128(u128::from_be_bytes(
+            slice[1..]
+                .try_into()
+                .map_err(|_| std::io::ErrorKind::InvalidInput)?,
+        ));
+
+        let mut key = [0; Self::KEY_SIZE + Self::KIND_SIZE];
+        key.copy_from_slice(&slice);
+        Ok(AgentKey { key })
     }
 }

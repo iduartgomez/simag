@@ -1,6 +1,6 @@
-use libp2p::PeerId;
 use simag_networking::prelude::*;
 use std::{collections::HashMap, net::Ipv4Addr};
+use uuid::Uuid;
 
 /// A Base58 enconded peer ID. Only used for testing pourpouses. The corresponding secret key can be found in
 /// the examples directory and is used in the bootstrap network example.
@@ -27,7 +27,10 @@ fn main() {
         .build::<AgentKey, String, String>()
         .unwrap();
     println!("This network encoded peer id is: {}", network.get_peer_id());
-    let key = AgentKey::new(0);
+    let key = AgentKey::unique(Uuid::new_v5(
+        &Uuid::NAMESPACE_URL,
+        b"resource://example".as_ref(),
+    ));
     network.get(key);
     network.send_message("Read my awesome message!".to_string(), peer_id);
 
