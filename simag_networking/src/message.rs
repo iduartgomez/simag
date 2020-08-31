@@ -7,7 +7,7 @@ use unsigned_varint::codec::UviBytes;
 pub(crate) const MAX_MSG_SIZE: usize = 4096;
 
 #[derive(Serialize, Deserialize)]
-pub(crate) struct Message {
+pub struct Message {
     seqno: Vec<u8>,
     pub data: Vec<u8>,
     /// signature and from are only necessary if verification is required
@@ -19,7 +19,7 @@ pub(crate) struct Message {
 impl Message {
     pub fn build<P>(payload: &P, keypair: &Keypair, verify: bool) -> Result<Message, ()>
     where
-        P: Serialize + for<'a> Deserialize<'a>,
+        P: Serialize,
     {
         let data = bincode::serialize(payload).map_err(|_| ())?;
         let (from, signature) = {
@@ -75,8 +75,8 @@ impl Decoder for MessageCodec {
             Some(p) => p,
             None => return Ok(None),
         };
-        let msg: Message =
-            bincode::deserialize(&packet[..]).map_err(|_| io::ErrorKind::InvalidInput)?;
+        let msg: Message = bincode::deserialize_from(std::io::Cursor::new(packet))
+            .map_err(|_| io::ErrorKind::InvalidInput)?;
 
         // validate that the seqno is of the right type
         if msg.seqno.len() != 8 {
@@ -115,7 +115,8 @@ mod test {
         assert!(!encoded.is_empty());
 
         let decoded = codec.decode(&mut encoded).unwrap().unwrap();
-        let msg_data: String = bincode::deserialize(&decoded.data).unwrap();
+        let msg_data: String =
+            bincode::deserialize_from(std::io::Cursor::new(decoded.data)).unwrap();
         assert_eq!(msg_data, original_data);
     }
 }

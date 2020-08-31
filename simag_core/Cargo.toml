@@ -16,7 +16,9 @@ once_cell = "^1.3.0"
 parking_lot = "0.11"
 rayon = "1.3.1"
 smallvec = "1.4.0"
+uuid = { version = "0.8.1", features = ["v4"]}
 
+# internal
 simag_terminal = { path = "../simag_terminal" }
 
 [dev-dependencies]

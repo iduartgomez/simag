@@ -11,15 +11,17 @@ pub(self) use self::lang::ParseErrF;
 ///
 /// Is the core construct of the simAG framework.
 pub struct Agent {
+    id: String,
     /// available threads for this agent
     thread_manager: ThreadManager,
     representation: kb::repr::Representation,
 }
 
 impl Agent {
-    pub fn new(threads: usize) -> Agent {
+    pub fn new(threads: usize, id: String) -> Agent {
         let representation = kb::repr::Representation::new(threads);
         Agent {
+            id,
             thread_manager: ThreadManager { threads },
             representation,
         }
@@ -27,6 +29,10 @@ impl Agent {
 
     pub fn ask(&self, source: &str) -> Result<kb::repr::Answer, kb::repr::QueryErr> {
         self.representation.ask(source)
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
     }
 
     pub fn tell(&self, source: &str) -> Result<(), Vec<ParseErrF>> {
@@ -46,7 +52,8 @@ impl Agent {
 
 impl Default for Agent {
     fn default() -> Agent {
-        Agent::new(num_cpus::get())
+        let id = uuid::Uuid::new_v4();
+        Agent::new(num_cpus::get(), id.to_string())
     }
 }
 

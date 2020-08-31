@@ -120,11 +120,13 @@ impl GlobalExecutor {
         }
     }
 
-    pub fn spawn<R: Send + 'static>(f: impl Future<Output = R> + Send + 'static) {
+    pub fn spawn<R: Send + 'static>(
+        f: impl Future<Output = R> + Send + 'static,
+    ) -> tokio::task::JoinHandle<R> {
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn(f);
+            handle.spawn(f)
         } else if let Some(rt) = &*ASYNC_RT {
-            rt.spawn(f);
+            rt.spawn(f)
         } else {
             unreachable!()
         }

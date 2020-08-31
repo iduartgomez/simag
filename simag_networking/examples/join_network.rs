@@ -1,6 +1,5 @@
 use simag_networking::prelude::*;
 use std::{collections::HashMap, net::Ipv4Addr};
-use uuid::Uuid;
 
 /// A Base58 enconded peer ID. Only used for testing pourpouses. The corresponding secret key can be found in
 /// the examples directory and is used in the bootstrap network example.
@@ -24,20 +23,17 @@ fn main() {
     // let peer = Provider::default();
     let mut network = NetworkBuilder::configure_network()
         .add_provider(peer)
-        .build::<AgentKey, String, String>()
+        .build::<String>()
         .unwrap();
     println!("This network encoded peer id is: {}", network.get_peer_id());
-    let key = AgentKey::unique(Uuid::new_v5(
-        &Uuid::NAMESPACE_URL,
-        b"resource://example".as_ref(),
-    ));
-    network.get(key);
+    let (ag_key, _ag_res) = Resource::agent("agent_01");
+    network.get(ag_key);
     network.send_message("Read my awesome message!".to_string(), peer_id);
 
     let mut cnt: HashMap<_, usize> = HashMap::new();
     let mut served = false;
     while network.is_running() {
-        if let Some(stats) = network.stats.for_key(&key) {
+        if let Some(stats) = network.stats.for_key(&ag_key) {
             if stats.times_received > 0 && !served {
                 println!("Received a resource at least once");
                 served = true;
@@ -56,7 +52,7 @@ fn main() {
                 }
 
                 if *current_amount % 2 == 0 {
-                    network.get(key);
+                    network.get(ag_key);
                 }
             }
         }

@@ -1,6 +1,6 @@
 use crate::{
     config::GlobalExecutor,
-    network::{KadKey, KadValue},
+    network::{KadKey, KadValue, Resource, ResourceIdentifier},
 };
 use libp2p::{identity, PeerId};
 use serde::{de::DeserializeOwned, Serialize};
@@ -20,13 +20,33 @@ where
     M: Serialize + DeserializeOwned,
 {
     pub stats: NetworkStats<K>,
-    sender: Sender<NetHandleCmd<K, V>>,
+    sender: Sender<NetHandleCmd<K, V, M>>,
     rcv: Receiver<NetHandleAnsw<K, M>>,
     local_key: identity::ed25519::Keypair,
     pending: HashMap<MsgId, PendingCmd<K, M>>,
     next_msg_id: MsgId,
     is_dead: bool,
     rcv_msg: HashMap<PeerId, Vec<M>>,
+}
+
+impl<M> NetworkHandle<ResourceIdentifier, Resource, M>
+where
+    M: Serialize + DeserializeOwned + Debug + Send + 'static,
+{
+    pub fn register_agent(&mut self, agent: &simag_core::Agent) -> ResourceIdentifier {
+        let agent_id = agent.id().to_owned();
+        let id = self.next_id();
+        self.pending.insert(
+            id,
+            PendingCmd {
+                cmd: SentCmd::RegisterAgent,
+                answ: None,
+            },
+        );
+        let msg = NetHandleCmd::RegisterAgent { id, agent_id };
+        GlobalExecutor::block_on(self.sender.send(msg)).expect("failed sending message");
+        todo!()
+    }
 }
 
 impl<K, V, M> NetworkHandle<K, V, M>
@@ -36,7 +56,7 @@ where
     M: Serialize + DeserializeOwned + Debug + Send + 'static,
 {
     pub(crate) fn new(
-        sender: Sender<NetHandleCmd<K, V>>,
+        sender: Sender<NetHandleCmd<K, V, M>>,
         rcv: Receiver<NetHandleAnsw<K, M>>,
         local_key: identity::ed25519::Keypair,
     ) -> Self {
@@ -68,13 +88,6 @@ where
 
     pub fn send_message(&mut self, value: M, peer: PeerId) {
         let id = self.next_id();
-        let mut sender = self.sender.clone();
-        GlobalExecutor::spawn(async move {
-            let value = bincode::serialize(&value).map_err(|_| ())?;
-            let msg = NetHandleCmd::<K, V>::SendMessage { id, value, peer };
-            sender.send(msg).await.map_err(|_| ())?;
-            Ok::<_, ()>(())
-        });
         self.pending.insert(
             id,
             PendingCmd {
@@ -82,6 +95,12 @@ where
                 answ: None,
             },
         );
+        let mut sender = self.sender.clone();
+        GlobalExecutor::spawn(async move {
+            let msg = NetHandleCmd::<K, V, M>::SendMessage { id, value, peer };
+            sender.send(msg).await.map_err(|_| ())?;
+            Ok::<_, ()>(())
+        });
     }
 
     pub fn get(&mut self, key: K) {
@@ -213,6 +232,7 @@ where
                     }
                     self.rcv_msg.entry(peer).or_default().push(msg);
                 }
+                Ok(NetHandleAnsw::AgentRegistered { key, id }) => todo!(),
                 Err(TryRecvError::Closed) => {
                     self.is_dead = true;
                     break;
@@ -282,27 +302,40 @@ enum SentCmd {
     PullContent(Vec<u8>),
     ShutDown,
     SentMsg,
+    RegisterAgent,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum NetHandleCmd<K, V>
+pub(crate) enum NetHandleCmd<K, V, M>
 where
     K: Borrow<[u8]> + Debug,
     V: Serialize + Debug,
+    M: Serialize,
 {
     /// query the network about current status
     IsRunning(usize),
     /// put a resource in this node
-    ProvideResource { id: usize, key: K, value: V },
+    ProvideResource {
+        id: usize,
+        key: K,
+        value: V,
+    },
     /// pull a resource in this node
-    PullResource { id: usize, key: K },
+    PullResource {
+        id: usize,
+        key: K,
+    },
     /// issue a shutdown command
     Shutdown(usize),
     /// send a serialized message
     SendMessage {
         id: usize,
-        value: Vec<u8>,
+        value: M,
         peer: PeerId,
+    },
+    RegisterAgent {
+        id: usize,
+        agent_id: String,
     },
 }
 
@@ -316,6 +349,7 @@ where
     GotRecord { id: usize, key: K },
     HasShutdown { id: usize, answ: bool },
     RcvMsg { peer: PeerId, msg: M },
+    AgentRegistered { key: K, id: usize },
 }
 
 fn peer_id_from_ed25519(key: identity::ed25519::PublicKey) -> PeerId {

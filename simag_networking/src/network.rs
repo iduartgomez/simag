@@ -1,8 +1,8 @@
 use crate::{
+    channel::{self, CHANNEL_PROTOCOL},
     config::{GlobalExecutor, CONF, PEER_TIMEOUT_SECS},
     handle::{NetHandleAnsw, NetHandleCmd, NetworkHandle},
     message::Message,
-    stream_behaviour::{self, STREAM_PROTOCOL},
 };
 use kad::record::Key;
 use libp2p::{
@@ -15,7 +15,7 @@ use libp2p::{
     tcp::TokioTcpConfig,
     yamux, Multiaddr, NetworkBehaviour, PeerId, Swarm, Transport,
 };
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     borrow::Borrow,
     collections::HashMap,
@@ -39,30 +39,37 @@ pub(crate) struct Network<K, V, M>
 where
     K: KadKey,
     V: KadValue,
-    M: DeserializeOwned,
+    M: DeserializeOwned + Serialize,
 {
     id: PeerId,
     key: identity::Keypair,
     swarm: Swarm<NetBehaviour>,
-    sent_kad_queries: HashMap<kad::QueryId, Option<NetHandleCmd<K, V>>>,
+    sent_kad_queries: HashMap<kad::QueryId, Option<NetHandleCmd<K, V, M>>>,
     answ_queue: Vec<NetHandleAnsw<K, M>>,
 }
 
-impl<K, V, M> Network<K, V, M>
+type DefaultNetHandleCmd<M> = NetHandleCmd<ResourceIdentifier, Resource, M>;
+type DefaultNetHandledAnsw<M> = NetHandleAnsw<ResourceIdentifier, M>;
+
+impl<M> Network<ResourceIdentifier, Resource, M>
 where
-    K: KadKey,
-    V: KadValue,
-    M: DeserializeOwned + Send + 'static,
+    M: DeserializeOwned + Serialize + Debug + Send + Sync + 'static,
 {
-    fn run_event_loop(mut self) -> (Sender<NetHandleCmd<K, V>>, Receiver<NetHandleAnsw<K, M>>) {
-        let (query_send, mut query_rcv) = channel::<NetHandleCmd<K, V>>(10);
-        let (mut answ_send, answ_rcv) = channel::<NetHandleAnsw<K, M>>(10);
+    /// specialized version of the event loop
+    fn run_event_loop(
+        mut self,
+    ) -> (
+        Sender<DefaultNetHandleCmd<M>>,
+        Receiver<DefaultNetHandledAnsw<M>>,
+    ) {
+        let (query_send, mut query_rcv) = channel::<DefaultNetHandleCmd<M>>(10);
+        let (mut answ_send, answ_rcv) = channel::<DefaultNetHandledAnsw<M>>(10);
         GlobalExecutor::spawn(async move {
             log::debug!("Setting #{} event loop", &self.id);
             let mut cmd_queue = Vec::with_capacity(1);
             'main: loop {
                 tokio::select! {
-                    answ = Network::<_, _, M>::push_msg_into_cmd_buffer(&mut cmd_queue, &mut query_rcv) => {
+                    answ = Self::push_msg_into_cmd_buffer(&mut cmd_queue, &mut query_rcv) => {
                         if let Err(()) = answ {
                             break 'main;
                         }
@@ -72,7 +79,7 @@ where
                 while let Some(cmd) = cmd_queue.pop() {
                     match cmd {
                         NetHandleCmd::ProvideResource { id, key, value } => {
-                            let key = &key.borrow();
+                            let key: &&[u8] = &key.borrow();
                             let record = kad::Record {
                                 key: Key::new(key),
                                 value: bincode::serialize(&value).unwrap(),
@@ -87,9 +94,10 @@ where
                             self.answ_queue.push(answ);
                         }
                         NetHandleCmd::PullResource { id, key } => {
+                            let key_borrowed: &&[u8] = &key.borrow();
                             let qid = self
                                 .swarm
-                                .get_record(&Key::new(&key.borrow()), kad::Quorum::One);
+                                .get_record(&Key::new(key_borrowed), kad::Quorum::One);
                             self.sent_kad_queries
                                 .insert(qid, Some(NetHandleCmd::PullResource { id, key }));
                         }
@@ -106,14 +114,22 @@ where
                         }
                         NetHandleCmd::Shutdown(id) => {
                             let answ = NetHandleAnsw::HasShutdown { id, answ: true };
-                            Network::<_, V, M>::return_and_finish(answ_send, answ).await;
+                            Self::return_and_finish(answ_send, answ).await;
                             break 'main;
+                        }
+                        NetHandleCmd::RegisterAgent { id, agent_id } => {
+                            let (key, mut res) = Resource::agent(agent_id);
+                            res.as_peer(self.id.clone());
+                            Swarm::external_addresses(&self.swarm)
+                                .for_each(|a| res.with_address(a.clone()));
+                            let answ = NetHandleAnsw::AgentRegistered { key, id };
+                            self.answ_queue.push(answ);
                         }
                         NetHandleCmd::IsRunning(_id) => {}
                     }
                 }
                 while let Some(answ) = self.answ_queue.pop() {
-                    if let Err(()) = Network::<_, V, M>::return_answ(&mut answ_send, answ).await {
+                    if let Err(()) = Self::return_answ(&mut answ_send, answ).await {
                         break 'main;
                     }
                 }
@@ -121,10 +137,17 @@ where
         });
         (query_send, answ_rcv)
     }
+}
 
+impl<K, V, M> Network<K, V, M>
+where
+    K: KadKey,
+    V: KadValue,
+    M: DeserializeOwned + Serialize + Debug + Send + Sync + 'static,
+{
     async fn push_msg_into_cmd_buffer(
-        cmd_queue: &mut Vec<NetHandleCmd<K, V>>,
-        query_rcv: &mut Receiver<NetHandleCmd<K, V>>,
+        cmd_queue: &mut Vec<NetHandleCmd<K, V, M>>,
+        query_rcv: &mut Receiver<NetHandleCmd<K, V, M>>,
     ) -> Result<(), ()> {
         match query_rcv.recv().await {
             Some(cmd) => {
@@ -178,10 +201,9 @@ where
                                     record: kad::Record { value, .. },
                                     ..
                                 } = rec;
-                                log::debug!(
-                                    "Received kademlia msg: {:?}",
-                                    bincode::deserialize::<V>(&value).unwrap()
-                                );
+                                let msg: V =
+                                    bincode::deserialize_from(std::io::Cursor::new(value)).unwrap();
+                                log::debug!("Received kademlia msg: {:?}", msg);
                                 self.answ_queue.push(NetHandleAnsw::GotRecord {
                                     id,
                                     key: key.clone(),
@@ -199,17 +221,17 @@ where
                 if info.protocol_version == CURRENT_IDENTIFY_PROTO_VERSION
                     && info.agent_version == CURRENT_AGENT_VERSION
                     && info.protocols.iter().any(|p| p == "/ipfs/kad/1.0.0")
-                    && info.protocols.iter().any(|p| p == STREAM_PROTOCOL)
+                    && info.protocols.iter().any(|p| p == CHANNEL_PROTOCOL)
                 {
                     observed_addr.push(Protocol::P2p(peer_id.clone().into()));
                     self.swarm.add_address(&peer_id, observed_addr);
                 }
             }
-            NetEvent::Stream(stream_behaviour::StreamEvent::MessageReceived { msg, peer }) => {
-                let msg: M = bincode::deserialize(&msg).unwrap();
+            NetEvent::Stream(channel::ChannelEvent::MessageReceived { msg, peer }) => {
+                let msg: M = bincode::deserialize_from(std::io::Cursor::new(msg)).unwrap();
                 self.answ_queue.push(NetHandleAnsw::RcvMsg { msg, peer });
             }
-            NetEvent::Stream(stream_behaviour::StreamEvent::ConnectionError { peer, err }) => {
+            NetEvent::Stream(channel::ChannelEvent::ConnectionError { peer, err }) => {
                 log::debug!("Connection error with peer: {}:\n{}", peer, err);
             }
             NetEvent::Identify(_) => {}
@@ -223,7 +245,7 @@ where
 struct NetBehaviour {
     kad: kad::Kademlia<kad::store::MemoryStore>,
     identify: identify::Identify,
-    streams: stream_behaviour::Stream,
+    streams: channel::Channel,
 }
 
 impl NetBehaviour {
@@ -260,7 +282,7 @@ impl std::ops::Deref for NetBehaviour {
 enum NetEvent {
     KademliaEvent(kad::KademliaEvent),
     Identify(identify::IdentifyEvent),
-    Stream(stream_behaviour::StreamEvent),
+    Stream(channel::ChannelEvent),
 }
 
 impl From<kad::KademliaEvent> for NetEvent {
@@ -275,8 +297,8 @@ impl From<identify::IdentifyEvent> for NetEvent {
     }
 }
 
-impl From<stream_behaviour::StreamEvent> for NetEvent {
-    fn from(event: stream_behaviour::StreamEvent) -> NetEvent {
+impl From<channel::ChannelEvent> for NetEvent {
+    fn from(event: channel::ChannelEvent) -> NetEvent {
         Self::Stream(event)
     }
 }
@@ -439,11 +461,12 @@ impl NetworkBuilder {
         self
     }
 
-    pub fn build<Key, Value, Message>(self) -> std::io::Result<NetworkHandle<Key, Value, Message>>
+    /// Builds the default implementation of network with a custom message kind.
+    pub fn build<Message>(
+        self,
+    ) -> std::io::Result<NetworkHandle<ResourceIdentifier, Resource, Message>>
     where
-        Key: KadKey,
-        Value: KadValue,
-        Message: Serialize + DeserializeOwned + Debug + Send + 'static,
+        Message: Serialize + DeserializeOwned + Debug + Send + Sync + 'static,
     {
         if (self.local_ip.is_none() || self.local_port.is_none())
             && self.remote_providers.is_empty()
@@ -477,7 +500,7 @@ impl NetworkBuilder {
             sent_queries.insert(bootstrap_query, None);
         }
 
-        let network: Network<Key, Value, Message> = Network {
+        let network: Network<ResourceIdentifier, Resource, Message> = Network {
             key: self.local_key,
             swarm,
             sent_kad_queries: sent_queries,
@@ -542,7 +565,7 @@ impl NetworkBuilder {
                 CURRENT_AGENT_VERSION.to_owned(),
                 self.local_key.public(),
             ),
-            streams: stream_behaviour::Stream::new(),
+            streams: channel::Channel::new(),
         }
     }
 }
@@ -565,9 +588,9 @@ impl TryFrom<u8> for AgentKeyKind {
     }
 }
 
-/// Agent keys are the default simag network resource representation.
+/// A `ResourceIdentifier` is the default simag network resource identifier.
 ///
-/// An agent key has two different variants that represent two different kinds of resources:
+/// The key has two different variants that represent two different kinds of resources:
 /// - A unique agent identifier, a self identifier for a given agent. Since agents own
 ///   their own process and are binded to a single peer (independently of multiple agents being
 ///   ran in a single host), each peer should have at most one (permanent) identifier binded
@@ -575,11 +598,11 @@ impl TryFrom<u8> for AgentKeyKind {
 /// - A group identifier, an agent can pertain to a number of groups, this can be determined by
 ///   a given peer owning this resource (key) in the Kadmelia DHT.
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
-pub struct AgentKey {
-    key: [u8; AgentKey::KIND_SIZE + AgentKey::KEY_SIZE],
+pub struct ResourceIdentifier {
+    key: [u8; ResourceIdentifier::KIND_SIZE + ResourceIdentifier::KEY_SIZE],
 }
 
-impl Debug for AgentKey {
+impl Debug for ResourceIdentifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AgentKey")
             .field("kind", &AgentKeyKind::try_from(self.key[0]).unwrap())
@@ -591,37 +614,37 @@ impl Debug for AgentKey {
     }
 }
 
-impl AgentKey {
+impl ResourceIdentifier {
     const KIND_SIZE: usize = 1;
     const KEY_SIZE: usize = std::mem::size_of::<u128>();
 
     /// This key represents a group resource kind.
-    pub fn group(id: Uuid) -> AgentKey {
+    fn group(id: &Uuid) -> ResourceIdentifier {
         let id = id.as_u128().to_be_bytes();
         let kind = AgentKeyKind::GroupId as u8;
         let mut key = [0; Self::KEY_SIZE + Self::KIND_SIZE];
         (&mut key[1..]).copy_from_slice(&id);
         key[0] = kind;
-        AgentKey { key }
+        ResourceIdentifier { key }
     }
 
-    pub fn unique(id: Uuid) -> AgentKey {
+    fn unique(id: &Uuid) -> ResourceIdentifier {
         let id = id.as_u128().to_be_bytes();
         let kind = AgentKeyKind::UniqueId as u8;
         let mut key = [0; Self::KEY_SIZE + Self::KIND_SIZE];
         (&mut key[1..]).copy_from_slice(&id);
         key[0] = kind;
-        AgentKey { key }
+        ResourceIdentifier { key }
     }
 }
 
-impl Borrow<[u8]> for AgentKey {
+impl Borrow<[u8]> for ResourceIdentifier {
     fn borrow(&self) -> &[u8] {
         &self.key
     }
 }
 
-impl TryFrom<&[u8]> for AgentKey {
+impl TryFrom<&[u8]> for ResourceIdentifier {
     type Error = std::io::Error;
     fn try_from(slice: &[u8]) -> std::io::Result<Self> {
         if Self::KEY_SIZE + Self::KIND_SIZE != slice.len() {
@@ -638,6 +661,129 @@ impl TryFrom<&[u8]> for AgentKey {
 
         let mut key = [0; Self::KEY_SIZE + Self::KIND_SIZE];
         key.copy_from_slice(&slice);
-        Ok(AgentKey { key })
+        Ok(ResourceIdentifier { key })
+    }
+}
+
+/// A `Resource` in a simag network is ...
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Resource(AgOrGroup);
+
+impl Resource {
+    /// Create a resource of agent kind. Returns both the identifier (key) and the resource
+    /// handle.
+    pub fn agent<ID: AsRef<str>>(agent_id: ID) -> (ResourceIdentifier, Resource) {
+        let uid = Uuid::new_v5(
+            &Uuid::NAMESPACE_URL,
+            ["simag://agent.", agent_id.as_ref()].concat().as_bytes(),
+        );
+        let key = ResourceIdentifier::unique(&uid);
+        let res = AgentRes {
+            agent_id: uid,
+            peer: None,
+            addr: Vec::with_capacity(1),
+        };
+        (key, Resource(AgOrGroup::Ag(res)))
+    }
+    /// Create a resource of group kind. Returns both the identifier (key) and the resource
+    /// handle.
+    pub fn group<ID: AsRef<str>>(group_id: ID) -> (ResourceIdentifier, Resource) {
+        let uid = Uuid::new_v5(
+            &Uuid::NAMESPACE_URL,
+            ["simag://group.", group_id.as_ref()].concat().as_bytes(),
+        );
+        let key = ResourceIdentifier::group(&uid);
+        let res = GroupRes {
+            id: uid,
+            topic_span: vec![],
+            members: vec![],
+        };
+        (key, Resource(AgOrGroup::Gr(res)))
+    }
+
+    pub(crate) fn as_peer(&mut self, peer: PeerId) {
+        match self.0 {
+            AgOrGroup::Ag(ref mut res) => res.peer = Some(peer),
+            _ => unreachable!(),
+        }
+    }
+
+    pub(crate) fn with_address(&mut self, addr: Multiaddr) {
+        match self.0 {
+            AgOrGroup::Ag(ref mut res) => res.addr.push(addr),
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+enum AgOrGroup {
+    Ag(AgentRes),
+    Gr(GroupRes),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct AgentRes {
+    addr: Vec<Multiaddr>,
+    #[serde(serialize_with = "custom_ser::ser_peer")]
+    #[serde(deserialize_with = "custom_ser::de_peer")]
+    peer: Option<PeerId>,
+    agent_id: Uuid,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct GroupRes {
+    id: Uuid,
+    /// all the topics peers connected to the group are automatically subscribed to
+    topic_span: Vec<String>,
+    /// eventually consistent list of peers; a message directed to this group will be propagated
+    /// to all the members of the group.
+    #[serde(serialize_with = "custom_ser::ser_members")]
+    #[serde(deserialize_with = "custom_ser::de_members")]
+    members: Vec<PeerId>,
+}
+
+mod custom_ser {
+    use super::*;
+
+    pub(super) fn ser_peer<S: Serializer>(
+        peer: &Option<PeerId>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let as_bytes = if let Some(peer) = peer {
+            Some(peer.as_bytes().to_vec())
+        } else {
+            None
+        };
+        as_bytes.serialize(serializer)
+    }
+
+    pub(super) fn de_peer<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<PeerId>, D::Error> {
+        let peer: Option<Vec<u8>> = Deserialize::deserialize(deserializer)?;
+        Ok(peer.map(|data| PeerId::from_bytes(data).unwrap()))
+    }
+
+    pub(super) fn ser_members<S: Serializer>(
+        members: &[PeerId],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let as_bytes: Vec<Vec<u8>> = members
+            .iter()
+            .map(|p| PeerId::as_bytes(p).to_vec())
+            .collect();
+        as_bytes.serialize(serializer)
+    }
+
+    pub(super) fn de_members<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<PeerId>, D::Error> {
+        let peers: Vec<Vec<u8>> = Deserialize::deserialize(deserializer)?;
+        Ok(peers
+            .into_iter()
+            .map(PeerId::from_bytes)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap())
     }
 }

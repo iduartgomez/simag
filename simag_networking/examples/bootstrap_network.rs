@@ -1,6 +1,5 @@
 use simag_networking::prelude::*;
 use std::{collections::HashMap, net::Ipv4Addr};
-use uuid::Uuid;
 
 const ENCONDED_KEY1: &[u8] = include_bytes!("key1");
 const ENCONDED_KEY2: &[u8] = include_bytes!("key2");
@@ -26,7 +25,7 @@ fn main() {
             .with_key(Keypair::decode(&mut ENCONDED_KEY1.to_vec()).unwrap())
             .with_ip(Ipv4Addr::LOCALHOST)
             .with_port(7800)
-            .build::<AgentKey, String, String>()
+            .build::<String>()
             .unwrap()
     } else {
         let provider = Provider::new()
@@ -48,16 +47,13 @@ fn main() {
 
     // #1 This is the id that must be provided to other nodes that want to join the network.
     println!("This network encoded peer id is: {}", network.get_peer_id());
-    let key = AgentKey::unique(Uuid::new_v5(
-        &Uuid::NAMESPACE_URL,
-        b"resource://example".as_ref(),
-    ));
-    network.put(key, "Joined group!".to_string());
+    let (ag_key, ag_res) = Resource::agent("agent_01");
+    network.put(ag_key, ag_res);
 
     let mut cnt: HashMap<_, usize> = HashMap::new();
     let mut served = false;
     while network.is_running() {
-        if let Some(stats) = network.stats.for_key(&key) {
+        if let Some(stats) = network.stats.for_key(&ag_key) {
             if stats.times_served > 0 && !served {
                 println!("Served a resource at least once");
                 served = false;
