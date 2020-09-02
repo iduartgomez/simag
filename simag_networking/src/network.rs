@@ -1,7 +1,7 @@
 use crate::{
     channel::{self, CHANNEL_PROTOCOL},
     config::{GlobalExecutor, CONF, PEER_TIMEOUT_SECS},
-    handle::{NetHandleAnsw, NetHandleCmd, NetworkHandle},
+    handle::{HandleAnsw, HandleCmd, NetworkHandle},
     message::Message,
 };
 use kad::record::Key;
@@ -23,9 +23,13 @@ use std::{
     fmt::Debug,
     hash::Hash,
     net::IpAddr,
+    sync::Arc,
     time::Duration,
 };
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::{
+    mpsc::{channel, Receiver, Sender},
+    Mutex,
+};
 use uuid::Uuid;
 
 const CURRENT_AGENT_VERSION: &str = "simag/0.1.0";
@@ -39,103 +43,90 @@ pub(crate) struct Network<K, V, M>
 where
     K: KadKey,
     V: KadValue,
-    M: DeserializeOwned + Serialize,
+    M: DeserializeOwned + Serialize + Send + Sync,
 {
     id: PeerId,
     key: identity::Keypair,
-    swarm: Swarm<NetBehaviour>,
-    sent_kad_queries: HashMap<kad::QueryId, Option<NetHandleCmd<K, V, M>>>,
-    answ_queue: Vec<NetHandleAnsw<K, M>>,
+    swarm: Mutex<Swarm<NetBehaviour>>,
+    sent_kad_queries: Mutex<HashMap<kad::QueryId, Option<HandleCmd<K, V, M>>>>,
+    answ_send: Mutex<Sender<HandleAnsw<K, M>>>,
 }
 
-type DefaultNetHandleCmd<M> = NetHandleCmd<ResourceIdentifier, Resource, M>;
-type DefaultNetHandledAnsw<M> = NetHandleAnsw<ResourceIdentifier, M>;
+type DefaultNetHandleCmd<M> = HandleCmd<ResourceIdentifier, Resource, M>;
+type DefaultNetHandledAnsw<M> = HandleAnsw<ResourceIdentifier, M>;
 
 impl<M> Network<ResourceIdentifier, Resource, M>
 where
     M: DeserializeOwned + Serialize + Debug + Send + Sync + 'static,
 {
     /// specialized version of the event loop
-    fn run_event_loop(
-        mut self,
-    ) -> (
-        Sender<DefaultNetHandleCmd<M>>,
-        Receiver<DefaultNetHandledAnsw<M>>,
-    ) {
-        let (query_send, mut query_rcv) = channel::<DefaultNetHandleCmd<M>>(10);
-        let (mut answ_send, answ_rcv) = channel::<DefaultNetHandledAnsw<M>>(10);
+    fn run_event_loop(self, mut query_rcv: Receiver<HandleCmd<ResourceIdentifier, Resource, M>>) {
+        let shared_handler = Arc::new(self);
+
+        // set the main event loop
+        let sh = shared_handler.clone();
+        GlobalExecutor::spawn(sh.process_events());
+
+        // set the command handling thread
         GlobalExecutor::spawn(async move {
-            log::debug!("Setting #{} event loop", &self.id);
-            let mut cmd_queue = Vec::with_capacity(1);
-            'main: loop {
-                tokio::select! {
-                    answ = Self::push_msg_into_cmd_buffer(&mut cmd_queue, &mut query_rcv) => {
-                        if let Err(()) = answ {
-                            break 'main;
-                        }
-                    }
-                    event = self.swarm.next() => self.process_event(event).await,
-                }
-                while let Some(cmd) = cmd_queue.pop() {
-                    match cmd {
-                        NetHandleCmd::ProvideResource { id, key, value } => {
-                            let key: &&[u8] = &key.borrow();
-                            let record = kad::Record {
-                                key: Key::new(key),
-                                value: bincode::serialize(&value).unwrap(),
-                                publisher: Some(self.id.clone()),
-                                expires: None,
-                            };
-                            let qid = self.swarm.put_record(record, kad::Quorum::One).unwrap();
-                            self.sent_kad_queries.insert(qid, None);
-                            let qid = self.swarm.start_providing(Key::new(key)).unwrap();
-                            self.sent_kad_queries.insert(qid, None);
-                            let answ = NetHandleAnsw::KeyAdded { id };
-                            self.answ_queue.push(answ);
-                        }
-                        NetHandleCmd::PullResource { id, key } => {
-                            let key_borrowed: &&[u8] = &key.borrow();
-                            let qid = self
-                                .swarm
-                                .get_record(&Key::new(key_borrowed), kad::Quorum::One);
-                            self.sent_kad_queries
-                                .insert(qid, Some(NetHandleCmd::PullResource { id, key }));
-                        }
-                        NetHandleCmd::SendMessage { value, peer, .. } => {
-                            match Message::build(&value, &self.key, true) {
-                                Ok(msg) => {
-                                    self.swarm.send_message(&peer, msg);
-                                }
-                                Err(_) => {
-                                    log::error!("Failed building a message from data: {:?}", value);
-                                    break 'main;
-                                }
-                            }
-                        }
-                        NetHandleCmd::Shutdown(id) => {
-                            let answ = NetHandleAnsw::HasShutdown { id, answ: true };
-                            Self::return_and_finish(answ_send, answ).await;
-                            break 'main;
-                        }
-                        NetHandleCmd::RegisterAgent { id, agent_id } => {
-                            let (key, mut res) = Resource::agent(agent_id);
-                            res.as_peer(self.id.clone());
-                            Swarm::external_addresses(&self.swarm)
-                                .for_each(|a| res.with_address(a.clone()));
-                            let answ = NetHandleAnsw::AgentRegistered { key, id };
-                            self.answ_queue.push(answ);
-                        }
-                        NetHandleCmd::IsRunning(_id) => {}
-                    }
-                }
-                while let Some(answ) = self.answ_queue.pop() {
-                    if let Err(()) = Self::return_answ(&mut answ_send, answ).await {
-                        break 'main;
-                    }
+            loop {
+                if let Some(cmd) = query_rcv.recv().await {
+                    let sh = shared_handler.clone();
+                    tokio::spawn(sh.process_handle_cmd(cmd));
                 }
             }
         });
-        (query_send, answ_rcv)
+    }
+
+    async fn process_handle_cmd(
+        self: Arc<Self>,
+        cmd: HandleCmd<ResourceIdentifier, Resource, M>,
+    ) -> Result<(), ()> {
+        match cmd {
+            HandleCmd::ProvideResource { id, key, value } => {
+                self.provide_value(key, value).await?;
+                let answ = HandleAnsw::KeyAdded { id };
+                self.return_answ(answ).await?;
+            }
+            HandleCmd::PullResource { id, key } => {
+                let key_borrowed: &&[u8] = &key.borrow();
+                let qid = self
+                    .swarm
+                    .lock()
+                    .await
+                    .get_record(&Key::new(key_borrowed), kad::Quorum::One);
+                self.sent_kad_queries
+                    .lock()
+                    .await
+                    .insert(qid, Some(HandleCmd::PullResource { id, key }));
+            }
+            HandleCmd::SendMessage { value, peer, .. } => {
+                let msg = tokio::task::block_in_place(|| Message::build(&value, &self.key, true));
+                match msg {
+                    Ok(msg) => {
+                        self.swarm.lock().await.send_message(&peer, msg);
+                    }
+                    Err(_) => {
+                        log::error!("Failed building a message from data: {:?}", value);
+                    }
+                }
+            }
+            HandleCmd::Shutdown(id) => {
+                let answ = HandleAnsw::HasShutdown { id, answ: true };
+                self.return_answ(answ).await?;
+            }
+            HandleCmd::RegisterAgent { agent_id } => {
+                let (key, mut res) = Resource::agent(agent_id);
+                res.as_peer(self.id.clone());
+                Swarm::external_addresses(&*self.swarm.lock().await)
+                    .for_each(|a| res.with_address(a.clone()));
+                self.provide_value(key, res).await?;
+                let answ = HandleAnsw::AgentRegistered { key };
+                self.return_answ(answ).await?;
+            }
+            HandleCmd::IsRunning(_id) => {}
+        }
+        Ok(())
     }
 }
 
@@ -145,24 +136,36 @@ where
     V: KadValue,
     M: DeserializeOwned + Serialize + Debug + Send + Sync + 'static,
 {
-    async fn push_msg_into_cmd_buffer(
-        cmd_queue: &mut Vec<NetHandleCmd<K, V, M>>,
-        query_rcv: &mut Receiver<NetHandleCmd<K, V, M>>,
-    ) -> Result<(), ()> {
-        match query_rcv.recv().await {
-            Some(cmd) => {
-                cmd_queue.push(cmd);
-                Ok(())
-            }
-            None => Err(()),
-        }
+    async fn provide_value(self: &Arc<Self>, key: K, value: V) -> Result<(), ()> {
+        let key: &&[u8] = &key.borrow();
+        let value = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, ()> {
+            bincode::serialize(&value).map_err(|_| ())
+        })
+        .await
+        .unwrap()?;
+        let record = kad::Record {
+            key: Key::new(key),
+            value,
+            publisher: Some(self.id.clone()),
+            expires: None,
+        };
+
+        let mut swarm = self.swarm.lock().await;
+        let mut sent_kad_queries = self.sent_kad_queries.lock().await;
+
+        let qid = swarm.put_record(record, kad::Quorum::One).map_err(|_| ())?;
+        sent_kad_queries.insert(qid, None);
+        let qid = swarm.start_providing(Key::new(key)).map_err(|_| ())?;
+        sent_kad_queries.insert(qid, None);
+
+        Ok(())
     }
 
-    async fn return_answ(
-        sender: &mut Sender<NetHandleAnsw<K, M>>,
-        answ: NetHandleAnsw<K, M>,
-    ) -> Result<(), ()> {
-        if sender
+    async fn return_answ(self: &Arc<Self>, answ: HandleAnsw<K, M>) -> Result<(), ()> {
+        if self
+            .answ_send
+            .lock()
+            .await
             .send_timeout(answ, Duration::from_secs(HANDLE_TIMEOUT_SECS))
             .await
             .is_err()
@@ -174,67 +177,78 @@ where
         }
     }
 
-    async fn return_and_finish(mut sender: Sender<NetHandleAnsw<K, M>>, answ: NetHandleAnsw<K, M>) {
-        if sender
-            .send_timeout(answ, Duration::from_secs(HANDLE_TIMEOUT_SECS))
-            .await
-            .is_err()
-        {
-            log::debug!("Network handle dropped!");
-        }
-    }
-
-    async fn process_event(&mut self, event: NetEvent) {
-        match event {
-            NetEvent::KademliaEvent(event) => {
-                // log::debug!("\nPeer #{} received event:\n {:?}", self.id, event);
-                if let kad::KademliaEvent::QueryResult { result, id, .. } = event {
-                    if let Some(Some(NetHandleCmd::PullResource { id, key })) =
-                        self.sent_kad_queries.remove(&id)
-                    {
-                        if let kad::QueryResult::GetRecord(Ok(kad::GetRecordOk {
-                            records, ..
-                        })) = result
-                        {
-                            for rec in records {
-                                let kad::PeerRecord {
-                                    record: kad::Record { value, .. },
+    async fn process_events(self: Arc<Self>) {
+        loop {
+            let mut swarm = self.swarm.lock().await;
+            if let Ok(event) = tokio::time::timeout(Duration::from_nanos(20), swarm.next()).await {
+                match event {
+                    NetEvent::KademliaEvent(event) => {
+                        // log::debug!("\nPeer #{} received event:\n {:?}", self.id, event);
+                        if let kad::KademliaEvent::QueryResult { result, id, .. } = event {
+                            if let Some(Some(HandleCmd::PullResource { id, key })) =
+                                self.sent_kad_queries.lock().await.remove(&id)
+                            {
+                                if let kad::QueryResult::GetRecord(Ok(kad::GetRecordOk {
+                                    records,
                                     ..
-                                } = rec;
-                                let msg: V =
-                                    bincode::deserialize_from(std::io::Cursor::new(value)).unwrap();
-                                log::debug!("Received kademlia msg: {:?}", msg);
-                                self.answ_queue.push(NetHandleAnsw::GotRecord {
-                                    id,
-                                    key: key.clone(),
-                                });
+                                })) = result
+                                {
+                                    for rec in records {
+                                        let kad::PeerRecord {
+                                            record: kad::Record { value, .. },
+                                            ..
+                                        } = rec;
+                                        let msg: V = tokio::task::spawn_blocking(|| {
+                                            bincode::deserialize_from(std::io::Cursor::new(value))
+                                                .unwrap()
+                                        })
+                                        .await
+                                        .unwrap();
+                                        log::debug!("Received kademlia msg: {:?}", msg);
+                                        self.return_answ(HandleAnsw::GotRecord {
+                                            id,
+                                            key: key.clone(),
+                                        })
+                                        .await
+                                        .unwrap();
+                                    }
+                                }
                             }
                         }
                     }
+                    NetEvent::Identify(identify::IdentifyEvent::Received {
+                        peer_id,
+                        mut observed_addr,
+                        info,
+                    }) => {
+                        if info.protocol_version == CURRENT_IDENTIFY_PROTO_VERSION
+                            && info.agent_version == CURRENT_AGENT_VERSION
+                            && info.protocols.iter().any(|p| p == "/ipfs/kad/1.0.0")
+                            && info.protocols.iter().any(|p| p == CHANNEL_PROTOCOL)
+                        {
+                            observed_addr.push(Protocol::P2p(peer_id.clone().into()));
+                            swarm.add_address(&peer_id, observed_addr);
+                        }
+                    }
+                    NetEvent::Stream(channel::ChannelEvent::MessageReceived { msg, peer }) => {
+                        let msg: M = tokio::task::spawn_blocking(|| {
+                            bincode::deserialize_from(std::io::Cursor::new(msg)).unwrap()
+                        })
+                        .await
+                        .unwrap();
+                        self.return_answ(HandleAnsw::RcvMsg { msg, peer })
+                            .await
+                            .unwrap();
+                    }
+                    NetEvent::Stream(channel::ChannelEvent::ConnectionError { peer, err }) => {
+                        log::debug!("Connection error with peer: {}:\n{}", peer, err);
+                    }
+                    NetEvent::Identify(_) => {}
                 }
             }
-            NetEvent::Identify(identify::IdentifyEvent::Received {
-                peer_id,
-                mut observed_addr,
-                info,
-            }) => {
-                if info.protocol_version == CURRENT_IDENTIFY_PROTO_VERSION
-                    && info.agent_version == CURRENT_AGENT_VERSION
-                    && info.protocols.iter().any(|p| p == "/ipfs/kad/1.0.0")
-                    && info.protocols.iter().any(|p| p == CHANNEL_PROTOCOL)
-                {
-                    observed_addr.push(Protocol::P2p(peer_id.clone().into()));
-                    self.swarm.add_address(&peer_id, observed_addr);
-                }
-            }
-            NetEvent::Stream(channel::ChannelEvent::MessageReceived { msg, peer }) => {
-                let msg: M = bincode::deserialize_from(std::io::Cursor::new(msg)).unwrap();
-                self.answ_queue.push(NetHandleAnsw::RcvMsg { msg, peer });
-            }
-            NetEvent::Stream(channel::ChannelEvent::ConnectionError { peer, err }) => {
-                log::debug!("Connection error with peer: {}:\n{}", peer, err);
-            }
-            NetEvent::Identify(_) => {}
+            // drop the swarm lock after work or timeout so work can be done in other thread
+            std::mem::drop(swarm);
+            tokio::time::delay_for(Duration::from_nanos(20)).await;
         }
     }
 }
@@ -367,6 +381,7 @@ pub trait KadKey:
     + Debug
     + Clone
     + Send
+    + Sync
     + for<'a> TryFrom<&'a [u8], Error = std::io::Error>
     + 'static
 {
@@ -379,14 +394,15 @@ impl<T> KadKey for T where
         + Debug
         + Clone
         + Send
+        + Sync
         + for<'a> TryFrom<&'a [u8], Error = std::io::Error>
         + 'static
 {
 }
 
-pub trait KadValue: Serialize + DeserializeOwned + Debug + Send + 'static {}
+pub trait KadValue: Serialize + DeserializeOwned + Debug + Send + Sync + 'static {}
 
-impl<T> KadValue for T where T: Serialize + DeserializeOwned + Debug + Send + 'static {}
+impl<T> KadValue for T where T: Serialize + DeserializeOwned + Debug + Send + Sync + 'static {}
 
 pub struct NetworkBuilder {
     /// ED25519 local peer private key.
@@ -500,15 +516,22 @@ impl NetworkBuilder {
             sent_queries.insert(bootstrap_query, None);
         }
 
+        let (query_send, query_rcv) = channel::<DefaultNetHandleCmd<Message>>(10);
+        let (answ_send, answ_rcv) = channel::<DefaultNetHandledAnsw<Message>>(10);
+
         let network: Network<ResourceIdentifier, Resource, Message> = Network {
             key: self.local_key,
-            swarm,
-            sent_kad_queries: sent_queries,
+            swarm: Mutex::new(swarm),
+            sent_kad_queries: Mutex::new(sent_queries),
             id: self.local_peer_id,
-            answ_queue: Vec::with_capacity(1),
+            answ_send: Mutex::new(answ_send),
         };
-        let (sender, rcv) = network.run_event_loop();
-        Ok(NetworkHandle::new(sender, rcv, self.local_ed25519_key))
+        network.run_event_loop(query_rcv);
+        Ok(NetworkHandle::new(
+            query_send,
+            answ_rcv,
+            self.local_ed25519_key,
+        ))
     }
 
     fn config_transport(

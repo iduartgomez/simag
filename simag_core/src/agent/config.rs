@@ -18,7 +18,7 @@ pub(super) struct Config {
     pub log_level: log::LevelFilter,
 }
 
-#[cfg(debug_assertions)]
+#[cfg(any(test, debug_assertions))]
 pub(super) mod tracing {
     use super::*;
 
@@ -31,13 +31,14 @@ pub(super) mod tracing {
         }
     }
 
+    #[allow(unused_must_use)]
     static LOGGER: Lazy<Logger> = Lazy::new(|| {
         env_logger::builder()
             .format_module_path(true)
             .format_timestamp_nanos()
             .target(env_logger::Target::Stderr)
             .filter(None, CONF.log_level)
-            .init();
+            .try_init();
 
         Logger
     });

@@ -20,8 +20,8 @@ where
     M: Serialize + DeserializeOwned,
 {
     pub stats: NetworkStats<K>,
-    sender: Sender<NetHandleCmd<K, V, M>>,
-    rcv: Receiver<NetHandleAnsw<K, M>>,
+    sender: Sender<HandleCmd<K, V, M>>,
+    rcv: Receiver<HandleAnsw<K, M>>,
     local_key: identity::ed25519::Keypair,
     pending: HashMap<MsgId, PendingCmd<K, M>>,
     next_msg_id: MsgId,
@@ -33,19 +33,19 @@ impl<M> NetworkHandle<ResourceIdentifier, Resource, M>
 where
     M: Serialize + DeserializeOwned + Debug + Send + 'static,
 {
-    pub fn register_agent(&mut self, agent: &simag_core::Agent) -> ResourceIdentifier {
+    pub fn register_agent(&mut self, agent: &simag_core::Agent) -> Result<ResourceIdentifier, ()> {
+        // block the handle until the agent has been registered or there is an error
         let agent_id = agent.id().to_owned();
-        let id = self.next_id();
-        self.pending.insert(
-            id,
-            PendingCmd {
-                cmd: SentCmd::RegisterAgent,
-                answ: None,
-            },
-        );
-        let msg = NetHandleCmd::RegisterAgent { id, agent_id };
+        let msg = HandleCmd::RegisterAgent { agent_id };
         GlobalExecutor::block_on(self.sender.send(msg)).expect("failed sending message");
-        todo!()
+        loop {
+            let msg = self.rcv.try_recv();
+            match self.process_answ_msg(msg) {
+                Ok(Some(HandleAnsw::AgentRegistered { key })) => break Ok(key),
+                Err(TryRecvError::Closed) => break Err(()),
+                _ => {}
+            }
+        }
     }
 }
 
@@ -56,8 +56,8 @@ where
     M: Serialize + DeserializeOwned + Debug + Send + 'static,
 {
     pub(crate) fn new(
-        sender: Sender<NetHandleCmd<K, V, M>>,
-        rcv: Receiver<NetHandleAnsw<K, M>>,
+        sender: Sender<HandleCmd<K, V, M>>,
+        rcv: Receiver<HandleAnsw<K, M>>,
         local_key: identity::ed25519::Keypair,
     ) -> Self {
         NetworkHandle {
@@ -82,7 +82,7 @@ where
                 answ: None,
             },
         );
-        let msg = NetHandleCmd::ProvideResource { id, key, value };
+        let msg = HandleCmd::ProvideResource { id, key, value };
         GlobalExecutor::block_on(self.sender.send(msg)).expect("failed sending message");
     }
 
@@ -97,7 +97,7 @@ where
         );
         let mut sender = self.sender.clone();
         GlobalExecutor::spawn(async move {
-            let msg = NetHandleCmd::<K, V, M>::SendMessage { id, value, peer };
+            let msg = HandleCmd::<K, V, M>::SendMessage { id, value, peer };
             sender.send(msg).await.map_err(|_| ())?;
             Ok::<_, ()>(())
         });
@@ -112,7 +112,7 @@ where
                 answ: None,
             },
         );
-        let msg = NetHandleCmd::PullResource { id, key };
+        let msg = HandleCmd::PullResource { id, key };
         GlobalExecutor::block_on(self.sender.send(msg)).expect("failed sending message");
     }
 
@@ -136,7 +136,7 @@ where
         self.process_answer_buffer();
 
         let msg_id = self.next_id();
-        let msg = NetHandleCmd::IsRunning(msg_id);
+        let msg = HandleCmd::IsRunning(msg_id);
         self.sender
             .try_send(msg)
             .map(|_| true)
@@ -163,7 +163,7 @@ where
         }
 
         let msg_id = self.next_id();
-        let msg = NetHandleCmd::Shutdown(msg_id);
+        let msg = HandleCmd::Shutdown(msg_id);
         match self.sender.try_send(msg) {
             Ok(()) => {}
             Err(TrySendError::Full(_msg)) => {
@@ -189,7 +189,7 @@ where
         match self.pending.values().find(|p| p.shutdown()) {
             Some(PendingCmd {
                 cmd: SentCmd::ShutDown,
-                answ: Some(NetHandleAnsw::HasShutdown { id, answ }),
+                answ: Some(HandleAnsw::HasShutdown { id, answ }),
             }) => {
                 let answ = *answ;
                 let id = *id;
@@ -203,43 +203,57 @@ where
 
     fn process_answer_buffer(&mut self) {
         loop {
-            match self.rcv.try_recv() {
-                Ok(NetHandleAnsw::HasShutdown { id, answ }) => {
-                    if let Some(q) = self.pending.get_mut(&id) {
-                        q.answ = Some(NetHandleAnsw::HasShutdown { id, answ })
-                    }
-                }
-                Ok(NetHandleAnsw::KeyAdded { id }) => {
-                    if let Some(PendingCmd {
-                        cmd: SentCmd::AddedKey(key),
-                        ..
-                    }) = self.pending.remove(&id)
-                    {
-                        log::debug!("Added key: {:?}", K::try_from(&key).unwrap());
-                    } else {
-                        unreachable!()
-                    }
-                }
-                Ok(NetHandleAnsw::GotRecord { key, .. }) => {
-                    self.stats.key_stats.entry(key).or_default().times_received += 1;
-                }
-                Ok(NetHandleAnsw::RcvMsg { peer, msg }) => {
-                    log::debug!("Received streaming msg from {}: {:?}", peer, msg);
-                    if let Some(stats) = self.stats.rcv_msgs.iter_mut().find(|p| p.0 == peer) {
-                        stats.1 += 1;
-                    } else {
-                        self.stats.rcv_msgs.push((peer.clone(), 1));
-                    }
-                    self.rcv_msg.entry(peer).or_default().push(msg);
-                }
-                Ok(NetHandleAnsw::AgentRegistered { key, id }) => todo!(),
-                Err(TryRecvError::Closed) => {
-                    self.is_dead = true;
-                    break;
-                }
-                Err(TryRecvError::Empty) => break,
+            let msg = self.rcv.try_recv();
+            if self.process_answ_msg(msg).is_err() {
+                break;
             }
         }
+    }
+
+    #[inline]
+    fn process_answ_msg(
+        &mut self,
+        msg: Result<HandleAnsw<K, M>, TryRecvError>,
+    ) -> Result<Option<HandleAnsw<K, M>>, TryRecvError> {
+        match msg {
+            Ok(HandleAnsw::HasShutdown { id, answ }) => {
+                if let Some(q) = self.pending.get_mut(&id) {
+                    q.answ = Some(HandleAnsw::HasShutdown { id, answ })
+                }
+            }
+            Ok(HandleAnsw::KeyAdded { id }) => {
+                if let Some(PendingCmd {
+                    cmd: SentCmd::AddedKey(key),
+                    ..
+                }) = self.pending.remove(&id)
+                {
+                    log::debug!("Added key: {:?}", K::try_from(&key).unwrap());
+                } else {
+                    unreachable!()
+                }
+            }
+            Ok(HandleAnsw::GotRecord { key, .. }) => {
+                self.stats.key_stats.entry(key).or_default().times_received += 1;
+            }
+            Ok(HandleAnsw::RcvMsg { peer, msg }) => {
+                log::debug!("Received streaming msg from {}: {:?}", peer, msg);
+                if let Some(stats) = self.stats.rcv_msgs.iter_mut().find(|p| p.0 == peer) {
+                    stats.1 += 1;
+                } else {
+                    self.stats.rcv_msgs.push((peer.clone(), 1));
+                }
+                self.rcv_msg.entry(peer).or_default().push(msg);
+            }
+            Ok(HandleAnsw::AgentRegistered { key }) => {
+                return Ok(Some(HandleAnsw::AgentRegistered { key }));
+            }
+            Err(TryRecvError::Closed) => {
+                self.is_dead = true;
+                return Err(TryRecvError::Closed);
+            }
+            Err(TryRecvError::Empty) => return Err(TryRecvError::Empty),
+        }
+        Ok(None)
     }
 
     fn next_id(&mut self) -> usize {
@@ -285,7 +299,7 @@ where
     M: DeserializeOwned,
 {
     cmd: SentCmd,
-    answ: Option<NetHandleAnsw<K, M>>,
+    answ: Option<HandleAnsw<K, M>>,
 }
 
 impl<K: Borrow<[u8]>, M: DeserializeOwned> PendingCmd<K, M> {
@@ -302,11 +316,10 @@ enum SentCmd {
     PullContent(Vec<u8>),
     ShutDown,
     SentMsg,
-    RegisterAgent,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum NetHandleCmd<K, V, M>
+pub(crate) enum HandleCmd<K, V, M>
 where
     K: Borrow<[u8]> + Debug,
     V: Serialize + Debug,
@@ -334,13 +347,12 @@ where
         peer: PeerId,
     },
     RegisterAgent {
-        id: usize,
         agent_id: String,
     },
 }
 
 #[derive(Clone)]
-pub(crate) enum NetHandleAnsw<K, M>
+pub(crate) enum HandleAnsw<K, M>
 where
     K: Borrow<[u8]>,
     M: DeserializeOwned,
@@ -349,7 +361,7 @@ where
     GotRecord { id: usize, key: K },
     HasShutdown { id: usize, answ: bool },
     RcvMsg { peer: PeerId, msg: M },
-    AgentRegistered { key: K, id: usize },
+    AgentRegistered { key: K },
 }
 
 fn peer_id_from_ed25519(key: identity::ed25519::PublicKey) -> PeerId {

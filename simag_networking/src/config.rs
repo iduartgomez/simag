@@ -110,6 +110,7 @@ impl GlobalExecutor {
         }
     }
 
+    #[inline]
     pub fn block_on<R>(f: impl Future<Output = R>) -> R {
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.block_on(f)
@@ -120,6 +121,7 @@ impl GlobalExecutor {
         }
     }
 
+    #[inline]
     pub fn spawn<R: Send + 'static>(
         f: impl Future<Output = R> + Send + 'static,
     ) -> tokio::task::JoinHandle<R> {
@@ -145,6 +147,7 @@ impl libp2p::core::Executor for GlobalExecutor {
     }
 }
 
+#[cfg(any(debug_assertions, test))]
 pub(super) mod tracing {
     use super::*;
 
@@ -158,13 +161,14 @@ pub(super) mod tracing {
         }
     }
 
+    #[allow(unused_must_use)]
     static LOGGER: Lazy<Logger> = Lazy::new(|| {
         env_logger::builder()
             .format_module_path(true)
             .format_timestamp_nanos()
             .target(env_logger::Target::Stderr)
             .filter(None, log::LevelFilter::Debug)
-            .init();
+            .try_init();
 
         Logger
     });

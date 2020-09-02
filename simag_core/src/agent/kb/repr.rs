@@ -52,7 +52,7 @@ impl Default for Representation {
 
 impl Representation {
     pub fn new(threads: usize) -> Representation {
-        #[cfg(debug_assertions)]
+        #[cfg(any(test, debug_assertions))]
         {
             crate::agent::config::tracing::Logger::get_logger();
         }

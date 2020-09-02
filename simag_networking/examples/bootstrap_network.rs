@@ -1,3 +1,4 @@
+use simag_core::Agent;
 use simag_networking::prelude::*;
 use std::{collections::HashMap, net::Ipv4Addr};
 
@@ -47,8 +48,8 @@ fn main() {
 
     // #1 This is the id that must be provided to other nodes that want to join the network.
     println!("This network encoded peer id is: {}", network.get_peer_id());
-    let (ag_key, ag_res) = Resource::agent("agent_01");
-    network.put(ag_key, ag_res);
+    let agent = Agent::new(1, "agent_01".to_owned());
+    let ag_key = network.register_agent(&agent).unwrap();
 
     let mut cnt: HashMap<_, usize> = HashMap::new();
     let mut served = false;
