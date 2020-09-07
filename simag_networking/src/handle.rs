@@ -1,63 +1,163 @@
 use crate::{
     config::GlobalExecutor,
-    network::{KadKey, KadValue, Resource, ResourceIdentifier},
+    rpc::{self, AgentRpc, GroupPermission, Resource, ResourceIdentifier},
+    Result,
 };
 use libp2p::{identity, PeerId};
 use serde::{de::DeserializeOwned, Serialize};
-use std::{borrow::Borrow, collections::HashMap, fmt::Debug, fs::File, hash::Hash, io::Write};
+use std::{
+    borrow::Borrow, collections::HashMap, convert::TryFrom, fmt::Debug, fs::File, hash::Hash,
+    io::Write, result::Result as StdResult,
+};
 use tokio::sync::mpsc::{
     error::{TryRecvError, TrySendError},
     Receiver, Sender,
 };
 
-type MsgId = usize;
+#[derive(thiserror::Error, Debug)]
+pub enum HandleError {
+    #[error("network op still running")]
+    OpRunning,
+    #[error("network op execution failed")]
+    OpFailed,
+    #[error("unexpected disconnect")]
+    Disconnected,
+    #[error("failed saving secret key")]
+    FailedSaving(#[from] std::io::Error),
+}
+
+/// An identifier for an operation executed asynchronously. Used to fetch the results
+/// of such operation in an asynchronous fashion.
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct OpId(usize);
 
 /// A handle to a running network connection.
-pub struct NetworkHandle<K, V, M>
+pub struct NetworkHandle<M>
 where
-    K: KadKey,
-    V: KadValue,
     M: Serialize + DeserializeOwned,
 {
-    pub stats: NetworkStats<K>,
-    sender: Sender<HandleCmd<K, V, M>>,
-    rcv: Receiver<HandleAnsw<K, M>>,
+    pub stats: NetworkStats,
+    sender: Sender<HandleCmd<M>>,
+    rcv: Receiver<HandleAnsw<M>>,
     local_key: identity::ed25519::Keypair,
-    pending: HashMap<MsgId, PendingCmd<K, M>>,
-    next_msg_id: MsgId,
+    pending: HashMap<OpId, PendingCmd<M>>,
+    next_msg_id: usize,
     is_dead: bool,
     rcv_msg: HashMap<PeerId, Vec<M>>,
 }
 
-impl<M> NetworkHandle<ResourceIdentifier, Resource, M>
+impl<M> NetworkHandle<M>
 where
     M: Serialize + DeserializeOwned + Debug + Send + 'static,
 {
-    pub fn register_agent(&mut self, agent: &simag_core::Agent) -> Result<ResourceIdentifier, ()> {
+    /// Register an agent with this node. From this point on the node will act as the owner of this
+    /// agent and handle any communication from/to this agent.
+    // TODO: An agent can only be registered with a single node. If you try to register the same agent in
+    // the same network more than once it will be an error.
+    pub fn register_agent(&mut self, agent: &simag_core::Agent) -> Result<ResourceIdentifier> {
         // block the handle until the agent has been registered or there is an error
-        let agent_id = agent.id().to_owned();
-        let msg = HandleCmd::RegisterAgent { agent_id };
-        GlobalExecutor::block_on(self.sender.send(msg)).expect("failed sending message");
+        let agent_id = agent.id().to_string();
+        let msg = HandleCmd::Rpc(AgentRpc::RegisterAgent { agent_id });
+        let mut sender = self.sender.clone();
+        GlobalExecutor::spawn(async move {
+            sender.send(msg).await.map_err(|_| ())?;
+            Ok::<_, ()>(())
+        });
         loop {
             let msg = self.rcv.try_recv();
             match self.process_answ_msg(msg) {
                 Ok(Some(HandleAnsw::AgentRegistered { key })) => break Ok(key),
-                Err(TryRecvError::Closed) => break Err(()),
-                _ => {}
+                Err(TryRecvError::Closed) => break Err(HandleError::Disconnected.into()),
+                Ok(_) | Err(TryRecvError::Empty) => {}
             }
         }
     }
+
+    /// Create a resource of the group kind that belongs to the given agent, which will then be the original
+    /// owner of the group.
+    ///
+    /// Returns the network identifier (key) to the group in case the group has not already been
+    /// registered by an other agent/peer or error otherwise.
+    pub fn create_group<ID: AsRef<str>>(
+        &mut self,
+        group_id: &str,
+        owners: impl IntoIterator<Item = ID> + Clone,
+        permits: Option<GroupPermission>,
+    ) -> OpId {
+        let id = self.next_id();
+        let (key, mut group) = Resource::group(owners.clone(), group_id);
+        if let Some(mut permits) = permits {
+            // ensure that owners are added as readers/writers
+            owners.into_iter().for_each(|owner| {
+                permits.write(owner.as_ref());
+                permits.read(owner.as_ref());
+            });
+            group.with_permissions(permits);
+        }
+        let msg = HandleCmd::ProvideResource {
+            id,
+            key,
+            value: Resource::new_group(group),
+        };
+        let mut sender = self.sender.clone();
+        GlobalExecutor::spawn(async move {
+            sender.send(msg).await.map_err(|_| ())?;
+            Ok::<_, ()>(())
+        });
+        id
+    }
+
+    /// Request joining to a given group, will return the network identifier of the group in case
+    /// this agent is allowed to join the group.
+    ///
+    /// Optionally request a set of group permissions, otherwise read permission will be requested.
+    /// The agent only will be allowed to join if the permissions are legal for this agent.
+    pub fn join_group(
+        &mut self,
+        group_id: &str,
+        agent_id: &str,
+        permits: Option<GroupPermission>,
+    ) -> OpId {
+        let id = self.next_id();
+        let agent_id = rpc::agent_id_from_str(agent_id);
+        // unknown owners, this information is to be completed after fecthing the initial info
+        let (resource_key, mut group) = Resource::group(Vec::<String>::new(), group_id);
+        if let Some(permits) = permits {
+            group.with_permissions(permits);
+        }
+        let msg = HandleCmd::Rpc(AgentRpc::JoinGroup {
+            resource_key,
+            agent_id,
+            group: Resource::new_group(group),
+        });
+        let mut sender = self.sender.clone();
+        GlobalExecutor::spawn(async move {
+            sender.send(msg).await.map_err(|_| ())?;
+            Ok::<_, ()>(())
+        });
+        id
+    }
+
+    /// Find an agent in the network and try to open a connection with it.
+    pub fn find_agent(&mut self, agent_id: &str) -> OpId {
+        todo!()
+    }
+
+    /// Returns whether the operation executed succesfully or not. If the operation still is running it will return
+    /// a `waiting` error type. Returns the resource identifier in case the operation returns one (create, join, find).
+    pub fn op_result(&mut self, id: OpId) -> Result<Option<ResourceIdentifier>> {
+        todo!()
+    }
 }
 
-impl<K, V, M> NetworkHandle<K, V, M>
+impl<M> NetworkHandle<M>
 where
-    K: KadKey,
-    V: KadValue,
     M: Serialize + DeserializeOwned + Debug + Send + 'static,
 {
+    /// Only should be instanced throught the network builder.
     pub(crate) fn new(
-        sender: Sender<HandleCmd<K, V, M>>,
-        rcv: Receiver<HandleAnsw<K, M>>,
+        sender: Sender<HandleCmd<M>>,
+        rcv: Receiver<HandleAnsw<M>>,
         local_key: identity::ed25519::Keypair,
     ) -> Self {
         NetworkHandle {
@@ -67,26 +167,13 @@ where
             pending: HashMap::new(),
             next_msg_id: 0,
             is_dead: false,
-            stats: NetworkStats::<K>::default(),
+            stats: NetworkStats::default(),
             rcv_msg: HashMap::new(),
         }
     }
 
-    /// Set this peer as a provider for a certain key.
-    pub fn put(&mut self, key: K, value: V) {
-        let id = self.next_id();
-        self.pending.insert(
-            id,
-            PendingCmd {
-                cmd: SentCmd::AddedKey(key.borrow().to_owned()),
-                answ: None,
-            },
-        );
-        let msg = HandleCmd::ProvideResource { id, key, value };
-        GlobalExecutor::block_on(self.sender.send(msg)).expect("failed sending message");
-    }
-
-    pub fn send_message(&mut self, value: M, peer: PeerId) {
+    /// Send a message to the given peer.
+    pub fn send_message(&mut self, value: M, peer: PeerId) -> OpId {
         let id = self.next_id();
         self.pending.insert(
             id,
@@ -97,23 +184,51 @@ where
         );
         let mut sender = self.sender.clone();
         GlobalExecutor::spawn(async move {
-            let msg = HandleCmd::<K, V, M>::SendMessage { id, value, peer };
+            let msg = HandleCmd::<M>::SendMessage { id, value, peer };
             sender.send(msg).await.map_err(|_| ())?;
             Ok::<_, ()>(())
         });
+        id
     }
 
-    pub fn get(&mut self, key: K) {
+    /// Request a key to the network. The result can be fetched asynchronously.
+    pub fn get(&mut self, key: ResourceIdentifier) -> OpId {
         let id = self.next_id();
+        let key_bytes: &[u8] = &key.borrow();
         self.pending.insert(
             id,
             PendingCmd {
-                cmd: SentCmd::PullContent(key.borrow().to_owned()),
+                cmd: SentCmd::PullContent(key_bytes.to_owned()),
                 answ: None,
             },
         );
         let msg = HandleCmd::PullResource { id, key };
-        GlobalExecutor::block_on(self.sender.send(msg)).expect("failed sending message");
+        let mut sender = self.sender.clone();
+        GlobalExecutor::spawn(async move {
+            sender.send(msg).await.map_err(|_| ())?;
+            Ok::<_, ()>(())
+        });
+        id
+    }
+
+    /// Set this peer as a provider for a certain key and value pair.
+    pub fn put(&mut self, key: ResourceIdentifier, value: Resource) -> OpId {
+        let id = self.next_id();
+        let key_bytes: &[u8] = &key.borrow();
+        self.pending.insert(
+            id,
+            PendingCmd {
+                cmd: SentCmd::AddedKey(key_bytes.to_owned()),
+                answ: None,
+            },
+        );
+        let msg = HandleCmd::ProvideResource { id, key, value };
+        let mut sender = self.sender.clone();
+        GlobalExecutor::spawn(async move {
+            sender.send(msg).await.map_err(|_| ())?;
+            Ok::<_, ()>(())
+        });
+        id
     }
 
     /// Get this peer id encoded as a Base58 string.
@@ -122,23 +237,23 @@ where
     }
 
     /// Saves this peer secret key to a file in bytes. This file should be kept in a secure location.
-    pub fn save_secret_key<T: AsRef<std::path::Path>>(&self, path: T) -> std::io::Result<()> {
+    pub fn save_secret_key<T: AsRef<std::path::Path>>(&self, path: T) -> Result<()> {
         let enconded_key = self.local_key.encode().to_vec();
-        let mut file = File::create(path.as_ref())?;
+        let mut file = File::create(path.as_ref())
+            .map_err(|err| crate::Error::from(HandleError::FailedSaving(err)))?;
         file.write_all(enconded_key.as_slice())
+            .map_err(|err| HandleError::FailedSaving(err).into())
     }
 
-    /// Returns Ok while the connection to the network still is running or Err if it has shutdown.
+    /// Returns whether the network connection is running or has shutdown.
     pub fn is_running(&mut self) -> bool {
         if self.is_dead {
             return false;
         }
         self.process_answer_buffer();
 
-        let msg_id = self.next_id();
-        let msg = HandleCmd::IsRunning(msg_id);
         self.sender
-            .try_send(msg)
+            .try_send(HandleCmd::IsRunning)
             .map(|_| true)
             .unwrap_or_else(|err| match err {
                 TrySendError::Full(_) => true,
@@ -149,13 +264,13 @@ where
             })
     }
 
-    /// Commands the network to shutdown asynchrnously, returns inmediately if the network has shutdown or error
+    /// Commands the network to shutdown asynchronously, returns inmediately if the network has shutdown or error
     /// if it already had disconnected for any reason.
     ///
     /// The network may not shutdown inmediately if still is listening and waiting for any events.
-    pub fn shutdown(&mut self) -> Result<bool, ()> {
+    pub fn shutdown(&mut self) -> Result<bool> {
         if self.is_dead {
-            return Err(());
+            return Err(HandleError::Disconnected.into());
         }
         self.process_answer_buffer();
         if let Ok(answ) = self.try_getting_shutdown_answ() {
@@ -177,7 +292,7 @@ where
             }
             Err(TrySendError::Closed(_)) => {
                 self.is_dead = true;
-                return Err(());
+                return Err(HandleError::Disconnected.into());
             }
         }
 
@@ -185,7 +300,7 @@ where
         Ok(self.try_getting_shutdown_answ().unwrap_or(false))
     }
 
-    fn try_getting_shutdown_answ(&mut self) -> Result<bool, ()> {
+    fn try_getting_shutdown_answ(&mut self) -> Result<bool> {
         match self.pending.values().find(|p| p.shutdown()) {
             Some(PendingCmd {
                 cmd: SentCmd::ShutDown,
@@ -197,15 +312,20 @@ where
                 Ok(answ)
             }
             Some(_) => Ok(false),
-            _ => Err(()),
+            _ => Err(HandleError::Disconnected.into()),
         }
     }
 
     fn process_answer_buffer(&mut self) {
         loop {
             let msg = self.rcv.try_recv();
-            if self.process_answ_msg(msg).is_err() {
-                break;
+            match self.process_answ_msg(msg) {
+                Err(TryRecvError::Closed) => {
+                    self.is_dead = true;
+                    break;
+                }
+                Err(TryRecvError::Empty) => break,
+                Ok(_) => {}
             }
         }
     }
@@ -213,8 +333,8 @@ where
     #[inline]
     fn process_answ_msg(
         &mut self,
-        msg: Result<HandleAnsw<K, M>, TryRecvError>,
-    ) -> Result<Option<HandleAnsw<K, M>>, TryRecvError> {
+        msg: StdResult<HandleAnsw<M>, TryRecvError>,
+    ) -> StdResult<Option<HandleAnsw<M>>, TryRecvError> {
         match msg {
             Ok(HandleAnsw::HasShutdown { id, answ }) => {
                 if let Some(q) = self.pending.get_mut(&id) {
@@ -227,7 +347,10 @@ where
                     ..
                 }) = self.pending.remove(&id)
                 {
-                    log::debug!("Added key: {:?}", K::try_from(&key).unwrap());
+                    log::debug!(
+                        "Added key: {:?}",
+                        ResourceIdentifier::try_from(&*key).unwrap()
+                    );
                 } else {
                     unreachable!()
                 }
@@ -256,19 +379,19 @@ where
         Ok(None)
     }
 
-    fn next_id(&mut self) -> usize {
+    fn next_id(&mut self) -> OpId {
         let msg_id = self.next_msg_id;
         self.next_msg_id += 1;
-        msg_id
+        OpId(msg_id)
     }
 }
 
-pub struct NetworkStats<K: Hash + Eq> {
-    key_stats: HashMap<K, KeyStats>,
+pub struct NetworkStats {
+    key_stats: HashMap<ResourceIdentifier, KeyStats>,
     rcv_msgs: Vec<(PeerId, usize)>,
 }
 
-impl<K: Eq + Hash> Default for NetworkStats<K> {
+impl Default for NetworkStats {
     fn default() -> Self {
         NetworkStats {
             key_stats: HashMap::new(),
@@ -277,8 +400,8 @@ impl<K: Eq + Hash> Default for NetworkStats<K> {
     }
 }
 
-impl<K: Eq + Hash> NetworkStats<K> {
-    pub fn for_key(&self, key: &K) -> Option<&KeyStats> {
+impl NetworkStats {
+    pub fn for_key(&self, key: &ResourceIdentifier) -> Option<&KeyStats> {
         self.key_stats.get(key)
     }
 
@@ -293,16 +416,15 @@ pub struct KeyStats {
     pub times_received: usize,
 }
 
-struct PendingCmd<K, M>
+struct PendingCmd<M>
 where
-    K: Borrow<[u8]>,
     M: DeserializeOwned,
 {
     cmd: SentCmd,
-    answ: Option<HandleAnsw<K, M>>,
+    answ: Option<HandleAnsw<M>>,
 }
 
-impl<K: Borrow<[u8]>, M: DeserializeOwned> PendingCmd<K, M> {
+impl<M: DeserializeOwned> PendingCmd<M> {
     fn shutdown(&self) -> bool {
         match self.cmd {
             SentCmd::ShutDown => true,
@@ -319,49 +441,39 @@ enum SentCmd {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum HandleCmd<K, V, M>
+pub(crate) enum HandleCmd<M>
 where
-    K: Borrow<[u8]> + Debug,
-    V: Serialize + Debug,
     M: Serialize,
 {
     /// query the network about current status
-    IsRunning(usize),
+    IsRunning,
     /// put a resource in this node
     ProvideResource {
-        id: usize,
-        key: K,
-        value: V,
+        id: OpId,
+        key: ResourceIdentifier,
+        value: Resource,
     },
     /// pull a resource in this node
-    PullResource {
-        id: usize,
-        key: K,
-    },
+    PullResource { id: OpId, key: ResourceIdentifier },
     /// issue a shutdown command
-    Shutdown(usize),
+    Shutdown(OpId),
     /// send a serialized message
-    SendMessage {
-        id: usize,
-        value: M,
-        peer: PeerId,
-    },
-    RegisterAgent {
-        agent_id: String,
-    },
+    SendMessage { id: OpId, value: M, peer: PeerId },
+    /// custom RPC commands for inter-node communication
+    Rpc(AgentRpc),
 }
 
+/// The answer of an operation.
 #[derive(Clone)]
-pub(crate) enum HandleAnsw<K, M>
+pub(crate) enum HandleAnsw<M>
 where
-    K: Borrow<[u8]>,
     M: DeserializeOwned,
 {
-    KeyAdded { id: usize },
-    GotRecord { id: usize, key: K },
-    HasShutdown { id: usize, answ: bool },
+    KeyAdded { id: OpId },
+    GotRecord { id: OpId, key: ResourceIdentifier },
+    HasShutdown { id: OpId, answ: bool },
     RcvMsg { peer: PeerId, msg: M },
-    AgentRegistered { key: K },
+    AgentRegistered { key: ResourceIdentifier },
 }
 
 fn peer_id_from_ed25519(key: identity::ed25519::PublicKey) -> PeerId {

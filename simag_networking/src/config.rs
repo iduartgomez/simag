@@ -111,6 +111,7 @@ impl GlobalExecutor {
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub fn block_on<R>(f: impl Future<Output = R>) -> R {
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.block_on(f)

@@ -48,8 +48,9 @@ fn main() {
 
     // #1 This is the id that must be provided to other nodes that want to join the network.
     println!("This network encoded peer id is: {}", network.get_peer_id());
-    let agent = Agent::new(1, "agent_01".to_owned());
+    let agent = Agent::new("agent_01".to_owned());
     let ag_key = network.register_agent(&agent).unwrap();
+    network.create_group("group_01", &["agent_01"], None);
 
     let mut cnt: HashMap<_, usize> = HashMap::new();
     let mut served = false;

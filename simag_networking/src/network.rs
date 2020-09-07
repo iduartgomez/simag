@@ -3,10 +3,12 @@ use crate::{
     config::{GlobalExecutor, CONF, PEER_TIMEOUT_SECS},
     handle::{HandleAnsw, HandleCmd, NetworkHandle},
     message::Message,
+    rpc::{AgentRpc, GroupRes, Resource, ResourceIdentifier},
 };
 use kad::record::Key;
 use libp2p::{
     core::{muxing, upgrade},
+    deflate::DeflateConfig,
     dns::DnsConfig,
     identify, identity, kad, mplex,
     multiaddr::Protocol,
@@ -15,22 +17,15 @@ use libp2p::{
     tcp::TokioTcpConfig,
     yamux, Multiaddr, NetworkBehaviour, PeerId, Swarm, Transport,
 };
-use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{de::DeserializeOwned, Serialize};
 use std::{
-    borrow::Borrow,
-    collections::HashMap,
-    convert::{TryFrom, TryInto},
-    fmt::Debug,
-    hash::Hash,
-    net::IpAddr,
-    sync::Arc,
-    time::Duration,
+    borrow::Borrow, collections::HashMap, convert::TryFrom, fmt::Debug, hash::Hash, net::IpAddr,
+    sync::Arc, time::Duration,
 };
 use tokio::sync::{
     mpsc::{channel, Receiver, Sender},
     Mutex,
 };
-use uuid::Uuid;
 
 const CURRENT_AGENT_VERSION: &str = "simag/0.1.0";
 const CURRENT_IDENTIFY_PROTO_VERSION: &str = "ipfs/0.1.0";
@@ -39,28 +34,26 @@ const HANDLE_TIMEOUT_SECS: u64 = 5;
 /// A prepared network connection not yet running.
 /// This can be either the preparation of a network bootstrap node or a new peer
 /// connecting to an existing network.
-pub(crate) struct Network<K, V, M>
+pub struct Network<M>
 where
-    K: KadKey,
-    V: KadValue,
     M: DeserializeOwned + Serialize + Send + Sync,
 {
-    id: PeerId,
-    key: identity::Keypair,
-    swarm: Mutex<Swarm<NetBehaviour>>,
-    sent_kad_queries: Mutex<HashMap<kad::QueryId, Option<HandleCmd<K, V, M>>>>,
-    answ_send: Mutex<Sender<HandleAnsw<K, M>>>,
+    pub(crate) id: PeerId,
+    pub(crate) key: identity::Keypair,
+    pub(crate) swarm: Mutex<Swarm<NetBehaviour>>,
+    pub(crate) sent_kad_queries: Mutex<HashMap<kad::QueryId, Option<HandleCmd<M>>>>,
+    pub(crate) answ_send: Mutex<Sender<HandleAnsw<M>>>,
 }
 
-type DefaultNetHandleCmd<M> = HandleCmd<ResourceIdentifier, Resource, M>;
-type DefaultNetHandledAnsw<M> = HandleAnsw<ResourceIdentifier, M>;
+// pub(crate) type DefaultHandleCmd<M> = HandleCmd<ResourceIdentifier, Resource, M, AgentRpc>;
+// pub(crate) type DefaultHandledAnsw<M> = HandleAnsw<ResourceIdentifier, M>;
 
-impl<M> Network<ResourceIdentifier, Resource, M>
+impl<M> Network<M>
 where
     M: DeserializeOwned + Serialize + Debug + Send + Sync + 'static,
 {
     /// specialized version of the event loop
-    fn run_event_loop(self, mut query_rcv: Receiver<HandleCmd<ResourceIdentifier, Resource, M>>) {
+    fn run_event_loop(self, mut query_rcv: Receiver<HandleCmd<M>>) {
         let shared_handler = Arc::new(self);
 
         // set the main event loop
@@ -78,10 +71,8 @@ where
         });
     }
 
-    async fn process_handle_cmd(
-        self: Arc<Self>,
-        cmd: HandleCmd<ResourceIdentifier, Resource, M>,
-    ) -> Result<(), ()> {
+    async fn process_handle_cmd(self: Arc<Self>, cmd: HandleCmd<M>) -> Result<(), ()> {
+        let mut swarm = self.swarm.lock().await;
         match cmd {
             HandleCmd::ProvideResource { id, key, value } => {
                 self.provide_value(key, value).await?;
@@ -90,11 +81,7 @@ where
             }
             HandleCmd::PullResource { id, key } => {
                 let key_borrowed: &&[u8] = &key.borrow();
-                let qid = self
-                    .swarm
-                    .lock()
-                    .await
-                    .get_record(&Key::new(key_borrowed), kad::Quorum::One);
+                let qid = swarm.get_record(&Key::new(key_borrowed), kad::Quorum::One);
                 self.sent_kad_queries
                     .lock()
                     .await
@@ -104,7 +91,7 @@ where
                 let msg = tokio::task::block_in_place(|| Message::build(&value, &self.key, true));
                 match msg {
                     Ok(msg) => {
-                        self.swarm.lock().await.send_message(&peer, msg);
+                        swarm.send_message(&peer, msg);
                     }
                     Err(_) => {
                         log::error!("Failed building a message from data: {:?}", value);
@@ -115,104 +102,117 @@ where
                 let answ = HandleAnsw::HasShutdown { id, answ: true };
                 self.return_answ(answ).await?;
             }
-            HandleCmd::RegisterAgent { agent_id } => {
-                let (key, mut res) = Resource::agent(agent_id);
-                res.as_peer(self.id.clone());
-                Swarm::external_addresses(&*self.swarm.lock().await)
-                    .for_each(|a| res.with_address(a.clone()));
-                self.provide_value(key, res).await?;
-                let answ = HandleAnsw::AgentRegistered { key };
-                self.return_answ(answ).await?;
+            HandleCmd::Rpc(rpc) => {
+                match rpc {
+                    AgentRpc::RegisterAgent { agent_id } => {
+                        let (key, mut res) = Resource::agent(agent_id);
+                        res.as_peer(self.id.clone());
+                        Swarm::external_addresses(&*swarm)
+                            .for_each(|a| res.with_address(a.clone()));
+                        self.provide_value(key, Resource::new_agent(res)).await?;
+                        let answ = HandleAnsw::AgentRegistered { key };
+                        self.return_answ(answ).await?;
+                    }
+                    AgentRpc::JoinGroup {
+                        resource_key,
+                        agent_id,
+                        group,
+                    } => {
+                        // get the group resource from network
+                        let key_borrowed: &&[u8] = &resource_key.borrow();
+                        let qid = swarm.get_record(&Key::new(key_borrowed), kad::Quorum::Majority);
+
+                        self.sent_kad_queries.lock().await.insert(
+                            qid,
+                            Some(HandleCmd::Rpc(AgentRpc::JoinGroup {
+                                resource_key,
+                                agent_id,
+                                group,
+                            })),
+                        );
+                    }
+                }
             }
-            HandleCmd::IsRunning(_id) => {}
+            HandleCmd::IsRunning => {}
         }
         Ok(())
-    }
-}
-
-impl<K, V, M> Network<K, V, M>
-where
-    K: KadKey,
-    V: KadValue,
-    M: DeserializeOwned + Serialize + Debug + Send + Sync + 'static,
-{
-    async fn provide_value(self: &Arc<Self>, key: K, value: V) -> Result<(), ()> {
-        let key: &&[u8] = &key.borrow();
-        let value = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, ()> {
-            bincode::serialize(&value).map_err(|_| ())
-        })
-        .await
-        .unwrap()?;
-        let record = kad::Record {
-            key: Key::new(key),
-            value,
-            publisher: Some(self.id.clone()),
-            expires: None,
-        };
-
-        let mut swarm = self.swarm.lock().await;
-        let mut sent_kad_queries = self.sent_kad_queries.lock().await;
-
-        let qid = swarm.put_record(record, kad::Quorum::One).map_err(|_| ())?;
-        sent_kad_queries.insert(qid, None);
-        let qid = swarm.start_providing(Key::new(key)).map_err(|_| ())?;
-        sent_kad_queries.insert(qid, None);
-
-        Ok(())
-    }
-
-    async fn return_answ(self: &Arc<Self>, answ: HandleAnsw<K, M>) -> Result<(), ()> {
-        if self
-            .answ_send
-            .lock()
-            .await
-            .send_timeout(answ, Duration::from_secs(HANDLE_TIMEOUT_SECS))
-            .await
-            .is_err()
-        {
-            log::debug!("Network handle dropped!");
-            Err(())
-        } else {
-            Ok(())
-        }
     }
 
     async fn process_events(self: Arc<Self>) {
         loop {
             let mut swarm = self.swarm.lock().await;
-            if let Ok(event) = tokio::time::timeout(Duration::from_nanos(20), swarm.next()).await {
+            let get_next = tokio::time::timeout(Duration::from_nanos(10), swarm.next());
+            if let Ok(event) = get_next.await {
                 match event {
                     NetEvent::KademliaEvent(event) => {
                         // log::debug!("\nPeer #{} received event:\n {:?}", self.id, event);
                         if let kad::KademliaEvent::QueryResult { result, id, .. } = event {
-                            if let Some(Some(HandleCmd::PullResource { id, key })) =
-                                self.sent_kad_queries.lock().await.remove(&id)
-                            {
-                                if let kad::QueryResult::GetRecord(Ok(kad::GetRecordOk {
-                                    records,
-                                    ..
-                                })) = result
-                                {
-                                    for rec in records {
-                                        let kad::PeerRecord {
-                                            record: kad::Record { value, .. },
-                                            ..
-                                        } = rec;
-                                        let msg: V = tokio::task::spawn_blocking(|| {
-                                            bincode::deserialize_from(std::io::Cursor::new(value))
+                            match self.sent_kad_queries.lock().await.remove(&id) {
+                                Some(Some(HandleCmd::PullResource { id, key })) => {
+                                    if let kad::QueryResult::GetRecord(Ok(kad::GetRecordOk {
+                                        records,
+                                        ..
+                                    })) = result
+                                    {
+                                        for rec in records {
+                                            let kad::PeerRecord {
+                                                record: kad::Record { value, .. },
+                                                ..
+                                            } = rec;
+                                            let msg: Resource = tokio::task::spawn_blocking(|| {
+                                                bincode::deserialize_from(std::io::Cursor::new(
+                                                    value,
+                                                ))
                                                 .unwrap()
-                                        })
-                                        .await
-                                        .unwrap();
-                                        log::debug!("Received kademlia msg: {:?}", msg);
-                                        self.return_answ(HandleAnsw::GotRecord {
-                                            id,
-                                            key: key.clone(),
-                                        })
-                                        .await
-                                        .unwrap();
+                                            })
+                                            .await
+                                            .unwrap();
+                                            log::debug!("Received kademlia msg: {:?}", msg);
+                                            self.return_answ(HandleAnsw::GotRecord { id, key })
+                                                .await
+                                                .unwrap();
+                                        }
+                                    } else {
+                                        unreachable!()
                                     }
                                 }
+                                Some(Some(HandleCmd::Rpc(rpc))) => {
+                                    if let kad::QueryResult::GetRecord(Ok(kad::GetRecordOk {
+                                        records,
+                                        ..
+                                    })) = result
+                                    {
+                                        if let AgentRpc::JoinGroup {
+                                            resource_key: expected_key,
+                                            agent_id,
+                                            group,
+                                        } = rpc
+                                        {
+                                            for record in records {
+                                                let kad::PeerRecord {
+                                                    peer,
+                                                    record: kad::Record { key, value, .. },
+                                                } = record;
+                                                let group_key =
+                                                    ResourceIdentifier::try_from(key.borrow())
+                                                        .unwrap();
+                                                let group: GroupRes =
+                                                    bincode::deserialize(&*value).unwrap();
+
+                                                if group_key != expected_key {
+                                                    panic!()
+                                                }
+
+                                                // request joining to owners, owners will propagate the change
+                                                // in membership across nodes which belong to the group
+                                                // receive confirmation that the agent has been added to the group
+                                            }
+                                        } else {
+                                            unreachable!()
+                                        }
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -248,7 +248,48 @@ where
             }
             // drop the swarm lock after work or timeout so work can be done in other thread
             std::mem::drop(swarm);
-            tokio::time::delay_for(Duration::from_nanos(20)).await;
+        }
+    }
+
+    pub(crate) async fn provide_value(
+        self: &Arc<Self>,
+        key: ResourceIdentifier,
+        value: Resource,
+    ) -> Result<(), ()> {
+        let key: &&[u8] = &key.borrow();
+        let value = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, ()> {
+            bincode::serialize(&value).map_err(|_| ())
+        })
+        .await
+        .unwrap()?;
+        let record = kad::Record {
+            key: Key::new(key),
+            value,
+            publisher: Some(self.id.clone()),
+            expires: None,
+        };
+
+        let mut swarm = self.swarm.lock().await;
+        let mut sent_kad_queries = self.sent_kad_queries.lock().await;
+
+        let qid = swarm.put_record(record, kad::Quorum::All).map_err(|_| ())?;
+        sent_kad_queries.insert(qid, None);
+        let qid = swarm.start_providing(Key::new(key)).map_err(|_| ())?;
+        sent_kad_queries.insert(qid, None);
+
+        Ok(())
+    }
+
+    pub(crate) async fn return_answ(self: &Arc<Self>, answ: HandleAnsw<M>) -> Result<(), ()> {
+        let mut sender = self.answ_send.lock().await;
+        let answ = sender
+            .send_timeout(answ, Duration::from_secs(HANDLE_TIMEOUT_SECS))
+            .await;
+        if answ.is_err() {
+            log::debug!("Network handle dropped!");
+            Err(())
+        } else {
+            Ok(())
         }
     }
 }
@@ -256,7 +297,7 @@ where
 #[derive(NetworkBehaviour)]
 #[behaviour(event_process = false)]
 #[behaviour(out_event = "NetEvent")]
-struct NetBehaviour {
+pub(crate) struct NetBehaviour {
     kad: kad::Kademlia<kad::store::MemoryStore>,
     identify: identify::Identify,
     streams: channel::Channel,
@@ -293,7 +334,7 @@ impl std::ops::Deref for NetBehaviour {
     }
 }
 
-enum NetEvent {
+pub(crate) enum NetEvent {
     KademliaEvent(kad::KademliaEvent),
     Identify(identify::IdentifyEvent),
     Stream(channel::ChannelEvent),
@@ -478,9 +519,7 @@ impl NetworkBuilder {
     }
 
     /// Builds the default implementation of network with a custom message kind.
-    pub fn build<Message>(
-        self,
-    ) -> std::io::Result<NetworkHandle<ResourceIdentifier, Resource, Message>>
+    pub fn build<Message>(self) -> std::io::Result<NetworkHandle<Message>>
     where
         Message: Serialize + DeserializeOwned + Debug + Send + Sync + 'static,
     {
@@ -516,10 +555,10 @@ impl NetworkBuilder {
             sent_queries.insert(bootstrap_query, None);
         }
 
-        let (query_send, query_rcv) = channel::<DefaultNetHandleCmd<Message>>(10);
-        let (answ_send, answ_rcv) = channel::<DefaultNetHandledAnsw<Message>>(10);
+        let (query_send, query_rcv) = channel::<HandleCmd<Message>>(10);
+        let (answ_send, answ_rcv) = channel::<HandleAnsw<Message>>(10);
 
-        let network: Network<ResourceIdentifier, Resource, Message> = Network {
+        let network: Network<Message> = Network {
             key: self.local_key,
             swarm: Mutex::new(swarm),
             sent_kad_queries: Mutex::new(sent_queries),
@@ -557,7 +596,16 @@ impl NetworkBuilder {
             .into_authentic(&self.local_key)
             .expect("Signing libp2p-noise static DH keypair failed.");
 
-        let tcp = TokioTcpConfig::new().nodelay(true);
+        let tcp = TokioTcpConfig::new()
+            .nodelay(true)
+            .and_then(|conn, endpoint| {
+                upgrade::apply(
+                    conn,
+                    DeflateConfig::default(),
+                    endpoint,
+                    upgrade::Version::V1,
+                )
+            });
         Ok(DnsConfig::new(tcp)?
             .upgrade(upgrade::Version::V1)
             .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
@@ -590,223 +638,5 @@ impl NetworkBuilder {
             ),
             streams: channel::Channel::new(),
         }
-    }
-}
-
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
-#[repr(u8)]
-enum AgentKeyKind {
-    UniqueId = 0,
-    GroupId = 1,
-}
-
-impl TryFrom<u8> for AgentKeyKind {
-    type Error = std::io::Error;
-    fn try_from(variant: u8) -> std::io::Result<AgentKeyKind> {
-        match variant {
-            0 => Ok(AgentKeyKind::UniqueId),
-            1 => Ok(AgentKeyKind::GroupId),
-            _ => Err(std::io::ErrorKind::InvalidInput.into()),
-        }
-    }
-}
-
-/// A `ResourceIdentifier` is the default simag network resource identifier.
-///
-/// The key has two different variants that represent two different kinds of resources:
-/// - A unique agent identifier, a self identifier for a given agent. Since agents own
-///   their own process and are binded to a single peer (independently of multiple agents being
-///   ran in a single host), each peer should have at most one (permanent) identifier binded
-///   to a single agent at creation time. This id must be unique across the whole network.
-/// - A group identifier, an agent can pertain to a number of groups, this can be determined by
-///   a given peer owning this resource (key) in the Kadmelia DHT.
-#[derive(PartialEq, Eq, Hash, Clone, Copy)]
-pub struct ResourceIdentifier {
-    key: [u8; ResourceIdentifier::KIND_SIZE + ResourceIdentifier::KEY_SIZE],
-}
-
-impl Debug for ResourceIdentifier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AgentKey")
-            .field("kind", &AgentKeyKind::try_from(self.key[0]).unwrap())
-            .field(
-                "id",
-                &Uuid::from_u128(u128::from_be_bytes(self.key[1..].try_into().unwrap())),
-            )
-            .finish()
-    }
-}
-
-impl ResourceIdentifier {
-    const KIND_SIZE: usize = 1;
-    const KEY_SIZE: usize = std::mem::size_of::<u128>();
-
-    /// This key represents a group resource kind.
-    fn group(id: &Uuid) -> ResourceIdentifier {
-        let id = id.as_u128().to_be_bytes();
-        let kind = AgentKeyKind::GroupId as u8;
-        let mut key = [0; Self::KEY_SIZE + Self::KIND_SIZE];
-        (&mut key[1..]).copy_from_slice(&id);
-        key[0] = kind;
-        ResourceIdentifier { key }
-    }
-
-    fn unique(id: &Uuid) -> ResourceIdentifier {
-        let id = id.as_u128().to_be_bytes();
-        let kind = AgentKeyKind::UniqueId as u8;
-        let mut key = [0; Self::KEY_SIZE + Self::KIND_SIZE];
-        (&mut key[1..]).copy_from_slice(&id);
-        key[0] = kind;
-        ResourceIdentifier { key }
-    }
-}
-
-impl Borrow<[u8]> for ResourceIdentifier {
-    fn borrow(&self) -> &[u8] {
-        &self.key
-    }
-}
-
-impl TryFrom<&[u8]> for ResourceIdentifier {
-    type Error = std::io::Error;
-    fn try_from(slice: &[u8]) -> std::io::Result<Self> {
-        if Self::KEY_SIZE + Self::KIND_SIZE != slice.len() {
-            return Err(std::io::ErrorKind::InvalidInput.into());
-        }
-        // validate the kind byte
-        let _kind = AgentKeyKind::try_from(slice[0])?;
-        // validate that is a valid uuid
-        let _uuid = Uuid::from_u128(u128::from_be_bytes(
-            slice[1..]
-                .try_into()
-                .map_err(|_| std::io::ErrorKind::InvalidInput)?,
-        ));
-
-        let mut key = [0; Self::KEY_SIZE + Self::KIND_SIZE];
-        key.copy_from_slice(&slice);
-        Ok(ResourceIdentifier { key })
-    }
-}
-
-/// A `Resource` in a simag network is ...
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Resource(AgOrGroup);
-
-impl Resource {
-    /// Create a resource of agent kind. Returns both the identifier (key) and the resource
-    /// handle.
-    pub fn agent<ID: AsRef<str>>(agent_id: ID) -> (ResourceIdentifier, Resource) {
-        let uid = Uuid::new_v5(
-            &Uuid::NAMESPACE_URL,
-            ["simag://agent.", agent_id.as_ref()].concat().as_bytes(),
-        );
-        let key = ResourceIdentifier::unique(&uid);
-        let res = AgentRes {
-            agent_id: uid,
-            peer: None,
-            addr: Vec::with_capacity(1),
-        };
-        (key, Resource(AgOrGroup::Ag(res)))
-    }
-    /// Create a resource of group kind. Returns both the identifier (key) and the resource
-    /// handle.
-    pub fn group<ID: AsRef<str>>(group_id: ID) -> (ResourceIdentifier, Resource) {
-        let uid = Uuid::new_v5(
-            &Uuid::NAMESPACE_URL,
-            ["simag://group.", group_id.as_ref()].concat().as_bytes(),
-        );
-        let key = ResourceIdentifier::group(&uid);
-        let res = GroupRes {
-            id: uid,
-            topic_span: vec![],
-            members: vec![],
-        };
-        (key, Resource(AgOrGroup::Gr(res)))
-    }
-
-    pub(crate) fn as_peer(&mut self, peer: PeerId) {
-        match self.0 {
-            AgOrGroup::Ag(ref mut res) => res.peer = Some(peer),
-            _ => unreachable!(),
-        }
-    }
-
-    pub(crate) fn with_address(&mut self, addr: Multiaddr) {
-        match self.0 {
-            AgOrGroup::Ag(ref mut res) => res.addr.push(addr),
-            _ => unreachable!(),
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-enum AgOrGroup {
-    Ag(AgentRes),
-    Gr(GroupRes),
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct AgentRes {
-    addr: Vec<Multiaddr>,
-    #[serde(serialize_with = "custom_ser::ser_peer")]
-    #[serde(deserialize_with = "custom_ser::de_peer")]
-    peer: Option<PeerId>,
-    agent_id: Uuid,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct GroupRes {
-    id: Uuid,
-    /// all the topics peers connected to the group are automatically subscribed to
-    topic_span: Vec<String>,
-    /// eventually consistent list of peers; a message directed to this group will be propagated
-    /// to all the members of the group.
-    #[serde(serialize_with = "custom_ser::ser_members")]
-    #[serde(deserialize_with = "custom_ser::de_members")]
-    members: Vec<PeerId>,
-}
-
-mod custom_ser {
-    use super::*;
-
-    pub(super) fn ser_peer<S: Serializer>(
-        peer: &Option<PeerId>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        let as_bytes = if let Some(peer) = peer {
-            Some(peer.as_bytes().to_vec())
-        } else {
-            None
-        };
-        as_bytes.serialize(serializer)
-    }
-
-    pub(super) fn de_peer<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Option<PeerId>, D::Error> {
-        let peer: Option<Vec<u8>> = Deserialize::deserialize(deserializer)?;
-        Ok(peer.map(|data| PeerId::from_bytes(data).unwrap()))
-    }
-
-    pub(super) fn ser_members<S: Serializer>(
-        members: &[PeerId],
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        let as_bytes: Vec<Vec<u8>> = members
-            .iter()
-            .map(|p| PeerId::as_bytes(p).to_vec())
-            .collect();
-        as_bytes.serialize(serializer)
-    }
-
-    pub(super) fn de_members<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Vec<PeerId>, D::Error> {
-        let peers: Vec<Vec<u8>> = Deserialize::deserialize(deserializer)?;
-        Ok(peers
-            .into_iter()
-            .map(PeerId::from_bytes)
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap())
     }
 }

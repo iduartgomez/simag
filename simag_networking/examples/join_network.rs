@@ -26,9 +26,17 @@ fn main() {
         .build::<String>()
         .unwrap();
     println!("This network encoded peer id is: {}", network.get_peer_id());
-    let (ag_key, _ag_res) = Resource::agent("agent_01");
-    network.get(ag_key);
+    let query = network.find_agent("agent_01");
     network.send_message("Read my awesome message!".to_string(), peer_id);
+    // get the async result of the find agent query
+    let ag_key = loop {
+        match network.op_result(query) {
+            Ok(Some(res)) => break res,
+            Err(Error::OpError(HandleError::OpRunning)) => {}
+            Err(err) => panic!("{}", err),
+            Ok(_) => unreachable!(),
+        }
+    };
 
     let mut cnt: HashMap<_, usize> = HashMap::new();
     let mut served = false;
