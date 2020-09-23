@@ -1,10 +1,12 @@
 use crate::{
     config::GlobalExecutor,
-    rpc::{self, AgentRpc, GroupPermission, Resource, ResourceIdentifier},
+    group::GroupSettings,
+    group::{Group, GroupPermits},
+    rpc::{self, Resource, ResourceIdentifier},
     Result,
 };
 use libp2p::{identity, PeerId};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     borrow::Borrow, collections::HashMap, convert::TryFrom, fmt::Debug, fs::File, hash::Hash,
     io::Write, result::Result as StdResult,
@@ -13,6 +15,7 @@ use tokio::sync::mpsc::{
     error::{TryRecvError, TrySendError},
     Receiver, Sender,
 };
+use uuid::Uuid;
 
 #[derive(thiserror::Error, Debug)]
 pub enum HandleError {
@@ -28,7 +31,7 @@ pub enum HandleError {
 
 /// An identifier for an operation executed asynchronously. Used to fetch the results
 /// of such operation in an asynchronous fashion.
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpId(usize);
 
 /// A handle to a running network connection.
@@ -57,7 +60,8 @@ where
     pub fn register_agent(&mut self, agent: &simag_core::Agent) -> Result<ResourceIdentifier> {
         // block the handle until the agent has been registered or there is an error
         let agent_id = agent.id().to_string();
-        let msg = HandleCmd::Rpc(AgentRpc::RegisterAgent { agent_id });
+        let id = self.next_id();
+        let msg = HandleCmd::RegisterAgent { id, agent_id };
         let mut sender = self.sender.clone();
         GlobalExecutor::spawn(async move {
             sender.send(msg).await.map_err(|_| ())?;
@@ -66,7 +70,7 @@ where
         loop {
             let msg = self.rcv.try_recv();
             match self.process_answ_msg(msg) {
-                Ok(Some(HandleAnsw::AgentRegistered { key })) => break Ok(key),
+                Ok(Some(HandleAnsw::AgentRegistered { id, key })) => break Ok(key),
                 Err(TryRecvError::Closed) => break Err(HandleError::Disconnected.into()),
                 Ok(_) | Err(TryRecvError::Empty) => {}
             }
@@ -78,21 +82,26 @@ where
     ///
     /// Returns the network identifier (key) to the group in case the group has not already been
     /// registered by an other agent/peer or error otherwise.
-    pub fn create_group<ID: AsRef<str>>(
+    pub fn create_group<C, ID>(
         &mut self,
         group_id: &str,
         owners: impl IntoIterator<Item = ID> + Clone,
-        permits: Option<GroupPermission>,
-    ) -> OpId {
+        permits: Option<GroupPermits>,
+        settings: C,
+    ) -> OpId
+    where
+        ID: AsRef<str>,
+        C: GroupSettings,
+    {
         let id = self.next_id();
-        let (key, mut group) = Resource::group(owners.clone(), group_id);
+        let (key, mut group) = Resource::group(owners.clone(), group_id, settings);
         if let Some(mut permits) = permits {
             // ensure that owners are added as readers/writers
             owners.into_iter().for_each(|owner| {
                 permits.write(owner.as_ref());
                 permits.read(owner.as_ref());
             });
-            group.with_permissions(permits);
+            group.with_permits(permits);
         }
         let msg = HandleCmd::ProvideResource {
             id,
@@ -110,32 +119,41 @@ where
     /// Request joining to a given group, will return the network identifier of the group in case
     /// this agent is allowed to join the group.
     ///
-    /// Optionally request a set of group permissions, otherwise read permission will be requested.
-    /// The agent only will be allowed to join if the permissions are legal for this agent.
-    pub fn join_group(
+    /// Optionally request a set of group permits, otherwise read permits will be requested.
+    /// The agent only will be allowed to join if the permits are legal for this agent.
+    pub fn join_group<C>(
         &mut self,
         group_id: &str,
         agent_id: &str,
-        permits: Option<GroupPermission>,
-    ) -> OpId {
-        let id = self.next_id();
+        permits: Option<GroupPermits>,
+        settings: C,
+    ) -> OpId
+    where
+        C: GroupSettings,
+    {
+        let op_id = self.next_id();
         let agent_id = rpc::agent_id_from_str(agent_id);
         // unknown owners, this information is to be completed after fecthing the initial info
-        let (resource_key, mut group) = Resource::group(Vec::<String>::new(), group_id);
+        let (group_key, mut group) = Resource::group(Vec::<String>::new(), group_id, settings);
         if let Some(permits) = permits {
-            group.with_permissions(permits);
+            group.with_permits(permits);
         }
-        let msg = HandleCmd::Rpc(AgentRpc::JoinGroup {
-            resource_key,
+        let msg = HandleCmd::ReqJoinGroup {
+            op_id,
+            group_key,
             agent_id,
-            group: Resource::new_group(group),
-        });
+            group,
+        };
         let mut sender = self.sender.clone();
         GlobalExecutor::spawn(async move {
             sender.send(msg).await.map_err(|_| ())?;
             Ok::<_, ()>(())
         });
-        id
+        op_id
+    }
+
+    pub fn leave_group(&mut self, group_id: &str, agent_id: &str) -> OpId {
+        todo!()
     }
 
     /// Find an agent in the network and try to open a connection with it.
@@ -367,9 +385,11 @@ where
                 }
                 self.rcv_msg.entry(peer).or_default().push(msg);
             }
-            Ok(HandleAnsw::AgentRegistered { key }) => {
-                return Ok(Some(HandleAnsw::AgentRegistered { key }));
+            Ok(HandleAnsw::AgentRegistered { id, key }) => {
+                return Ok(Some(HandleAnsw::AgentRegistered { id, key }));
             }
+            Ok(HandleAnsw::PropagateGroupChange { group_id }) => todo!(),
+            Ok(HandleAnsw::ReqJoinGroupAccepted { op_id, group_id }) => {}
             Err(TryRecvError::Closed) => {
                 self.is_dead = true;
                 return Err(TryRecvError::Closed);
@@ -440,11 +460,8 @@ enum SentCmd {
     SentMsg,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) enum HandleCmd<M>
-where
-    M: Serialize,
-{
+#[derive(Debug)]
+pub(crate) enum HandleCmd<M> {
     /// query the network about current status
     IsRunning,
     /// put a resource in this node
@@ -459,8 +476,23 @@ where
     Shutdown(OpId),
     /// send a serialized message
     SendMessage { id: OpId, value: M, peer: PeerId },
-    /// custom RPC commands for inter-node communication
-    Rpc(AgentRpc),
+    /// register a peer as the manager of an agent
+    RegisterAgent { id: OpId, agent_id: String },
+    /// instruct the network handler to send a request
+    /// for an agent joining a group
+    ReqJoinGroup {
+        op_id: OpId,
+        group_key: ResourceIdentifier,
+        agent_id: Uuid,
+        group: Group,
+    },
+    /// awaiting peer information to try connect
+    AwaitingReqJoinGroup {
+        op_id: OpId,
+        group_key: ResourceIdentifier,
+        agent_id: Uuid,
+        group: Group,
+    },
 }
 
 /// The answer of an operation.
@@ -469,11 +501,33 @@ pub(crate) enum HandleAnsw<M>
 where
     M: DeserializeOwned,
 {
-    KeyAdded { id: OpId },
-    GotRecord { id: OpId, key: ResourceIdentifier },
-    HasShutdown { id: OpId, answ: bool },
-    RcvMsg { peer: PeerId, msg: M },
-    AgentRegistered { key: ResourceIdentifier },
+    KeyAdded {
+        id: OpId,
+    },
+    GotRecord {
+        id: OpId,
+        key: ResourceIdentifier,
+    },
+    HasShutdown {
+        id: OpId,
+        answ: bool,
+    },
+    AgentRegistered {
+        id: OpId,
+        key: ResourceIdentifier,
+    },
+    /// Propagate a change in the configuration or composition of a group.
+    PropagateGroupChange {
+        group_id: Uuid,
+    },
+    ReqJoinGroupAccepted {
+        op_id: OpId,
+        group_id: Uuid,
+    },
+    RcvMsg {
+        peer: PeerId,
+        msg: M,
+    },
 }
 
 fn peer_id_from_ed25519(key: identity::ed25519::PublicKey) -> PeerId {

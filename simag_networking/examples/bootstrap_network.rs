@@ -50,7 +50,7 @@ fn main() {
     println!("This network encoded peer id is: {}", network.get_peer_id());
     let agent = Agent::new("agent_01".to_owned());
     let ag_key = network.register_agent(&agent).unwrap();
-    network.create_group("group_01", &["agent_01"], None);
+    network.create_group("group_01", &["agent_01"], None, Settings {});
 
     let mut cnt: HashMap<_, usize> = HashMap::new();
     let mut served = false;
@@ -77,4 +77,18 @@ fn main() {
         }
     }
     println!("Shutted down");
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct Settings;
+
+#[typetag::serde]
+impl GroupSettings for Settings {
+    fn is_allowed_to_join(&self, _petitioner_settings: &dyn GroupSettings) -> bool {
+        true
+    }
+
+    fn box_cloned(&self) -> Box<dyn GroupSettings> {
+        Box::new(Settings)
+    }
 }

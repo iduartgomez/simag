@@ -4,6 +4,7 @@ use handle::HandleError;
 
 mod channel;
 mod config;
+pub(crate) mod group;
 mod handle;
 mod message;
 mod network;
@@ -12,6 +13,7 @@ mod rpc;
 pub use network::{NetworkBuilder, Provider};
 
 pub mod prelude {
+    pub use super::group::GroupSettings;
     pub use super::handle::{HandleError, NetworkHandle};
     pub use super::network::{NetworkBuilder, Provider};
     pub use super::rpc::Resource;

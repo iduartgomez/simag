@@ -1,24 +1,36 @@
+use crate::{
+    group::{Group, GroupSettings},
+    handle::OpId,
+};
 use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Borrow,
-    collections::BTreeSet,
     convert::{TryFrom, TryInto},
     fmt::Debug,
-    iter::FromIterator,
 };
 use uuid::Uuid;
 
-#[derive(Clone, Debug)]
-#[doc(hidden)]
-pub enum AgentRpc {
-    RegisterAgent {
-        agent_id: String,
-    },
-    JoinGroup {
-        resource_key: ResourceIdentifier,
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) enum AgentRpc {
+    /// request joining a group to one of the owners
+    ReqGroupJoin {
+        op_id: OpId,
+        group_id: Uuid,
         agent_id: Uuid,
-        group: Resource,
+        /// (read, write)
+        permits: (bool, bool),
+        /// the settings of the petitioner
+        settings: Box<dyn GroupSettings>,
+    },
+    ReqGroupJoinAccepted {
+        op_id: OpId,
+        group_id: Uuid,
+    },
+    ReqGroupJoinDenied {
+        op_id: OpId,
+        group_id: Uuid,
+        reason: String,
     },
 }
 
@@ -30,7 +42,7 @@ pub(crate) fn agent_id_from_str<ID: AsRef<str>>(id: ID) -> Uuid {
 }
 
 /// A `Resource` in a simag network is ...
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Resource(AgOrGroup);
 
 impl Resource {
@@ -38,7 +50,7 @@ impl Resource {
         Resource(AgOrGroup::Ag(agent))
     }
 
-    pub(crate) fn new_group(group: GroupRes) -> Resource {
+    pub(crate) fn new_group(group: Group) -> Resource {
         Resource(AgOrGroup::Gr(group))
     }
 
@@ -58,19 +70,18 @@ impl Resource {
     /// Create a resource of group kind, optionally provide a list of owners of the group.
     /// Returns both the identifier (key) and the resource handle.
     ///
-    pub(crate) fn group<ID: AsRef<str>>(
+    pub(crate) fn group<C, ID>(
         owners: impl IntoIterator<Item = ID>,
         group_id: &str,
-    ) -> (ResourceIdentifier, GroupRes) {
+        settings: C,
+    ) -> (ResourceIdentifier, Group)
+    where
+        C: GroupSettings,
+        ID: AsRef<str>,
+    {
         let uid = agent_id_from_str(group_id);
         let key = ResourceIdentifier::group(&uid);
-        let res = GroupRes {
-            id: uid,
-            topic_span: vec![],
-            members: BTreeSet::new(),
-            owners: BTreeSet::from_iter(owners.into_iter().map(agent_id_from_str)),
-            permissions: GroupPermission::new(),
-        };
+        let res = Group::from_owners(uid, owners, settings);
         (key, res)
     }
 }
@@ -84,7 +95,7 @@ impl Resource {
 ///   to a single agent at creation time. This id must be unique across the whole network.
 /// - A group identifier, an agent can pertain to a number of groups, this can be determined by
 ///   a given peer owning this resource (key) in the Kadmelia DHT.
-#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct ResourceIdentifier {
     key: [u8; ResourceIdentifier::KIND_SIZE + ResourceIdentifier::KEY_SIZE],
 }
@@ -106,7 +117,7 @@ impl ResourceIdentifier {
     const KEY_SIZE: usize = std::mem::size_of::<u128>();
 
     /// This key represents a group resource kind.
-    fn group(id: &Uuid) -> ResourceIdentifier {
+    pub(crate) fn group(id: &Uuid) -> ResourceIdentifier {
         let id = id.as_u128().to_be_bytes();
         let kind = AgentKeyKind::GroupId as u8;
         let mut key = [0; Self::KEY_SIZE + Self::KIND_SIZE];
@@ -115,7 +126,8 @@ impl ResourceIdentifier {
         ResourceIdentifier { key }
     }
 
-    fn unique(id: &Uuid) -> ResourceIdentifier {
+    /// This key represents a unique agent.
+    pub(crate) fn unique(id: &Uuid) -> ResourceIdentifier {
         let id = id.as_u128().to_be_bytes();
         let kind = AgentKeyKind::UniqueId as u8;
         let mut key = [0; Self::KEY_SIZE + Self::KIND_SIZE];
@@ -177,10 +189,10 @@ impl TryFrom<u8> for AgentKeyKind {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 enum AgOrGroup {
     Ag(AgentRes),
-    Gr(GroupRes),
+    Gr(Group),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -199,67 +211,6 @@ impl AgentRes {
 
     pub fn with_address(&mut self, addr: Multiaddr) {
         self.addr.push(addr);
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct GroupRes {
-    id: Uuid,
-    /// All the topics peers connected to the group are automatically subscribed to
-    topic_span: Vec<String>,
-    /// Eventually consistent list of peers; a message directed to this group will be propagated
-    /// to all the members of the group.
-    members: BTreeSet<Uuid>,
-    /// Owners of the group, passed at group creation time or updated by one of the original owners.
-    owners: BTreeSet<Uuid>,
-    /// Permissions to write/read to a group.
-    permissions: GroupPermission,
-}
-
-impl GroupRes {
-    pub fn with_permissions(&mut self, permission: GroupPermission) -> &mut Self {
-        self.permissions = permission;
-        self
-    }
-}
-
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
-pub struct GroupPermission {
-    read: BTreeSet<Uuid>,
-    write: BTreeSet<Uuid>,
-}
-
-impl GroupPermission {
-    pub fn new() -> Self {
-        GroupPermission {
-            read: BTreeSet::new(),
-            write: BTreeSet::new(),
-        }
-    }
-
-    pub fn for_agent(agent: &str, read: bool, write: bool) -> Self {
-        let mut permits = GroupPermission::new();
-        if read {
-            permits.read(agent);
-        }
-        if write {
-            permits.write(agent);
-        }
-        permits
-    }
-
-    /// Grant/request read permit for this agent.
-    pub fn read(&mut self, agent: &str) -> &mut Self {
-        let uid = agent_id_from_str(agent);
-        self.read.insert(uid);
-        self
-    }
-
-    /// Grant/request write permit for this agent.
-    pub fn write(&mut self, agent: &str) -> &mut Self {
-        let uid = agent_id_from_str(agent);
-        self.write.insert(uid);
-        self
     }
 }
 

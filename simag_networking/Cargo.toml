@@ -5,7 +5,7 @@ authors = ["Ignacio Duart Gómez <iduartgomez@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-async-trait = "0.1.40"
+# async-trait = "0.1.40"
 bincode = "1.3"
 config = "0.10"
 crossbeam = "0.7.3"
@@ -20,9 +20,6 @@ libp2p = { version = "0.24.0", features = [
     "gossipsub",
     "mplex",
     "noise",
-    #"secio",
-    #"secp256k1",
-    #"tcp-async-std",
     "tcp-tokio",
     "yamux"
 ] }
@@ -30,10 +27,11 @@ log = "0.4"
 once_cell = "1.4"
 rand = "0.7"
 smallvec = "1.4"
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
 thiserror = "1.0"
+typetag = "0.1"
 tokio = { version = "0.2", features = ["blocking", "macros", "parking_lot", "rt-threaded", "sync", "time"] }
-unsigned-varint = { version = "0.5.0", features = ["futures-codec"] }
+unsigned-varint = { version = "0.5", features = ["futures-codec"] }
 uuid = { version = "0.8.1", features = ["v5", "serde"]}
 
 # internal:

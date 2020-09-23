@@ -4,12 +4,16 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use unsigned_varint::codec::UviBytes;
 
+use crate::rpc::AgentRpc;
+
 pub(crate) const MAX_MSG_SIZE: usize = 4096;
 
 #[derive(Serialize, Deserialize)]
-pub struct Message {
+pub(crate) struct Message {
     seqno: Vec<u8>,
-    pub data: Vec<u8>,
+    /// could be an agent RPC, in that case data is none
+    pub rpc: Option<AgentRpc>,
+    pub data: Option<Vec<u8>>,
     /// signature and from are only necessary if verification is required
     /// otherwise they will be empty non-allocated vectors
     signature: Vec<u8>,
@@ -34,10 +38,15 @@ impl Message {
         };
         Ok(Message {
             seqno: rand::random::<u64>().to_be_bytes().to_vec(),
-            data,
+            data: Some(data),
             signature,
             from,
+            rpc: None,
         })
+    }
+
+    pub fn rpc(rpc: AgentRpc, keypair: &Keypair, verify: bool) -> Result<Message, ()> {
+        todo!()
     }
 }
 
@@ -90,8 +99,10 @@ impl Decoder for MessageCodec {
             // verify message signatures
             let public_key = PublicKey::from_protobuf_encoding(&msg.from)
                 .map_err(|_| io::ErrorKind::InvalidInput)?;
-            if !public_key.verify(&msg.data, &msg.signature) {
-                return Err(io::ErrorKind::InvalidData.into());
+            if let Some(data) = &msg.data {
+                if !public_key.verify(data, &msg.signature) {
+                    return Err(io::ErrorKind::InvalidData.into());
+                }
             }
         }
 
@@ -116,7 +127,7 @@ mod test {
 
         let decoded = codec.decode(&mut encoded).unwrap().unwrap();
         let msg_data: String =
-            bincode::deserialize_from(std::io::Cursor::new(decoded.data)).unwrap();
+            bincode::deserialize_from(std::io::Cursor::new(decoded.data.unwrap())).unwrap();
         assert_eq!(msg_data, original_data);
     }
 }

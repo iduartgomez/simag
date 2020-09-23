@@ -1,9 +1,13 @@
 use crate::{
     channel::{self, CHANNEL_PROTOCOL},
     config::{GlobalExecutor, CONF, PEER_TIMEOUT_SECS},
+    group::Group,
+    group::GroupManager,
+    group::GroupPermits,
+    handle::OpId,
     handle::{HandleAnsw, HandleCmd, NetworkHandle},
     message::Message,
-    rpc::{AgentRpc, GroupRes, Resource, ResourceIdentifier},
+    rpc::{AgentRpc, Resource, ResourceIdentifier},
 };
 use kad::record::Key;
 use libp2p::{
@@ -15,17 +19,18 @@ use libp2p::{
     noise,
     swarm::SwarmBuilder,
     tcp::TokioTcpConfig,
-    yamux, Multiaddr, NetworkBehaviour, PeerId, Swarm, Transport,
+    yamux, Multiaddr, PeerId, Swarm, Transport,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
-    borrow::Borrow, collections::HashMap, convert::TryFrom, fmt::Debug, hash::Hash, net::IpAddr,
-    sync::Arc, time::Duration,
+    borrow::Borrow, collections::HashMap, convert::TryFrom, fmt::Debug, net::IpAddr, sync::Arc,
+    time::Duration,
 };
 use tokio::sync::{
     mpsc::{channel, Receiver, Sender},
     Mutex,
 };
+use uuid::Uuid;
 
 const CURRENT_AGENT_VERSION: &str = "simag/0.1.0";
 const CURRENT_IDENTIFY_PROTO_VERSION: &str = "ipfs/0.1.0";
@@ -38,15 +43,14 @@ pub struct Network<M>
 where
     M: DeserializeOwned + Serialize + Send + Sync,
 {
-    pub(crate) id: PeerId,
-    pub(crate) key: identity::Keypair,
-    pub(crate) swarm: Mutex<Swarm<NetBehaviour>>,
-    pub(crate) sent_kad_queries: Mutex<HashMap<kad::QueryId, Option<HandleCmd<M>>>>,
-    pub(crate) answ_send: Mutex<Sender<HandleAnsw<M>>>,
+    id: PeerId,
+    key: identity::Keypair,
+    swarm: Mutex<Swarm<NetBehaviour>>,
+    sent_kad_queries: Mutex<HashMap<kad::QueryId, Option<HandleCmd<M>>>>,
+    answ_send: Mutex<Sender<HandleAnsw<M>>>,
+    /// a map from agent identifiers to peers which own the agent
+    identifiers: Mutex<HashMap<uuid::Uuid, PeerId>>,
 }
-
-// pub(crate) type DefaultHandleCmd<M> = HandleCmd<ResourceIdentifier, Resource, M, AgentRpc>;
-// pub(crate) type DefaultHandledAnsw<M> = HandleAnsw<ResourceIdentifier, M>;
 
 impl<M> Network<M>
 where
@@ -56,12 +60,20 @@ where
     fn run_event_loop(self, mut query_rcv: Receiver<HandleCmd<M>>) {
         let shared_handler = Arc::new(self);
 
-        // set the main event loop
         let sh = shared_handler.clone();
-        GlobalExecutor::spawn(sh.process_events());
-
-        // set the command handling thread
         GlobalExecutor::spawn(async move {
+            // set the main inbound connection event loop
+            loop {
+                let mut swarm = sh.swarm.lock().await;
+                let get_next = tokio::time::timeout(Duration::from_nanos(10), swarm.next());
+                if let Ok(event) = get_next.await {
+                    sh.process_event(event, &mut *swarm).await;
+                }
+            }
+        });
+
+        GlobalExecutor::spawn(async move {
+            // set the command handling event loop
             loop {
                 if let Some(cmd) = query_rcv.recv().await {
                     let sh = shared_handler.clone();
@@ -72,10 +84,10 @@ where
     }
 
     async fn process_handle_cmd(self: Arc<Self>, cmd: HandleCmd<M>) -> Result<(), ()> {
-        let mut swarm = self.swarm.lock().await;
+        let swarm = &mut *self.swarm.lock().await;
         match cmd {
             HandleCmd::ProvideResource { id, key, value } => {
-                self.provide_value(key, value).await?;
+                self.provide_value(swarm, key, value).await?;
                 let answ = HandleAnsw::KeyAdded { id };
                 self.return_answ(answ).await?;
             }
@@ -102,157 +114,224 @@ where
                 let answ = HandleAnsw::HasShutdown { id, answ: true };
                 self.return_answ(answ).await?;
             }
-            HandleCmd::Rpc(rpc) => {
-                match rpc {
-                    AgentRpc::RegisterAgent { agent_id } => {
-                        let (key, mut res) = Resource::agent(agent_id);
-                        res.as_peer(self.id.clone());
-                        Swarm::external_addresses(&*swarm)
-                            .for_each(|a| res.with_address(a.clone()));
-                        self.provide_value(key, Resource::new_agent(res)).await?;
-                        let answ = HandleAnsw::AgentRegistered { key };
-                        self.return_answ(answ).await?;
-                    }
-                    AgentRpc::JoinGroup {
-                        resource_key,
+            HandleCmd::RegisterAgent { id, agent_id } => {
+                let (key, mut res) = Resource::agent(agent_id);
+                res.as_peer(self.id.clone());
+                Swarm::external_addresses(&*swarm).for_each(|a| res.with_address(a.clone()));
+                self.provide_value(swarm, key, Resource::new_agent(res))
+                    .await?;
+                let answ = HandleAnsw::AgentRegistered { id, key };
+                self.return_answ(answ).await?;
+            }
+            HandleCmd::ReqJoinGroup {
+                op_id,
+                group_key,
+                agent_id,
+                group,
+            } => {
+                // get the group resource from network
+                let key_borrowed: &&[u8] = &group_key.borrow();
+                let qid = swarm.get_record(&Key::new(key_borrowed), kad::Quorum::Majority);
+
+                self.sent_kad_queries.lock().await.insert(
+                    qid,
+                    Some(HandleCmd::ReqJoinGroup {
+                        op_id,
+                        group_key,
                         agent_id,
                         group,
-                    } => {
-                        // get the group resource from network
-                        let key_borrowed: &&[u8] = &resource_key.borrow();
-                        let qid = swarm.get_record(&Key::new(key_borrowed), kad::Quorum::Majority);
-
-                        self.sent_kad_queries.lock().await.insert(
-                            qid,
-                            Some(HandleCmd::Rpc(AgentRpc::JoinGroup {
-                                resource_key,
-                                agent_id,
-                                group,
-                            })),
-                        );
-                    }
-                }
+                    }),
+                );
             }
-            HandleCmd::IsRunning => {}
+            HandleCmd::AwaitingReqJoinGroup { .. } => unreachable!(),
+            HandleCmd::IsRunning => {} // will get an answer from the channel, so is active
         }
         Ok(())
     }
 
-    async fn process_events(self: Arc<Self>) {
-        loop {
-            let mut swarm = self.swarm.lock().await;
-            let get_next = tokio::time::timeout(Duration::from_nanos(10), swarm.next());
-            if let Ok(event) = get_next.await {
-                match event {
-                    NetEvent::KademliaEvent(event) => {
-                        // log::debug!("\nPeer #{} received event:\n {:?}", self.id, event);
-                        if let kad::KademliaEvent::QueryResult { result, id, .. } = event {
-                            match self.sent_kad_queries.lock().await.remove(&id) {
-                                Some(Some(HandleCmd::PullResource { id, key })) => {
-                                    if let kad::QueryResult::GetRecord(Ok(kad::GetRecordOk {
-                                        records,
+    async fn process_event(self: &Arc<Self>, event: NetEvent, swarm: &mut Swarm<NetBehaviour>) {
+        match event {
+            NetEvent::KademliaEvent(event) => {
+                // log::debug!("\nPeer #{} received event:\n {:?}", self.id, event);
+                if let kad::KademliaEvent::QueryResult { result, id, .. } = event {
+                    match self.sent_kad_queries.lock().await.remove(&id) {
+                        Some(Some(HandleCmd::PullResource { id, key })) => {
+                            if let kad::QueryResult::GetRecord(Ok(kad::GetRecordOk {
+                                records,
+                                ..
+                            })) = result
+                            {
+                                for rec in records {
+                                    let kad::PeerRecord {
+                                        record: kad::Record { value, .. },
                                         ..
-                                    })) = result
-                                    {
-                                        for rec in records {
-                                            let kad::PeerRecord {
-                                                record: kad::Record { value, .. },
-                                                ..
-                                            } = rec;
-                                            let msg: Resource = tokio::task::spawn_blocking(|| {
-                                                bincode::deserialize_from(std::io::Cursor::new(
-                                                    value,
-                                                ))
-                                                .unwrap()
-                                            })
-                                            .await
-                                            .unwrap();
-                                            log::debug!("Received kademlia msg: {:?}", msg);
-                                            self.return_answ(HandleAnsw::GotRecord { id, key })
-                                                .await
-                                                .unwrap();
-                                        }
-                                    } else {
-                                        unreachable!()
-                                    }
+                                    } = rec;
+                                    let msg: Resource = tokio::task::spawn_blocking(|| {
+                                        bincode::deserialize_from(std::io::Cursor::new(value))
+                                            .unwrap()
+                                    })
+                                    .await
+                                    .unwrap();
+                                    log::debug!("Received kademlia msg: {:?}", msg);
+                                    self.return_answ(HandleAnsw::GotRecord { id, key })
+                                        .await
+                                        .unwrap();
                                 }
-                                Some(Some(HandleCmd::Rpc(rpc))) => {
-                                    if let kad::QueryResult::GetRecord(Ok(kad::GetRecordOk {
-                                        records,
-                                        ..
-                                    })) = result
-                                    {
-                                        if let AgentRpc::JoinGroup {
-                                            resource_key: expected_key,
-                                            agent_id,
-                                            group,
-                                        } = rpc
-                                        {
-                                            for record in records {
-                                                let kad::PeerRecord {
-                                                    peer,
-                                                    record: kad::Record { key, value, .. },
-                                                } = record;
-                                                let group_key =
-                                                    ResourceIdentifier::try_from(key.borrow())
-                                                        .unwrap();
-                                                let group: GroupRes =
-                                                    bincode::deserialize(&*value).unwrap();
-
-                                                if group_key != expected_key {
-                                                    panic!()
-                                                }
-
-                                                // request joining to owners, owners will propagate the change
-                                                // in membership across nodes which belong to the group
-                                                // receive confirmation that the agent has been added to the group
-                                            }
-                                        } else {
-                                            unreachable!()
-                                        }
+                            } else {
+                                unreachable!()
+                            }
+                        }
+                        Some(Some(HandleCmd::ReqJoinGroup {
+                            op_id,
+                            group_key,
+                            agent_id,
+                            group,
+                        })) => {
+                            if let kad::QueryResult::GetRecord(Ok(kad::GetRecordOk {
+                                records,
+                                ..
+                            })) = result
+                            // TODO: this can be retrieved from local storage if already exists
+                            // should ensure consistency across the network!
+                            {
+                                request_joining_group(
+                                    &self,
+                                    &mut *swarm,
+                                    records,
+                                    (op_id, group_key, agent_id, group),
+                                )
+                                .await;
+                            } else {
+                                unreachable!()
+                            }
+                        }
+                        Some(Some(HandleCmd::AwaitingReqJoinGroup {
+                            op_id,
+                            group_key,
+                            group,
+                            agent_id,
+                        })) => {
+                            if let kad::QueryResult::GetRecord(Ok(kad::GetRecordOk {
+                                mut records,
+                                ..
+                            })) = result
+                            {
+                                // the answer should consist of a single record from the peer owning the agent
+                                if let Some(rec) = records.pop() {
+                                    if !records.is_empty() {
+                                        panic!()
                                     }
+                                    // TODO: extract the peer information and add it to the managing peers <-> identifiers map
+                                    todo!()
+                                } else {
+                                    panic!()
                                 }
-                                _ => {}
+                            } else {
+                                unreachable!()
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            NetEvent::Identify(identify::IdentifyEvent::Received {
+                peer_id,
+                mut observed_addr,
+                info,
+            }) => {
+                if info.protocol_version == CURRENT_IDENTIFY_PROTO_VERSION
+                    && info.agent_version == CURRENT_AGENT_VERSION
+                    && info.protocols.iter().any(|p| p == "/ipfs/kad/1.0.0")
+                    && info.protocols.iter().any(|p| p == CHANNEL_PROTOCOL)
+                {
+                    observed_addr.push(Protocol::P2p(peer_id.clone().into()));
+                    swarm.add_address(&peer_id, observed_addr);
+                }
+            }
+            NetEvent::Stream(channel::ChannelEvent::MessageReceived { msg, peer }) => {
+                if let Some(data) = msg.data {
+                    let msg: M = tokio::task::spawn_blocking(|| {
+                        bincode::deserialize_from(std::io::Cursor::new(data)).unwrap()
+                    })
+                    .await
+                    .unwrap();
+                    self.return_answ(HandleAnsw::RcvMsg {
+                        msg,
+                        peer: peer.clone(),
+                    })
+                    .await
+                    .unwrap();
+                }
+
+                match msg.rpc {
+                    Some(AgentRpc::ReqGroupJoin {
+                        op_id,
+                        group_id,
+                        agent_id,
+                        permits: (read, write),
+                        settings,
+                    }) => {
+                        let mut permits = GroupPermits::new();
+                        if read {
+                            permits.read.insert(agent_id);
+                        }
+                        if write {
+                            permits.write.insert(agent_id);
+                        }
+                        let mut manager = GroupManager::new();
+                        match manager.request_joining(agent_id, group_id, &*settings, permits) {
+                            Ok(_) => {
+                                self.return_answ(HandleAnsw::PropagateGroupChange { group_id })
+                                    .await
+                                    .unwrap();
+                                let msg = Message::rpc(
+                                    AgentRpc::ReqGroupJoinAccepted { op_id, group_id },
+                                    &self.key,
+                                    true,
+                                )
+                                .unwrap();
+                                swarm.send_message(&peer, msg);
+                            }
+                            Err(err) => {
+                                let reason = "not allowed".to_owned();
+                                let msg = Message::rpc(
+                                    AgentRpc::ReqGroupJoinDenied {
+                                        op_id,
+                                        group_id,
+                                        reason,
+                                    },
+                                    &self.key,
+                                    true,
+                                )
+                                .unwrap();
+                                swarm.send_message(&peer, msg);
                             }
                         }
                     }
-                    NetEvent::Identify(identify::IdentifyEvent::Received {
-                        peer_id,
-                        mut observed_addr,
-                        info,
-                    }) => {
-                        if info.protocol_version == CURRENT_IDENTIFY_PROTO_VERSION
-                            && info.agent_version == CURRENT_AGENT_VERSION
-                            && info.protocols.iter().any(|p| p == "/ipfs/kad/1.0.0")
-                            && info.protocols.iter().any(|p| p == CHANNEL_PROTOCOL)
-                        {
-                            observed_addr.push(Protocol::P2p(peer_id.clone().into()));
-                            swarm.add_address(&peer_id, observed_addr);
-                        }
-                    }
-                    NetEvent::Stream(channel::ChannelEvent::MessageReceived { msg, peer }) => {
-                        let msg: M = tokio::task::spawn_blocking(|| {
-                            bincode::deserialize_from(std::io::Cursor::new(msg)).unwrap()
-                        })
-                        .await
-                        .unwrap();
-                        self.return_answ(HandleAnsw::RcvMsg { msg, peer })
+                    Some(AgentRpc::ReqGroupJoinAccepted { op_id, group_id }) => {
+                        // TODO: set open channel for pub/sub within the group topics
+                        self.return_answ(HandleAnsw::ReqJoinGroupAccepted { op_id, group_id })
                             .await
                             .unwrap();
                     }
-                    NetEvent::Stream(channel::ChannelEvent::ConnectionError { peer, err }) => {
-                        log::debug!("Connection error with peer: {}:\n{}", peer, err);
-                    }
-                    NetEvent::Identify(_) => {}
+                    Some(AgentRpc::ReqGroupJoinDenied {
+                        op_id,
+                        group_id,
+                        reason,
+                    }) => todo!(),
+                    None => {}
                 }
             }
-            // drop the swarm lock after work or timeout so work can be done in other thread
-            std::mem::drop(swarm);
+            NetEvent::Stream(channel::ChannelEvent::ConnectionError { peer, err }) => {
+                log::debug!("Connection error with peer: {}:\n{}", peer, err);
+            }
+            NetEvent::Identify(_) => {}
         }
     }
 
-    pub(crate) async fn provide_value(
+    async fn provide_value(
         self: &Arc<Self>,
+        swarm: &mut Swarm<NetBehaviour>,
         key: ResourceIdentifier,
         value: Resource,
     ) -> Result<(), ()> {
@@ -269,9 +348,7 @@ where
             expires: None,
         };
 
-        let mut swarm = self.swarm.lock().await;
         let mut sent_kad_queries = self.sent_kad_queries.lock().await;
-
         let qid = swarm.put_record(record, kad::Quorum::All).map_err(|_| ())?;
         sent_kad_queries.insert(qid, None);
         let qid = swarm.start_providing(Key::new(key)).map_err(|_| ())?;
@@ -280,7 +357,7 @@ where
         Ok(())
     }
 
-    pub(crate) async fn return_answ(self: &Arc<Self>, answ: HandleAnsw<M>) -> Result<(), ()> {
+    async fn return_answ(self: &Arc<Self>, answ: HandleAnsw<M>) -> Result<(), ()> {
         let mut sender = self.answ_send.lock().await;
         let answ = sender
             .send_timeout(answ, Duration::from_secs(HANDLE_TIMEOUT_SECS))
@@ -294,7 +371,81 @@ where
     }
 }
 
-#[derive(NetworkBehaviour)]
+type JoinReq = (OpId, ResourceIdentifier, Uuid, Group);
+
+async fn request_joining_group<M>(
+    network: &Arc<Network<M>>,
+    swarm: &mut Swarm<NetBehaviour>,
+    group_data: Vec<kad::PeerRecord>,
+    req: JoinReq,
+) where
+    M: Serialize + DeserializeOwned + Send + Sync + 'static,
+{
+    let (op_id, expected_key, agent_id, ori_group) = req;
+    for record in group_data {
+        let kad::PeerRecord {
+            record: kad::Record { key, value, .. },
+            ..
+        } = record;
+        let group_key = ResourceIdentifier::try_from(key.borrow()).unwrap();
+        let group: Group = tokio::task::spawn_blocking(|| {
+            bincode::deserialize_from(std::io::Cursor::new(value)).unwrap()
+        })
+        .await
+        .unwrap();
+
+        if group_key != expected_key || ori_group.id != group.id {
+            panic!()
+        }
+
+        // request joining to owners, owners will propagate the change in membership,
+        // if accepted, across nodes which belong to the group
+        let mapped_owners = network.identifiers.lock().await;
+        let mut managing_peers = Vec::with_capacity(group.owners.len());
+        for owner in group.owners.iter() {
+            if let Some(peer) = mapped_owners.get(owner) {
+                managing_peers.push(peer);
+            }
+        }
+
+        if managing_peers.is_empty() {
+            // try getting at least one of the peers managing one of the owners
+            let owner = group
+                .owners
+                .iter()
+                .next()
+                .expect("there should be at least one always");
+            let owner_key = ResourceIdentifier::unique(owner);
+            let owner_key: &&[u8] = &owner_key.borrow();
+            let qid = swarm.get_record(&Key::new(owner_key), kad::Quorum::One);
+            // wait until getting a response to continue
+            network.sent_kad_queries.lock().await.insert(
+                qid,
+                Some(HandleCmd::AwaitingReqJoinGroup {
+                    op_id,
+                    group_key,
+                    agent_id,
+                    group,
+                }),
+            );
+        } else {
+            // todo: try contacting at most 10 and if failed try with the next 10
+            for peer in managing_peers.iter().take(10) {
+                let rpc = AgentRpc::ReqGroupJoin {
+                    op_id,
+                    agent_id,
+                    group_id: group.id,
+                    permits: (true, true),
+                    settings: ori_group.settings.box_cloned(),
+                };
+                let msg = Message::rpc(rpc, &network.key, true).unwrap();
+                swarm.send_message(peer, msg);
+            }
+        }
+    }
+}
+
+#[derive(libp2p::NetworkBehaviour)]
 #[behaviour(event_process = false)]
 #[behaviour(out_event = "NetEvent")]
 pub(crate) struct NetBehaviour {
@@ -415,36 +566,6 @@ impl std::default::Default for Provider {
     }
 }
 
-pub trait KadKey:
-    Borrow<[u8]>
-    + Eq
-    + Hash
-    + Debug
-    + Clone
-    + Send
-    + Sync
-    + for<'a> TryFrom<&'a [u8], Error = std::io::Error>
-    + 'static
-{
-}
-
-impl<T> KadKey for T where
-    T: Borrow<[u8]>
-        + Eq
-        + Hash
-        + Debug
-        + Clone
-        + Send
-        + Sync
-        + for<'a> TryFrom<&'a [u8], Error = std::io::Error>
-        + 'static
-{
-}
-
-pub trait KadValue: Serialize + DeserializeOwned + Debug + Send + Sync + 'static {}
-
-impl<T> KadValue for T where T: Serialize + DeserializeOwned + Debug + Send + Sync + 'static {}
-
 pub struct NetworkBuilder {
     /// ED25519 local peer private key.
     local_ed25519_key: identity::ed25519::Keypair,
@@ -564,6 +685,7 @@ impl NetworkBuilder {
             sent_kad_queries: Mutex::new(sent_queries),
             id: self.local_peer_id,
             answ_send: Mutex::new(answ_send),
+            identifiers: Mutex::new(HashMap::new()),
         };
         network.run_event_loop(query_rcv);
         Ok(NetworkHandle::new(

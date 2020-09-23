@@ -32,7 +32,7 @@ use std::{
 pub(crate) const CHANNEL_PROTOCOL: &str = "/simag/channel/0.1.0";
 
 pub(crate) enum ChannelEvent {
-    MessageReceived { peer: PeerId, msg: Vec<u8> },
+    MessageReceived { peer: PeerId, msg: Message },
     ConnectionError { peer: PeerId, err: std::io::Error },
 }
 
@@ -105,11 +105,11 @@ impl Channel {
     fn poll_rcv_msg(
         rcv_conn: &mut SimagStream<NegotiatedSubstream>,
         cx: &mut Context,
-    ) -> Result<(bool, Option<Vec<u8>>), std::io::Error> {
+    ) -> Result<(bool, Option<Message>), std::io::Error> {
         match stream::Stream::poll_next(Pin::new(rcv_conn), cx) {
             Poll::Ready(Some(Ok(msg))) => {
                 // msg received
-                Ok((false, Some(msg.data)))
+                Ok((false, Some(msg)))
             }
             Poll::Ready(Some(Err(err))) => Err(err),
             Poll::Ready(None) | Poll::Pending => Ok((false, None)),
