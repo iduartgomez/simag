@@ -12,6 +12,7 @@ use std::{
 use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(clippy::enum_variant_names)]
 pub(crate) enum AgentRpc {
     /// request joining a group to one of the owners
     ReqGroupJoin {
@@ -43,7 +44,7 @@ pub(crate) fn agent_id_from_str<ID: AsRef<str>>(id: ID) -> Uuid {
 
 /// A `Resource` in a simag network is ...
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Resource(AgOrGroup);
+pub struct Resource(pub(crate) AgOrGroup);
 
 impl Resource {
     pub(crate) fn new_agent(agent: AgentRes) -> Resource {
@@ -56,12 +57,15 @@ impl Resource {
 
     /// Create a resource of agent kind. Returns both the identifier (key) and the resource
     /// handle.
-    pub(crate) fn agent<ID: AsRef<str>>(agent_id: ID) -> (ResourceIdentifier, AgentRes) {
+    pub(crate) fn agent<ID: AsRef<str>>(
+        agent_id: ID,
+        peer_id: PeerId,
+    ) -> (ResourceIdentifier, AgentRes) {
         let uid = agent_id_from_str(agent_id);
         let key = ResourceIdentifier::unique(&uid);
         let res = AgentRes {
             agent_id: uid,
-            peer: None,
+            peer: Some(peer_id),
             addr: Vec::with_capacity(1),
         };
         (key, res)
@@ -190,7 +194,7 @@ impl TryFrom<u8> for AgentKeyKind {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-enum AgOrGroup {
+pub(crate) enum AgOrGroup {
     Ag(AgentRes),
     Gr(Group),
 }
@@ -200,7 +204,7 @@ pub(crate) struct AgentRes {
     addr: Vec<Multiaddr>,
     #[serde(serialize_with = "custom_ser::ser_peer")]
     #[serde(deserialize_with = "custom_ser::de_peer")]
-    peer: Option<PeerId>,
+    pub peer: Option<PeerId>,
     agent_id: Uuid,
 }
 

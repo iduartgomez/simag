@@ -7,7 +7,7 @@ use crate::{
     handle::OpId,
     handle::{HandleAnsw, HandleCmd, NetworkHandle},
     message::Message,
-    rpc::{AgentRpc, Resource, ResourceIdentifier},
+    rpc::{AgOrGroup, AgentRpc, Resource, ResourceIdentifier},
 };
 use kad::record::Key;
 use libp2p::{
@@ -115,7 +115,7 @@ where
                 self.return_answ(answ).await?;
             }
             HandleCmd::RegisterAgent { id, agent_id } => {
-                let (key, mut res) = Resource::agent(agent_id);
+                let (key, mut res) = Resource::agent(agent_id, self.id.clone());
                 res.as_peer(self.id.clone());
                 Swarm::external_addresses(&*swarm).for_each(|a| res.with_address(a.clone()));
                 self.provide_value(swarm, key, Resource::new_agent(res))
@@ -177,8 +177,6 @@ where
                                         .await
                                         .unwrap();
                                 }
-                            } else {
-                                unreachable!()
                             }
                         }
                         Some(Some(HandleCmd::ReqJoinGroup {
@@ -201,8 +199,6 @@ where
                                     (op_id, group_key, agent_id, group),
                                 )
                                 .await;
-                            } else {
-                                unreachable!()
                             }
                         }
                         Some(Some(HandleCmd::AwaitingReqJoinGroup {
@@ -216,18 +212,38 @@ where
                                 ..
                             })) = result
                             {
-                                // the answer should consist of a single record from the peer owning the agent
-                                if let Some(rec) = records.pop() {
-                                    if !records.is_empty() {
-                                        panic!()
-                                    }
-                                    // TODO: extract the peer information and add it to the managing peers <-> identifiers map
-                                    todo!()
-                                } else {
+                                if records.is_empty() {
                                     panic!()
                                 }
-                            } else {
-                                unreachable!()
+
+                                // the answer should consist of a single record from the peer owning the agent
+                                while let Some(rec) = records.pop() {
+                                    // TODO: extract the peer information and add it to the managing peers <-> identifiers map
+                                    let kad::PeerRecord {
+                                        record: kad::Record { value, .. },
+                                        ..
+                                    } = rec;
+                                    let msg: Resource = tokio::task::spawn_blocking(|| {
+                                        bincode::deserialize_from(std::io::Cursor::new(value))
+                                            .unwrap()
+                                    })
+                                    .await
+                                    .unwrap();
+                                    if let AgOrGroup::Ag(ag) = msg.0 {
+                                        // let agent_provider = ag.
+                                        let identifiers = &mut *self.identifiers.lock().await;
+                                        identifiers.insert(agent_id, ag.peer.unwrap());
+                                    }
+                                    // let rpc = AgentRpc::ReqGroupJoin {
+                                    //     op_id,
+                                    //     agent_id,
+                                    //     group_id: group.id,
+                                    //     permits: (true, true),
+                                    //     settings: ori_group.settings.box_cloned(),
+                                    // };
+                                    // let msg = Message::rpc(rpc, &network.key, true).unwrap();
+                                    // swarm.send_message(peer, msg);
+                                }
                             }
                         }
                         _ => {}
