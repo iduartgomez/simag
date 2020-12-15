@@ -100,25 +100,12 @@ impl GlobalExecutor {
             None
         } else {
             Some(
-                tokio::runtime::Builder::new()
-                    .threaded_scheduler()
+                tokio::runtime::Builder::new_multi_thread()
                     .enable_all()
                     .thread_name("simag-nw-exec")
                     .build()
                     .expect("failed to build tokio runtime"),
             )
-        }
-    }
-
-    #[inline]
-    #[allow(dead_code)]
-    pub fn block_on<R>(f: impl Future<Output = R>) -> R {
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.block_on(f)
-        } else if let Some(rt) = &*ASYNC_RT {
-            rt.handle().block_on(f)
-        } else {
-            unreachable!()
         }
     }
 

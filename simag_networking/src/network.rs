@@ -11,7 +11,7 @@ use crate::{
 };
 use kad::record::Key;
 use libp2p::{
-    core::{muxing, upgrade},
+    core::{muxing, transport, upgrade},
     deflate::DeflateConfig,
     dns::DnsConfig,
     identify, identity, kad, mplex,
@@ -117,7 +117,7 @@ where
             HandleCmd::RegisterAgent { id, agent_id } => {
                 let (key, mut res) = Resource::agent(agent_id, self.id.clone());
                 res.as_peer(self.id.clone());
-                Swarm::external_addresses(&*swarm).for_each(|a| res.with_address(a.clone()));
+                Swarm::external_addresses(&*swarm).for_each(|a| res.with_address(a.addr.clone()));
                 self.provide_value(swarm, key, Resource::new_agent(res))
                     .await?;
                 let answ = HandleAnsw::AgentRegistered { id, key };
@@ -713,23 +713,7 @@ impl NetworkBuilder {
 
     fn config_transport(
         &self,
-    ) -> std::io::Result<
-        impl Transport<
-                Output = (
-                    PeerId,
-                    impl muxing::StreamMuxer<
-                            OutboundSubstream = impl Send,
-                            Substream = impl Send,
-                            Error = impl Into<std::io::Error>,
-                        > + Send
-                        + Sync,
-                ),
-                Listener = impl Send,
-                ListenerUpgrade = impl Send,
-                Dial = impl Send,
-                Error = impl std::error::Error + Send,
-            > + Clone,
-    > {
+    ) -> std::io::Result<transport::Boxed<(PeerId, muxing::StreamMuxerBox)>> {
         let noise_keys = noise::Keypair::<noise::X25519Spec>::new()
             .into_authentic(&self.local_key)
             .expect("Signing libp2p-noise static DH keypair failed.");
@@ -744,15 +728,17 @@ impl NetworkBuilder {
                     upgrade::Version::V1,
                 )
             });
-        Ok(DnsConfig::new(tcp)?
-            .upgrade(upgrade::Version::V1)
-            .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
-            .multiplex(upgrade::SelectUpgrade::new(
-                yamux::Config::default(),
-                mplex::MplexConfig::default(),
-            ))
-            .map(|(peer, muxer), _| (peer, muxing::StreamMuxerBox::new(muxer)))
-            .timeout(std::time::Duration::from_secs(PEER_TIMEOUT_SECS)))
+        Ok(
+            DnsConfig::new(tcp)?
+                .upgrade(upgrade::Version::V1)
+                .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
+                .multiplex(upgrade::SelectUpgrade::new(
+                    yamux::YamuxConfig::default(),
+                    mplex::MplexConfig::default(),
+                ))
+                .map(|(peer, muxer), _| (peer, muxing::StreamMuxerBox::new(muxer)))
+                .boxed(), // .timeout(std::time::Duration::from_secs(PEER_TIMEOUT_SECS)))
+        )
     }
 
     fn config_behaviour(&self) -> NetBehaviour {

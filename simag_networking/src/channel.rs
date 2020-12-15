@@ -395,9 +395,12 @@ mod handler {
         type InboundProtocol = ChannelProtocol;
         type OutboundProtocol = ChannelProtocol;
         type OutboundOpenInfo = ();
+        type InboundOpenInfo = ();
 
-        fn listen_protocol(&self) -> swarm::SubstreamProtocol<Self::InboundProtocol> {
-            swarm::SubstreamProtocol::new(ChannelProtocol)
+        fn listen_protocol(
+            &self,
+        ) -> swarm::SubstreamProtocol<Self::InboundProtocol, Self::InboundOpenInfo> {
+            swarm::SubstreamProtocol::new(ChannelProtocol, ())
         }
 
         fn inject_fully_negotiated_outbound(
@@ -413,6 +416,7 @@ mod handler {
         fn inject_fully_negotiated_inbound(
             &mut self,
             substream: <Self::InboundProtocol as InboundUpgrade<NegotiatedSubstream>>::Output,
+            _info: Self::InboundOpenInfo,
         ) {
             self.inbound_substream = Some(substream);
         }
@@ -460,8 +464,7 @@ mod handler {
                 match event {
                     SubstreamState::OutPendingOpen => {
                         let ev = swarm::ProtocolsHandlerEvent::OutboundSubstreamRequest {
-                            protocol: swarm::SubstreamProtocol::new(ChannelProtocol),
-                            info: (),
+                            protocol: swarm::SubstreamProtocol::new(ChannelProtocol, ()),
                         };
                         return Poll::Ready(ev);
                     }
