@@ -6,7 +6,7 @@ use unsigned_varint::codec::UviBytes;
 
 use crate::rpc::AgentRpc;
 
-pub(crate) const MAX_MSG_SIZE: usize = 4096;
+pub(crate) const MAX_MSG_BYTES: usize = 4096;
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Message {
@@ -68,7 +68,7 @@ impl Encoder for MessageCodec {
         let msg = bincode::serialize(&item).map_err(|_| io::ErrorKind::InvalidInput)?;
 
         let mut codec: UviBytes<io::Cursor<Vec<u8>>> = UviBytes::default();
-        codec.set_max_len(MAX_MSG_SIZE);
+        codec.set_max_len(MAX_MSG_BYTES);
         codec.encode(io::Cursor::new(msg), dst)
     }
 }
@@ -79,7 +79,7 @@ impl Decoder for MessageCodec {
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let mut codec: UviBytes<io::Cursor<Vec<u8>>> = UviBytes::default();
-        codec.set_max_len(MAX_MSG_SIZE);
+        codec.set_max_len(MAX_MSG_BYTES);
         let packet = match codec.decode(src)? {
             Some(p) => p,
             None => return Ok(None),

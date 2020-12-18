@@ -11,6 +11,7 @@ mod network;
 mod rpc;
 
 pub use network::{NetworkBuilder, Provider};
+use uuid::Uuid;
 
 pub mod prelude {
     pub use super::group::GroupSettings;
@@ -27,4 +28,9 @@ pub type Result<R> = std::result::Result<R, Error>;
 pub enum Error {
     #[error(transparent)]
     OpError(#[from] HandleError),
+    #[error("failed to join group `{group_id}` because: {reason}")]
+    GroupError {
+        group_id: Uuid,
+        reason: group::GroupError,
+    },
 }

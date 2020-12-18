@@ -42,8 +42,10 @@ fn main() {
             .unwrap()
     };
 
-    // Uncommenting the following file would save the newly generated key to the specified path
-    // (or an existing one if provided like in this example):
+    /*
+    Uncommenting the following line would save the newly generated key to the specified path
+    (or an existing one if provided like in this example):
+    */
     // network.save_secret_key(secret_file).unwrap();
 
     // #1 This is the id that must be provided to other nodes that want to join the network.
@@ -58,7 +60,7 @@ fn main() {
         if let Some(stats) = network.stats.for_key(&ag_key) {
             if stats.times_served > 0 && !served {
                 println!("Served a resource at least once");
-                served = false;
+                served = true;
             }
         }
 
@@ -84,7 +86,11 @@ struct Settings;
 
 #[typetag::serde]
 impl GroupSettings for Settings {
-    fn is_allowed_to_join(&self, _petitioner_settings: &dyn GroupSettings) -> bool {
+    fn is_allowed_to_join(
+        &self,
+        _agent: uuid::Uuid,
+        _petitioner_settings: &dyn GroupSettings,
+    ) -> bool {
         true
     }
 

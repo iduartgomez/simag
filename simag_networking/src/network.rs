@@ -7,7 +7,7 @@ use crate::{
     handle::OpId,
     handle::{HandleAnsw, HandleCmd, NetworkHandle},
     message::Message,
-    rpc::{AgOrGroup, AgentRpc, Resource, ResourceIdentifier},
+    rpc::{AgentRpc, Resource, ResourceIdentifier, ResourceKind},
 };
 use kad::record::Key;
 use libp2p::{
@@ -52,6 +52,12 @@ where
     identifiers: Mutex<HashMap<uuid::Uuid, PeerId>>,
 }
 
+/*
+TODO: profile which is better: have two different threads handling the event rcv
+and the cmd hanling or leave it all under one single thread and avoid sync friction
+by having the swarm behind a mutex.
+*/
+
 impl<M> Network<M>
 where
     M: DeserializeOwned + Serialize + Debug + Send + Sync + 'static,
@@ -66,6 +72,7 @@ where
             loop {
                 let mut swarm = sh.swarm.lock().await;
                 let get_next = tokio::time::timeout(Duration::from_nanos(10), swarm.next());
+                // unlock the swarm to allow the thread handling commands to send messages, time to time
                 if let Ok(event) = get_next.await {
                     sh.process_event(event, &mut *swarm).await;
                 }
@@ -143,7 +150,7 @@ where
                     }),
                 );
             }
-            HandleCmd::AwaitingReqJoinGroup { .. } => unreachable!(),
+            HandleCmd::AwaitingReqJoinGroup { .. } => todo!(),
             HandleCmd::IsRunning => {} // will get an answer from the channel, so is active
         }
         Ok(())
@@ -152,7 +159,6 @@ where
     async fn process_event(self: &Arc<Self>, event: NetEvent, swarm: &mut Swarm<NetBehaviour>) {
         match event {
             NetEvent::KademliaEvent(event) => {
-                // log::debug!("\nPeer #{} received event:\n {:?}", self.id, event);
                 if let kad::KademliaEvent::QueryResult { result, id, .. } = event {
                     match self.sent_kad_queries.lock().await.remove(&id) {
                         Some(Some(HandleCmd::PullResource { id, key })) => {
@@ -173,6 +179,7 @@ where
                                     .await
                                     .unwrap();
                                     log::debug!("Received kademlia msg: {:?}", msg);
+                                    // TODO: add this rss
                                     self.return_answ(HandleAnsw::GotRecord { id, key })
                                         .await
                                         .unwrap();
@@ -213,10 +220,11 @@ where
                             })) = result
                             {
                                 if records.is_empty() {
+                                    // FIXME: return error to net handler. managers not found.
                                     panic!()
                                 }
 
-                                // the answer should consist of a single record from the peer owning the agent
+                                // the answer should consist of a single record from the peer owning the agent which owns the group
                                 while let Some(rec) = records.pop() {
                                     // TODO: extract the peer information and add it to the managing peers <-> identifiers map
                                     let kad::PeerRecord {
@@ -229,10 +237,12 @@ where
                                     })
                                     .await
                                     .unwrap();
-                                    if let AgOrGroup::Ag(ag) = msg.0 {
+                                    if let ResourceKind::Agent(ag) = msg.0 {
                                         // let agent_provider = ag.
                                         let identifiers = &mut *self.identifiers.lock().await;
                                         identifiers.insert(agent_id, ag.peer.unwrap());
+                                    } else {
+                                        // TODO: received an incorrect answer
                                     }
                                     // let rpc = AgentRpc::ReqGroupJoin {
                                     //     op_id,
@@ -308,8 +318,7 @@ where
                                 .unwrap();
                                 swarm.send_message(&peer, msg);
                             }
-                            Err(err) => {
-                                let reason = "not allowed".to_owned();
+                            Err(reason) => {
                                 let msg = Message::rpc(
                                     AgentRpc::ReqGroupJoinDenied {
                                         op_id,
@@ -334,7 +343,15 @@ where
                         op_id,
                         group_id,
                         reason,
-                    }) => todo!(),
+                    }) => {
+                        self.return_answ(HandleAnsw::ReqJoinGroupDenied {
+                            op_id,
+                            group_id,
+                            reason,
+                        })
+                        .await
+                        .unwrap();
+                    }
                     None => {}
                 }
             }
@@ -374,7 +391,7 @@ where
     }
 
     async fn return_answ(self: &Arc<Self>, answ: HandleAnsw<M>) -> Result<(), ()> {
-        let mut sender = self.answ_send.lock().await;
+        let sender = self.answ_send.lock().await;
         let answ = sender
             .send_timeout(answ, Duration::from_secs(HANDLE_TIMEOUT_SECS))
             .await;
@@ -389,6 +406,9 @@ where
 
 type JoinReq = (OpId, ResourceIdentifier, Uuid, Group);
 
+/// Will send a request to join if managing peers have been locally cached.
+///
+/// Otherwise will query the network to find any group managing peers.
 async fn request_joining_group<M>(
     network: &Arc<Network<M>>,
     swarm: &mut Swarm<NetBehaviour>,
@@ -411,6 +431,7 @@ async fn request_joining_group<M>(
         .unwrap();
 
         if group_key != expected_key || ori_group.id != group.id {
+            // TODO: return error instead
             panic!()
         }
 
@@ -445,7 +466,7 @@ async fn request_joining_group<M>(
                 }),
             );
         } else {
-            // todo: try contacting at most 10 and if failed try with the next 10
+            // TODO: try contacting at most 10 and if failed try with the next 10
             for peer in managing_peers.iter().take(10) {
                 let rpc = AgentRpc::ReqGroupJoin {
                     op_id,

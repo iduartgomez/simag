@@ -1,15 +1,21 @@
 use crate::{
     config::GlobalExecutor,
     group::GroupSettings,
-    group::{Group, GroupPermits},
+    group::{Group, GroupError, GroupPermits},
     rpc::{self, Resource, ResourceIdentifier},
-    Result,
+    Error, Result,
 };
 use libp2p::{identity, PeerId};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-    borrow::Borrow, collections::HashMap, convert::TryFrom, fmt::Debug, fs::File, hash::Hash,
-    io::Write, result::Result as StdResult,
+    borrow::Borrow,
+    collections::HashMap,
+    convert::TryFrom,
+    fmt::{Debug, Display},
+    fs::File,
+    hash::Hash,
+    io::Write,
+    result::Result as StdResult,
 };
 use tokio::sync::mpsc::{
     error::{TryRecvError, TrySendError},
@@ -23,16 +29,27 @@ pub enum HandleError {
     OpRunning,
     #[error("network op execution failed")]
     OpFailed,
+    #[error("operation `{0}` not found")]
+    OpNotFound(OpId),
     #[error("unexpected disconnect")]
     Disconnected,
     #[error("failed saving secret key")]
     FailedSaving(#[from] std::io::Error),
+    #[error("awaiting a response for op `{0}`")]
+    AwaitingResponse(OpId),
 }
 
 /// An identifier for an operation executed asynchronously. Used to fetch the results
 /// of such operation in an asynchronous fashion.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpId(usize);
+
+impl Display for OpId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)?;
+        Ok(())
+    }
+}
 
 /// A handle to a running network connection.
 pub struct NetworkHandle<M>
@@ -62,7 +79,7 @@ where
         let agent_id = agent.id().to_string();
         let id = self.next_id();
         let msg = HandleCmd::RegisterAgent { id, agent_id };
-        let mut sender = self.sender.clone();
+        let sender = self.sender.clone();
         GlobalExecutor::spawn(async move {
             sender.send(msg).await.map_err(|_| ())?;
             Ok::<_, ()>(())
@@ -108,7 +125,7 @@ where
             key,
             value: Resource::new_group(group),
         };
-        let mut sender = self.sender.clone();
+        let sender = self.sender.clone();
         GlobalExecutor::spawn(async move {
             sender.send(msg).await.map_err(|_| ())?;
             Ok::<_, ()>(())
@@ -118,6 +135,9 @@ where
 
     /// Request joining to a given group, will return the network identifier of the group in case
     /// this agent is allowed to join the group.
+    ///
+    /// The petitioner must pass the settings used to evaluate if are compatible with the settings
+    /// set by the owners of the group.
     ///
     /// Optionally request a set of group permits, otherwise read permits will be requested.
     /// The agent only will be allowed to join if the permits are legal for this agent.
@@ -144,7 +164,7 @@ where
             agent_id,
             group,
         };
-        let mut sender = self.sender.clone();
+        let sender = self.sender.clone();
         GlobalExecutor::spawn(async move {
             sender.send(msg).await.map_err(|_| ())?;
             Ok::<_, ()>(())
@@ -163,30 +183,25 @@ where
 
     /// Returns whether the operation executed succesfully or not. If the operation still is running it will return
     /// a `waiting` error type. Returns the resource identifier in case the operation returns one (create, join, find).
-    pub fn op_result(&mut self, id: OpId) -> Result<Option<ResourceIdentifier>> {
-        todo!()
-    }
-}
-
-impl<M> NetworkHandle<M>
-where
-    M: Serialize + DeserializeOwned + Debug + Send + 'static,
-{
-    /// Only should be instanced throught the network builder.
-    pub(crate) fn new(
-        sender: Sender<HandleCmd<M>>,
-        rcv: Receiver<HandleAnsw<M>>,
-        local_key: identity::ed25519::Keypair,
-    ) -> Self {
-        NetworkHandle {
-            sender,
-            rcv,
-            local_key,
-            pending: HashMap::new(),
-            next_msg_id: 0,
-            is_dead: false,
-            stats: NetworkStats::default(),
-            rcv_msg: HashMap::new(),
+    pub fn op_result(&mut self, op_id: OpId) -> Result<Option<ResourceIdentifier>> {
+        match self.pending.remove(&op_id) {
+            None => Err(HandleError::OpNotFound(op_id).into()),
+            Some(PendingCmd { cmd, answ: None }) => {
+                // no answer received, insert back into the pending cmd map.
+                self.pending.insert(op_id, PendingCmd { cmd, answ: None });
+                Err(HandleError::AwaitingResponse(op_id).into())
+            }
+            Some(PendingCmd {
+                answ: Some(answ), ..
+            }) => match answ {
+                HandleAnsw::ReqJoinGroupAccepted { group_id, .. } => {
+                    Ok(Some(ResourceIdentifier::group(&group_id)))
+                }
+                HandleAnsw::ReqJoinGroupDenied {
+                    group_id, reason, ..
+                } => Err(Error::GroupError { group_id, reason }),
+                _ => todo!(),
+            },
         }
     }
 
@@ -200,7 +215,7 @@ where
                 answ: None,
             },
         );
-        let mut sender = self.sender.clone();
+        let sender = self.sender.clone();
         GlobalExecutor::spawn(async move {
             let msg = HandleCmd::<M>::SendMessage { id, value, peer };
             sender.send(msg).await.map_err(|_| ())?;
@@ -221,7 +236,7 @@ where
             },
         );
         let msg = HandleCmd::PullResource { id, key };
-        let mut sender = self.sender.clone();
+        let sender = self.sender.clone();
         GlobalExecutor::spawn(async move {
             sender.send(msg).await.map_err(|_| ())?;
             Ok::<_, ()>(())
@@ -241,7 +256,7 @@ where
             },
         );
         let msg = HandleCmd::ProvideResource { id, key, value };
-        let mut sender = self.sender.clone();
+        let sender = self.sender.clone();
         GlobalExecutor::spawn(async move {
             sender.send(msg).await.map_err(|_| ())?;
             Ok::<_, ()>(())
@@ -318,6 +333,24 @@ where
         Ok(self.try_getting_shutdown_answ().unwrap_or(false))
     }
 
+    /// Only should be instanced throught the network builder.
+    pub(crate) fn new(
+        sender: Sender<HandleCmd<M>>,
+        rcv: Receiver<HandleAnsw<M>>,
+        local_key: identity::ed25519::Keypair,
+    ) -> Self {
+        NetworkHandle {
+            sender,
+            rcv,
+            local_key,
+            pending: HashMap::new(),
+            next_msg_id: 0,
+            is_dead: false,
+            stats: NetworkStats::default(),
+            rcv_msg: HashMap::new(),
+        }
+    }
+
     fn try_getting_shutdown_answ(&mut self) -> Result<bool> {
         match self.pending.values().find(|p| p.shutdown()) {
             Some(PendingCmd {
@@ -348,16 +381,15 @@ where
         }
     }
 
-    #[inline]
     fn process_answ_msg(
         &mut self,
         msg: StdResult<HandleAnsw<M>, TryRecvError>,
     ) -> StdResult<Option<HandleAnsw<M>>, TryRecvError> {
         match msg {
             Ok(HandleAnsw::HasShutdown { id, answ }) => {
-                if let Some(q) = self.pending.get_mut(&id) {
-                    q.answ = Some(HandleAnsw::HasShutdown { id, answ })
-                }
+                self.pending.entry(id).and_modify(|e| {
+                    e.answ = Some(HandleAnsw::HasShutdown { id, answ });
+                });
             }
             Ok(HandleAnsw::KeyAdded { id }) => {
                 if let Some(PendingCmd {
@@ -369,8 +401,6 @@ where
                         "Added key: {:?}",
                         ResourceIdentifier::try_from(&*key).unwrap()
                     );
-                } else {
-                    unreachable!()
                 }
             }
             Ok(HandleAnsw::GotRecord { key, .. }) => {
@@ -389,7 +419,16 @@ where
                 return Ok(Some(HandleAnsw::AgentRegistered { id, key }));
             }
             Ok(HandleAnsw::PropagateGroupChange { group_id }) => todo!(),
-            Ok(HandleAnsw::ReqJoinGroupAccepted { op_id, group_id }) => {}
+            Ok(HandleAnsw::ReqJoinGroupAccepted { op_id, group_id }) => {
+                self.pending.entry(op_id).and_modify(|e| {
+                    e.answ = Some(HandleAnsw::ReqJoinGroupAccepted { op_id, group_id });
+                });
+            }
+            Ok(HandleAnsw::ReqJoinGroupDenied {
+                op_id,
+                group_id,
+                reason,
+            }) => todo!(),
             Err(TryRecvError::Closed) => {
                 self.is_dead = true;
                 return Err(TryRecvError::Closed);
@@ -523,6 +562,11 @@ where
     ReqJoinGroupAccepted {
         op_id: OpId,
         group_id: Uuid,
+    },
+    ReqJoinGroupDenied {
+        op_id: OpId,
+        group_id: Uuid,
+        reason: crate::group::GroupError,
     },
     RcvMsg {
         peer: PeerId,

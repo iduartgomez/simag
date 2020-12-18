@@ -1,5 +1,5 @@
 use crate::{
-    group::{Group, GroupSettings},
+    group::{Group, GroupError, GroupSettings},
     handle::OpId,
 };
 use libp2p::{Multiaddr, PeerId};
@@ -31,7 +31,7 @@ pub(crate) enum AgentRpc {
     ReqGroupJoinDenied {
         op_id: OpId,
         group_id: Uuid,
-        reason: String,
+        reason: GroupError,
     },
 }
 
@@ -44,15 +44,15 @@ pub(crate) fn agent_id_from_str<ID: AsRef<str>>(id: ID) -> Uuid {
 
 /// A `Resource` in a simag network is ...
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Resource(pub(crate) AgOrGroup);
+pub struct Resource(pub(crate) ResourceKind);
 
 impl Resource {
-    pub(crate) fn new_agent(agent: AgentRes) -> Resource {
-        Resource(AgOrGroup::Ag(agent))
+    pub(crate) fn new_agent(agent: Agent) -> Resource {
+        Resource(ResourceKind::Agent(agent))
     }
 
     pub(crate) fn new_group(group: Group) -> Resource {
-        Resource(AgOrGroup::Gr(group))
+        Resource(ResourceKind::Group(group))
     }
 
     /// Create a resource of agent kind. Returns both the identifier (key) and the resource
@@ -60,10 +60,10 @@ impl Resource {
     pub(crate) fn agent<ID: AsRef<str>>(
         agent_id: ID,
         peer_id: PeerId,
-    ) -> (ResourceIdentifier, AgentRes) {
+    ) -> (ResourceIdentifier, Agent) {
         let uid = agent_id_from_str(agent_id);
         let key = ResourceIdentifier::unique(&uid);
-        let res = AgentRes {
+        let res = Agent {
             agent_id: uid,
             peer: Some(peer_id),
             addr: Vec::with_capacity(1),
@@ -194,13 +194,13 @@ impl TryFrom<u8> for AgentKeyKind {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(crate) enum AgOrGroup {
-    Ag(AgentRes),
-    Gr(Group),
+pub(crate) enum ResourceKind {
+    Agent(Agent),
+    Group(Group),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct AgentRes {
+pub(crate) struct Agent {
     addr: Vec<Multiaddr>,
     #[serde(serialize_with = "custom_ser::ser_peer")]
     #[serde(deserialize_with = "custom_ser::de_peer")]
@@ -208,7 +208,7 @@ pub(crate) struct AgentRes {
     agent_id: Uuid,
 }
 
-impl AgentRes {
+impl Agent {
     pub fn as_peer(&mut self, peer: PeerId) {
         self.peer = Some(peer);
     }

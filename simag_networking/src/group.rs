@@ -21,14 +21,19 @@ impl GroupManager {
         group_id: Uuid,
         petitioner_settings: &dyn GroupSettings,
         permits: GroupPermits,
-    ) -> Result<(), ()> {
-        // permits
-        let group = self.groups.get_mut(&group_id).ok_or_else(|| ())?;
-        if !group.settings.is_allowed_to_join(petitioner_settings) {
-            return Err(());
+    ) -> Result<(), GroupError> {
+        let group = self
+            .groups
+            .get_mut(&group_id)
+            .ok_or_else(|| GroupError::NotExisting)?;
+        if !group
+            .settings
+            .is_allowed_to_join(agent_id, petitioner_settings)
+        {
+            return Err(GroupError::NotAllowedToJoin);
         }
         if !group.permits.are_compatible(&permits) {
-            return Err(());
+            return Err(GroupError::IncompatiblePermits);
         }
         group.permits.append(permits);
         Ok(())
@@ -40,7 +45,7 @@ impl GroupManager {
 pub trait GroupSettings: Debug + Send + Sync + 'static {
     /// Takes an inbound instance of settings and evaluates if are compatible with this set of
     /// settings.
-    fn is_allowed_to_join(&self, petitioner_settings: &dyn GroupSettings) -> bool;
+    fn is_allowed_to_join(&self, agent_id: Uuid, petitioner_settings: &dyn GroupSettings) -> bool;
     fn box_cloned(&self) -> Box<dyn GroupSettings>;
 }
 
@@ -119,12 +124,24 @@ impl GroupPermits {
         self
     }
 
-    pub fn are_compatible(&self, other: &Self) -> bool {
+    pub(crate) fn are_compatible(&self, other: &Self) -> bool {
         todo!()
     }
 
     /// Apends a new set of permits to this group if permits.
-    pub fn append(&mut self, other: Self) -> bool {
+    pub(crate) fn append(&mut self, other: Self) -> bool {
         todo!()
     }
+}
+
+#[derive(thiserror::Error, Debug, Serialize, Deserialize, Clone)]
+pub enum GroupError {
+    #[error("requested permits are not allowed")]
+    IncompatiblePermits,
+
+    #[error("group does not exist")]
+    NotExisting,
+
+    #[error("request to join denied")]
+    NotAllowedToJoin,
 }

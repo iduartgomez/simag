@@ -118,7 +118,7 @@ impl GlobalExecutor {
         } else if let Some(rt) = &*ASYNC_RT {
             rt.spawn(f)
         } else {
-            unreachable!()
+            unreachable!("the executor must have been initialized")
         }
     }
 }
@@ -129,8 +129,6 @@ impl libp2p::core::Executor for GlobalExecutor {
             handle.spawn(future);
         } else if let Some(rt) = &*ASYNC_RT {
             rt.spawn(future);
-        } else {
-            unreachable!()
         }
     }
 }
