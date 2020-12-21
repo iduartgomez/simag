@@ -63,6 +63,18 @@ pub(crate) struct Group {
     pub settings: Box<dyn GroupSettings>,
 }
 
+impl Clone for Group {
+    fn clone(&self) -> Self {
+        Group {
+            id: self.id.clone(),
+            topic_span: self.topic_span.clone(),
+            owners: self.owners.clone(),
+            permits: self.permits.clone(),
+            settings: self.settings.box_cloned(),
+        }
+    }
+}
+
 impl Group {
     pub fn from_owners<ID, C>(id: Uuid, owners: impl IntoIterator<Item = ID>, settings: C) -> Group
     where
@@ -138,10 +150,10 @@ impl GroupPermits {
 pub enum GroupError {
     #[error("requested permits are not allowed")]
     IncompatiblePermits,
-
     #[error("group does not exist")]
     NotExisting,
-
     #[error("request to join denied")]
     NotAllowedToJoin,
+    #[error("managers for this group not found")]
+    ManagerNotFound,
 }

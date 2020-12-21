@@ -121,6 +121,9 @@ where
     ///
     /// Optionally request a set of group permits, otherwise read permits will be requested.
     /// The agent only will be allowed to join if the permits are legal for this agent.
+    ///
+    /// ## Arguments
+    /// - agent_id: identifier of the agent making the request.
     pub fn join_group<C>(
         &mut self,
         group_id: &str,
@@ -483,11 +486,6 @@ enum SentCmd {
     PullContent(Vec<u8>),
     ShutDown,
     SentMsg,
-}
-
-struct RequestState {
-    total_providers: usize,
-    tried: usize,
 }
 
 #[derive(Debug)]

@@ -146,6 +146,10 @@ impl ResourceIdentifier {
     ) -> [u8; ResourceIdentifier::KIND_SIZE + ResourceIdentifier::KEY_SIZE] {
         self.key
     }
+
+    pub(crate) fn get_group_id(&self) -> Result<Uuid, ()> {
+        todo!()
+    }
 }
 
 impl Borrow<[u8]> for ResourceIdentifier {

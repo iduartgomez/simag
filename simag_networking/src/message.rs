@@ -18,6 +18,8 @@ pub(crate) struct Message {
     /// otherwise they will be empty non-allocated vectors
     signature: Vec<u8>,
     from: Vec<u8>,
+    /// seconds to wait for a response if it applies, 0 means it doesn't apply
+    time_out: Option<u16>,
 }
 
 impl Message {
@@ -46,16 +48,18 @@ impl Message {
             signature,
             from,
             rpc: None,
+            time_out: None,
         })
     }
 
-    pub fn rpc(rpc: AgentRpc) -> Message {
+    pub fn rpc(rpc: AgentRpc, time_out: Option<u16>) -> Message {
         Message {
             seqno: rand::random::<u64>().to_be_bytes().to_vec(),
             data: None,
             signature: vec![],
             from: vec![],
             rpc: Some(rpc),
+            time_out,
         }
     }
 }
