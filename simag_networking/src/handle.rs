@@ -1,7 +1,8 @@
 use crate::{
     config::GlobalExecutor,
     group::GroupSettings,
-    group::{Group, GroupError, GroupPermits},
+    group::{Group, GroupPermits},
+    network::NetworkError,
     rpc::{self, Resource, ResourceIdentifier},
     Error, Result,
 };
@@ -23,34 +24,6 @@ use tokio::sync::mpsc::{
 };
 use uuid::Uuid;
 
-#[derive(thiserror::Error, Debug)]
-pub enum HandleError {
-    #[error("network op still running")]
-    OpRunning,
-    #[error("network op execution failed")]
-    OpFailed,
-    #[error("operation `{0}` not found")]
-    OpNotFound(OpId),
-    #[error("unexpected disconnect")]
-    Disconnected,
-    #[error("failed saving secret key")]
-    FailedSaving(#[from] std::io::Error),
-    #[error("awaiting a response for op `{0}`")]
-    AwaitingResponse(OpId),
-}
-
-/// An identifier for an operation executed asynchronously. Used to fetch the results
-/// of such operation in an asynchronous fashion.
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OpId(usize);
-
-impl Display for OpId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)?;
-        Ok(())
-    }
-}
-
 /// A handle to a running network connection.
 pub struct NetworkHandle<M>
 where
@@ -58,7 +31,7 @@ where
 {
     pub stats: NetworkStats,
     sender: Sender<HandleCmd<M>>,
-    rcv: Receiver<HandleAnsw<M>>,
+    rcv: Receiver<StdResult<HandleAnsw<M>, NetworkError>>,
     local_key: identity::ed25519::Keypair,
     pending: HashMap<OpId, PendingCmd<M>>,
     next_msg_id: usize,
@@ -72,10 +45,12 @@ where
 {
     /// Register an agent with this node. From this point on the node will act as the owner of this
     /// agent and handle any communication from/to this agent.
-    // TODO: An agent can only be registered with a single node. If you try to register the same agent in
-    // the same network more than once it will be an error.
+    ///
+    /// This will block the handle until the agent has been correctly registered or an error happens.
     pub fn register_agent(&mut self, agent: &simag_core::Agent) -> Result<ResourceIdentifier> {
-        // block the handle until the agent has been registered or there is an error
+        // TODO: An agent can only be registered with a single node. If you try to register the same agent in
+        // the same network more than once it will be an error.
+
         let agent_id = agent.id().to_string();
         let id = self.next_id();
         let msg = HandleCmd::RegisterAgent { id, agent_id };
@@ -85,11 +60,16 @@ where
             Ok::<_, ()>(())
         });
         loop {
-            let msg = self.rcv.try_recv();
+            let msg = match self.rcv.try_recv() {
+                Err(err) => {
+                    self.received_error(err)?;
+                    continue;
+                }
+                Ok(maybe_valid_msg) => maybe_valid_msg?,
+            };
             match self.process_answ_msg(msg) {
-                Ok(Some(HandleAnsw::AgentRegistered { id, key })) => break Ok(key),
-                Err(TryRecvError::Closed) => break Err(HandleError::Disconnected.into()),
-                Ok(_) | Err(TryRecvError::Empty) => {}
+                Some(HandleAnsw::AgentRegistered { key, .. }) => break Ok(key),
+                _ => { /* received answer from other command */ }
             }
         }
     }
@@ -266,7 +246,7 @@ where
 
     /// Get this peer id encoded as a Base58 string.
     pub fn get_peer_id(&self) -> String {
-        peer_id_from_ed25519(self.local_key.public()).to_base58()
+        Self::peer_id_from_ed25519(self.local_key.public()).to_base58()
     }
 
     /// Saves this peer secret key to a file in bytes. This file should be kept in a secure location.
@@ -280,10 +260,9 @@ where
 
     /// Returns whether the network connection is running or has shutdown.
     pub fn is_running(&mut self) -> bool {
-        if self.is_dead {
+        if self.is_dead || self.process_answer_buffer().is_err() {
             return false;
         }
-        self.process_answer_buffer();
 
         self.sender
             .try_send(HandleCmd::IsRunning)
@@ -305,7 +284,7 @@ where
         if self.is_dead {
             return Err(HandleError::Disconnected.into());
         }
-        self.process_answer_buffer();
+        self.process_answer_buffer()?;
         if let Ok(answ) = self.try_getting_shutdown_answ() {
             return Ok(answ);
         }
@@ -329,14 +308,14 @@ where
             }
         }
 
-        self.process_answer_buffer();
+        self.process_answer_buffer()?;
         Ok(self.try_getting_shutdown_answ().unwrap_or(false))
     }
 
     /// Only should be instanced throught the network builder.
     pub(crate) fn new(
         sender: Sender<HandleCmd<M>>,
-        rcv: Receiver<HandleAnsw<M>>,
+        rcv: Receiver<StdResult<HandleAnsw<M>, NetworkError>>,
         local_key: identity::ed25519::Keypair,
     ) -> Self {
         NetworkHandle {
@@ -367,31 +346,39 @@ where
         }
     }
 
-    fn process_answer_buffer(&mut self) {
+    fn process_answer_buffer(&mut self) -> Result<()> {
         loop {
-            let msg = self.rcv.try_recv();
-            match self.process_answ_msg(msg) {
-                Err(TryRecvError::Closed) => {
-                    self.is_dead = true;
-                    break;
+            match self.rcv.try_recv() {
+                Err(err) => {
+                    self.received_error(err)?;
+                    break; // queue is empty so finish
                 }
-                Err(TryRecvError::Empty) => break,
-                Ok(_) => {}
+                Ok(_) => break, // disregard the result
+            };
+        }
+        Ok(())
+    }
+
+    /// Called when an error is received from the network message queue.
+    /// Sets a flag if the thread died.
+    fn received_error(&mut self, err: TryRecvError) -> Result<()> {
+        match err {
+            TryRecvError::Closed => {
+                self.is_dead = true;
+                Err(HandleError::Disconnected.into())
             }
+            TryRecvError::Empty => Ok(()),
         }
     }
 
-    fn process_answ_msg(
-        &mut self,
-        msg: StdResult<HandleAnsw<M>, TryRecvError>,
-    ) -> StdResult<Option<HandleAnsw<M>>, TryRecvError> {
+    fn process_answ_msg(&mut self, msg: HandleAnsw<M>) -> Option<HandleAnsw<M>> {
         match msg {
-            Ok(HandleAnsw::HasShutdown { id, answ }) => {
+            HandleAnsw::HasShutdown { id, answ } => {
                 self.pending.entry(id).and_modify(|e| {
                     e.answ = Some(HandleAnsw::HasShutdown { id, answ });
                 });
             }
-            Ok(HandleAnsw::KeyAdded { id }) => {
+            HandleAnsw::KeyAdded { id } => {
                 if let Some(PendingCmd {
                     cmd: SentCmd::AddedKey(key),
                     ..
@@ -403,10 +390,10 @@ where
                     );
                 }
             }
-            Ok(HandleAnsw::GotRecord { key, .. }) => {
+            HandleAnsw::GotRecord { key, .. } => {
                 self.stats.key_stats.entry(key).or_default().times_received += 1;
             }
-            Ok(HandleAnsw::RcvMsg { peer, msg }) => {
+            HandleAnsw::RcvMsg { peer, msg } => {
                 log::debug!("Received streaming msg from {}: {:?}", peer, msg);
                 if let Some(stats) = self.stats.rcv_msgs.iter_mut().find(|p| p.0 == peer) {
                     stats.1 += 1;
@@ -415,33 +402,32 @@ where
                 }
                 self.rcv_msg.entry(peer).or_default().push(msg);
             }
-            Ok(HandleAnsw::AgentRegistered { id, key }) => {
-                return Ok(Some(HandleAnsw::AgentRegistered { id, key }));
+            HandleAnsw::AgentRegistered { id, key } => {
+                return Some(HandleAnsw::AgentRegistered { id, key });
             }
-            Ok(HandleAnsw::PropagateGroupChange { group_id }) => todo!(),
-            Ok(HandleAnsw::ReqJoinGroupAccepted { op_id, group_id }) => {
+            HandleAnsw::PropagateGroupChange { group_id } => todo!(),
+            HandleAnsw::ReqJoinGroupAccepted { op_id, group_id } => {
                 self.pending.entry(op_id).and_modify(|e| {
                     e.answ = Some(HandleAnsw::ReqJoinGroupAccepted { op_id, group_id });
                 });
             }
-            Ok(HandleAnsw::ReqJoinGroupDenied {
+            HandleAnsw::ReqJoinGroupDenied {
                 op_id,
                 group_id,
                 reason,
-            }) => todo!(),
-            Err(TryRecvError::Closed) => {
-                self.is_dead = true;
-                return Err(TryRecvError::Closed);
-            }
-            Err(TryRecvError::Empty) => return Err(TryRecvError::Empty),
+            } => todo!(),
         }
-        Ok(None)
+        None
     }
 
     fn next_id(&mut self) -> OpId {
         let msg_id = self.next_msg_id;
         self.next_msg_id += 1;
         OpId(msg_id)
+    }
+
+    fn peer_id_from_ed25519(key: identity::ed25519::PublicKey) -> PeerId {
+        PeerId::from_public_key(identity::PublicKey::Ed25519(key))
     }
 }
 
@@ -499,6 +485,11 @@ enum SentCmd {
     SentMsg,
 }
 
+struct RequestState {
+    total_providers: usize,
+    tried: usize,
+}
+
 #[derive(Debug)]
 pub(crate) enum HandleCmd<M> {
     /// query the network about current status
@@ -524,6 +515,7 @@ pub(crate) enum HandleCmd<M> {
         group_key: ResourceIdentifier,
         agent_id: Uuid,
         group: Group,
+        // state: RequestState,
     },
     /// awaiting peer information to try connect
     AwaitingReqJoinGroup {
@@ -535,13 +527,14 @@ pub(crate) enum HandleCmd<M> {
 }
 
 /// The answer of an operation.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum HandleAnsw<M>
 where
     M: DeserializeOwned,
 {
-    KeyAdded {
+    AgentRegistered {
         id: OpId,
+        key: ResourceIdentifier,
     },
     GotRecord {
         id: OpId,
@@ -551,9 +544,8 @@ where
         id: OpId,
         answ: bool,
     },
-    AgentRegistered {
+    KeyAdded {
         id: OpId,
-        key: ResourceIdentifier,
     },
     /// Propagate a change in the configuration or composition of a group.
     PropagateGroupChange {
@@ -574,6 +566,38 @@ where
     },
 }
 
-fn peer_id_from_ed25519(key: identity::ed25519::PublicKey) -> PeerId {
-    PeerId::from_public_key(identity::PublicKey::Ed25519(key))
+#[derive(thiserror::Error, Debug)]
+pub enum HandleError {
+    #[error("awaiting a response for op `{0}`")]
+    AwaitingResponse(OpId),
+    #[error("unexpected disconnect")]
+    Disconnected,
+    #[error("failed saving secret key")]
+    FailedSaving(#[from] std::io::Error),
+    #[error("handle not available")]
+    HandleNotResponding,
+    #[error("irrecoverable error in the network")]
+    IrrecoverableError,
+    #[error("network op execution failed")]
+    OpFailed,
+    #[error("operation `{0}` not found")]
+    OpNotFound(OpId),
+    #[error("network op still running")]
+    OpRunning,
+    #[error("manager not found for op `{0}`")]
+    ManagerNotFound(OpId),
+    #[error("unexpected response")]
+    UnexpectedResponse(OpId),
+}
+
+/// An identifier for an operation executed asynchronously. Used to fetch the results
+/// of such operation in an asynchronous fashion.
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpId(usize);
+
+impl Display for OpId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)?;
+        Ok(())
+    }
 }

@@ -1,7 +1,7 @@
 use futures_codec::{BytesMut, Decoder, Encoder};
 use libp2p::{core::PublicKey, identity::Keypair};
 use serde::{Deserialize, Serialize};
-use std::io;
+use std::{error::Error as StdError, io};
 use unsigned_varint::codec::UviBytes;
 
 use crate::rpc::AgentRpc;
@@ -21,16 +21,20 @@ pub(crate) struct Message {
 }
 
 impl Message {
-    pub fn build<P>(payload: &P, keypair: &Keypair, verify: bool) -> Result<Message, ()>
+    pub fn build<P>(
+        payload: &P,
+        keypair: &Keypair,
+        verify: bool,
+    ) -> Result<Message, Box<dyn StdError>>
     where
         P: Serialize,
     {
-        let data = bincode::serialize(payload).map_err(|_| ())?;
+        let data = bincode::serialize(payload)?;
         let (from, signature) = {
             if verify {
                 (
                     keypair.public().into_protobuf_encoding(),
-                    keypair.sign(&data).map_err(|_| ())?,
+                    keypair.sign(&data)?,
                 )
             } else {
                 (vec![], vec![])
@@ -45,8 +49,14 @@ impl Message {
         })
     }
 
-    pub fn rpc(rpc: AgentRpc, keypair: &Keypair, verify: bool) -> Result<Message, ()> {
-        todo!()
+    pub fn rpc(rpc: AgentRpc) -> Message {
+        Message {
+            seqno: rand::random::<u64>().to_be_bytes().to_vec(),
+            data: None,
+            signature: vec![],
+            from: vec![],
+            rpc: Some(rpc),
+        }
     }
 }
 
@@ -95,7 +105,7 @@ impl Decoder for MessageCodec {
             ));
         }
 
-        if self.verification {
+        if self.verification && msg.data.is_some() {
             // verify message signatures
             let public_key = PublicKey::from_protobuf_encoding(&msg.from)
                 .map_err(|_| io::ErrorKind::InvalidInput)?;

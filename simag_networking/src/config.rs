@@ -109,7 +109,6 @@ impl GlobalExecutor {
         }
     }
 
-    #[inline]
     pub fn spawn<R: Send + 'static>(
         f: impl Future<Output = R> + Send + 'static,
     ) -> tokio::task::JoinHandle<R> {

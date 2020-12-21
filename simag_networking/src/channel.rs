@@ -81,7 +81,6 @@ impl Channel {
         }
     }
 
-    #[inline]
     fn poll_send_msg(
         send_conn: &mut SimagStream<NegotiatedSubstream>,
         msg: Message,
@@ -101,7 +100,6 @@ impl Channel {
         }
     }
 
-    #[inline]
     fn poll_rcv_msg(
         rcv_conn: &mut SimagStream<NegotiatedSubstream>,
         cx: &mut Context,
@@ -117,7 +115,6 @@ impl Channel {
         }
     }
 
-    #[inline]
     fn keep_alive(queue: &mut NotifyKeepAlive, peer: PeerId) {
         queue.push_back(NetworkBehaviourAction::NotifyHandler {
             peer_id: peer,
@@ -126,7 +123,6 @@ impl Channel {
         });
     }
 
-    #[inline]
     fn shutdown(queue: &mut NotifyShutdown, peer: PeerId, refresh: bool) {
         queue.push_back(NetworkBehaviourAction::NotifyHandler {
             peer_id: peer,
