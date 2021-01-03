@@ -18,7 +18,8 @@ pub struct Agent {
 }
 
 impl Agent {
-    pub fn new(threads: usize, id: String) -> Agent {
+    pub fn new(id: String) -> Agent {
+        let threads = num_cpus::get();
         let representation = kb::repr::Representation::new(threads);
         Agent {
             id,
@@ -39,7 +40,8 @@ impl Agent {
         self.representation.tell(source)
     }
 
-    pub fn set_thread_pool(&mut self, threads: usize) {
+    /// Change the current thread pool size. Default size is the number of logical CPUs.
+    pub fn thread_pool_size(&mut self, threads: usize) {
         self.thread_manager.threads = threads;
         self.representation.set_threads(threads);
     }
@@ -53,7 +55,7 @@ impl Agent {
 impl Default for Agent {
     fn default() -> Agent {
         let id = uuid::Uuid::new_v4();
-        Agent::new(num_cpus::get(), id.to_string())
+        Agent::new(id.to_string())
     }
 }
 

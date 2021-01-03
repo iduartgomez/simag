@@ -44,9 +44,6 @@ fn contvar_construct() -> HashMap<&'static str, DefContVar> {
         "fly_duty_period",
         DefContVar::with_dist(cp.clone()).unwrap(),
     );
-    vars.insert(
-        "rest_time_on_flight",
-        DefContVar::with_dist(cp.clone()).unwrap(),
-    );
+    vars.insert("rest_time_on_flight", DefContVar::with_dist(cp).unwrap());
     vars
 }

@@ -32,7 +32,7 @@ use std::{
 pub(crate) const CHANNEL_PROTOCOL: &str = "/simag/channel/0.1.0";
 
 pub(crate) enum ChannelEvent {
-    MessageReceived { peer: PeerId, msg: Vec<u8> },
+    MessageReceived { peer: PeerId, msg: Message },
     ConnectionError { peer: PeerId, err: std::io::Error },
 }
 
@@ -81,7 +81,6 @@ impl Channel {
         }
     }
 
-    #[inline]
     fn poll_send_msg(
         send_conn: &mut SimagStream<NegotiatedSubstream>,
         msg: Message,
@@ -101,15 +100,14 @@ impl Channel {
         }
     }
 
-    #[inline]
     fn poll_rcv_msg(
         rcv_conn: &mut SimagStream<NegotiatedSubstream>,
         cx: &mut Context,
-    ) -> Result<(bool, Option<Vec<u8>>), std::io::Error> {
+    ) -> Result<(bool, Option<Message>), std::io::Error> {
         match stream::Stream::poll_next(Pin::new(rcv_conn), cx) {
             Poll::Ready(Some(Ok(msg))) => {
                 // msg received
-                Ok((false, Some(msg.data)))
+                Ok((false, Some(msg)))
             }
             Poll::Ready(Some(Err(err))) => Err(err),
             Poll::Ready(None) | Poll::Pending => Ok((false, None)),
@@ -117,21 +115,19 @@ impl Channel {
         }
     }
 
-    #[inline]
     fn keep_alive(queue: &mut NotifyKeepAlive, peer: PeerId) {
         queue.push_back(NetworkBehaviourAction::NotifyHandler {
             peer_id: peer,
             event: ChannelHandlerInEvent::KeepAlive,
-            handler: NotifyHandler::All,
+            handler: NotifyHandler::Any,
         });
     }
 
-    #[inline]
     fn shutdown(queue: &mut NotifyShutdown, peer: PeerId, refresh: bool) {
         queue.push_back(NetworkBehaviourAction::NotifyHandler {
             peer_id: peer,
             event: ChannelHandlerInEvent::Finished(refresh),
-            handler: NotifyHandler::All,
+            handler: NotifyHandler::Any,
         });
     }
 }
@@ -395,9 +391,12 @@ mod handler {
         type InboundProtocol = ChannelProtocol;
         type OutboundProtocol = ChannelProtocol;
         type OutboundOpenInfo = ();
+        type InboundOpenInfo = ();
 
-        fn listen_protocol(&self) -> swarm::SubstreamProtocol<Self::InboundProtocol> {
-            swarm::SubstreamProtocol::new(ChannelProtocol)
+        fn listen_protocol(
+            &self,
+        ) -> swarm::SubstreamProtocol<Self::InboundProtocol, Self::InboundOpenInfo> {
+            swarm::SubstreamProtocol::new(ChannelProtocol, ())
         }
 
         fn inject_fully_negotiated_outbound(
@@ -413,6 +412,7 @@ mod handler {
         fn inject_fully_negotiated_inbound(
             &mut self,
             substream: <Self::InboundProtocol as InboundUpgrade<NegotiatedSubstream>>::Output,
+            _info: Self::InboundOpenInfo,
         ) {
             self.inbound_substream = Some(substream);
         }
@@ -460,8 +460,7 @@ mod handler {
                 match event {
                     SubstreamState::OutPendingOpen => {
                         let ev = swarm::ProtocolsHandlerEvent::OutboundSubstreamRequest {
-                            protocol: swarm::SubstreamProtocol::new(ChannelProtocol),
-                            info: (),
+                            protocol: swarm::SubstreamProtocol::new(ChannelProtocol, ()),
                         };
                         return Poll::Ready(ev);
                     }

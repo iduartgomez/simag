@@ -1,5 +1,5 @@
 use simag_core::Agent;
-use simag_networking::prelude::*;
+use simag_networking::*;
 use std::{collections::HashMap, net::Ipv4Addr};
 
 const ENCONDED_KEY1: &[u8] = include_bytes!("key1");
@@ -42,22 +42,32 @@ fn main() {
             .unwrap()
     };
 
-    // Uncommenting the following file would save the newly generated key to the specified path
-    // (or an existing one if provided like in this example):
+    /*
+    Uncommenting the following line would save the newly generated key to the specified path
+    (or an existing one if provided like in this example):
+    */
     // network.save_secret_key(secret_file).unwrap();
 
     // #1 This is the id that must be provided to other nodes that want to join the network.
     println!("This network encoded peer id is: {}", network.get_peer_id());
-    let agent = Agent::new(1, "agent_01".to_owned());
-    let ag_key = network.register_agent(&agent).unwrap();
+    let agent = Agent::new("agent_01".to_owned());
+    let op_id = network.register_agent(&agent);
+    let ag_key = loop {
+        match network.op_result(op_id) {
+            Err(Error::OpError(HandleError::AwaitingResponse(_))) => {}
+            Ok(Some(key)) => break key,
+            _ => panic!("something failed!"),
+        }
+    };
+    network.create_group("group_01", &["agent_01"], None, Settings {});
 
     let mut cnt: HashMap<_, usize> = HashMap::new();
     let mut served = false;
-    while network.is_running() {
+    while network.running() {
         if let Some(stats) = network.stats.for_key(&ag_key) {
             if stats.times_served > 0 && !served {
                 println!("Served a resource at least once");
-                served = false;
+                served = true;
             }
         }
 
@@ -76,4 +86,22 @@ fn main() {
         }
     }
     println!("Shutted down");
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct Settings;
+
+#[typetag::serde]
+impl GroupSettings for Settings {
+    fn is_allowed_to_join(
+        &self,
+        _agent: uuid::Uuid,
+        _petitioner_settings: &dyn GroupSettings,
+    ) -> bool {
+        true
+    }
+
+    fn box_cloned(&self) -> Box<dyn GroupSettings> {
+        Box::new(Settings)
+    }
 }

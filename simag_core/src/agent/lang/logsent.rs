@@ -638,8 +638,8 @@ impl<'a> std::iter::Iterator for LhsPreds<'a> {
                 return None;
             }
 
-            let mut comb = vec![];
-            let mut row = vec![];
+            let mut comb = Vec::with_capacity(self.preds.len());
+            let mut row = Vec::with_capacity(self.preds.len());
             for (i, v) in self.preds.iter().enumerate() {
                 let idx = self.index[i].0;
                 comb.push(idx);
@@ -688,7 +688,7 @@ impl<'a> std::iter::Iterator for SentVarReq<'a> {
             if self.iter.sent.vars.is_empty() {
                 return None;
             }
-            let mut requeriments = HashMap::new();
+            let mut requeriments = HashMap::with_capacity(self.iter.sent.vars.len());
             for var in &self.iter.sent.vars {
                 let mut var_req = Vec::new();
                 for a in &picks {

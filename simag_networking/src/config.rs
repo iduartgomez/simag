@@ -100,8 +100,7 @@ impl GlobalExecutor {
             None
         } else {
             Some(
-                tokio::runtime::Builder::new()
-                    .threaded_scheduler()
+                tokio::runtime::Builder::new_multi_thread()
                     .enable_all()
                     .thread_name("simag-nw-exec")
                     .build()
@@ -110,18 +109,6 @@ impl GlobalExecutor {
         }
     }
 
-    #[inline]
-    pub fn block_on<R>(f: impl Future<Output = R>) -> R {
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.block_on(f)
-        } else if let Some(rt) = &*ASYNC_RT {
-            rt.handle().block_on(f)
-        } else {
-            unreachable!()
-        }
-    }
-
-    #[inline]
     pub fn spawn<R: Send + 'static>(
         f: impl Future<Output = R> + Send + 'static,
     ) -> tokio::task::JoinHandle<R> {
@@ -130,20 +117,26 @@ impl GlobalExecutor {
         } else if let Some(rt) = &*ASYNC_RT {
             rt.spawn(f)
         } else {
-            unreachable!()
+            unreachable!("the executor must have been initialized")
+        }
+    }
+
+    pub fn spawn_blocking<R: Send + 'static>(
+        f: impl FnOnce() -> R + Send + 'static,
+    ) -> tokio::task::JoinHandle<R> {
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn_blocking(f)
+        } else if let Some(rt) = &*ASYNC_RT {
+            rt.spawn_blocking(f)
+        } else {
+            unreachable!("the executor must have been initialized")
         }
     }
 }
 
 impl libp2p::core::Executor for GlobalExecutor {
     fn exec(&self, future: Pin<Box<dyn Future<Output = ()> + 'static + Send>>) {
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn(future);
-        } else if let Some(rt) = &*ASYNC_RT {
-            rt.spawn(future);
-        } else {
-            unreachable!()
-        }
+        GlobalExecutor::spawn(future);
     }
 }
 

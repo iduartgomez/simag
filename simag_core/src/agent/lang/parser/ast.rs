@@ -52,9 +52,13 @@ impl ParseTree {
 
 #[derive(Debug)]
 pub(in crate::agent) enum ASTNode<'a> {
+    /// A single assertion statement
     Assert(AssertBorrowed<'a>),
+    /// A nested scope
     Scope(Box<Scope<'a>>),
+    /// A chain of assertions (previouslt chained by AND operators)
     Chain(Vec<ASTNode<'a>>),
+    /// An node belonging to an empty scope, which may only contain useless variable declarations
     None,
 }
 

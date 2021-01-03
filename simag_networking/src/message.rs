@@ -1,32 +1,42 @@
 use futures_codec::{BytesMut, Decoder, Encoder};
 use libp2p::{core::PublicKey, identity::Keypair};
 use serde::{Deserialize, Serialize};
-use std::io;
+use std::{error::Error as StdError, io};
 use unsigned_varint::codec::UviBytes;
 
-pub(crate) const MAX_MSG_SIZE: usize = 4096;
+use crate::rpc::AgentRpc;
+
+pub(crate) const MAX_MSG_BYTES: usize = 4096;
 
 #[derive(Serialize, Deserialize)]
-pub struct Message {
+pub(crate) struct Message {
     seqno: Vec<u8>,
-    pub data: Vec<u8>,
+    /// could be an agent RPC, in that case data is none
+    pub rpc: Option<AgentRpc>,
+    pub data: Option<Vec<u8>>,
     /// signature and from are only necessary if verification is required
     /// otherwise they will be empty non-allocated vectors
     signature: Vec<u8>,
     from: Vec<u8>,
+    /// seconds to wait for a response if it applies, 0 means it doesn't apply
+    time_out: Option<u16>,
 }
 
 impl Message {
-    pub fn build<P>(payload: &P, keypair: &Keypair, verify: bool) -> Result<Message, ()>
+    pub fn build<P>(
+        payload: &P,
+        keypair: &Keypair,
+        verify: bool,
+    ) -> Result<Message, Box<dyn StdError>>
     where
         P: Serialize,
     {
-        let data = bincode::serialize(payload).map_err(|_| ())?;
+        let data = bincode::serialize(payload)?;
         let (from, signature) = {
             if verify {
                 (
                     keypair.public().into_protobuf_encoding(),
-                    keypair.sign(&data).map_err(|_| ())?,
+                    keypair.sign(&data)?,
                 )
             } else {
                 (vec![], vec![])
@@ -34,10 +44,23 @@ impl Message {
         };
         Ok(Message {
             seqno: rand::random::<u64>().to_be_bytes().to_vec(),
-            data,
+            data: Some(data),
             signature,
             from,
+            rpc: None,
+            time_out: None,
         })
+    }
+
+    pub fn rpc(rpc: AgentRpc, time_out: Option<u16>) -> Message {
+        Message {
+            seqno: rand::random::<u64>().to_be_bytes().to_vec(),
+            data: None,
+            signature: vec![],
+            from: vec![],
+            rpc: Some(rpc),
+            time_out,
+        }
     }
 }
 
@@ -59,7 +82,7 @@ impl Encoder for MessageCodec {
         let msg = bincode::serialize(&item).map_err(|_| io::ErrorKind::InvalidInput)?;
 
         let mut codec: UviBytes<io::Cursor<Vec<u8>>> = UviBytes::default();
-        codec.set_max_len(MAX_MSG_SIZE);
+        codec.set_max_len(MAX_MSG_BYTES);
         codec.encode(io::Cursor::new(msg), dst)
     }
 }
@@ -70,7 +93,7 @@ impl Decoder for MessageCodec {
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let mut codec: UviBytes<io::Cursor<Vec<u8>>> = UviBytes::default();
-        codec.set_max_len(MAX_MSG_SIZE);
+        codec.set_max_len(MAX_MSG_BYTES);
         let packet = match codec.decode(src)? {
             Some(p) => p,
             None => return Ok(None),
@@ -86,12 +109,14 @@ impl Decoder for MessageCodec {
             ));
         }
 
-        if self.verification {
+        if self.verification && msg.data.is_some() {
             // verify message signatures
             let public_key = PublicKey::from_protobuf_encoding(&msg.from)
                 .map_err(|_| io::ErrorKind::InvalidInput)?;
-            if !public_key.verify(&msg.data, &msg.signature) {
-                return Err(io::ErrorKind::InvalidData.into());
+            if let Some(data) = &msg.data {
+                if !public_key.verify(data, &msg.signature) {
+                    return Err(io::ErrorKind::InvalidData.into());
+                }
             }
         }
 
@@ -116,7 +141,7 @@ mod test {
 
         let decoded = codec.decode(&mut encoded).unwrap().unwrap();
         let msg_data: String =
-            bincode::deserialize_from(std::io::Cursor::new(decoded.data)).unwrap();
+            bincode::deserialize_from(std::io::Cursor::new(decoded.data.unwrap())).unwrap();
         assert_eq!(msg_data, original_data);
     }
 }
