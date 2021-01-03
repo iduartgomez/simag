@@ -40,7 +40,7 @@ fn main() {
 
     let mut cnt: HashMap<_, usize> = HashMap::new();
     let mut served = false;
-    while network.is_running() {
+    while network.running() {
         if let Some(stats) = network.stats.for_key(&ag_key) {
             if stats.times_received > 0 && !served {
                 println!("Received a resource at least once");

@@ -6,6 +6,7 @@ use crate::{
     rpc::{self, Resource, ResourceIdentifier},
     Error, Result,
 };
+use dashmap::DashMap;
 use libp2p::{identity, PeerId};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
@@ -17,11 +18,9 @@ use std::{
     hash::Hash,
     io::Write,
     result::Result as StdResult,
+    sync::Arc,
 };
-use tokio::sync::mpsc::{
-    error::{TryRecvError, TrySendError},
-    Receiver, Sender,
-};
+use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender};
 use uuid::Uuid;
 
 /// A handle to a running network connection.
@@ -31,18 +30,41 @@ where
 {
     pub stats: NetworkStats,
     sender: Sender<HandleCmd<M>>,
-    rcv: Receiver<StdResult<HandleAnsw<M>, NetworkError>>,
     local_key: identity::ed25519::Keypair,
-    pending: HashMap<OpId, PendingCmd<M>>,
+    pending: Arc<DashMap<OpId, PendingCmd<M>>>,
     next_msg_id: usize,
     is_dead: bool,
-    rcv_msg: HashMap<PeerId, Vec<M>>,
+    rcv_msg: Arc<DashMap<PeerId, Vec<M>>>,
 }
 
 impl<M> NetworkHandle<M>
 where
-    M: Serialize + DeserializeOwned + Debug + Send + 'static,
+    M: Serialize + DeserializeOwned + Debug + Send + Sync + 'static,
 {
+    /// Only should be instanced throught the network builder.
+    pub(crate) fn new(
+        sender: Sender<HandleCmd<M>>,
+        rcv: Receiver<StdResult<HandleAnsw<M>, NetworkError>>,
+        local_key: identity::ed25519::Keypair,
+    ) -> Self {
+        let pending = Arc::new(DashMap::new());
+        let rcv_msg = Arc::new(DashMap::new());
+        GlobalExecutor::spawn(Self::process_answer_buffer(
+            rcv,
+            pending.clone(),
+            rcv_msg.clone(),
+        ));
+        NetworkHandle {
+            sender,
+            local_key,
+            pending,
+            next_msg_id: 0,
+            is_dead: false,
+            stats: NetworkStats::default(),
+            rcv_msg,
+        }
+    }
+
     /// Returns whether an asynchrnous operation executed succesfully or not.
     /// If the operation still is running it will return a `waiting` error type.
     /// Returns the resource identifier in case the operation returns one:
@@ -51,17 +73,19 @@ where
     /// - register_agent
     /// - find_agent.
     pub fn op_result(&mut self, op_id: OpId) -> Result<Option<ResourceIdentifier>> {
-        self.process_answer_buffer()?;
         match self.pending.remove(&op_id) {
             None => Err(HandleError::OpNotFound(op_id).into()),
-            Some(PendingCmd { cmd, answ: None }) => {
+            Some((_, PendingCmd { cmd, answ: None })) => {
                 // no answer received, insert back into the pending cmd map.
                 self.pending.insert(op_id, PendingCmd { cmd, answ: None });
                 Err(HandleError::AwaitingResponse(op_id).into())
             }
-            Some(PendingCmd {
-                answ: Some(answ), ..
-            }) => match answ {
+            Some((
+                _,
+                PendingCmd {
+                    answ: Some(answ), ..
+                },
+            )) => match answ {
                 HandleAnsw::ReqJoinGroupAccepted { group_id, .. } => {
                     Ok(Some(ResourceIdentifier::group(&group_id)))
                 }
@@ -77,6 +101,22 @@ where
                 HandleAnsw::RcvMsg { .. } => unreachable!(),
             },
         }
+    }
+
+    /// Get all the received messages from a given peer.
+    pub fn received_messages(&mut self, peer: PeerId) -> Vec<M> {
+        let mut new_msgs = vec![];
+        if let Some(mut msgs) = self.rcv_msg.get_mut(&peer) {
+            std::mem::swap(&mut *msgs, &mut new_msgs);
+            let stats = if let Some(stats) = self.stats.rcv_msgs.iter_mut().find(|p| p.0 == peer) {
+                &mut stats.1
+            } else {
+                self.stats.rcv_msgs.push((peer.clone(), 0));
+                &mut self.stats.rcv_msgs.last_mut().unwrap().1
+            };
+            *stats = *stats + new_msgs.len();
+        }
+        new_msgs
     }
 
     /// Register an agent with this node. From this point on the node will act as the owner of this
@@ -274,8 +314,8 @@ where
     }
 
     /// Returns whether the network connection is running or has shutdown.
-    pub fn is_running(&mut self) -> bool {
-        if self.is_dead || self.process_answer_buffer().is_err() {
+    pub fn running(&mut self) -> bool {
+        if self.is_dead {
             return false;
         }
 
@@ -297,11 +337,12 @@ where
     /// The network may not shutdown inmediately if still is listening and waiting for any events.
     pub fn shutdown(&mut self) -> Result<bool> {
         if self.is_dead {
+            // was previously marked as dead
             return Err(HandleError::Disconnected.into());
         }
-        self.process_answer_buffer()?;
-        if let Ok(answ) = self.try_getting_shutdown_answ() {
-            return Ok(answ);
+
+        if self.has_shutdown() {
+            return Ok(true);
         }
 
         let msg_id = self.next_id();
@@ -323,64 +364,62 @@ where
             }
         }
 
-        self.process_answer_buffer()?;
-        Ok(self.try_getting_shutdown_answ().unwrap_or(false))
+        Ok(self.has_shutdown())
     }
 
-    /// Only should be instanced throught the network builder.
-    pub(crate) fn new(
-        sender: Sender<HandleCmd<M>>,
-        rcv: Receiver<StdResult<HandleAnsw<M>, NetworkError>>,
-        local_key: identity::ed25519::Keypair,
-    ) -> Self {
-        NetworkHandle {
-            sender,
-            rcv,
-            local_key,
-            pending: HashMap::new(),
-            next_msg_id: 0,
-            is_dead: false,
-            stats: NetworkStats::default(),
-            rcv_msg: HashMap::new(),
-        }
-    }
-
-    fn try_getting_shutdown_answ(&mut self) -> Result<bool> {
-        match self.pending.values().find(|p| p.shutdown()) {
-            Some(PendingCmd {
-                cmd: SentCmd::ShutDown,
-                answ: Some(HandleAnsw::HasShutdown { op_id: id, answ }),
-            }) => {
-                let answ = *answ;
-                let id = *id;
-                self.pending.remove(&id.clone());
-                Ok(answ)
-            }
-            Some(_) => Ok(false),
-            _ => Err(HandleError::Disconnected.into()),
-        }
-    }
-
-    fn process_answer_buffer(&mut self) -> Result<()> {
-        loop {
-            let msg = match self.rcv.try_recv() {
-                Err(err) => {
-                    self.received_error(err)?;
-                    break; // queue is empty so finish
+    fn has_shutdown(&mut self) -> bool {
+        let shutdown_cmds: Vec<_> = self
+            .pending
+            .iter()
+            .filter_map(|p| {
+                if (*p).shutdown() {
+                    Some(*p.key())
+                } else {
+                    None
                 }
-                Ok(answ_res) => answ_res?, // disregard the result
-            };
+            })
+            .collect();
+        let mut has_shutdown = false;
+        for k in shutdown_cmds {
+            if let Some((
+                _,
+                PendingCmd {
+                    cmd: SentCmd::ShutDown,
+                    answ: Some(HandleAnsw::HasShutdown { answ, .. }),
+                },
+            )) = self.pending.remove(&k)
+            {
+                if answ {
+                    // one of all the sent shutdown commands was successful, not the conn is dead
+                    self.is_dead = true;
+                    has_shutdown = true;
+                }
+            }
+        }
+        has_shutdown
+    }
+
+    async fn process_answer_buffer(
+        mut rcv: Receiver<StdResult<HandleAnsw<M>, NetworkError>>,
+        pending: Arc<DashMap<OpId, PendingCmd<M>>>,
+        rcv_msg: Arc<DashMap<PeerId, Vec<M>>>,
+    ) -> Result<()> {
+        while let Some(answ_res) = rcv.recv().await {
+            let msg = answ_res?;
             match msg {
                 HandleAnsw::HasShutdown { op_id: id, answ } => {
-                    self.pending.entry(id).and_modify(|e| {
+                    pending.entry(id).and_modify(|e| {
                         e.answ = Some(HandleAnsw::HasShutdown { op_id: id, answ });
                     });
                 }
                 HandleAnsw::KeyAdded { op_id: id } => {
-                    if let Some(PendingCmd {
-                        cmd: SentCmd::AddedKey(key),
-                        ..
-                    }) = self.pending.remove(&id)
+                    if let Some((
+                        _,
+                        PendingCmd {
+                            cmd: SentCmd::AddedKey(key),
+                            ..
+                        },
+                    )) = pending.remove(&id)
                     {
                         log::debug!(
                             "Added key: {:?}",
@@ -389,25 +428,21 @@ where
                     }
                 }
                 HandleAnsw::GotRecord { key, .. } => {
-                    self.stats.key_stats.entry(key).or_default().times_received += 1;
+                    // self.stats.key_stats.entry(key).or_default().times_received += 1;
                 }
                 HandleAnsw::RcvMsg { peer, msg } => {
                     log::debug!("Received streaming msg from {}: {:?}", peer, msg);
-                    if let Some(stats) = self.stats.rcv_msgs.iter_mut().find(|p| p.0 == peer) {
-                        stats.1 += 1;
-                    } else {
-                        self.stats.rcv_msgs.push((peer.clone(), 1));
-                    }
-                    self.rcv_msg.entry(peer).or_default().push(msg);
+
+                    rcv_msg.entry(peer).or_default().push(msg);
                 }
                 HandleAnsw::AgentRegistered { op_id: id, key } => {
-                    self.pending.entry(id).and_modify(|e| {
+                    pending.entry(id).and_modify(|e| {
                         e.answ = Some(HandleAnsw::AgentRegistered { op_id: id, key });
                     });
                 }
                 HandleAnsw::PropagateGroupChange { group_id } => todo!(),
                 HandleAnsw::ReqJoinGroupAccepted { op_id, group_id } => {
-                    self.pending.entry(op_id).and_modify(|e| {
+                    pending.entry(op_id).and_modify(|e| {
                         e.answ = Some(HandleAnsw::ReqJoinGroupAccepted { op_id, group_id });
                     });
                 }
@@ -416,7 +451,7 @@ where
                     group_id,
                     reason,
                 } => {
-                    self.pending.entry(op_id).and_modify(|e| {
+                    pending.entry(op_id).and_modify(|e| {
                         e.answ = Some(HandleAnsw::ReqJoinGroupDenied {
                             op_id,
                             group_id,
@@ -426,19 +461,20 @@ where
                 }
             }
         }
-        Ok(())
-    }
 
-    /// Called when an error is received from the network message queue.
-    /// Sets a flag if the thread died.
-    fn received_error(&mut self, err: TryRecvError) -> Result<()> {
-        match err {
-            TryRecvError::Closed => {
-                self.is_dead = true;
-                Err(HandleError::Disconnected.into())
-            }
-            TryRecvError::Empty => Ok(()),
-        }
+        // all sending halves were closed, meaning that the network connection has been dropped
+        // communicate back to the main thread
+        pending.insert(
+            OpId(usize::MAX),
+            PendingCmd {
+                cmd: SentCmd::ShutDown,
+                answ: Some(HandleAnsw::HasShutdown {
+                    op_id: OpId(usize::MAX),
+                    answ: true,
+                }),
+            },
+        );
+        Err(HandleError::Disconnected.into())
     }
 
     fn next_id(&mut self) -> OpId {

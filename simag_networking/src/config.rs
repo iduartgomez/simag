@@ -120,15 +120,23 @@ impl GlobalExecutor {
             unreachable!("the executor must have been initialized")
         }
     }
+
+    pub fn spawn_blocking<R: Send + 'static>(
+        f: impl FnOnce() -> R + Send + 'static,
+    ) -> tokio::task::JoinHandle<R> {
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn_blocking(f)
+        } else if let Some(rt) = &*ASYNC_RT {
+            rt.spawn_blocking(f)
+        } else {
+            unreachable!("the executor must have been initialized")
+        }
+    }
 }
 
 impl libp2p::core::Executor for GlobalExecutor {
     fn exec(&self, future: Pin<Box<dyn Future<Output = ()> + 'static + Send>>) {
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn(future);
-        } else if let Some(rt) = &*ASYNC_RT {
-            rt.spawn(future);
-        }
+        GlobalExecutor::spawn(future);
     }
 }
 
