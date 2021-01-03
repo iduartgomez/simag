@@ -1,5 +1,5 @@
 use simag_core::Agent;
-use simag_networking::prelude::*;
+use simag_networking::*;
 use std::{collections::HashMap, net::Ipv4Addr};
 
 const ENCONDED_KEY1: &[u8] = include_bytes!("key1");

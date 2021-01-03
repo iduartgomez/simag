@@ -1,4 +1,4 @@
-use simag_networking::prelude::*;
+use simag_networking::*;
 use std::{collections::HashMap, net::Ipv4Addr};
 
 /// A Base58 enconded peer ID. Only used for testing pourpouses. The corresponding secret key can be found in

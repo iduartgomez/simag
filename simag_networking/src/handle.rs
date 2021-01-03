@@ -43,39 +43,65 @@ impl<M> NetworkHandle<M>
 where
     M: Serialize + DeserializeOwned + Debug + Send + 'static,
 {
+    /// Returns whether an asynchrnous operation executed succesfully or not.
+    /// If the operation still is running it will return a `waiting` error type.
+    /// Returns the resource identifier in case the operation returns one:
+    /// - create_group
+    /// - join_group
+    /// - register_agent
+    /// - find_agent.
+    pub fn op_result(&mut self, op_id: OpId) -> Result<Option<ResourceIdentifier>> {
+        match self.pending.remove(&op_id) {
+            None => Err(HandleError::OpNotFound(op_id).into()),
+            Some(PendingCmd { cmd, answ: None }) => {
+                // no answer received, insert back into the pending cmd map.
+                self.pending.insert(op_id, PendingCmd { cmd, answ: None });
+                Err(HandleError::AwaitingResponse(op_id).into())
+            }
+            Some(PendingCmd {
+                answ: Some(answ), ..
+            }) => match answ {
+                HandleAnsw::ReqJoinGroupAccepted { group_id, .. } => {
+                    Ok(Some(ResourceIdentifier::group(&group_id)))
+                }
+                HandleAnsw::ReqJoinGroupDenied {
+                    group_id, reason, ..
+                } => Err(Error::GroupError { group_id, reason }),
+                HandleAnsw::AgentRegistered { key, .. } | HandleAnsw::GotRecord { key, .. } => {
+                    Ok(Some(key))
+                }
+                HandleAnsw::HasShutdown { .. }
+                | HandleAnsw::KeyAdded { .. }
+                | HandleAnsw::PropagateGroupChange { .. } => Ok(None),
+                HandleAnsw::RcvMsg { peer, msg } => Ok(None),
+            },
+        }
+    }
+
     /// Register an agent with this node. From this point on the node will act as the owner of this
-    /// agent and handle any communication from/to this agent.
+    /// agent and handle any communication from/to this agent. Operation is asynchronous.
     ///
     /// This will block the handle until the agent has been correctly registered or an error happens.
-    pub fn register_agent(&mut self, agent: &simag_core::Agent) -> Result<ResourceIdentifier> {
+    pub fn register_agent(&mut self, agent: &simag_core::Agent) -> OpId {
         // TODO: An agent can only be registered with a single node. If you try to register the same agent in
         // the same network more than once it will be an error.
 
         let agent_id = agent.id().to_string();
         let id = self.next_id();
-        let msg = HandleCmd::RegisterAgent { id, agent_id };
+        let msg = HandleCmd::RegisterAgent {
+            op_id: id,
+            agent_id,
+        };
         let sender = self.sender.clone();
         GlobalExecutor::spawn(async move {
             sender.send(msg).await.map_err(|_| ())?;
             Ok::<_, ()>(())
         });
-        loop {
-            let msg = match self.rcv.try_recv() {
-                Err(err) => {
-                    self.received_error(err)?;
-                    continue;
-                }
-                Ok(maybe_valid_msg) => maybe_valid_msg?,
-            };
-            match self.process_answ_msg(msg) {
-                Some(HandleAnsw::AgentRegistered { key, .. }) => break Ok(key),
-                _ => { /* received answer from other command */ }
-            }
-        }
+        id
     }
 
     /// Create a resource of the group kind that belongs to the given agent, which will then be the original
-    /// owner of the group.
+    /// owner of the group. Operation is asynchronous.
     ///
     /// Returns the network identifier (key) to the group in case the group has not already been
     /// registered by an other agent/peer or error otherwise.
@@ -90,7 +116,7 @@ where
         ID: AsRef<str>,
         C: GroupSettings,
     {
-        let id = self.next_id();
+        let op_id = self.next_id();
         let (key, mut group) = Resource::group(owners.clone(), group_id, settings);
         if let Some(mut permits) = permits {
             // ensure that owners are added as readers/writers
@@ -101,7 +127,7 @@ where
             group.with_permits(permits);
         }
         let msg = HandleCmd::ProvideResource {
-            id,
+            op_id,
             key,
             value: Resource::new_group(group),
         };
@@ -110,11 +136,11 @@ where
             sender.send(msg).await.map_err(|_| ())?;
             Ok::<_, ()>(())
         });
-        id
+        op_id
     }
 
     /// Request joining to a given group, will return the network identifier of the group in case
-    /// this agent is allowed to join the group.
+    /// this agent is allowed to join the group. Operation is asynchronous.
     ///
     /// The petitioner must pass the settings used to evaluate if are compatible with the settings
     /// set by the owners of the group.
@@ -155,40 +181,17 @@ where
         op_id
     }
 
+    /// Operation is asynchronous.
     pub fn leave_group(&mut self, group_id: &str, agent_id: &str) -> OpId {
         todo!()
     }
 
-    /// Find an agent in the network and try to open a connection with it.
+    /// Find an agent in the network and try to open a connection with it. Operation is asynchronous.
     pub fn find_agent(&mut self, agent_id: &str) -> OpId {
         todo!()
     }
 
-    /// Returns whether the operation executed succesfully or not. If the operation still is running it will return
-    /// a `waiting` error type. Returns the resource identifier in case the operation returns one (create, join, find).
-    pub fn op_result(&mut self, op_id: OpId) -> Result<Option<ResourceIdentifier>> {
-        match self.pending.remove(&op_id) {
-            None => Err(HandleError::OpNotFound(op_id).into()),
-            Some(PendingCmd { cmd, answ: None }) => {
-                // no answer received, insert back into the pending cmd map.
-                self.pending.insert(op_id, PendingCmd { cmd, answ: None });
-                Err(HandleError::AwaitingResponse(op_id).into())
-            }
-            Some(PendingCmd {
-                answ: Some(answ), ..
-            }) => match answ {
-                HandleAnsw::ReqJoinGroupAccepted { group_id, .. } => {
-                    Ok(Some(ResourceIdentifier::group(&group_id)))
-                }
-                HandleAnsw::ReqJoinGroupDenied {
-                    group_id, reason, ..
-                } => Err(Error::GroupError { group_id, reason }),
-                _ => todo!(),
-            },
-        }
-    }
-
-    /// Send a message to the given peer.
+    /// Send a message to the given peer. Operation is asynchronous.
     pub fn send_message(&mut self, value: M, peer: PeerId) -> OpId {
         let id = self.next_id();
         self.pending.insert(
@@ -200,14 +203,18 @@ where
         );
         let sender = self.sender.clone();
         GlobalExecutor::spawn(async move {
-            let msg = HandleCmd::<M>::SendMessage { id, value, peer };
+            let msg = HandleCmd::<M>::SendMessage {
+                op_id: id,
+                value,
+                peer,
+            };
             sender.send(msg).await.map_err(|_| ())?;
             Ok::<_, ()>(())
         });
         id
     }
 
-    /// Request a key to the network. The result can be fetched asynchronously.
+    /// Request a key to the network. The result can be fetched asynchronously. Operation is asynchronous.
     pub fn get(&mut self, key: ResourceIdentifier) -> OpId {
         let id = self.next_id();
         let key_bytes: &[u8] = &key.borrow();
@@ -218,7 +225,7 @@ where
                 answ: None,
             },
         );
-        let msg = HandleCmd::PullResource { id, key };
+        let msg = HandleCmd::PullResource { op_id: id, key };
         let sender = self.sender.clone();
         GlobalExecutor::spawn(async move {
             sender.send(msg).await.map_err(|_| ())?;
@@ -227,7 +234,7 @@ where
         id
     }
 
-    /// Set this peer as a provider for a certain key and value pair.
+    /// Set this peer as a provider for a certain key and value pair. Operation is asynchronous.
     pub fn put(&mut self, key: ResourceIdentifier, value: Resource) -> OpId {
         let id = self.next_id();
         let key_bytes: &[u8] = &key.borrow();
@@ -238,7 +245,11 @@ where
                 answ: None,
             },
         );
-        let msg = HandleCmd::ProvideResource { id, key, value };
+        let msg = HandleCmd::ProvideResource {
+            op_id: id,
+            key,
+            value,
+        };
         let sender = self.sender.clone();
         GlobalExecutor::spawn(async move {
             sender.send(msg).await.map_err(|_| ())?;
@@ -279,8 +290,8 @@ where
             })
     }
 
-    /// Commands the network to shutdown asynchronously, returns inmediately if the network has shutdown or error
-    /// if it already had disconnected for any reason.
+    /// Commands the network to shutdown asynchronously, returns inmediately if the network has shutdown
+    /// or if it already had disconnected for any reason.
     ///
     /// The network may not shutdown inmediately if still is listening and waiting for any events.
     pub fn shutdown(&mut self) -> Result<bool> {
@@ -337,7 +348,7 @@ where
         match self.pending.values().find(|p| p.shutdown()) {
             Some(PendingCmd {
                 cmd: SentCmd::ShutDown,
-                answ: Some(HandleAnsw::HasShutdown { id, answ }),
+                answ: Some(HandleAnsw::HasShutdown { op_id: id, answ }),
             }) => {
                 let answ = *answ;
                 let id = *id;
@@ -351,13 +362,68 @@ where
 
     fn process_answer_buffer(&mut self) -> Result<()> {
         loop {
-            match self.rcv.try_recv() {
+            let msg = match self.rcv.try_recv() {
                 Err(err) => {
                     self.received_error(err)?;
                     break; // queue is empty so finish
                 }
-                Ok(_) => break, // disregard the result
+                Ok(answ_res) => answ_res?, // disregard the result
             };
+            match msg {
+                HandleAnsw::HasShutdown { op_id: id, answ } => {
+                    self.pending.entry(id).and_modify(|e| {
+                        e.answ = Some(HandleAnsw::HasShutdown { op_id: id, answ });
+                    });
+                }
+                HandleAnsw::KeyAdded { op_id: id } => {
+                    if let Some(PendingCmd {
+                        cmd: SentCmd::AddedKey(key),
+                        ..
+                    }) = self.pending.remove(&id)
+                    {
+                        log::debug!(
+                            "Added key: {:?}",
+                            ResourceIdentifier::try_from(&*key).unwrap()
+                        );
+                    }
+                }
+                HandleAnsw::GotRecord { key, .. } => {
+                    self.stats.key_stats.entry(key).or_default().times_received += 1;
+                }
+                HandleAnsw::RcvMsg { peer, msg } => {
+                    log::debug!("Received streaming msg from {}: {:?}", peer, msg);
+                    if let Some(stats) = self.stats.rcv_msgs.iter_mut().find(|p| p.0 == peer) {
+                        stats.1 += 1;
+                    } else {
+                        self.stats.rcv_msgs.push((peer.clone(), 1));
+                    }
+                    self.rcv_msg.entry(peer).or_default().push(msg);
+                }
+                HandleAnsw::AgentRegistered { op_id: id, key } => {
+                    self.pending.entry(id).and_modify(|e| {
+                        e.answ = Some(HandleAnsw::AgentRegistered { op_id: id, key });
+                    });
+                }
+                HandleAnsw::PropagateGroupChange { group_id } => todo!(),
+                HandleAnsw::ReqJoinGroupAccepted { op_id, group_id } => {
+                    self.pending.entry(op_id).and_modify(|e| {
+                        e.answ = Some(HandleAnsw::ReqJoinGroupAccepted { op_id, group_id });
+                    });
+                }
+                HandleAnsw::ReqJoinGroupDenied {
+                    op_id,
+                    group_id,
+                    reason,
+                } => {
+                    self.pending.entry(op_id).and_modify(|e| {
+                        e.answ = Some(HandleAnsw::ReqJoinGroupDenied {
+                            op_id,
+                            group_id,
+                            reason,
+                        });
+                    });
+                }
+            }
         }
         Ok(())
     }
@@ -372,55 +438,6 @@ where
             }
             TryRecvError::Empty => Ok(()),
         }
-    }
-
-    fn process_answ_msg(&mut self, msg: HandleAnsw<M>) -> Option<HandleAnsw<M>> {
-        match msg {
-            HandleAnsw::HasShutdown { id, answ } => {
-                self.pending.entry(id).and_modify(|e| {
-                    e.answ = Some(HandleAnsw::HasShutdown { id, answ });
-                });
-            }
-            HandleAnsw::KeyAdded { id } => {
-                if let Some(PendingCmd {
-                    cmd: SentCmd::AddedKey(key),
-                    ..
-                }) = self.pending.remove(&id)
-                {
-                    log::debug!(
-                        "Added key: {:?}",
-                        ResourceIdentifier::try_from(&*key).unwrap()
-                    );
-                }
-            }
-            HandleAnsw::GotRecord { key, .. } => {
-                self.stats.key_stats.entry(key).or_default().times_received += 1;
-            }
-            HandleAnsw::RcvMsg { peer, msg } => {
-                log::debug!("Received streaming msg from {}: {:?}", peer, msg);
-                if let Some(stats) = self.stats.rcv_msgs.iter_mut().find(|p| p.0 == peer) {
-                    stats.1 += 1;
-                } else {
-                    self.stats.rcv_msgs.push((peer.clone(), 1));
-                }
-                self.rcv_msg.entry(peer).or_default().push(msg);
-            }
-            HandleAnsw::AgentRegistered { id, key } => {
-                return Some(HandleAnsw::AgentRegistered { id, key });
-            }
-            HandleAnsw::PropagateGroupChange { group_id } => todo!(),
-            HandleAnsw::ReqJoinGroupAccepted { op_id, group_id } => {
-                self.pending.entry(op_id).and_modify(|e| {
-                    e.answ = Some(HandleAnsw::ReqJoinGroupAccepted { op_id, group_id });
-                });
-            }
-            HandleAnsw::ReqJoinGroupDenied {
-                op_id,
-                group_id,
-                reason,
-            } => todo!(),
-        }
-        None
     }
 
     fn next_id(&mut self) -> OpId {
@@ -494,18 +511,21 @@ pub(crate) enum HandleCmd<M> {
     IsRunning,
     /// put a resource in this node
     ProvideResource {
-        id: OpId,
+        op_id: OpId,
         key: ResourceIdentifier,
         value: Resource,
     },
     /// pull a resource in this node
-    PullResource { id: OpId, key: ResourceIdentifier },
+    PullResource {
+        op_id: OpId,
+        key: ResourceIdentifier,
+    },
     /// issue a shutdown command
     Shutdown(OpId),
     /// send a serialized message
-    SendMessage { id: OpId, value: M, peer: PeerId },
+    SendMessage { op_id: OpId, value: M, peer: PeerId },
     /// register a peer as the manager of an agent
-    RegisterAgent { id: OpId, agent_id: String },
+    RegisterAgent { op_id: OpId, agent_id: String },
     /// instruct the network handler to send a request
     /// for an agent joining a group
     ReqJoinGroup {
@@ -531,19 +551,19 @@ where
     M: DeserializeOwned,
 {
     AgentRegistered {
-        id: OpId,
+        op_id: OpId,
         key: ResourceIdentifier,
     },
     GotRecord {
-        id: OpId,
+        op_id: OpId,
         key: ResourceIdentifier,
     },
     HasShutdown {
-        id: OpId,
+        op_id: OpId,
         answ: bool,
     },
     KeyAdded {
-        id: OpId,
+        op_id: OpId,
     },
     /// Propagate a change in the configuration or composition of a group.
     PropagateGroupChange {

@@ -1,6 +1,4 @@
 //! Support networking library for the simAG framework
-#![allow(clippy::type_complexity)]
-use handle::HandleError;
 
 mod channel;
 mod config;
@@ -11,17 +9,14 @@ mod network;
 mod rpc;
 
 use network::NetworkError;
-pub use network::{NetworkBuilder, Provider};
-use uuid::Uuid;
 
-pub mod prelude {
-    pub use super::group::GroupSettings;
-    pub use super::handle::{HandleError, NetworkHandle};
-    pub use super::network::{NetworkBuilder, Provider};
-    pub use super::rpc::Resource;
-    pub use super::Error;
-    pub use libp2p::{identity::ed25519::Keypair, PeerId};
-}
+pub use group::GroupSettings;
+pub use handle::{HandleError, NetworkHandle};
+pub use network::{NetworkBuilder, Provider};
+pub use rpc::Resource;
+
+pub use libp2p::{identity::ed25519::Keypair, PeerId};
+use uuid::Uuid;
 
 pub type Result<R> = std::result::Result<R, Error>;
 
