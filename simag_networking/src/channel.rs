@@ -119,7 +119,7 @@ impl Channel {
         queue.push_back(NetworkBehaviourAction::NotifyHandler {
             peer_id: peer,
             event: ChannelHandlerInEvent::KeepAlive,
-            handler: NotifyHandler::All,
+            handler: NotifyHandler::Any,
         });
     }
 
@@ -127,7 +127,7 @@ impl Channel {
         queue.push_back(NetworkBehaviourAction::NotifyHandler {
             peer_id: peer,
             event: ChannelHandlerInEvent::Finished(refresh),
-            handler: NotifyHandler::All,
+            handler: NotifyHandler::Any,
         });
     }
 }

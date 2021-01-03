@@ -51,7 +51,14 @@ fn main() {
     // #1 This is the id that must be provided to other nodes that want to join the network.
     println!("This network encoded peer id is: {}", network.get_peer_id());
     let agent = Agent::new("agent_01".to_owned());
-    let ag_key = network.register_agent(&agent).unwrap();
+    let op_id = network.register_agent(&agent);
+    let ag_key = loop {
+        match network.op_result(op_id) {
+            Err(Error::OpError(HandleError::AwaitingResponse(_))) => {}
+            Ok(Some(key)) => break key,
+            _ => panic!("something failed!"),
+        }
+    };
     network.create_group("group_01", &["agent_01"], None, Settings {});
 
     let mut cnt: HashMap<_, usize> = HashMap::new();

@@ -231,7 +231,7 @@ mod custom_ser {
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
         let as_bytes = if let Some(peer) = peer {
-            Some(peer.as_bytes().to_vec())
+            Some(peer.to_bytes())
         } else {
             None
         };
@@ -242,6 +242,6 @@ mod custom_ser {
         deserializer: D,
     ) -> Result<Option<PeerId>, D::Error> {
         let peer: Option<Vec<u8>> = Deserialize::deserialize(deserializer)?;
-        Ok(peer.map(|data| PeerId::from_bytes(data).unwrap()))
+        Ok(peer.map(|data| PeerId::from_bytes(&data).unwrap()))
     }
 }

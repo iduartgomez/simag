@@ -51,6 +51,7 @@ where
     /// - register_agent
     /// - find_agent.
     pub fn op_result(&mut self, op_id: OpId) -> Result<Option<ResourceIdentifier>> {
+        self.process_answer_buffer()?;
         match self.pending.remove(&op_id) {
             None => Err(HandleError::OpNotFound(op_id).into()),
             Some(PendingCmd { cmd, answ: None }) => {
@@ -73,7 +74,7 @@ where
                 HandleAnsw::HasShutdown { .. }
                 | HandleAnsw::KeyAdded { .. }
                 | HandleAnsw::PropagateGroupChange { .. } => Ok(None),
-                HandleAnsw::RcvMsg { peer, msg } => Ok(None),
+                HandleAnsw::RcvMsg { .. } => unreachable!(),
             },
         }
     }
