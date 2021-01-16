@@ -369,7 +369,7 @@ impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
             {
                 log::trace!("Correct substitution found, updating: {:?}", grfact);
             }
-            context.push_grounded_cls(grfact.clone(), grfact.bms.as_ref().unwrap().get_last_date());
+            context.push_grounded_cls(grfact.clone(), grfact.bms.as_ref().unwrap().get_last_time());
             agent.up_membership(&Arc::new(grfact), Some(context))
         }
     }

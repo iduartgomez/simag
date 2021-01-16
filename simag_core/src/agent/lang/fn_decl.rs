@@ -430,7 +430,7 @@ impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
             {
                 log::trace!("Correct substitution found, updating: {:?}", grfunc);
             }
-            context.push_grounded_func(grfunc.clone(), grfunc.bms.get_last_date());
+            context.push_grounded_func(grfunc.clone(), grfunc.bms.get_last_time());
             agent.up_relation(&Arc::new(grfunc), Some(context));
         }
     }

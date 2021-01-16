@@ -19,6 +19,8 @@ use parking_lot::RwLock;
 ///
 /// Not meant to be instantiated directly, but asserted from logic
 /// sentences or processed from `ClassDecl` on `tell` mode.
+///
+/// E.g.: abc\[$def=1\]
 pub(in crate::agent) struct GroundedMemb {
     pub(in crate::agent::lang) term: GrTerminalKind<String>,
     pub(in crate::agent::lang) value: RwLock<Option<f32>>,
@@ -278,7 +280,7 @@ impl GroundedMemb {
         if let Some(time) = pred_bms.is_predicate() {
             let op_rhs = self.operator.unwrap();
             let op_lhs = pred.operator.unwrap();
-            let time_pred = pred_bms.get_last_date();
+            let time_pred = pred_bms.get_last_time();
             let (val_lhs, loc_lhs) = pred_bms.get_last_value();
             let (val_rhs, loc_rhs) = if time_pred < *time {
                 self_bms.get_record_at_time(time_pred)
@@ -346,7 +348,7 @@ impl std::fmt::Display for GroundedMemb {
         let (value, time) = if let Some(ref bms) = self.bms {
             (
                 bms.get_last_value().0,
-                format!(" @ `{}` ", bms.get_last_date()),
+                format!(" @ `{}` ", bms.get_last_time()),
             )
         } else {
             (self.get_value(), "".to_string())

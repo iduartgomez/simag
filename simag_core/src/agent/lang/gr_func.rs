@@ -34,7 +34,7 @@ impl GroundedFunc {
         let pred_lock = &*pred.bms.acquire_read_lock();
 
         if let Some(time) = pred.bms.is_predicate() {
-            let time_pred = pred.bms.get_last_date();
+            let time_pred = pred.bms.get_last_time();
             let (val_lhs, loc_lhs) = pred.bms.get_last_value();
             let (val_rhs, loc_rhs) = if time_pred < *time {
                 self.bms.get_record_at_time(time_pred)
@@ -278,7 +278,7 @@ impl std::fmt::Display for GroundedFunc {
             self.bms.get_last_value(),
             self.args[1].get_name(),
             third,
-            self.bms.get_last_date()
+            self.bms.get_last_time()
         )
     }
 }

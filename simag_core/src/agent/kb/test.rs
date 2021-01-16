@@ -196,7 +196,7 @@ fn repr_inference_time_calc_1() {
     let rep = Representation::default();
     rep.tell(test_01).unwrap();
     assert_eq!(rep.ask(q01_01).unwrap().get_results_single(), Some(true));
-    // FIXME:
+    // FIXME: fails
     // assert_eq!(
     //     rep.ask("(fat(since '2017-07-05T10:25:00Z')[$Pancho=1])")
     //         .unwrap()
@@ -273,7 +273,7 @@ fn repr_inference_time_calc_1() {
     ";
     rep.tell(test_03_04).unwrap();
     let _q03_04 = "(fat[$Pancho=0])";
-    // FIXME:
+    // FIXME: fails
     // assert_eq!(rep.ask(q03_04).unwrap().get_results_single(), Some(true));
 }
 
@@ -293,7 +293,8 @@ fn repr_inference_time_calc_2() {
     let q04_1_03 = "(fat(since '2018-02-01T00:00:00Z')[$Pancho=1])";
     assert_eq!(rep.ask(q04_1_03).unwrap().get_results_single(), None);
 
-    // TODO: "(let t0:time='2018-02-01T00:00:00Z' in fat(since t0)[$Pancho=1])"
+    // TODO: more query types
+    // "(let t0:time='2018-02-01T00:00:00Z' in fat(since t0)[$Pancho=1])"
     // "(let t0:time='2018-02-01T00:00:00Z', x in fat(since t0)[x=1])"
     // "(let t0:time='2018-02-01T00:00:00Z', x in x(since t0)[$Pancho=1])"
 
@@ -313,7 +314,8 @@ fn repr_inference_time_calc_2() {
     let q04_2_03 = "(fn::criticize(since '2018-02-01T00:00:00Z')[$John=1,$Lucy])";
     assert_eq!(rep.ask(q04_2_03).unwrap().get_results_single(), None);
 
-    // TODO: "(let t0:time='2018-02-01T00:00:00Z' in fn::criticize(since t0)[$John=1,$Lucy])"
+    // TODO: more query types
+    // "(let t0:time='2018-02-01T00:00:00Z' in fn::criticize(since t0)[$John=1,$Lucy])"
     // "(let t0:time='2018-02-01T00:00:00Z', x in fn::x(since t0)[$John=1,$Lucy])"
     // "(let t0:time='2018-02-01T00:00:00Z', x in fn::criticize(since t0)[x=1,$Lucy])"
 }
@@ -508,6 +510,7 @@ fn repr_inference_spatial_calc() {
     rep.tell(source).unwrap();
 
     // locate a concrete object at a given location right now
+    // FIXME: fails some times
     let res = rep.ask("(fn::location($John at '1.1.0'))").unwrap();
     assert_eq!(res.get_results_single(), Some(true));
     let res = rep.ask("(fn::location($John at '0.0.0'))").unwrap();

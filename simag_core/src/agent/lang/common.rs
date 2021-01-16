@@ -13,7 +13,7 @@ use super::{
     spatial_semantics::{SpatialArg, SpatialFnErr},
     time_semantics::{TimeArg, TimeFn, TimeFnErr, TimeOps},
     var::Var,
-    BuiltIns, GroundedFunc, GroundedMemb, Point, SpatialOps, Terminal,
+    BuiltIns, GroundedFunc, GroundedMemb, Point, SpatialOps, Terminal, Time,
 };
 use crate::agent::{
     kb::bms::{BmsWrapper, HasBms, IsSpatialData, IsTimeData},
@@ -26,16 +26,18 @@ use float_cmp::ApproxEqUlps;
 
 #[derive(Debug, Clone)]
 pub(in crate::agent) enum Predicate {
-    /// (let x in some[x])
+    /// (let x in some\[x\])
     FreeMembershipToClass(FreeMembershipToClass),
-    /// abc[$def=1]
+    /// abc\[$def=1\]
     GroundedMemb(GroundedMemb),
-    /// (let x in x[$Lucy>0.5])
+    /// (let x in x\[$Lucy>0.5\])
     FreeClassMembership(FreeClassMembership),
 }
 
 impl<'a> Predicate {
-    /// # Args
+    /// Tries to create a predicate from parsed elements.
+    ///
+    /// ## Args
     /// - is_func: whether this predicate is a func declaration or not; and the argument number in case it is.
     pub(in crate::agent::lang) fn from(
         arg: &'a ArgBorrowed<'a>,
@@ -147,6 +149,14 @@ impl<'a> Predicate {
             Predicate::FreeClassMembership(ref t) => t.value.is_some(),
         }
     }
+
+    pub fn get_last_date(&self) -> Option<Time> {
+        match self {
+            Predicate::GroundedMemb(t) => t.get_bms().map(|bms| bms.get_last_time()),
+            Predicate::FreeMembershipToClass(_) => None,
+            Predicate::FreeClassMembership(t) => t.get_bms().map(|bms| bms.get_last_time()),
+        }
+    }
 }
 
 // Grounded types:
@@ -180,7 +190,8 @@ impl<'a> GroundedRef<'a> {
 
 // Free types:
 
-/// (let x in some[x])
+/// Any entities that belong to a class. Does not include support for time values (yet).
+/// E.g.: (let x in some\[x\])
 #[derive(Debug, Clone)]
 pub(in crate::agent) struct FreeMembershipToClass {
     pub(in crate::agent::lang) term: Arc<Var>,
@@ -238,7 +249,6 @@ impl FreeMembershipToClass {
     /// Compares a free term with a grounded term, assumes they are comparable
     /// (panics otherwise).
     pub fn grounded_eq(&self, other: &GroundedMemb) -> bool {
-        // FIXME: check time equality!
         if self.parent.get_name() != other.parent {
             return false;
         }
@@ -276,7 +286,7 @@ impl FreeMembershipToClass {
     }
 }
 
-/// Reified object, free class belongship. Ie: x[$Lucy>0.5]
+/// Reified object, free class belongship. E.g.: x\[$Lucy>0.5\]
 #[derive(Debug, Clone)]
 pub(in crate::agent) struct FreeClassMembership {
     term: String,
@@ -320,10 +330,16 @@ impl FreeClassMembership {
     }
 
     pub fn filter_grounded(&self, other: &GroundedMemb) -> bool {
-        // FIXME: check time equality!
         if self.operator.is_some() {
             let val = self.value.as_ref().unwrap();
-            let o_val = if let Some(o_val) = *other.value.read() {
+            // get the value at the current set time for self to compare
+            let o_val = if let Some(o_val) = other
+                .bms
+                .as_ref()
+                .map(|bms| bms.get_record_at_time(self.times.get_last_time()).0)
+                .flatten()
+                .or_else(|| *other.value.read())
+            {
                 o_val
             } else {
                 return false;

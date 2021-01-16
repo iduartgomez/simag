@@ -320,7 +320,7 @@ where
         })) => {
             if let kad::QueryResult::GetRecord(Ok(kad::GetRecordOk { mut records, .. })) = result {
                 // TODO: this can be retrieved from local storage if already exists
-                // should ensure consistency across the network!
+                // TODO: should ensure consistency across the network!
                 if let Some(record) = records.pop() {
                     init_req_to_join_group(
                         &nt,

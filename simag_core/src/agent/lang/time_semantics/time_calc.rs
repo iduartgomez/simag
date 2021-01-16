@@ -78,8 +78,8 @@ impl TimeCalcFn {
         &self,
         assignments: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
     ) -> bool {
-        let arg0 = assignments.get(&*self.var0).unwrap().get_last_date();
-        let arg1 = assignments.get(&*self.var1).unwrap().get_last_date();
+        let arg0 = assignments.get(&*self.var0).unwrap().get_last_time();
+        let arg1 = assignments.get(&*self.var1).unwrap().get_last_time();
 
         match self.op {
             Operator::Equal => {

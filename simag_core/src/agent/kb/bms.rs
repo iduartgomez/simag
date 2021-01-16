@@ -167,8 +167,8 @@ impl TryFrom<&BmsWrapper<RecordHistory>> for BmsWrapper<IsSpatialData> {
 }
 
 impl<T: BmsKind> BmsWrapper<T> {
-    /// Get the last record date.
-    pub fn get_last_date(&self) -> Time {
+    /// Get the last time from which the record value applies.
+    pub fn get_last_time(&self) -> Time {
         let lock = self.records.read();
         let rec = lock.last().unwrap();
         rec.time
@@ -321,17 +321,17 @@ impl BmsWrapper<RecordHistory> {
 
     /// Return the value valid at the given time, if any.
     pub fn get_record_at_time(&self, cmp_time: Time) -> (Option<f32>, Option<Point>) {
-        let mut latest = (None, None);
-        for rec in self
+        if let Some(rec) = self
             .records
             .read()
             .iter()
             .take_while(|rec| rec.time <= cmp_time)
+            .last()
         {
-            // TODO: optimize this to avoid copying/cloning
-            latest = (rec.value, rec.location.clone());
+            (rec.value, rec.location.clone())
+        } else {
+            (None, None)
         }
-        latest
     }
 
     /// Add a new record to this BMS.
@@ -361,7 +361,7 @@ impl BmsWrapper<RecordHistory> {
             was_produced,
         };
         records.push(record);
-        // FIXME: records always should be sorted by time, but this makes soem tests fail
+        // FIXME: records always should be sorted by time, but this makes some tests fail
         // records.sort_by(|a, b| a.time.cmp(&b.time));
     }
 
@@ -801,7 +801,7 @@ impl<T: BmsKind> std::clone::Clone for BmsWrapper<T> {
 
 impl<T: BmsKind> std::fmt::Display for BmsWrapper<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let record = self.get_last_date();
+        let record = self.get_last_time();
         let val = self.get_last_value();
         write!(f, "Bms(.., {} = {:?})", record, val)
     }

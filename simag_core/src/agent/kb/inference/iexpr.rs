@@ -67,7 +67,6 @@ impl<'rep> Inference<'rep> {
     }
 
     pub fn get_results(self) -> Answer<'rep> {
-        // TODO: filter results based on query composition
         Answer::new(self.results)
     }
 

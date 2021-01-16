@@ -159,49 +159,43 @@ impl Class {
         pos: usize,
         compare: &Predicate,
     ) -> HashMap<&str, Vec<Arc<GroundedFunc>>> {
-        // FIXME: check time equality!
         let mut res = HashMap::new();
         let (op, val) = compare.get_uval();
+        let at_time = compare.get_last_date();
         for functions in self.relations.iter() {
             for f in functions.value() {
                 if f.name_in_pos(&*self.name, pos) {
                     // Safety: guaranteed this lives as long as self
                     let t = unsafe { &*(&**f as *const GroundedFunc) };
                     let rel_name = t.get_name();
+                    let val_at_time = Self::get_value_at_time(f, at_time).unwrap();
                     match op {
                         None => res.entry(rel_name).or_insert_with(Vec::new).push(f.clone()),
                         Some(Operator::Equal) => {
-                            if f.get_value()
-                                .unwrap()
-                                .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
-                            {
+                            if val_at_time.approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS) {
                                 res.entry(rel_name).or_insert_with(Vec::new).push(f.clone())
                             }
                         }
                         Some(Operator::More) => {
-                            if *val.as_ref().unwrap() < f.get_value().unwrap() {
+                            if *val.as_ref().unwrap() < val_at_time {
                                 res.entry(rel_name).or_insert_with(Vec::new).push(f.clone())
                             }
                         }
                         Some(Operator::Less) => {
-                            if *val.as_ref().unwrap() > f.get_value().unwrap() {
+                            if *val.as_ref().unwrap() > val_at_time {
                                 res.entry(rel_name).or_insert_with(Vec::new).push(f.clone())
                             }
                         }
                         Some(Operator::LessEqual) => {
-                            if *val.as_ref().unwrap() > f.get_value().unwrap()
-                                || f.get_value()
-                                    .unwrap()
-                                    .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
+                            if *val.as_ref().unwrap() > val_at_time
+                                || val_at_time.approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
                             {
                                 res.entry(rel_name).or_insert_with(Vec::new).push(f.clone())
                             }
                         }
                         Some(Operator::MoreEqual) => {
-                            if *val.as_ref().unwrap() < f.get_value().unwrap()
-                                || f.get_value()
-                                    .unwrap()
-                                    .approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
+                            if *val.as_ref().unwrap() < val_at_time
+                                || val_at_time.approx_eq_ulps(val.as_ref().unwrap(), FLOAT_EQ_ULPS)
                             {
                                 res.entry(rel_name).or_insert_with(Vec::new).push(f.clone())
                             }
@@ -358,6 +352,14 @@ impl Class {
 
     pub(in crate::agent::kb) fn add_rule(&self, rule: Arc<LogSentence>) {
         self.rules.write().push(rule);
+    }
+
+    fn get_value_at_time(f: &Arc<GroundedFunc>, at_time: Option<Time>) -> Option<f32> {
+        if let Some(at_time) = at_time {
+            f.bms.get_record_at_time(at_time).0
+        } else {
+            f.get_value()
+        }
     }
 }
 
