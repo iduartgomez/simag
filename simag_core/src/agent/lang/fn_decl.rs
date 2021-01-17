@@ -220,7 +220,7 @@ impl FuncDecl {
             let grfunc = self.clone().into();
             if let Some(relation) = agent.get_relationship(&grfunc, sbj[0].get_name()) {
                 Some(Arc::new((&*relation.bms).try_into().unwrap_or_else(|_| {
-                    unreachable!("SIMAG - {}:{}: illegal conversion", file!(), line!())
+                    unreachable!("SIMAG - illegal conversion")
                 })))
             } else {
                 None
@@ -235,13 +235,7 @@ impl FuncDecl {
                         if let Some(entity) = assignments.get(&*arg.term) {
                             if let Some(current) = entity.get_relationship(&grfunc) {
                                 return Some(Arc::new((&*current.bms).try_into().unwrap_or_else(
-                                    |_| {
-                                        unreachable!(
-                                            "SIMAG - {}:{}: illegal conversion",
-                                            file!(),
-                                            line!()
-                                        )
-                                    },
+                                    |_| unreachable!("SIMAG - illegal conversion"),
                                 )));
                             }
                         }
@@ -300,9 +294,8 @@ impl Into<GroundedFunc> for FuncDecl {
                     OpArg::Time(DeclTime(TimeFn::Interval(t0, t1))) => {
                         let mut t0 = BmsWrapper::<IsTimeData>::new(Some(t0), val);
                         let t1 = &BmsWrapper::<IsTimeData>::new(Some(t1), None);
-                        t0.merge_since_until(t1).unwrap_or_else(|_| {
-                            unreachable!("SIMAG - {}:{}: illegal merge", file!(), line!())
-                        });
+                        t0.merge_since_until(t1)
+                            .unwrap_or_else(|_| unreachable!("SIMAG - illegal merge"));
                         time_data = Some(t0)
                     }
                     OpArg::Time(DeclTime(TimeFn::Now)) => {

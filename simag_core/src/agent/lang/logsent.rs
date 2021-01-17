@@ -218,7 +218,7 @@ impl<'a> LogSentence {
     }
 
     pub fn get_rhs_predicates(&self) -> Vec<&Assert> {
-        // TODO: from particles[root] .. particles.len()
+        // TODO: optimize when particles are sorted by lhs/rhs with root at the center, from particles[root] .. particles.len()
         let mut v = vec![];
         for p in &self.predicates.1 {
             let p = self.particles[*p].pred_ref();
@@ -228,7 +228,7 @@ impl<'a> LogSentence {
     }
 
     pub fn get_all_lhs_predicates(&self) -> Vec<&Assert> {
-        // TODO: from 0..particles[root]
+        // TODO: optimize when particles are sorted by lhs/rhs with root at the center, from 0..particles[root]
         let mut v = vec![];
         for p in &self.predicates.0 {
             let p = self.particles[*p].pred_ref();

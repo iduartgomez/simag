@@ -865,7 +865,6 @@ impl<'a> Answer<'a> {
     }
 }
 
-#[inline]
 pub(super) fn lookahead_rules(agent: &Representation, name: &str, grounded: &GroundedRef) -> bool {
     use super::inference::rules_inference_lookahead;
     let rules: Vec<Arc<LogSentence>> = {
@@ -876,7 +875,6 @@ pub(super) fn lookahead_rules(agent: &Representation, name: &str, grounded: &Gro
     rules_inference_lookahead(agent, rules, grounded)
 }
 
-#[inline]
 fn rollback_from_rule(agent: &Representation, rule: &Arc<LogSentence>) {
     use super::inference::rules_inference_rollback;
     rules_inference_rollback(agent, rule);

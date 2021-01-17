@@ -559,11 +559,9 @@ impl Assert {
             Assert::SpecialFunc(BuiltIns::Move(move_fn)) => {
                 move_fn.substitute(agent, assignments, time_assign, loc_assign, context)
             }
-            Assert::SpecialFunc(_) => unreachable!(format!(
-                "SIMAG - {}:{}: implication cannot have any other than `move` buil-in func",
-                file!(),
-                line!()
-            )),
+            Assert::SpecialFunc(_) => {
+                unreachable!("SIMAG - implication cannot have any other than `move` buil-in func")
+            }
         }
     }
 
@@ -579,7 +577,7 @@ impl Assert {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(in crate::agent) enum OpArg {
-    // TODO: split `generic` in two variants
+    // TODO: split `generic` in two variants, one with 2nd operand and one w/o
     /// Generic optional argument which includes one binding value and optionally a second operand to compare against
     Generic(ConstraintValue, Option<(Operator, ConstraintValue)>),
     Time(TimeArg),

@@ -7,14 +7,16 @@ use std::collections::HashSet;
 fn repr_inference_ask_pred() {
     // straight query of declared knowledge
     let test_01 = "
-        ( professor[$Lucy=1] )
-    ";
+            ( professor[$Lucy=1] )
+        ";
     let q01_01 = "(professor[$Lucy=1] and person[$Lucy=1])";
     let q01_02 = "(professor[$Lucy=1])";
     let rep = Representation::default();
     rep.tell(test_01).unwrap();
     assert_eq!(rep.ask(q01_01).unwrap().get_results_single(), None);
     assert_eq!(rep.ask(q01_02).unwrap().get_results_single(), Some(true));
+
+    rep.ask(q01_01).unwrap().get_results_multiple();
 
     // produced by one or two log sentence
     let test_02 = "
@@ -467,8 +469,7 @@ fn repr_tell_record() {
     assert_eq!(res.unwrap().get_results_single(), Some(true));
 
     /*
-    //TODO: could be used for querying
-    // defining more than one entity with similar values:
+    //TODO: syntax could be used for querying too
     [$john, $mary] = {
         ...
     }

@@ -113,11 +113,7 @@ impl<'a> std::convert::TryFrom<(&'a FuncDeclBorrowed<'a>, &'a mut ParseContext)>
             }
             Ok(LocFn { locations })
         } else {
-            unreachable!(format!(
-                "SIMAG - {}:{}: a LocFn decl must have op args",
-                file!(),
-                line!()
-            ))
+            unreachable!("SIMAG - a LocFn decl must have op args")
         }
     }
 }

@@ -4,18 +4,6 @@
 //! 1) Recording how a belief came to existence to the agent.
 //! 2) Detecting inconsistences between new and old beliefs.
 //! 3) Fixing those inconsitences.
-use std::cmp::Ordering as CmpOrdering;
-use std::mem;
-use std::{
-    collections::HashMap,
-    convert::TryFrom,
-    marker::PhantomData,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-};
-
 pub(in crate::agent) use self::errors::BmsError;
 use super::{inference::QueryInput, repr::Representation};
 use crate::agent::{
@@ -27,6 +15,17 @@ use crate::agent::{
 };
 use chrono::Utc;
 use parking_lot::{RwLock, RwLockReadGuard};
+use std::cmp::Ordering as CmpOrdering;
+use std::mem;
+use std::{
+    collections::HashMap,
+    convert::TryFrom,
+    marker::PhantomData,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 /// Acts as a wrapper for the Belief Maintenance System for a given agent.
 ///
@@ -142,9 +141,18 @@ impl TryFrom<&BmsWrapper<RecordHistory>> for BmsWrapper<IsTimeData> {
     type Error = ();
 
     fn try_from(value: &BmsWrapper<RecordHistory>) -> Result<Self, Self::Error> {
-        // FIXME: check that invariants hold
+        let values = &*value.records.read();
+        match values.len() {
+            1 if values[0].value.is_some() => {}
+            2 if values[0].value.is_some() && values[1].value.is_some() => {}
+            _ => {
+                //
+                return Err(());
+            }
+        }
+
         Ok(BmsWrapper {
-            records: RwLock::new((&*value.records.read()).clone()),
+            records: RwLock::new(values.clone()),
             pred: value.pred,
             overwrite: AtomicBool::new(value.overwrite.load(Ordering::Acquire)),
             _kind: PhantomData,
@@ -156,9 +164,19 @@ impl TryFrom<&BmsWrapper<RecordHistory>> for BmsWrapper<IsSpatialData> {
     type Error = ();
 
     fn try_from(value: &BmsWrapper<RecordHistory>) -> Result<Self, Self::Error> {
-        // FIXME: check that invariants hold
+        let values = &*value.records.read();
+        // spatial data only should have exactly one record
+        if values.len() != 1 {
+            return Err(());
+        }
+
+        // spatial data record should have a location set
+        if values[0].location.is_none() {
+            return Err(());
+        }
+
         Ok(BmsWrapper {
-            records: RwLock::new((&*value.records.read()).clone()),
+            records: RwLock::new(values.clone()),
             pred: value.pred,
             overwrite: AtomicBool::new(value.overwrite.load(Ordering::Acquire)),
             _kind: PhantomData,
@@ -269,11 +287,7 @@ impl BmsWrapper<RecordHistory> {
         let (sent_id, at_time) = if let Some((sent_id, at_time)) = recordings.was_produced {
             (sent_id, at_time)
         } else {
-            unreachable!(format!(
-                "SIMAG - {}:{} - can't rollback records which were not produced",
-                file!(),
-                line!()
-            ))
+            unreachable!("SIMAG - can't rollback records which were not produced")
         };
 
         for (record, _) in &recordings.produced {

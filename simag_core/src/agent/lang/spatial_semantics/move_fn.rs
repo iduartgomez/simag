@@ -171,13 +171,9 @@ impl MoveFn {
         };
 
         if let Some(assignments) = assignments {
-            let loc = self.get_location(loc_assign).unwrap_or_else(|_| {
-                unreachable!(
-                    "SIMAG - {}:{}: location not assigned in move fn",
-                    file!(),
-                    line!()
-                )
-            });
+            let loc = self
+                .get_location(loc_assign)
+                .unwrap_or_else(|_| unreachable!("SIMAG - location not assigned in move fn"));
 
             for var in &self.vars {
                 let assigned = assignments[&**var];

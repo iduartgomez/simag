@@ -147,16 +147,16 @@ impl<'rep> InfResults<'rep> {
 
     //pub type GroundedResult = Option<(bool, Option<Time>)>;
     pub fn get_results_multiple(self) -> HashMap<QueryPred, HashMap<String, GroundedResult>> {
-        // TODO: change collection of results to iterator over owned values when dashmap exposes a method
         // Safety WARNING: ObjName<'rep> may (truly) outlive the content, own the &str first
-        let mut res = HashMap::new();
-        for entry in self.grounded_queries.iter() {
-            let qpred = entry.key().to_owned();
-            let owned_values = entry.value().iter().map(|(k, v)| ((*k).to_owned(), *v));
-            let r = HashMap::from_iter(owned_values);
-            res.insert(qpred, r);
-        }
-        res
+        self.grounded_queries
+            .into_iter()
+            .map(|(k, v)| {
+                (
+                    k.to_owned(),
+                    v.into_iter().map(|(k, v)| ((*k).to_owned(), v)).collect(),
+                )
+            })
+            .collect()
     }
 
     pub fn get_memberships(&self) -> HashMap<ObjName<'rep>, Vec<&'rep GroundedMemb>> {

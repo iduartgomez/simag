@@ -168,13 +168,11 @@ impl ClassDecl {
                     if let Some(grounded) = entity.get_class(free.parent.get_name()) {
                         if free.grounded_eq(grounded) {
                             return grounded.bms.as_ref().map(|bms| {
-                                Arc::new((&**bms).try_into().unwrap_or_else(|_| {
-                                    unreachable!(
-                                        "SIMAG - {}:{}: illegal conversion",
-                                        file!(),
-                                        line!()
-                                    )
-                                }))
+                                Arc::new(
+                                    (&**bms).try_into().unwrap_or_else(|_| {
+                                        unreachable!("SIMAG - illegal conversion")
+                                    }),
+                                )
                             });
                         }
                     } else {
@@ -189,9 +187,11 @@ impl ClassDecl {
                 if let Some(grounded) = entity {
                     if grounded.compare_ignoring_times(compare) {
                         return grounded.bms.as_ref().map(|bms| {
-                            Arc::new((&**bms).try_into().unwrap_or_else(|_| {
-                                unreachable!("SIMAG - {}:{}: illegal conversion", file!(), line!())
-                            }))
+                            Arc::new(
+                                (&**bms)
+                                    .try_into()
+                                    .unwrap_or_else(|_| unreachable!("SIMAG - illegal conversion")),
+                            )
                         });
                     }
                 } else {

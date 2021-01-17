@@ -66,11 +66,7 @@ impl TimeArg {
                 t0.merge_since_until(&t1).unwrap();
                 t0
             }
-            _ => unreachable!(format!(
-                "SIMAG - {}:{}: can't get time payload from a free variable",
-                file!(),
-                line!()
-            )),
+            _ => unreachable!("SIMAG - can't get time payload from a free variable"),
         }
     }
 
@@ -345,9 +341,8 @@ impl TimeFn {
             TimeFn::Interval(time0, time1) => {
                 let mut t0 = BmsWrapper::<IsTimeData>::new(Some(*time0), value);
                 let t1 = &BmsWrapper::<IsTimeData>::new(Some(*time1), None);
-                t0.merge_since_until(t1).unwrap_or_else(|_| {
-                    unreachable!("SIMAG - {}:{}: illegal merge", file!(), line!())
-                });
+                t0.merge_since_until(t1)
+                    .unwrap_or_else(|_| unreachable!("SIMAG - illegal merge"));
                 t0
             }
             _ => unreachable!(),
