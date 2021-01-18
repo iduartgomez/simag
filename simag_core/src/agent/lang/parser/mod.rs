@@ -42,6 +42,8 @@ use rayon::prelude::*;
 pub(self) mod args;
 pub(self) mod assertion;
 pub(self) mod ast;
+#[cfg(test)]
+mod bench;
 pub(self) mod numbers;
 pub(self) mod operators;
 pub(self) mod scope;

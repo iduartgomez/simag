@@ -50,7 +50,7 @@ impl ParseTree {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(in crate::agent) enum ASTNode<'a> {
     /// A single assertion statement
     Assert(AssertBorrowed<'a>),

@@ -1,10 +1,3 @@
-use std::collections::{HashMap, HashSet};
-use std::iter::FromIterator;
-use std::rc::Rc;
-use std::sync::Arc;
-
-use dashmap::DashMap;
-
 use super::{bms::build_declaration_bms, entity::Entity};
 use crate::agent::kb::{
     class::*,
@@ -20,6 +13,11 @@ use crate::agent::lang::{
     GroundedFunc, GroundedMemb, GroundedRef, LocFn, LogSentence, MoveFn, ParseErrF, ParseTree,
     Parser, Point, Predicate, ProofResContext, SentVarReq, Var,
 };
+use dashmap::DashMap;
+use std::collections::{HashMap, HashSet};
+use std::iter::FromIterator;
+use std::rc::Rc;
+use std::sync::Arc;
 
 // TODO: find better solution for self-referential borrows escaping self method scopes
 // this should remove the use of unsafe in this module which seems a little bit unnecessary?

@@ -7,15 +7,6 @@
 //! the representation is alive), thereby is safe to point to the data being
 //! referenced from the representation or the query (for the duration of the query).
 
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::hash::{Hash, Hasher};
-use std::iter::FromIterator;
-use std::mem;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
-};
-
 use crate::agent::kb::{
     bms::{HasBms, OverwriteBms},
     class::Class,
@@ -33,6 +24,14 @@ use crate::agent::lang::{
 use chrono::Utc;
 use dashmap::DashMap;
 use rayon::prelude::*;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::hash::{Hash, Hasher};
+use std::iter::FromIterator;
+use std::mem;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 
 pub(in crate::agent::kb) struct Inference<'rep> {
     query: Arc<QueryProcessed>,

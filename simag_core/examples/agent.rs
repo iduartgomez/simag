@@ -1,3 +1,5 @@
+use std::{sync::Arc, time::Instant};
+
 use simag_core::*;
 
 const ASK_SETUP: &[&str] = &[
@@ -52,16 +54,48 @@ fn new_knowledge(agent: &mut Agent) {
     }
 }
 
-fn old_knowledge(agent: &Agent) {
-    for _ in 0..10_000 {
-        for q in ASK_QUESTION {
-            agent.ask(q).unwrap();
-        }
+fn old_knowledge(agent: Arc<Agent>) {
+    let num_cores: usize = num_cpus::get() / 1 * 2;
+    let reader_iters: usize = 40_000;
+    println!(
+        "testing with {} parallel readers; {} asks each",
+        num_cores, reader_iters
+    );
+
+    // FIXME: doing this after running new_knowledge first triggers either a pathological case or a deadlock
+    /*
+    for s in ASK_SETUP {
+        agent.tell(s).unwrap();
     }
+    */
+
+    let mut threads = Vec::with_capacity(num_cores);
+    let t0 = Instant::now();
+    for _ in 0..num_cores {
+        let ag_cl = agent.clone();
+        threads.push(std::thread::spawn(move || {
+            for _ in 0..reader_iters {
+                for q in ASK_QUESTION {
+                    ag_cl.ask(q).unwrap();
+                }
+            }
+        }));
+    }
+
+    threads.into_iter().fold(Ok(()), |_, h| h.join()).unwrap();
+    let t1 = Instant::now();
+    let diff = ((t1 - t0).as_nanos() as f64 / 1e9).round();
+    let total = num_cores * reader_iters;
+    println!(
+        "took {} secs to process a total of {} requests, {} req/sec",
+        diff,
+        total,
+        (total as f64 / diff).round()
+    );
 }
 
 fn main() {
     let mut agent = Agent::default();
     new_knowledge(&mut agent);
-    old_knowledge(&agent);
+    old_knowledge(Arc::new(agent));
 }

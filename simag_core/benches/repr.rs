@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use simag_core::Agent;
 
 const TELL_TEST: &[&str] = &[
@@ -15,6 +15,7 @@ fn setup(c: &mut Criterion) {
     c.bench_function("setup", |b| b.iter(Agent::default));
 }
 
+/// How long does it take to add a new fact to the repr.
 fn tell_insert(c: &mut Criterion) {
     let mut group = c.benchmark_group("tell_insert");
     for (num, test) in TELL_TEST.iter().enumerate() {
@@ -36,6 +37,7 @@ fn tell_insert(c: &mut Criterion) {
     group.finish();
 }
 
+/// How long does it take to update a fact in the repr.
 fn tell_upsert(c: &mut Criterion) {
     let mut group = c.benchmark_group("tell_upsert");
     for (num, test) in TELL_TEST.iter().enumerate() {
@@ -95,6 +97,8 @@ const ASK_QUESTION: &[&str] = &[
     "(fat[$Pancho=1])",
 ];
 
+/// Answers questions about fresh established facts.
+/// Includes setting up the preconditions to answer the questions.
 fn ask_once(c: &mut Criterion) {
     let mut group = c.benchmark_group("ask_once");
     for (num, test) in ASK_QUESTION.iter().enumerate() {
@@ -105,7 +109,7 @@ fn ask_once(c: &mut Criterion) {
                 for _ in 0..iters {
                     let start = std::time::Instant::now();
                     rep.tell(ASK_SETUP[num]).unwrap();
-                    black_box(rep.ask(source).unwrap());
+                    rep.ask(source).unwrap();
                     let t = start.elapsed();
                     total += t;
                     rep.clear();
@@ -117,6 +121,8 @@ fn ask_once(c: &mut Criterion) {
     group.finish();
 }
 
+/// Simulates answering an established fact repetitively.
+/// Excludes setting up the preconditions to answer the questions.
 fn ask_many(c: &mut Criterion) {
     let mut group = c.benchmark_group("ask_many");
     for (num, test) in ASK_QUESTION.iter().enumerate() {
@@ -126,7 +132,7 @@ fn ask_many(c: &mut Criterion) {
                 rep.tell(ASK_SETUP[num]).unwrap();
                 let start = std::time::Instant::now();
                 for _ in 0..iters {
-                    black_box(rep.ask(source).unwrap());
+                    rep.ask(source).unwrap();
                 }
                 start.elapsed()
             });

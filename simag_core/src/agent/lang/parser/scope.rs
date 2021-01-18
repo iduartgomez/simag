@@ -13,7 +13,7 @@ use crate::agent::lang::logsent::ParseContext;
 /// A scope includes any variable declaratiosn that apply in the scope
 /// (potentially shadowing parent scope variables),
 /// any (if existing) logical operator that applies to the next node, and the next node.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(in crate::agent) struct Scope<'a> {
     pub vars: Option<Vec<VarDeclBorrowed<'a>>>,
     pub logic_op: Option<LogicOperator>,

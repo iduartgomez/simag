@@ -161,7 +161,7 @@ pub(super) fn record_decl(input: &[u8]) -> IResult<&[u8], ASTNode> {
     Ok((rest, ASTNode::Chain(declared)))
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(in crate::agent) enum AssertBorrowed<'a> {
     FuncDecl(FuncDeclBorrowed<'a>),
     ClassDecl(ClassDeclBorrowed<'a>),
@@ -203,7 +203,7 @@ pub(in crate::agent) struct VarBorrowed<'a> {
 
 // func_decl = 'fn::' term ['(' op_args ')'] args
 // 			 | 'fn::' term '(' op_args ')' ;
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(in crate::agent) struct FuncDeclBorrowed<'a> {
     pub name: TerminalBorrowed<'a>,
     pub args: Option<Vec<ArgBorrowed<'a>>>,
@@ -227,7 +227,7 @@ impl FuncVariants {
 }
 
 // class_decl = term ['(' op_args ')'] args ;
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(in crate::agent) struct ClassDeclBorrowed<'a> {
     pub name: TerminalBorrowed<'a>,
     pub args: Vec<ArgBorrowed<'a>>,
