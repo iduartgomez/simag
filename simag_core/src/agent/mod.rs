@@ -46,6 +46,11 @@ impl Agent {
         self.representation.set_threads(threads);
     }
 
+    pub fn with_threads(mut self, threads: usize) -> Self {
+        self.thread_pool_size(threads);
+        self
+    }
+
     /// Clean up all the knowledge of the agent.
     pub fn clear(&mut self) {
         self.representation.clear()

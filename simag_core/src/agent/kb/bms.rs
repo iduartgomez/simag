@@ -403,14 +403,19 @@ impl BmsWrapper<RecordHistory> {
                 (Grounded::Function(ref func), ..) => {
                     let func = func.upgrade().unwrap();
                     // check if indeed the value was produced by this producer or is more recent
-                    let mut ask = false;
-                    let func_lock = func.bms.records.read();
-                    let last = func_lock.last().unwrap();
-                    if last.time > *cmp_rec {
-                        // if it was produced, run again a test against the kb to check
-                        // if it is still valid
-                        ask = true;
-                    }
+                    let ask = {
+                        // avoid keeping the lock; since it may deadlock in the next iteration,
+                        // after calling `ask_processed` again.
+                        let func_lock = func.bms.records.read();
+                        let last = func_lock.last().unwrap();
+                        if last.time > *cmp_rec {
+                            // if it was produced, run again a test against the kb to check
+                            // if it is still valid
+                            true
+                        } else {
+                            false
+                        }
+                    };
                     if ask {
                         let answ = agent
                             .ask_processed(QueryInput::AskRelationalFunc(func.clone()), 0, true)
@@ -421,30 +426,35 @@ impl BmsWrapper<RecordHistory> {
                             let mut time = None;
                             let mut value = None;
                             let mut loc = None;
-                            let recs = (*func_lock).iter();
-                            for rec in recs.rev() {
-                                if rec.was_produced.is_none() {
-                                    time = Some(rec.time);
-                                    value = rec.value;
-                                    loc = rec.location.clone();
-                                    break;
+                            {
+                                let recs = &*func.bms.records.read();
+                                for rec in recs.iter().rev() {
+                                    if rec.was_produced.is_none() {
+                                        time = Some(rec.time);
+                                        value = rec.value;
+                                        loc = rec.location.clone();
+                                        break;
+                                    }
                                 }
+                                func.update_value(value);
                             }
-                            func.update_value(value);
                             bms.add_new_record(time, loc, value, None);
                         }
                     }
                 }
                 (Grounded::Class(ref cls), ..) => {
                     let cls = cls.upgrade().unwrap();
-                    let mut ask = false;
-                    {
-                        let lock = &*cls.bms.as_ref().unwrap().records.read();
-                        let last = lock.last().unwrap();
+                    let ask = {
+                        // avoid keeping the lock; since it may deadlock in the next iteration,
+                        // after calling `ask_processed` again.
+                        let recs = &*cls.bms.as_ref().unwrap().records.read();
+                        let last = recs.last().unwrap();
                         if last.time > *cmp_rec {
-                            ask = true;
+                            true
+                        } else {
+                            false
                         }
-                    }
+                    };
                     if ask {
                         let answ = agent
                             .ask_processed(QueryInput::AskClassMember(cls.clone()), 0, true)
@@ -456,9 +466,8 @@ impl BmsWrapper<RecordHistory> {
                             let mut value = None;
                             let mut loc = None;
                             {
-                                let lock = bms.records.read();
-                                let recs = (*lock).iter();
-                                for rec in recs.rev() {
+                                let recs = bms.records.read();
+                                for rec in recs.iter().rev() {
                                     if rec.was_produced.is_none() {
                                         time = Some(rec.time);
                                         value = rec.value;

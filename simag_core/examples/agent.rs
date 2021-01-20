@@ -42,7 +42,7 @@ const ASK_QUESTION: &[&str] = &[
 ];
 
 fn new_knowledge(agent: &mut Agent) {
-    for _ in 0..1_000 {
+    for _ in 0..10 {
         agent.clear();
         for s in ASK_SETUP {
             agent.tell(s).unwrap();
@@ -54,27 +54,24 @@ fn new_knowledge(agent: &mut Agent) {
     }
 }
 
-fn old_knowledge(agent: Arc<Agent>) {
-    let num_cores: usize = num_cpus::get() / 1 * 2;
-    let reader_iters: usize = 40_000;
+fn old_knowledge(agent: Arc<Agent>, threads: usize, iters_per_reader: usize) {
+    // load at 75% capacity
+    let paralellism: usize = threads / 4 * 3;
     println!(
         "testing with {} parallel readers; {} asks each",
-        num_cores, reader_iters
+        paralellism, iters_per_reader
     );
 
-    // FIXME: doing this after running new_knowledge first triggers either a pathological case or a deadlock
-    /*
     for s in ASK_SETUP {
         agent.tell(s).unwrap();
     }
-    */
 
-    let mut threads = Vec::with_capacity(num_cores);
+    let mut threads = Vec::with_capacity(paralellism);
     let t0 = Instant::now();
-    for _ in 0..num_cores {
+    for _ in 0..paralellism {
         let ag_cl = agent.clone();
         threads.push(std::thread::spawn(move || {
-            for _ in 0..reader_iters {
+            for _ in 0..iters_per_reader {
                 for q in ASK_QUESTION {
                     ag_cl.ask(q).unwrap();
                 }
@@ -84,8 +81,9 @@ fn old_knowledge(agent: Arc<Agent>) {
 
     threads.into_iter().fold(Ok(()), |_, h| h.join()).unwrap();
     let t1 = Instant::now();
+
     let diff = ((t1 - t0).as_nanos() as f64 / 1e9).round();
-    let total = num_cores * reader_iters;
+    let total = paralellism * iters_per_reader;
     println!(
         "took {} secs to process a total of {} requests, {} req/sec",
         diff,
@@ -95,7 +93,8 @@ fn old_knowledge(agent: Arc<Agent>) {
 }
 
 fn main() {
-    let mut agent = Agent::default();
+    let threads = num_cpus::get();
+    let mut agent = Agent::default().with_threads(threads);
     new_knowledge(&mut agent);
-    old_knowledge(Arc::new(agent));
+    old_knowledge(Arc::new(agent), threads, 10_000);
 }
