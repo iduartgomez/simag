@@ -82,10 +82,10 @@ fn old_knowledge(agent: Arc<Agent>, threads: usize, iters_per_reader: usize) {
     threads.into_iter().fold(Ok(()), |_, h| h.join()).unwrap();
     let t1 = Instant::now();
 
-    let diff = ((t1 - t0).as_nanos() as f64 / 1e9).round();
+    let diff = (t1 - t0).as_nanos() as f64 / 1e9;
     let total = paralellism * iters_per_reader;
     println!(
-        "took {} secs to process a total of {} requests, {} req/sec",
+        "took {:.2} secs to process a total of {} requests, ~{} req/sec",
         diff,
         total,
         (total as f64 / diff).round()

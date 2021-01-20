@@ -710,10 +710,12 @@ impl Representation {
     }
 
     pub fn set_threads(&mut self, threads: usize) {
-        self.threads = rayon::ThreadPoolBuilder::new()
+        let mut new_tp = rayon::ThreadPoolBuilder::new()
             .num_threads(threads)
             .build()
             .unwrap();
+        std::mem::swap(&mut new_tp, &mut self.threads);
+        std::mem::drop(new_tp);
     }
 
     pub fn clear(&mut self) {

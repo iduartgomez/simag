@@ -14,9 +14,9 @@ use crate::agent::{
     ParseErrF,
 };
 use chrono::Utc;
-use parking_lot::{RwLock, RwLockReadGuard};
-use std::cmp::Ordering as CmpOrdering;
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::mem;
+use std::{cmp::Ordering as CmpOrdering, time::Duration};
 use std::{
     collections::HashMap,
     convert::TryFrom,
@@ -26,6 +26,9 @@ use std::{
         Arc,
     },
 };
+
+const CLEAN_UP_THRESHOLD: usize = 100;
+const WRITE_LOCK_RETRIES: usize = 100;
 
 /// Acts as a wrapper for the Belief Maintenance System for a given agent.
 ///
@@ -75,7 +78,7 @@ fn internal_overwrite_data<T: BmsKind>(
     // drop old records
     lock.truncate(0);
     // insert new records
-    for rec in &*other.records.read() {
+    for rec in &*other.acquire_read_lock() {
         lock.push(rec.clone())
     }
     first
@@ -89,7 +92,7 @@ fn internal_overwrite_loc_data<T: BmsKind>(
     first: &BmsWrapper<T>,
     spatial_data: BmsWrapper<IsSpatialData>,
 ) -> Result<(), ()> {
-    let spatial_data = &*spatial_data.records.read();
+    let spatial_data = &*spatial_data.acquire_read_lock();
     let location = match spatial_data.last() {
         Some(loc) if spatial_data.len() == 1 => loc.location.clone(),
         _ => return Err(()),
@@ -141,7 +144,7 @@ impl TryFrom<&BmsWrapper<RecordHistory>> for BmsWrapper<IsTimeData> {
     type Error = ();
 
     fn try_from(value: &BmsWrapper<RecordHistory>) -> Result<Self, Self::Error> {
-        let values = &*value.records.read();
+        let values = &*value.acquire_read_lock();
         match values.len() {
             1 if values[0].value.is_some() => {}
             2 if values[0].value.is_some() && values[1].value.is_some() => {}
@@ -164,7 +167,7 @@ impl TryFrom<&BmsWrapper<RecordHistory>> for BmsWrapper<IsSpatialData> {
     type Error = ();
 
     fn try_from(value: &BmsWrapper<RecordHistory>) -> Result<Self, Self::Error> {
-        let values = &*value.records.read();
+        let values = &*value.acquire_read_lock();
         // spatial data only should have exactly one record
         if values.len() != 1 {
             return Err(());
@@ -187,13 +190,13 @@ impl TryFrom<&BmsWrapper<RecordHistory>> for BmsWrapper<IsSpatialData> {
 impl<T: BmsKind> BmsWrapper<T> {
     /// Get the last time from which the record value applies.
     pub fn get_last_time(&self) -> Time {
-        let lock = self.records.read();
+        let lock = self.acquire_read_lock();
         let rec = lock.last().unwrap();
         rec.time
     }
 
     pub fn get_last_value(&self) -> (Option<f32>, Option<Point>) {
-        let records = self.records.read();
+        let records = self.acquire_read_lock();
         if let Some(rec) = records.last() {
             (rec.value, rec.location.clone())
         } else {
@@ -206,8 +209,26 @@ impl<T: BmsKind> BmsWrapper<T> {
         self
     }
 
+    /// Returns a guarded shared reference to the internal record log.
     pub fn acquire_read_lock(&self) -> RwLockReadGuard<Vec<BmsRecord>> {
         self.records.read()
+    }
+
+    /// Returns a guarded exclusive reference to the internal record log.
+    fn acquire_write_lock(&self) -> RwLockWriteGuard<Vec<BmsRecord>> {
+        for retry in 0..WRITE_LOCK_RETRIES {
+            // optimistally try to lock to append to records; retry for a number of times waiting between retrials
+            // under heavy stress otherwise deadlocks were observed when scheduling an exclusive lock request
+            if let Some(records) = self.records.try_write_for(Duration::from_nanos(100)) {
+                return records;
+            }
+            log::warn!(
+                "retrying acquiring rec lock exclusive access, attempt #{}",
+                retry + 1
+            );
+            std::thread::sleep(Duration::from_nanos(100));
+        }
+        unreachable!("deadlock detected!");
     }
 }
 
@@ -222,7 +243,12 @@ impl BmsWrapper<RecordHistory> {
     }
 
     fn cleanup_records(&self) {
-        let records = &mut *self.records.write();
+        let records = &mut *self.acquire_write_lock();
+        if records.len() < CLEAN_UP_THRESHOLD {
+            // only perform a cleanup if more than 100 records have been registered
+            return;
+        }
+
         let l = records.len() - 2;
         let mut remove_ls: Vec<usize> = vec![];
         for (i, rec) in records[..l].iter().enumerate() {
@@ -239,7 +265,7 @@ impl BmsWrapper<RecordHistory> {
     /// Compare the last record on this bms to a given time and returns
     /// the newest of both.
     pub fn get_newest_date(&self, other: Time) -> Option<Time> {
-        let lock = &*self.records.read();
+        let lock = &*self.acquire_read_lock();
         let rec = lock.last().unwrap();
         if rec.time > other {
             Some(rec.time)
@@ -250,7 +276,7 @@ impl BmsWrapper<RecordHistory> {
 
     /// Set a producer for the last truth value
     pub fn set_last_rec_producer(&self, produced: Option<(SentID, Time)>) {
-        let records = &mut *self.records.write();
+        let records = &mut *self.acquire_write_lock();
         let last = records.last_mut().unwrap();
         last.was_produced = produced;
     }
@@ -264,7 +290,7 @@ impl BmsWrapper<RecordHistory> {
     /// be rolled back recursively.
     pub(in crate::agent) fn rollback_one_once(&self, other: &Self) {
         // Write lock to guarantee atomicity of the operation
-        let lock_self = &mut *self.records.write();
+        let lock_self = &mut *self.acquire_write_lock();
         let lock_other = &mut *other.records.write();
         let own_is_newer = {
             let own_last_time = lock_self.last_mut().unwrap();
@@ -309,7 +335,7 @@ impl BmsWrapper<RecordHistory> {
     }
 
     fn rollback(&self, sent_id: SentID, at_time: &Time) {
-        let lock = &mut *self.records.write();
+        let lock = &mut *self.acquire_write_lock();
         let rollback_this = {
             let last = lock.last().unwrap();
             if let Some((other_id, ref production_time)) = last.was_produced {
@@ -326,8 +352,8 @@ impl BmsWrapper<RecordHistory> {
     /// Compare the time of the last record of two BMS and return
     /// the ordering of self vs. other.
     pub fn cmp_by_time(&self, other: &Self) -> CmpOrdering {
-        let lock0 = &*self.records.read();
-        let lock1 = &*other.records.read();
+        let lock0 = &*self.acquire_read_lock();
+        let lock1 = &*other.acquire_read_lock();
         let own_last_time = &lock0.last().unwrap().time;
         let other_last_time = &lock1.last().unwrap().time;
         own_last_time.cmp(other_last_time)
@@ -356,7 +382,7 @@ impl BmsWrapper<RecordHistory> {
         value: Option<f32>,
         was_produced: Option<(SentID, Time)>,
     ) {
-        let mut records = self.records.write();
+        let mut records = self.acquire_write_lock();
         let production_time = match was_produced {
             Some((_, production_time)) => Some(production_time),
             None => None,
@@ -380,7 +406,7 @@ impl BmsWrapper<RecordHistory> {
     }
 
     fn add_produced_entry(&self, produced: Grounded, with_val: Option<f32>) {
-        let mut records = self.records.write();
+        let mut records = self.acquire_write_lock();
         let record = records.last_mut().unwrap();
         record.add_produced_entry((produced, with_val));
     }
@@ -406,7 +432,7 @@ impl BmsWrapper<RecordHistory> {
                     let ask = {
                         // avoid keeping the lock; since it may deadlock in the next iteration,
                         // after calling `ask_processed` again.
-                        let func_lock = func.bms.records.read();
+                        let func_lock = func.bms.acquire_read_lock();
                         let last = func_lock.last().unwrap();
                         if last.time > *cmp_rec {
                             // if it was produced, run again a test against the kb to check
@@ -427,7 +453,7 @@ impl BmsWrapper<RecordHistory> {
                             let mut value = None;
                             let mut loc = None;
                             {
-                                let recs = &*func.bms.records.read();
+                                let recs = &*func.bms.acquire_read_lock();
                                 for rec in recs.iter().rev() {
                                     if rec.was_produced.is_none() {
                                         time = Some(rec.time);
@@ -447,7 +473,7 @@ impl BmsWrapper<RecordHistory> {
                     let ask = {
                         // avoid keeping the lock; since it may deadlock in the next iteration,
                         // after calling `ask_processed` again.
-                        let recs = &*cls.bms.as_ref().unwrap().records.read();
+                        let recs = &*cls.bms.as_ref().unwrap().acquire_read_lock();
                         let last = recs.last().unwrap();
                         if last.time > *cmp_rec {
                             true
@@ -466,7 +492,7 @@ impl BmsWrapper<RecordHistory> {
                             let mut value = None;
                             let mut loc = None;
                             {
-                                let recs = bms.records.read();
+                                let recs = bms.acquire_read_lock();
                                 for rec in recs.iter().rev() {
                                     if rec.was_produced.is_none() {
                                         time = Some(rec.time);
@@ -489,10 +515,10 @@ impl BmsWrapper<RecordHistory> {
             let old_recs;
             {
                 let mut new_recs: Vec<BmsRecord> = vec![];
-                for rec in &*data.records.read() {
+                for rec in &*data.acquire_read_lock() {
                     new_recs.push(rec.clone())
                 }
-                let prev_recs = &mut *self.records.write();
+                let prev_recs = &mut *self.acquire_write_lock();
                 mem::swap(prev_recs, &mut new_recs);
                 old_recs = new_recs;
             }
@@ -505,12 +531,12 @@ impl BmsWrapper<RecordHistory> {
         }
 
         let (up_rec_value, up_rec_date, up_rec_loc) = {
-            let lock = data.records.read();
+            let lock = data.acquire_read_lock();
             let last = lock.last().unwrap();
             (last.value, last.time, last.location.clone())
         };
         let (last_rec_value, last_rec_date, last_rec_loc) = {
-            let lock = self.records.read();
+            let lock = self.acquire_read_lock();
             let last = lock.last().unwrap();
             (last.value, last.time, last.location.clone())
         };
@@ -534,7 +560,7 @@ impl BmsWrapper<RecordHistory> {
             let old_recs;
             {
                 let mut new_recs: Vec<BmsRecord> = vec![];
-                let records = &mut *self.records.write();
+                let records = &mut *self.acquire_write_lock();
                 let newest_rec = records.pop().unwrap();
                 new_recs.push(newest_rec);
                 mem::swap(records, &mut new_recs);
@@ -554,7 +580,7 @@ impl BmsWrapper<RecordHistory> {
             let last = {
                 // in order to avoid deadlocks, pop the old record temporarily
                 // and push it back after the necessary checks, then sort by age
-                let mut records = self.records.write();
+                let mut records = self.acquire_write_lock();
                 let pos = records.len() - 2;
                 records.remove(pos)
             };
@@ -562,7 +588,7 @@ impl BmsWrapper<RecordHistory> {
                 ask_processed(entry, &last_rec_date);
             }
             {
-                let records = &mut *self.records.write();
+                let records = &mut *self.acquire_write_lock();
                 records.push(last);
                 records.sort_by(|a, b| a.time.cmp(&b.time));
             }
@@ -571,7 +597,7 @@ impl BmsWrapper<RecordHistory> {
     }
 
     pub fn record_len(&self) -> usize {
-        self.records.read().len()
+        self.acquire_read_lock().len()
     }
 
     pub fn of_predicate(&mut self) {
@@ -639,8 +665,8 @@ impl BmsWrapper<IsTimeData> {
     ///
     /// This operation is meant to be used when asserting new facts.
     pub fn merge_since_until(&mut self, until: &Self) -> Result<(), errors::BmsError> {
-        let mut self_records = self.records.write();
-        let other_records = until.records.read();
+        let mut self_records = self.acquire_write_lock();
+        let other_records = until.acquire_read_lock();
 
         if self_records.is_empty() || other_records.is_empty() {
             return Err(errors::BmsError::EmptyRecordList);
@@ -666,7 +692,7 @@ impl BmsWrapper<IsTimeData> {
 
     /// Replaces the value of the last, active, record.
     pub fn replace_value(&self, val: Option<f32>) {
-        let records = &mut *self.records.write();
+        let records = &mut *self.acquire_write_lock();
         let last = records.last_mut().unwrap();
         last.value = val;
     }
@@ -790,8 +816,8 @@ impl BmsWrapper<IsSpatialData> {
     ///
     /// This operation is meant to be used with the `move` operation.
     pub fn merge_from_to(&mut self, to: &Self) -> Result<(), errors::BmsError> {
-        let mut self_records = self.records.write();
-        let other_records = to.records.read();
+        let mut self_records = self.acquire_write_lock();
+        let other_records = to.acquire_read_lock();
 
         if self_records.is_empty() || other_records.is_empty() {
             return Err(errors::BmsError::EmptyRecordList);
@@ -812,7 +838,7 @@ impl BmsWrapper<IsSpatialData> {
 
 impl<T: BmsKind> std::clone::Clone for BmsWrapper<T> {
     fn clone(&self) -> BmsWrapper<T> {
-        let recs = &*self.records.read();
+        let recs = &*self.acquire_read_lock();
         BmsWrapper {
             records: RwLock::new(recs.clone()),
             pred: self.pred,
