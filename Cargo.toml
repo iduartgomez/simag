@@ -10,12 +10,13 @@ default-run = "simag"
 
 [dependencies]
 ansi_term =  "0.12.1"
-once_cell = "^1.3.0"
+once_cell = "1.5"
 
 # own deps:
-simag_core = { path = "simag_core" }
+simag_core = { path = "./simag_core" }
+simag_networking = { path = "./simag_networking" }
 # simag_maths = { path = "simag_maths" }
-simag_terminal = { path = "simag_terminal" }
+simag_term_utils = { path = "./simag_terminal", optional = true }
 
 [[bin]]
 name = "simag"
@@ -24,10 +25,15 @@ path = "bin/main.rs"
 [[bin]]
 name = "manager"
 path = "bin/manager.rs"
+required-features = ["simag_term_utils"]
 
 [[bin]]
 name = "repl"
 path = "bin/repl.rs"
+required-features = ["simag_term_utils"]
+
+[features]
+repl = ["simag_term_utils"]
 
 [workspace]
 members = ["simag_core", "simag_networking", "simag_terminal"]

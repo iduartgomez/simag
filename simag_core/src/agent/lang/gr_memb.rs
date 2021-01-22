@@ -212,7 +212,7 @@ impl GroundedMemb {
     /// last one is none.
     pub fn is_time_interval(&self) -> bool {
         if let Some(bms) = &self.bms {
-            bms.record_len() == 2 && bms.get_last_value().0.is_none()
+            bms.records_log_size() == 2 && bms.get_last_value().0.is_none()
         } else {
             false
         }

@@ -74,7 +74,7 @@ fn internal_overwrite_data<T: BmsKind>(
     first: &BmsWrapper<T>,
     other: BmsWrapper<RecordHistory>,
 ) -> Result<(), ()> {
-    let lock = &mut *first.records.write();
+    let lock = &mut *first.acquire_write_lock();
     // drop old records
     lock.truncate(0);
     // insert new records
@@ -98,7 +98,7 @@ fn internal_overwrite_loc_data<T: BmsKind>(
         _ => return Err(()),
     };
 
-    for rec in &mut *first.records.write() {
+    for rec in &mut *first.acquire_write_lock() {
         rec.location = location.clone();
     }
 
@@ -210,11 +210,13 @@ impl<T: BmsKind> BmsWrapper<T> {
     }
 
     /// Returns a guarded shared reference to the internal record log.
+    #[inline]
     pub fn acquire_read_lock(&self) -> RwLockReadGuard<Vec<BmsRecord>> {
         self.records.read()
     }
 
     /// Returns a guarded exclusive reference to the internal record log.
+    #[inline]
     fn acquire_write_lock(&self) -> RwLockWriteGuard<Vec<BmsRecord>> {
         for retry in 0..WRITE_LOCK_RETRIES {
             // optimistally try to lock to append to records; retry for a number of times waiting between retrials
@@ -239,26 +241,6 @@ impl BmsWrapper<RecordHistory> {
             pred: None,
             overwrite: AtomicBool::new(false),
             _kind: PhantomData,
-        }
-    }
-
-    fn cleanup_records(&self) {
-        let records = &mut *self.acquire_write_lock();
-        if records.len() < CLEAN_UP_THRESHOLD {
-            // only perform a cleanup if more than 100 records have been registered
-            return;
-        }
-
-        let l = records.len() - 2;
-        let mut remove_ls: Vec<usize> = vec![];
-        for (i, rec) in records[..l].iter().enumerate() {
-            if rec.produced.is_empty() && rec.was_produced.is_some() {
-                remove_ls.push(i);
-            }
-        }
-        remove_ls.reverse();
-        for pos in remove_ls {
-            records.remove(pos);
         }
     }
 
@@ -291,7 +273,7 @@ impl BmsWrapper<RecordHistory> {
     pub(in crate::agent) fn rollback_one_once(&self, other: &Self) {
         // Write lock to guarantee atomicity of the operation
         let lock_self = &mut *self.acquire_write_lock();
-        let lock_other = &mut *other.records.write();
+        let lock_other = &mut *other.acquire_write_lock();
         let own_is_newer = {
             let own_last_time = lock_self.last_mut().unwrap();
             let other_last_time = lock_other.last_mut().unwrap();
@@ -362,8 +344,7 @@ impl BmsWrapper<RecordHistory> {
     /// Return the value valid at the given time, if any.
     pub fn get_record_at_time(&self, cmp_time: Time) -> (Option<f32>, Option<Point>) {
         if let Some(rec) = self
-            .records
-            .read()
+            .acquire_read_lock()
             .iter()
             .take_while(|rec| rec.time <= cmp_time)
             .last()
@@ -402,13 +383,7 @@ impl BmsWrapper<RecordHistory> {
         };
         records.push(record);
         // FIXME: records always should be sorted by time, but this makes some tests fail
-        // records.sort_by(|a, b| a.time.cmp(&b.time));
-    }
-
-    fn add_produced_entry(&self, produced: Grounded, with_val: Option<f32>) {
-        let mut records = self.acquire_write_lock();
-        let record = records.last_mut().unwrap();
-        record.add_produced_entry((produced, with_val));
+        records.sort_by(|a, b| a.time.cmp(&b.time));
     }
 
     /// Look for all the changes that were produced, before an update,
@@ -552,51 +527,53 @@ impl BmsWrapper<RecordHistory> {
         owner.update_value(up_rec_value);
         self.add_new_record(Some(up_rec_date), up_rec_loc, up_rec_value, was_produced);
 
-        // check if there are any inconsistencies with the knowledge produced with
-        // the previous value
+        // check if there are any inconsistencies with the knowledge produced with the previous value
         if up_rec_date < last_rec_date {
             // new value is older, in face of new information all previously
             // produced knowledge must be checked to see if it still holds true
-            let old_recs;
-            {
-                let mut new_recs: Vec<BmsRecord> = vec![];
+            let old_recs = {
+                let mut new_recs: Vec<BmsRecord> = Vec::with_capacity(1);
                 let records = &mut *self.acquire_write_lock();
                 let newest_rec = records.pop().unwrap();
                 new_recs.push(newest_rec);
                 mem::swap(records, &mut new_recs);
-                old_recs = new_recs;
-            }
-            for rec in old_recs {
-                for entry in &rec.produced {
-                    ask_processed(entry, &last_rec_date);
-                }
+                new_recs
+            };
+            for entry in old_recs.iter().map(|rec| rec.produced.iter()).flatten() {
+                ask_processed(entry, &last_rec_date);
             }
         } else if up_rec_date > last_rec_date || up_rec_value != last_rec_value {
-            // new value is more recent, check only the last produced values
+            // new value is more recent, check only the last produced values.
+            // if both times are the same there is an incongruency.
             //
-            // if both times are the same there is an incongruency
             // replace previous record value and check that all produced knowledge
             // with that value still holds true
-            let last = {
-                // in order to avoid deadlocks, pop the old record temporarily
+            let old_record = {
+                // in order to avoid deadlocks, remove the previous record temporarily
                 // and push it back after the necessary checks, then sort by age
                 let mut records = self.acquire_write_lock();
-                let pos = records.len() - 2;
-                records.remove(pos)
+                if records.len() > 1 {
+                    let pos = records.len() - 2;
+                    Some(records.remove(pos))
+                } else {
+                    None
+                }
             };
-            for entry in &last.produced {
+            for entry in old_record.iter().map(|r| r.produced.iter()).flatten() {
                 ask_processed(entry, &last_rec_date);
             }
             {
                 let records = &mut *self.acquire_write_lock();
-                records.push(last);
+                if let Some(old_record) = old_record {
+                    records.push(old_record);
+                }
                 records.sort_by(|a, b| a.time.cmp(&b.time));
             }
         }
         self.cleanup_records()
     }
 
-    pub fn record_len(&self) -> usize {
+    pub fn records_log_size(&self) -> usize {
         self.acquire_read_lock().len()
     }
 
@@ -622,6 +599,33 @@ impl BmsWrapper<RecordHistory> {
                 }
             }
             Vec::new()
+        }
+    }
+
+    fn add_produced_entry(&self, produced: Grounded, with_val: Option<f32>) {
+        let mut records = self.acquire_write_lock();
+        let record = records.last_mut().unwrap();
+        record.add_produced_entry((produced, with_val));
+    }
+
+    fn cleanup_records(&self) {
+        let records = &mut *self.acquire_write_lock();
+        if records.len() < CLEAN_UP_THRESHOLD {
+            // only perform a cleanup if more than 100 records have been registered
+            return;
+        }
+
+        // keep the last two records regardless
+        let last_two = records.len() - 2;
+        let mut remove_ls: Vec<usize> = vec![];
+        for (i, rec) in records[..last_two].iter().enumerate() {
+            if rec.produced.is_empty() && rec.was_produced.is_some() {
+                remove_ls.push(i);
+            }
+        }
+        remove_ls.reverse();
+        for pos in remove_ls {
+            records.remove(pos);
         }
     }
 }
@@ -699,8 +703,7 @@ impl BmsWrapper<IsTimeData> {
 
     pub fn get_time_interval(&self) -> Result<[(Time, Option<f32>); 2], ()> {
         let values: Vec<_> = self
-            .records
-            .read()
+            .acquire_read_lock()
             .iter()
             .take(2)
             .map(|r| (r.time, r.value))
@@ -912,7 +915,7 @@ pub(in crate::agent) fn build_declaration_bms(
             let t = f_bms.clone();
             {
                 // replace first because it may be an interval
-                let records = &mut *t.records.write();
+                let records = &mut *t.acquire_write_lock();
                 records.first_mut().unwrap().value = val;
             }
             *bms = Arc::new(t);
@@ -1004,10 +1007,10 @@ mod test {
         rep.tell(fol).unwrap();
         let answ0 = rep.ask("(fat[$Pancho=0])");
         assert_eq!(answ0.unwrap().get_results_single(), Some(true));
-        let answ1 = rep.ask("(ugly[$Pancho=0])");
-        assert_eq!(answ1.unwrap().get_results_single(), Some(true));
         let answ2 = rep.ask("(sad[$Pancho=0])");
         assert_eq!(answ2.unwrap().get_results_single(), None);
+        let answ1 = rep.ask("(ugly[$Pancho=0])");
+        assert_eq!(answ1.unwrap().get_results_single(), Some(true));
     }
 
     #[test]

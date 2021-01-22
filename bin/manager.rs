@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use simag_terminal::{Action, ReplInterpreter, Terminal};
+use simag_term_utils::{Action, ReplInterpreter, Terminal};
 
 extern crate ansi_term;
 

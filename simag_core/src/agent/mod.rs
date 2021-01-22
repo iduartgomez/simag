@@ -2,7 +2,6 @@ pub(self) mod config;
 mod kb;
 mod lang;
 
-pub use self::kb::repl::SimagInterpreter;
 pub(crate) use self::kb::repr::Representation;
 pub use self::kb::repr::{Answer, QueryErr};
 pub(self) use self::lang::ParseErrF;

@@ -19,7 +19,7 @@ smallvec = "1.6"
 uuid = { version = "0.8.2", features = ["v4"]}
 
 # internal
-simag_terminal = { path = "../simag_terminal" }
+# simag_terminal = { path = "../simag_terminal" }
 
 [dev-dependencies]
 criterion = "^0.3.2"
