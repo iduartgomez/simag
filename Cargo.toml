@@ -4,6 +4,7 @@ version = "0.0.1"
 authors = ["Ignacio Duart Gómez <iduartgomez@gmail.com>"]
 autobins = false
 edition = "2018"
+rust = "1.49"
 license = "Apache-2.0 OR MIT"
 codecov = { repository = "iduartgomez/simag", branch = "master", service = "github" }
 default-run = "simag"
