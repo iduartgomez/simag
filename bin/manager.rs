@@ -1,6 +1,7 @@
 //! SimAg Manager
 //!
 //! Creation and management for for SimAg simulations.
+#![cfg(target_family = "unix")]
 
 use std::collections::HashMap;
 
