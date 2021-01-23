@@ -1,3 +1,5 @@
+use tui::text::Text;
+
 #[derive(PartialEq)]
 pub enum Action<'a> {
     /// Signal to the terminal that the interpreter is currently reading
@@ -6,14 +8,10 @@ pub enum Action<'a> {
     /// Signal to the terminal that the interpreter is done ingesting
     /// source of interpretable instructions.
     StopReading,
-    /// Output a single line message to the terminal.  
-    Write((String, bool)),
-    /// Output a single line message to the terminal.
-    WriteStr((&'a str, bool)),
-    /// Output multiple lines message to the terminal.
-    WriteMulti((String, bool)),
-    /// Output multiple lines message to the terminal.
-    WriteMultiStr((&'a str, bool)),
+    /// Writes some text to the input box in the terminal
+    WriteInputText(Text<'a>),
+    /// Writes some text to the output box in the terminal
+    WriteInfoText(Text<'a>),
     /// Signal an interpretable command to the terminal main event loop
     /// for the interpreter.
     Command(String),

@@ -1,16 +1,12 @@
 //! SimAg Manager
 //!
 //! Creation and management for for SimAg simulations.
-use std::collections::HashMap;
-
-use simag_term_utils::{Action, ReplInterpreter};
-
-extern crate ansi_term;
-
 use ansi_term::Colour::{Black, Blue, Green, Red, White};
 use ansi_term::{ANSIString, ANSIStrings, Style};
-
 use once_cell::sync::Lazy;
+use simag_term_utils::{Action, ReplInterpreter};
+use std::collections::HashMap;
+use tui::text::Text;
 
 // Env management
 
@@ -74,12 +70,12 @@ impl Manager {
                 return self.messages.help_for_cmd(&cmd);
             }
         }
-        Action::WriteStr((self.messages.done(), true))
+        Action::WriteInfoText(Text::from(self.messages.done()))
     }
 
     fn clean_up(&self) -> Action<'static> {
         let clean_up_pipe = vec![
-            Action::WriteStr(("Closing gracefully, please wait ...", false)),
+            Action::WriteInfoText(Text::from("Closing gracefully, please wait ...")),
             Action::Command("closing".to_string()),
         ];
         Action::Chain(clean_up_pipe)
@@ -100,15 +96,15 @@ impl ReplInterpreter for Manager {
     fn cmd_executor<'b, 'a: 'b>(&'b mut self, command: String) -> Option<Action<'a>> {
         match command.as_str() {
             "make" => Some(self.make()),
-            "help" => Some(Action::WriteMultiStr((self.messages.help(), true))),
+            "help" => Some(Action::WriteInfoText(Text::from(self.messages.help()))),
             "quit" => Some(self.clean_up()),
             "closing" => Some(Action::Chain(vec![
                 Action::Sleep(2000),
-                Action::WriteStr((self.messages.done(), false)),
+                Action::WriteInfoText(Text::from(self.messages.done())),
                 Action::Sleep(1000),
                 Action::Exit,
             ])),
-            _ => Some(Action::WriteMultiStr((self.messages.unknown(), true))),
+            _ => Some(Action::WriteInfoText(Text::from(self.messages.unknown()))),
         }
     }
 
@@ -229,9 +225,9 @@ impl ConsoleMsg {
                     i += 1;
                 }
                 let msg = format!("{}", ANSIStrings(&msg_new));
-                Action::WriteMulti((msg, true))
+                Action::WriteInfoText(Text::from(msg))
             }
-            _ => Action::WriteStr(("Wrong arguments...", true)),
+            _ => Action::WriteInfoText(Text::from("Wrong arguments...")),
         }
     }
 
@@ -240,7 +236,7 @@ impl ConsoleMsg {
             "Arguments for {}:\n --num <NODES>",
             Black.bold().on(White).paint(&cmd.cmd)
         );
-        Action::WriteMulti((cmd_help, true))
+        Action::WriteInfoText(Text::from(cmd_help))
     }
 }
 
@@ -260,14 +256,13 @@ static INFO: Lazy<String> = Lazy::new(|| {
 
 fn main() {
     if cfg!(target_family = "unix") {
-        #[cfg(feature = "repl_unix")]
         repl_unix::init_unix()
     } else {
         todo!("no simag manager supported yet for non-unix platforms!")
     }
 }
 
-#[cfg(all(target_family = "unix", feature = "repl_unix"))]
+#[cfg(all(target_family = "unix"))]
 mod repl_unix {
     use super::*;
     use simag_term_utils::Terminal;
@@ -276,6 +271,6 @@ mod repl_unix {
         let manager = Manager::new();
         let mut terminal = Terminal::new(manager);
         terminal.print_multiline(&INFO, true);
-        terminal.start_event_loop();
+        terminal.start_event_loop().unwrap();
     }
 }

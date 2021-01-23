@@ -1,8 +1,8 @@
 use std::io::Write;
 use std::time::{Duration, Instant};
 
-pub(crate) struct Cursor<O> {
-    _writter: std::marker::PhantomData<O>,
+pub(crate) struct Cursor<W> {
+    _writter: std::marker::PhantomData<W>,
     pub column: u16,
     pub row: u16,
     space: (u16, u16),
@@ -11,44 +11,44 @@ pub(crate) struct Cursor<O> {
     pub effect_on: bool,
 }
 
-impl<O: Write> Default for Cursor<O> {
+impl<W: Write> Default for Cursor<W> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<O: Write> Cursor<O> {
-    pub fn new() -> Cursor<O> {
+impl<W: Write> Cursor<W> {
+    pub fn new() -> Cursor<W> {
         Cursor {
             _writter: std::marker::PhantomData,
             row: 1,
             column: 1,
-            space: termion::terminal_size().unwrap(),
+            space: (0, 0),
             time: Instant::now(),
             show: true,
             effect_on: true,
         }
     }
 
-    pub fn action(&mut self, stdout: &mut O, action: CursorMovement) -> CursorMovement {
+    pub fn action(&mut self, writer: &mut W, action: CursorMovement) -> CursorMovement {
         match action {
             CursorMovement::MoveDown(pos) => {
-                self.move_down(stdout, pos);
+                self.move_down(writer, pos);
                 CursorMovement::None
             }
-            CursorMovement::MoveRight(pos) => self.move_right(stdout, pos),
-            CursorMovement::MoveLeft(pos) => self.move_left(stdout, pos),
+            CursorMovement::MoveRight(pos) => self.move_right(writer, pos),
+            CursorMovement::MoveLeft(pos) => self.move_left(writer, pos),
             CursorMovement::Newline => {
-                self.move_down(stdout, 1);
+                self.move_down(writer, 1);
                 CursorMovement::None
             }
             CursorMovement::None => CursorMovement::None,
         }
     }
 
-    pub fn side_effects(&mut self, stdout: &mut O) {
+    pub fn side_effects(&mut self, writer: &mut W) {
         // re-evaluate terminal size for dynamic changes in size
-        self.space = termion::terminal_size().unwrap();
+        // self.space = termion::terminal_size().unwrap();
 
         // cursor effect
         if !self.effect_on {
@@ -58,23 +58,23 @@ impl<O: Write> Cursor<O> {
         if nt.duration_since(self.time) >= Duration::new(0, 500_000_000) {
             if self.show {
                 self.show = false;
-                self.hide(stdout);
+                self.hide(writer);
             } else {
                 self.show = true;
-                self.show(stdout);
+                self.show(writer);
             }
             self.time = nt;
         }
     }
 
-    pub fn show(&self, stdout: &mut O) {
-        write!(stdout, "{}", termion::cursor::Show).unwrap();
-        stdout.flush().unwrap();
+    pub fn show(&self, writer: &mut W) {
+        // write!(writer, "{}", termion::cursor::Show).unwrap();
+        // writer.flush().unwrap();
     }
 
-    pub fn hide(&self, stdout: &mut O) {
-        write!(stdout, "{}", termion::cursor::Hide).unwrap();
-        stdout.flush().unwrap();
+    pub fn hide(&self, writer: &mut W) {
+        // write!(writer, "{}", termion::cursor::Hide).unwrap();
+        // writer.flush().unwrap();
     }
 
     pub fn command_line_start(&mut self) {
@@ -85,32 +85,32 @@ impl<O: Write> Cursor<O> {
         self.column <= 5
     }
 
-    fn move_down(&mut self, stdout: &mut O, pos: u16) {
+    fn move_down(&mut self, writer: &mut W, pos: u16) {
         if self.row + pos > self.space.1 {
-            write!(stdout, "{}", termion::scroll::Up(pos)).unwrap();
+            // write!(writer, "{}", termion::scroll::Up(pos)).unwrap();
         }
         self.row += pos;
-        write!(stdout, "{}", termion::cursor::Goto(1, self.row)).unwrap();
-        stdout.flush().unwrap();
+        // write!(writer, "{}", termion::cursor::Goto(1, self.row)).unwrap();
+        writer.flush().unwrap();
     }
 
-    fn move_right(&mut self, stdout: &mut O, pos: u16) -> CursorMovement {
+    fn move_right(&mut self, writer: &mut W, pos: u16) -> CursorMovement {
         if self.column + pos > self.space.0 {
             return CursorMovement::Newline;
         } else {
             self.column += pos;
         }
-        write!(stdout, "{}", termion::cursor::Goto(self.column, self.row)).unwrap();
-        stdout.flush().unwrap();
+        // write!(writer, "{}", termion::cursor::Goto(self.column, self.row)).unwrap();
+        writer.flush().unwrap();
         CursorMovement::None
     }
 
-    fn move_left(&mut self, stdout: &mut O, pos: u16) -> CursorMovement {
+    fn move_left(&mut self, writer: &mut W, pos: u16) -> CursorMovement {
         if self.column > 2 {
             self.column -= pos;
         }
-        write!(stdout, "{}", termion::cursor::Goto(self.column, self.row)).unwrap();
-        stdout.flush().unwrap();
+        // write!(writer, "{}", termion::cursor::Goto(self.column, self.row)).unwrap();
+        writer.flush().unwrap();
         CursorMovement::None
     }
 }

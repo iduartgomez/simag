@@ -51,14 +51,14 @@ jobs:
         displayName: cargo check
       - script: cargo check --no-default-features --workspace
         displayName: cargo check --no-default-features
-      - script: cargo test --all-features --workspace --features simag_networking,repl_unix
+      - script: cargo test --workspace --features simag_networking,repl_unix
         displayName: cargo test
       - script: cargo doc --no-deps --workspace
         displayName: cargo doc
 
   - job: main_macos
     displayName: Compile and test MacOS
-    dependsOn: ["main_linux"]
+    dependsOn: []
     pool:
       vmImage: macOS-10.15
     continueOnError: "false"
@@ -77,7 +77,7 @@ jobs:
 
   - job: main_windows
     displayName: Compile and test Windows
-    dependsOn: ["main_macos"]
+    dependsOn: []
     pool:
       vmImage: windows-2019
     continueOnError: "false"

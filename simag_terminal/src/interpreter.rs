@@ -15,6 +15,7 @@
 //! to execute the command.
 use crate::Action;
 use simag_core::{Agent, Answer, QueryErr};
+use tui::text::Text;
 
 const HELP_COMMAND: &str = "\
 Welcome to the interactive Simag 0.0.1 interpreter!
@@ -88,11 +89,8 @@ pub trait ReplInterpreter {
         } else if currently_reading {
             self.set_reading(false);
             match self.evaluate() {
-                Ok(Action::Write(p)) => Action::Write(p),
-                Ok(Action::WriteStr(p)) => Action::WriteStr(p),
-                Ok(Action::WriteMulti(p)) => Action::WriteMulti(p),
-                Ok(Action::WriteMultiStr(p)) => Action::WriteMultiStr(p),
-                Err(msg) => Action::WriteMulti((msg, true)),
+                Ok(Action::WriteInputText(p)) => Action::WriteInputText(p),
+                Err(msg) => Action::WriteInfoText(Text::from(msg)),
                 _ => Action::StopReading,
             }
         } else if let Some(command) = self.queued_command() {
@@ -211,13 +209,13 @@ impl<'a> ReplInterpreter for SimagInterpreter<'a> {
 
     fn cmd_executor<'b, 'c: 'b>(&'b mut self, command: String) -> Option<Action<'c>> {
         match Command::from(command.as_str()) {
-            Command::Err => Some(Action::WriteStr(("Unknown command", true))),
-            Command::Help => Some(Action::WriteMultiStr((HELP_COMMAND, true))),
-            Command::HelpCommands => Some(Action::WriteMultiStr((HELP_COMMANDS, true))),
-            Command::HelpQuerying => Some(Action::WriteMultiStr((HELP_QUERYING, true))),
+            Command::Err => Some(Action::WriteInfoText(Text::from("Unknown command"))),
+            Command::Help => Some(Action::WriteInfoText(Text::from(HELP_COMMAND))),
+            Command::HelpCommands => Some(Action::WriteInfoText(Text::from(HELP_COMMANDS))),
+            Command::HelpQuerying => Some(Action::WriteInfoText(Text::from(HELP_QUERYING))),
             Command::Query(ResultQuery::Single) => match self.query_result(ResultQuery::Single) {
-                Ok(result) => Some(Action::WriteMulti((result, true))),
-                Err(msg) => Some(Action::WriteMulti((msg, true))),
+                Ok(result) => Some(Action::WriteInfoText(Text::from(result))),
+                Err(msg) => Some(Action::WriteInfoText(Text::from(msg))),
             },
             Command::Query(ResultQuery::Multiple) => todo!(),
             Command::Exit => Some(Action::Exit),
@@ -261,7 +259,9 @@ impl<'a> ReplInterpreter for SimagInterpreter<'a> {
                 },
             } {
                 self.result = Some(r);
-                Ok(Action::WriteStr(("Query executed succesfully", true)))
+                Ok(Action::WriteInfoText(Text::from(
+                    "Query executed succesfully",
+                )))
             } else {
                 self.result = None;
                 Err("Incorrect query".to_string())

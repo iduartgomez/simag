@@ -2,22 +2,22 @@
 use simag_term_utils::SimagInterpreter;
 
 const INFO: &str = "Simag Logic Lang 0.0.1 Interpreter\nType \"help\" for more information";
+
 fn main() {
     if cfg!(target_family = "unix") {
-        #[cfg(feature = "repl_unix")]
         repl_unix::init_unix()
     } else {
         todo!("no repl supported yet for non-unix platforms!")
     }
 }
 
-#[cfg(all(target_family = "unix", feature = "repl_unix"))]
+#[cfg(all(target_family = "unix"))]
 mod repl_unix {
     use super::*;
     use simag_term_utils::Terminal;
 
     struct SimagRepl<'a> {
-        terminal: Terminal<SimagInterpreter<'a>>,
+        terminal: Terminal<'a, SimagInterpreter<'a>>,
     }
 
     impl<'a> SimagRepl<'_> {
@@ -32,6 +32,6 @@ mod repl_unix {
         let interpreter = SimagInterpreter::new();
         let mut repl = SimagRepl::new(interpreter);
         repl.terminal.print_multiline(INFO, true);
-        repl.terminal.start_event_loop();
+        repl.terminal.start_event_loop().unwrap();
     }
 }

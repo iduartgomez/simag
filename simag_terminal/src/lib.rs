@@ -1,9 +1,8 @@
 mod action;
+mod cursor;
 mod interpreter;
-#[cfg(all(target_family = "unix", feature = "termion"))]
-mod unix;
+mod terminal;
 
 pub use action::Action;
 pub use interpreter::{ReplInterpreter, SimagInterpreter};
-#[cfg(all(target_family = "unix", feature = "termion"))]
-pub use unix::terminal::Terminal;
+pub use terminal::Terminal;
