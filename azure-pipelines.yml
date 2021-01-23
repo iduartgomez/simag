@@ -47,42 +47,49 @@ jobs:
           rust: stable
       - script: sudo apt-get install libxcb-shape0-dev libxcb-xfixes0-dev
         displayName: Install depedencies
-      - script: cargo check --workspace
+      - script: cargo check --workspace --features simag_networking,repl_unix
         displayName: cargo check
       - script: cargo check --no-default-features --workspace
         displayName: cargo check --no-default-features
-      - script: cargo check --all-features --workspace
-        displayName: cargo check --all-features
-      - script: cargo test --all-features --workspace
+      - script: cargo test --all-features --workspace --features simag_networking,repl_unix
         displayName: cargo test
       - script: cargo doc --no-deps --workspace
         displayName: cargo doc
 
-  - job: main_other_os
-    displayName: Compile and test
-    dependsOn: []
-    strategy:
-      matrix:
-        MacOS:
-          vmImage: macOS-10.15
-          rust: stable
-        Windows:
-          vmImage: windows-2019
-          rust: stable
+  - job: main_macos
+    displayName: Compile and test MacOS
+    dependsOn: ["main_linux"]
     pool:
-      vmImage: $(vmImage)
+      vmImage: macOS-10.15
     continueOnError: "false"
     steps:
       - template: install-rust.yml@templates
         parameters:
-          rust: $(rust)
-      - script: cargo check --workspace
+          rust: stable
+      - script: cargo check --workspace --features simag_networking,repl_unix
         displayName: cargo check
       - script: cargo check --no-default-features --workspace
         displayName: cargo check --no-default-features
-      - script: cargo check --all-features --workspace
-        displayName: cargo check --all-features
-      - script: cargo test --all-features --workspace
+      - script: cargo test --workspace --features simag_networking,repl_unix
+        displayName: cargo test
+      - script: cargo doc --no-deps --workspace
+        displayName: cargo doc
+
+  - job: main_windows
+    displayName: Compile and test Windows
+    dependsOn: ["main_macos"]
+    pool:
+      vmImage: windows-2019
+    continueOnError: "false"
+    steps:
+      - template: install-rust.yml@templates
+        parameters:
+          rust: stable
+      - script: cargo check --workspac --features simag_networking,repl_win
+        displayName: cargo check
+      - script: cargo check --no-default-features --workspace
+        displayName: cargo check --no-default-features
+      - script: cargo test --workspace --features simag_networking,repl_win
         displayName: cargo test
       - script: cargo doc --no-deps --workspace
         displayName: cargo doc

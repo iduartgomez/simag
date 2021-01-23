@@ -35,6 +35,7 @@ required-features = ["simag_term_utils"]
 
 [features]
 repl_unix = ["simag_term_utils", "simag_term_utils/unix_term"]
+repl_win = ["simag_term_utils"]
 
 [workspace]
 members = ["simag_core", "simag_networking", "simag_terminal"]
