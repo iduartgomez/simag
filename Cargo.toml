@@ -10,12 +10,12 @@ codecov = { repository = "iduartgomez/simag", branch = "master", service = "gith
 default-run = "simag"
 
 [dependencies]
-ansi_term =  "0.12.1"
+ansi_term =  "0.12"
 once_cell = "1.5"
 
 # own deps:
 simag_core = { path = "./simag_core" }
-simag_networking = { path = "./simag_networking" }
+simag_networking = { path = "./simag_networking", optional = true }
 # simag_maths = { path = "simag_maths" }
 simag_term_utils = { path = "./simag_terminal", optional = true }
 
@@ -34,7 +34,8 @@ path = "bin/repl.rs"
 required-features = ["simag_term_utils"]
 
 [features]
-repl = ["simag_term_utils"]
+repl_unix = ["simag_term_utils", "simag_term_utils/unix_term"]
+repl_win = ["simag_term_utils"]
 
 [workspace]
 members = ["simag_core", "simag_networking", "simag_terminal"]

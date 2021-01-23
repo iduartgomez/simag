@@ -12,8 +12,8 @@ use termion::raw::{IntoRawMode, RawTerminal};
 use termion::{async_stdin, AsyncReader};
 
 use crate::{
-    cursor::{Cursor, CursorMovement},
     interpreter::ReplInterpreter,
+    unix::cursor::{Cursor, CursorMovement},
     Action,
 };
 

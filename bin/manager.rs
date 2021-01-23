@@ -1,11 +1,9 @@
 //! SimAg Manager
 //!
 //! Creation and management for for SimAg simulations.
-#![cfg(target_family = "unix")]
-
 use std::collections::HashMap;
 
-use simag_term_utils::{Action, ReplInterpreter, Terminal};
+use simag_term_utils::{Action, ReplInterpreter};
 
 extern crate ansi_term;
 
@@ -261,8 +259,23 @@ static INFO: Lazy<String> = Lazy::new(|| {
 });
 
 fn main() {
-    let manager = Manager::new();
-    let mut terminal = Terminal::new(manager);
-    terminal.print_multiline(&INFO, true);
-    terminal.start_event_loop();
+    if cfg!(target_family = "unix") {
+        #[cfg(feature = "repl_unix")]
+        repl_unix::init_unix()
+    } else {
+        todo!("no simag manager supported yet for non-unix platforms!")
+    }
+}
+
+#[cfg(all(target_family = "unix", feature = "repl_unix"))]
+mod repl_unix {
+    use super::*;
+    use simag_term_utils::Terminal;
+
+    pub fn init_unix() {
+        let manager = Manager::new();
+        let mut terminal = Terminal::new(manager);
+        terminal.print_multiline(&INFO, true);
+        terminal.start_event_loop();
+    }
 }
