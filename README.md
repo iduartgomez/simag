@@ -1,4 +1,4 @@
-[![Build Status](https://dev.azure.com/iduartgomez/iduartgomez/_apis/build/status/simag-CI?branchName=master)](https://dev.azure.com/iduartgomez/iduartgomez/_build/latest?definitionId=1&branchName=master)  [![codecov](https://codecov.io/gh/iduartgomez/simag/branch/master/graph/badge.svg)](https://codecov.io/gh/iduartgomez/simag)
+[![Build Status](https://dev.azure.com/iduartgomez/iduartgomez/_apis/build/status/simag-CI?branchName=master)](https://dev.azure.com/iduartgomez/iduartgomez/_build/latest?definitionId=1&branchName=master) [![codecov](https://codecov.io/gh/iduartgomez/simag/branch/master/graph/badge.svg?token=ZU3I19FY60)](https://codecov.io/gh/iduartgomez/simag)
 
 # simAG #
 
