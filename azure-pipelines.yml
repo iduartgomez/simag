@@ -76,11 +76,15 @@ jobs:
       - template: install-rust.yml@templates
         parameters:
           rust: $(rust)
-      - script: cargo check -p simag_core -p simag_networking
+      - script: cargo check --workspace
         displayName: cargo check
-      - script: cargo test -p simag_core -p simag_networking
+      - script: cargo check --no-default-features --workspace
+        displayName: cargo check --no-default-features
+      - script: cargo check --all-features --workspace
+        displayName: cargo check --all-features
+      - script: cargo test --all-features --workspace
         displayName: cargo test
-      - script: cargo doc --no-deps --p simag_core -p simag_networking
+      - script: cargo doc --no-deps --workspace
         displayName: cargo doc
 
   - template: coverage.yml@templates
