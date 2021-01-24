@@ -1,17 +1,12 @@
 //! SimAg Manager
 //!
 //! Creation and management for for SimAg simulations.
-// use ansi_term::Colour::{Black, Blue, Green, Red, White};
-// use ansi_term::{ANSIString, ANSIStrings, Style};
-use once_cell::sync::Lazy;
 use simag_term_utils::{Action, Application, ReplInterpreter};
 use std::collections::HashMap;
 use tui::{
     style::{Color, Modifier, Style},
     text::{Span, Spans, Text},
 };
-
-// Env management
 
 struct Manager {
     messages: ConsoleMsg,
@@ -73,7 +68,7 @@ impl Manager {
                 return self.messages.help_for_cmd(&cmd);
             }
         }
-        Action::WriteInfoText(Text::from(self.messages.done()))
+        Action::WriteInfoText(self.messages.done().clone())
     }
 
     fn clean_up(&self) -> Action<'static> {
@@ -99,15 +94,15 @@ impl ReplInterpreter for Manager {
     fn cmd_executor<'b, 'a: 'b>(&'b mut self, command: String) -> Option<Action<'a>> {
         match command.as_str() {
             "make" => Some(self.make()),
-            "help" => Some(Action::WriteInfoText(Text::from(self.messages.help()))),
+            "help" => Some(Action::WriteInfoText(self.messages.help().clone())),
             "quit" => Some(self.clean_up()),
             "closing" => Some(Action::Chain(vec![
                 Action::Sleep(2000),
-                Action::WriteInfoText(Text::from(self.messages.done())),
+                Action::WriteInfoText(self.messages.done().clone()),
                 Action::Sleep(1000),
                 Action::Exit,
             ])),
-            _ => Some(Action::WriteInfoText(Text::from(self.messages.unknown()))),
+            _ => Some(Action::WriteInfoText(self.messages.unknown().clone())),
         }
     }
 
@@ -156,7 +151,7 @@ struct Args {
 // Commands
 
 struct ConsoleMsg {
-    messages: HashMap<&'static str, &'static str>,
+    messages: HashMap<&'static str, Text<'static>>,
 }
 
 const HELP: &str = "\
@@ -170,83 +165,113 @@ Help commands:
 impl ConsoleMsg {
     fn new() -> ConsoleMsg {
         let mut messages = HashMap::new();
-        messages.insert("help", HELP);
+        messages.insert("help", Text::from(HELP));
 
-        static UNKNOWN_COMMAND: Lazy<String> = Lazy::new(|| {
-            // ANSIStrings(&[
-            //     Red.paint("Unknown command, write "),
-            //     Black.bold().on(White).paint("help"),
-            //     Red.paint(" for a list of commands"),
-            // ])
-            // .to_string()
-            "todo".to_string()
-        });
-        messages.insert("unknown", &**UNKNOWN_COMMAND);
+        let unknown_command = Text::from(Spans::from(vec![
+            Span::styled("Unknown command, write ", Style::default().fg(Color::Red)),
+            Span::styled(
+                "help",
+                Style::default()
+                    .bg(Color::White)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" for a list of commands", Style::default().fg(Color::Red)),
+        ]));
+        messages.insert("unknown", unknown_command);
 
-        // static DONE: Lazy<String> = Lazy::new(|| format!("{}", Green.bold().paint("Done!")));
-        messages.insert("done", "");
+        let done = Text::styled(
+            "Done!",
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .fg(Color::Green),
+        );
+        messages.insert("done", done);
 
-        static ARG_NUM: Lazy<String> = Lazy::new(|| {
-            "Wrong number of arguments ({}), for {} command, write {} for help".to_string()
-        });
-        messages.insert("arg_num", &**ARG_NUM);
+        let arg_num = Text::from(Spans::from(vec![
+            Span::styled(
+                "Wrong number of arguments (",
+                Style::default().fg(Color::Red),
+            ),
+            Span::from("{}"),
+            Span::styled("), for ", Style::default().fg(Color::Red)),
+            Span::from("{}"),
+            Span::styled("command, write ", Style::default().fg(Color::Red)),
+            Span::from("{}"),
+            Span::styled(" for help", Style::default().fg(Color::Red)),
+        ]));
+        messages.insert("arg_num", arg_num);
 
         ConsoleMsg { messages }
     }
 
-    fn unknown(&self) -> &'static str {
+    fn unknown(&self) -> &Text<'static> {
         self.messages.get("unknown").unwrap()
     }
 
-    fn help(&self) -> &'static str {
+    fn help(&self) -> &Text<'static> {
         self.messages.get("help").unwrap()
     }
 
-    fn done(&self) -> &'static str {
+    fn done(&self) -> &Text<'static> {
         self.messages.get("done").unwrap()
     }
 
-    fn cmd_errors(&self, err: &str, args: HashMap<&str, &str>) -> Action<'static> {
+    fn cmd_errors(&self, err: &str, args: HashMap<&str, &'static str>) -> Action<'static> {
         match err {
             "arg_num" => {
-                // let msg_ori = self.messages.get("arg_num").unwrap();
-                // let mut msg_ori: Vec<&str> = msg_ori.split("{}").collect();
-                // let mut msg_new: Vec<ANSIString> = Vec::with_capacity(7);
+                let mut msg_new = self.messages.get("arg_num").unwrap().clone();
+                let line = &mut msg_new.lines[0].0;
 
-                // let &num = args.get("num").unwrap();
-                // let &cmd = args.get("cmd").unwrap();
-                // let &helper = args.get("helper").unwrap();
+                let num = Span::from(*args.get("num").unwrap());
+                line.get_mut(1).map(|t| *t = num);
 
-                // msg_new.push(Style::default().paint(num));
-                // msg_new.push(Black.bold().on(White).paint(cmd));
-                // msg_new.push(Black.bold().on(White).paint(helper));
+                let cmd = Span::styled(
+                    *args.get("cmd").unwrap(),
+                    Style::default()
+                        .bg(Color::White)
+                        .fg(Color::Black)
+                        .add_modifier(Modifier::BOLD),
+                );
+                line.get_mut(1).map(|t| *t = cmd);
 
-                // let mut i = 0;
-                // while !msg_ori.is_empty() {
-                //     if (i + 1) % 2 != 0 {
-                //         msg_new.insert(i, Red.paint(msg_ori.remove(0)));
-                //     }
-                //     i += 1;
-                // }
-                // let msg = format!("{}", ANSIStrings(&msg_new));
-                Action::WriteInfoText(Text::from(""))
+                let helper = Span::styled(
+                    *args.get("helper").unwrap(),
+                    Style::default()
+                        .bg(Color::White)
+                        .fg(Color::Black)
+                        .add_modifier(Modifier::BOLD),
+                );
+                line.get_mut(1).map(|t| *t = helper);
+
+                Action::WriteInfoText(msg_new)
             }
             _ => Action::WriteInfoText(Text::from("Wrong arguments...")),
         }
     }
 
     fn help_for_cmd(&self, cmd: &Args) -> Action<'static> {
-        let cmd_help = format!(
-            "Arguments for {}:\n --num <NODES>",
-            cmd.cmd // Black.bold().on(White).paint(&cmd.cmd)
-        );
+        let cmd_help = Spans::from(vec![
+            Span::from("Arguments for "),
+            Span::styled(
+                format!("{}", cmd.cmd),
+                Style::default()
+                    .bg(Color::White)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::from(":\n --num <NODES>"),
+        ]);
         Action::WriteInfoText(Text::from(cmd_help))
     }
 }
 
-static INFO: Lazy<Text> = Lazy::new(|| {
-    let msg = Spans::from(vec![
-        Span::styled("\n    Welcome to the ", Style::default().bg(Color::White)),
+pub fn init_app() {
+    let info = Text::from(Spans::from(vec![
+        Span::styled(
+            " Welcome to the ",
+            Style::default().fg(Color::Black).bg(Color::White),
+        ),
         Span::styled(
             "SimAg",
             Style::default()
@@ -264,15 +289,12 @@ static INFO: Lazy<Text> = Lazy::new(|| {
                 .add_modifier(Modifier::BOLD)
                 .add_modifier(Modifier::UNDERLINED),
         ),
-        Span::styled("    \n ", Style::default().bg(Color::White)),
-    ]);
-    Text::from(msg)
-});
+        Span::styled(" ", Style::default().fg(Color::Black).bg(Color::White)),
+    ]));
 
-pub fn init_app() {
     let manager = Manager::new();
     let mut app = Application::new(manager);
-    app.print_text((&*INFO).clone(), true);
+    app.print_text(info);
     app.start_event_loop().unwrap();
 }
 

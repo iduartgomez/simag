@@ -1,24 +1,19 @@
 //! Terminal that controls the main application flow, includes the main event loop.
 
+use crate::{cursor::Cursor, interpreter::ReplInterpreter, Action};
 use copypasta::{ClipboardContext, ClipboardProvider};
 use crossterm::event::{Event, KeyCode, KeyModifiers};
-use std::io::Stdout;
 use std::iter::Iterator;
 use std::time::Duration;
 use std::{collections::VecDeque, sync::mpsc::Receiver};
+use std::{io::Stdout, time::Instant};
 use tui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
     style::Style,
     text::{Span, Spans, Text},
     widgets::{Block, Borders, Paragraph},
-    Frame, Terminal as TuiTerminal,
-};
-
-use crate::{
-    cursor::{Cursor, CursorMovement},
-    interpreter::ReplInterpreter,
-    Action,
+    Terminal as TuiTerminal,
 };
 
 const SHORTCUTS_HELP: &str = "\
@@ -64,7 +59,7 @@ where
                         tx.send(Event::Mouse(event));
                     }
                     Event::Resize(width, height) => {
-                        println!("New size {}x{}", width, height);
+                        eprintln!("New size {}x{}", width, height);
                     }
                 }
             }
@@ -83,23 +78,18 @@ where
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = TuiTerminal::new(backend).unwrap();
 
-        // draw the initial frame
         terminal.clear()?;
-        terminal.draw(|f| {
-            let chunks = Self::layout_for_frame(f.size());
-            let input = Self::draw_input_box(self.state.get_current_input_box());
-            f.render_widget(input, chunks[0]);
-            let output = if let Some(Action::WriteInfoText(text)) = self.state.action_queue.pop() {
-                Self::draw_output_box(text)
-            } else {
-                Self::draw_output_box(Text::from(""))
-            };
-            f.render_widget(output, chunks[1]);
-        })?;
+        self.state.newline();
+        terminal.flush()?;
+
+        if cfg!(debug_assertions) {
+            self.state
+                .output_box
+                .push(Spans::from(format!("tick: {:?}", Instant::now())));
+        }
+
         loop {
             terminal.draw(|f| {
-                let chunks = Self::layout_for_frame(f.size());
-
                 match self.events.recv_timeout(Duration::from_millis(15)) {
                     Ok(event) => {
                         let action = self
@@ -123,8 +113,20 @@ where
                         self.state.terminate = true;
                     }
                 };
+
+                let chunks = Self::layout_for_frame(f.size());
+                if cfg!(debug_assertions) {
+                    self.state.output_box.pop();
+                    self.state
+                        .output_box
+                        .push(Spans::from(format!("tick: {:?}", Instant::now())));
+                }
+
+                self.state.input_box_size = chunks[0];
                 let input = Self::draw_input_box(self.state.get_current_input_box());
                 f.render_widget(input, chunks[0]);
+
+                self.state.output_box_size = chunks[1];
                 let output = Self::draw_output_box(self.state.get_current_output_box());
                 f.render_widget(output, chunks[1]);
             })?;
@@ -142,20 +144,20 @@ where
         Layout::default()
             .direction(Direction::Vertical)
             .margin(2)
-            .constraints([Constraint::Length(20), Constraint::Min(2)].as_ref())
+            .constraints([Constraint::Length(10), Constraint::Min(2)].as_ref())
             .split(area)
     }
 
     fn draw_input_box(text: Text) -> Paragraph {
         Paragraph::new(text)
             .style(Style::default())
-            .block(Block::default().borders(Borders::ALL).title("Input"))
+            .block(Block::default().borders(Borders::ALL).title(" Input "))
     }
 
     fn draw_output_box(text: Text) -> Paragraph {
         Paragraph::new(text)
             .style(Style::default())
-            .block(Block::default().borders(Borders::ALL).title("Output"))
+            .block(Block::default().borders(Borders::ALL).title(" Inspect "))
     }
 
     fn exec_action<'b>(&'b mut self, action: Action<'a>) -> Option<Action<'a>> {
@@ -212,7 +214,7 @@ where
                 None
             }
             "shortcuts" => {
-                self.print_text(SHORTCUTS_HELP, false);
+                self.print_text(SHORTCUTS_HELP);
                 None
             }
             _non_executable_cmd => Some(cmd),
@@ -239,7 +241,7 @@ where
         if let Event::Key(key) = event {
             let action = match key.code {
                 KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE => {
-                    self.state.print_char(c);
+                    self.state.input_char(c);
                     self.interpreter.digest(c)
                 }
                 KeyCode::Backspace => {
@@ -260,10 +262,10 @@ where
                 KeyCode::Esc => Action::Exit,
                 KeyCode::Char(c) if key.modifiers == KeyModifiers::CONTROL => self.ctrl_action(c),
                 KeyCode::Up => {
-                    return self.print_previous_command();
+                    return self.show_previous_command();
                 }
                 KeyCode::Down => {
-                    return self.print_following_command();
+                    return self.show_following_command();
                 }
                 _ => Action::Continue,
             };
@@ -290,45 +292,29 @@ where
         }
     }
 
-    /// Prints a text in the terminal.
-    pub fn print_text<'b, T: Into<Text<'a>>>(&'b mut self, text: T, info_box: bool) {
-        self.state.reading = false;
-        let action = if info_box {
-            Action::WriteInfoText(text.into())
-        } else {
-            Action::WriteInputText(text.into())
-        };
-        self.state.action_queue.push(action);
-
-        // for (i, line) in output.lines().enumerate() {
-        //     if i != 0 {
-        //         self.cursor
-        //             .action(&mut self.stdout, CursorMovement::MoveDown(1));
-        //     }
-        //     write!(self.stdout, "{}", line).unwrap();
-        // }
-        // self.flush();
-        // if print_newline {
-        //     self.newline();
-        // }
+    /// Prints a text to the output box.
+    pub fn print_text<'b, T: Into<Text<'a>>>(&'b mut self, text: T) {
+        self.state.print_text(text.into());
     }
 
-    fn print_previous_command(&mut self) -> Option<Action<'a>> {
+    /// Show previous command in the input box.
+    fn show_previous_command(&mut self) -> Option<Action<'a>> {
         if self.state.reading {
             None
         } else if let Some(prev_cmd) = self.state.get_previous_call() {
-            self.print_command(prev_cmd);
+            self.show_input_command(prev_cmd);
             Some(Action::Continue)
         } else {
             None
         }
     }
 
-    fn print_following_command(&mut self) -> Option<Action<'a>> {
+    /// Show next command in the input box.
+    fn show_following_command(&mut self) -> Option<Action<'a>> {
         if self.state.reading {
             None
         } else if let Some(following_cmd) = self.state.get_following_call() {
-            self.print_command(following_cmd);
+            self.show_input_command(following_cmd);
             Some(Action::Continue)
         } else {
             self.state.clear_line();
@@ -338,13 +324,13 @@ where
         }
     }
 
-    fn print_command(&mut self, cmd: String) {
-        self.interpreter.drop_command();
+    fn show_input_command(&mut self, cmd: String) {
         self.state.clear_line();
-        self.state.print_str(&cmd, false);
-        for c in cmd.chars() {
+        self.interpreter.drop_command();
+        cmd.chars().for_each(|c| self.state.input_char(c));
+        cmd.chars().for_each(|c| {
             self.interpreter.digest(c);
-        }
+        })
     }
 }
 
@@ -367,16 +353,13 @@ struct AppState<'a> {
     shifted_backward: usize,
     shifted_forward: usize,
     cursor: Cursor<Stdout>,
-    action_queue: Vec<Action<'a>>,
-    input_box: Vec<Spans<'a>>,
+    /// each string belongs to a single line in the box
+    input_box: Vec<String>,
+    input_box_size: Rect,
+    /// each group of spans belongs to a single line in the box
     output_box: Vec<Spans<'a>>,
+    output_box_size: Rect,
     clipboard: ClipboardContext,
-}
-
-impl<'a> Default for AppState<'a> {
-    fn default() -> Self {
-        AppState::new()
-    }
 }
 
 impl<'a> AppState<'a> {
@@ -388,17 +371,35 @@ impl<'a> AppState<'a> {
             shifted_backward: 0,
             shifted_forward: 0,
             cursor: Cursor::new(),
+            input_box: Vec::new(),
+            input_box_size: Rect::default(),
+            output_box: Vec::new(),
+            output_box_size: Rect::default(),
             clipboard: ClipboardContext::new().unwrap(),
-            ..Default::default()
         }
     }
 
     fn get_current_input_box(&self) -> Text {
-        todo!()
+        Text::from(Spans::from(
+            self.input_box
+                .iter()
+                .map(|s| Span::from(s.as_str()))
+                .into_iter()
+                .collect::<Vec<_>>(),
+        ))
     }
 
-    fn get_current_output_box(&self) -> Text {
-        todo!()
+    fn get_current_output_box(&mut self) -> Text {
+        let spans_to_print: Vec<_> = if self.output_box.len() > self.output_box_size.height as usize
+        {
+            self.output_box[self.output_box_size.height as usize..]
+                .iter()
+                .cloned()
+                .collect()
+        } else {
+            self.output_box.clone()
+        };
+        Text::from(spans_to_print)
     }
 
     fn push_in_call(&mut self, call: String) {
@@ -447,6 +448,10 @@ impl<'a> AppState<'a> {
         self.shifted_forward = 0;
     }
 
+    fn print_text<'b>(&'b mut self, text: Text<'a>) {
+        self.output_box.extend(text.into_iter())
+    }
+
     fn clear_terminal(&mut self) {
         // write!(
         //     self.stdout,
@@ -470,14 +475,21 @@ impl<'a> AppState<'a> {
         // )
         // .unwrap();
         // self.flush();
-        self.cursor.column = 5;
+        // self.cursor.column = 5;
     }
 
     fn set_reading_status(&mut self, status: bool) {
         self.reading = status;
     }
 
-    fn print_char(&mut self, output: char) {
+    /// Append a character to the current input box line.
+    fn input_char(&mut self, output: char) {
+        if let Some(line) = self.input_box.last_mut() {
+            line.push(output);
+        } else {
+            self.input_box.push(String::from(output));
+        };
+
         // write!(self.stdout, "{}", output).unwrap();
         // if let CursorMovement::Newline = self
         //     .cursor
@@ -491,30 +503,31 @@ impl<'a> AppState<'a> {
         // self.flush();
     }
 
-    fn print_str(&mut self, output: &str, new_line: bool) {
-        // self.state.reading = false;
-        // write!(self.stdout, "{}", output).unwrap();
-        // if let CursorMovement::Newline = self.cursor.action(
-        //     &mut self.stdout,
-        //     CursorMovement::MoveRight(output.len() as u16),
-        // ) {
-        //     self.cursor
-        //         .action(&mut self.stdout, CursorMovement::MoveDown(1));
-        //     self.print_str(output, new_line);
-        //     return;
-        // }
-        // self.flush();
-        // if new_line {
-        //     self.newline();
-        // };
-    }
+    // fn print_str(&mut self, output: &str, new_line: bool) {
+    //     self.state.reading = false;
+    //     write!(self.stdout, "{}", output).unwrap();
+    //     if let CursorMovement::Newline = self.cursor.action(
+    //         &mut self.stdout,
+    //         CursorMovement::MoveRight(output.len() as u16),
+    //     ) {
+    //         self.cursor
+    //             .action(&mut self.stdout, CursorMovement::MoveDown(1));
+    //         self.print_str(output, new_line);
+    //         return;
+    //     }
+    //     self.flush();
+    //     if new_line {
+    //         self.newline();
+    //     };
+    // }
 
     /// Make a new line in the input box.
     fn newline(&mut self) {
+        self.input_box.push(String::from(">>> "));
+
         // self.cursor
         //     .action(&mut self.stdout, CursorMovement::MoveDown(1));
         // self.cursor.command_line_start();
-
         // if self.state.reading {
         //     write!(
         //         self.stdout,
@@ -544,9 +557,7 @@ impl<'a> AppState<'a> {
     }
 
     // Report an error in the output box.
-    fn report_error(&mut self, msg: &str) {
-        todo!()
-    }
+    fn report_error(&mut self, msg: &str) {}
 
     fn side_effects(&mut self) {
         if self.cursor.effect_on {

@@ -18,7 +18,7 @@ impl<'a> SimagRepl<'_> {
 pub fn init_app() {
     let app = SimagInterpreter::new();
     let mut repl = SimagRepl::new(app);
-    repl.terminal.print_text(INFO, true);
+    repl.terminal.print_text(INFO);
     repl.terminal.start_event_loop().unwrap();
 }
 
