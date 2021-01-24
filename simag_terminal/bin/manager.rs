@@ -1,12 +1,15 @@
 //! SimAg Manager
 //!
 //! Creation and management for for SimAg simulations.
-use ansi_term::Colour::{Black, Blue, Green, Red, White};
-use ansi_term::{ANSIString, ANSIStrings, Style};
+// use ansi_term::Colour::{Black, Blue, Green, Red, White};
+// use ansi_term::{ANSIString, ANSIStrings, Style};
 use once_cell::sync::Lazy;
-use simag_term_utils::{Action, ReplInterpreter};
+use simag_term_utils::{Action, Application, ReplInterpreter};
 use std::collections::HashMap;
-use tui::text::Text;
+use tui::{
+    style::{Color, Modifier, Style},
+    text::{Span, Spans, Text},
+};
 
 // Env management
 
@@ -170,17 +173,18 @@ impl ConsoleMsg {
         messages.insert("help", HELP);
 
         static UNKNOWN_COMMAND: Lazy<String> = Lazy::new(|| {
-            ANSIStrings(&[
-                Red.paint("Unknown command, write "),
-                Black.bold().on(White).paint("help"),
-                Red.paint(" for a list of commands"),
-            ])
-            .to_string()
+            // ANSIStrings(&[
+            //     Red.paint("Unknown command, write "),
+            //     Black.bold().on(White).paint("help"),
+            //     Red.paint(" for a list of commands"),
+            // ])
+            // .to_string()
+            "todo".to_string()
         });
         messages.insert("unknown", &**UNKNOWN_COMMAND);
 
-        static DONE: Lazy<String> = Lazy::new(|| format!("{}", Green.bold().paint("Done!")));
-        messages.insert("done", &**DONE);
+        // static DONE: Lazy<String> = Lazy::new(|| format!("{}", Green.bold().paint("Done!")));
+        messages.insert("done", "");
 
         static ARG_NUM: Lazy<String> = Lazy::new(|| {
             "Wrong number of arguments ({}), for {} command, write {} for help".to_string()
@@ -205,27 +209,27 @@ impl ConsoleMsg {
     fn cmd_errors(&self, err: &str, args: HashMap<&str, &str>) -> Action<'static> {
         match err {
             "arg_num" => {
-                let msg_ori = self.messages.get("arg_num").unwrap();
-                let mut msg_ori: Vec<&str> = msg_ori.split("{}").collect();
-                let mut msg_new: Vec<ANSIString> = Vec::with_capacity(7);
+                // let msg_ori = self.messages.get("arg_num").unwrap();
+                // let mut msg_ori: Vec<&str> = msg_ori.split("{}").collect();
+                // let mut msg_new: Vec<ANSIString> = Vec::with_capacity(7);
 
-                let &num = args.get("num").unwrap();
-                let &cmd = args.get("cmd").unwrap();
-                let &helper = args.get("helper").unwrap();
+                // let &num = args.get("num").unwrap();
+                // let &cmd = args.get("cmd").unwrap();
+                // let &helper = args.get("helper").unwrap();
 
-                msg_new.push(Style::default().paint(num));
-                msg_new.push(Black.bold().on(White).paint(cmd));
-                msg_new.push(Black.bold().on(White).paint(helper));
+                // msg_new.push(Style::default().paint(num));
+                // msg_new.push(Black.bold().on(White).paint(cmd));
+                // msg_new.push(Black.bold().on(White).paint(helper));
 
-                let mut i = 0;
-                while !msg_ori.is_empty() {
-                    if (i + 1) % 2 != 0 {
-                        msg_new.insert(i, Red.paint(msg_ori.remove(0)));
-                    }
-                    i += 1;
-                }
-                let msg = format!("{}", ANSIStrings(&msg_new));
-                Action::WriteInfoText(Text::from(msg))
+                // let mut i = 0;
+                // while !msg_ori.is_empty() {
+                //     if (i + 1) % 2 != 0 {
+                //         msg_new.insert(i, Red.paint(msg_ori.remove(0)));
+                //     }
+                //     i += 1;
+                // }
+                // let msg = format!("{}", ANSIStrings(&msg_new));
+                Action::WriteInfoText(Text::from(""))
             }
             _ => Action::WriteInfoText(Text::from("Wrong arguments...")),
         }
@@ -234,43 +238,44 @@ impl ConsoleMsg {
     fn help_for_cmd(&self, cmd: &Args) -> Action<'static> {
         let cmd_help = format!(
             "Arguments for {}:\n --num <NODES>",
-            Black.bold().on(White).paint(&cmd.cmd)
+            cmd.cmd // Black.bold().on(White).paint(&cmd.cmd)
         );
         Action::WriteInfoText(Text::from(cmd_help))
     }
 }
 
-static INFO: Lazy<String> = Lazy::new(|| {
-    let msg: &[ANSIString] = &[
-        Black.on(White).paint("\n    Welcome to the "),
-        Red.bold().underline().on(White).paint("SimAg"),
-        Style::default().on(White).paint(" "),
-        Blue.bold()
-            .underline()
-            .on(White)
-            .paint("Management Command Line"),
-        Style::default().on(White).paint("    \n"),
-    ];
-    ANSIStrings(msg).to_string()
+static INFO: Lazy<Text> = Lazy::new(|| {
+    let msg = Spans::from(vec![
+        Span::styled("\n    Welcome to the ", Style::default().bg(Color::White)),
+        Span::styled(
+            "SimAg",
+            Style::default()
+                .bg(Color::White)
+                .fg(Color::Red)
+                .add_modifier(Modifier::BOLD)
+                .add_modifier(Modifier::UNDERLINED),
+        ),
+        Span::styled(" ", Style::default().bg(Color::White)),
+        Span::styled(
+            "Management Command Line",
+            Style::default()
+                .bg(Color::White)
+                .fg(Color::Red)
+                .add_modifier(Modifier::BOLD)
+                .add_modifier(Modifier::UNDERLINED),
+        ),
+        Span::styled("    \n ", Style::default().bg(Color::White)),
+    ]);
+    Text::from(msg)
 });
 
-fn main() {
-    if cfg!(target_family = "unix") {
-        repl_unix::init_unix()
-    } else {
-        todo!("no simag manager supported yet for non-unix platforms!")
-    }
+pub fn init_app() {
+    let manager = Manager::new();
+    let mut app = Application::new(manager);
+    app.print_text((&*INFO).clone(), true);
+    app.start_event_loop().unwrap();
 }
 
-#[cfg(all(target_family = "unix"))]
-mod repl_unix {
-    use super::*;
-    use simag_term_utils::Terminal;
-
-    pub fn init_unix() {
-        let manager = Manager::new();
-        let mut terminal = Terminal::new(manager);
-        terminal.print_multiline(&INFO, true);
-        terminal.start_event_loop().unwrap();
-    }
+fn main() {
+    init_app()
 }

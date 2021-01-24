@@ -1,37 +1,27 @@
 //! A REPL (Read-Eval-Print-Loop) terminal interface for the language
-use simag_term_utils::SimagInterpreter;
+use simag_term_utils::{Application, SimagInterpreter};
 
 const INFO: &str = "Simag Logic Lang 0.0.1 Interpreter\nType \"help\" for more information";
 
-fn main() {
-    if cfg!(target_family = "unix") {
-        repl_unix::init_unix()
-    } else {
-        todo!("no repl supported yet for non-unix platforms!")
+struct SimagRepl<'a> {
+    terminal: Application<'a, SimagInterpreter<'a>>,
+}
+
+impl<'a> SimagRepl<'_> {
+    fn new(interpreter: SimagInterpreter<'a>) -> SimagRepl<'a> {
+        SimagRepl {
+            terminal: Application::new(interpreter),
+        }
     }
 }
 
-#[cfg(all(target_family = "unix"))]
-mod repl_unix {
-    use super::*;
-    use simag_term_utils::Terminal;
+pub fn init_app() {
+    let app = SimagInterpreter::new();
+    let mut repl = SimagRepl::new(app);
+    repl.terminal.print_text(INFO, true);
+    repl.terminal.start_event_loop().unwrap();
+}
 
-    struct SimagRepl<'a> {
-        terminal: Terminal<'a, SimagInterpreter<'a>>,
-    }
-
-    impl<'a> SimagRepl<'_> {
-        fn new(interpreter: SimagInterpreter<'a>) -> SimagRepl<'a> {
-            SimagRepl {
-                terminal: Terminal::new(interpreter),
-            }
-        }
-    }
-
-    pub fn init_unix() {
-        let interpreter = SimagInterpreter::new();
-        let mut repl = SimagRepl::new(interpreter);
-        repl.terminal.print_multiline(INFO, true);
-        repl.terminal.start_event_loop().unwrap();
-    }
+fn main() {
+    init_app()
 }

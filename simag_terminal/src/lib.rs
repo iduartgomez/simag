@@ -5,4 +5,4 @@ mod terminal;
 
 pub use action::Action;
 pub use interpreter::{ReplInterpreter, SimagInterpreter};
-pub use terminal::Terminal;
+pub use terminal::Application;

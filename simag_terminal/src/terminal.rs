@@ -8,7 +8,7 @@ use std::time::Duration;
 use std::{collections::VecDeque, sync::mpsc::Receiver};
 use tui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::Style,
     text::{Span, Spans, Text},
     widgets::{Block, Borders, Paragraph},
@@ -32,7 +32,8 @@ Built-in commands:
 * clear > clears the terminal screen
 ";
 
-pub struct Terminal<'a, I>
+/// A TUI application.
+pub struct Application<'a, I>
 where
     I: ReplInterpreter,
 {
@@ -44,43 +45,36 @@ where
     action_queue: Vec<Action<'a>>,
 }
 
-impl<'a, I> Terminal<'a, I>
+impl<'a, I> Application<'a, I>
 where
     I: ReplInterpreter,
 {
     pub fn new(interpreter: I) -> Self {
         // set event handler thread
         let (tx, events) = std::sync::mpsc::channel();
-        let _ = {
-            let tx = tx.clone();
-            std::thread::spawn(move || -> crossterm::Result<()> {
-                loop {
-                    match crossterm::event::read()? {
-                        Event::Key(event) => {
-                            tx.send(Event::Key(event));
-                            break;
-                        }
-                        Event::Mouse(event) => {
-                            tx.send(Event::Mouse(event));
-                        }
-                        Event::Resize(width, height) => {
-                            println!("New size {}x{}", width, height);
-                        }
+        std::thread::spawn(move || -> crossterm::Result<()> {
+            loop {
+                let event = crossterm::event::read()?;
+                if is_exit_event(&event) {
+                    tx.send(event);
+                    break;
+                }
+                match event {
+                    Event::Key(event) => {
+                        tx.send(Event::Key(event));
+                    }
+                    Event::Mouse(event) => {
+                        tx.send(Event::Mouse(event));
+                    }
+                    Event::Resize(width, height) => {
+                        println!("New size {}x{}", width, height);
                     }
                 }
-                Ok(())
-            })
-        };
+            }
+            Ok(())
+        });
 
-        // write!(
-        //     stdout,
-        //     "{}{}",
-        //     termion::clear::All,
-        //     termion::cursor::Goto(1, 1)
-        // )
-        // .unwrap();
-
-        Terminal {
+        Application {
             interpreter,
             state: AppState::new(),
             events,
@@ -90,8 +84,34 @@ where
         }
     }
 
-    fn draw_frame(_f: &mut Frame<CrosstermBackend<Stdout>>) {
-        // self.side_effects();
+    fn draw_input_box(text: Option<Text>) -> Paragraph {
+        let text = if let Some(text) = text {
+            text
+        } else {
+            Text::from(">>> ")
+        };
+        Paragraph::new(text)
+            .style(Style::default())
+            .block(Block::default().borders(Borders::ALL).title("Input"))
+    }
+
+    fn draw_output_box(text: Option<Text>) -> Paragraph {
+        let text = if let Some(text) = text {
+            text
+        } else {
+            Text::from("")
+        };
+        Paragraph::new(text)
+            .style(Style::default())
+            .block(Block::default().borders(Borders::ALL).title("Output"))
+    }
+
+    fn layout_for_frame(area: Rect) -> Vec<Rect> {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .margin(2)
+            .constraints([Constraint::Length(20), Constraint::Min(2)].as_ref())
+            .split(area)
     }
 
     pub fn start_event_loop(&mut self) -> std::io::Result<()> {
@@ -99,90 +119,59 @@ where
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = TuiTerminal::new(backend).unwrap();
 
-        // Set up the initial layout and perform any required initialization actions
-        // terminal.draw(|f| {
-        //     let chunks = Layout::default()
-        //         .direction(Direction::Vertical)
-        //         .margin(2)
-        //         .constraints(
-        //             [
-        //                 Constraint::Length(1),
-        //                 Constraint::Length(3),
-        //                 Constraint::Min(1),
-        //             ]
-        //             .as_ref(),
-        //         )
-        //         .split(f.size());
-
-        //     self.action_queue.reverse();
-        //     while let Some(action) = self.action_queue.pop() {
-        //         match action {
-        //             Action::Write((val, new_line)) => {}
-        //             Action::WriteStr((val, new_line)) => {}
-        //             Action::WriteMulti((val, new_line)) => {}
-        //             Action::WriteMultiStr((val, new_line)) => {
-        //                 let text = Text::from(Span::from(val));
-        //                 let help_paragraph = Paragraph::new(text);
-        //                 f.render_widget(help_paragraph, chunks[0]);
-        //             }
-        //             _ => {}
-        //         }
-        //     }
-        // })?;
         terminal.clear()?;
+
+        // draw the initial frame
+        terminal.draw(|f| {
+            let chunks = Self::layout_for_frame(f.size());
+            let input = Self::draw_input_box(None);
+            f.render_widget(input, chunks[0]);
+            let output = if let Some(Action::WriteInfoText(text)) = self.action_queue.pop() {
+                Self::draw_output_box(Some(text))
+            } else {
+                Self::draw_output_box(None)
+            };
+            f.render_widget(output, chunks[1]);
+        })?;
 
         loop {
             terminal.draw(|f| {
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .margin(2)
-                    .constraints(
-                        [
-                            Constraint::Length(2),
-                            Constraint::Length(100),
-                            Constraint::Min(1),
-                        ]
-                        .as_ref(),
-                    )
-                    .split(f.size());
-
-                let mut text = Text::from(Spans::from("HELLO WORLD!"));
-                text.patch_style(Style::default());
-                let help_message = Paragraph::new(text);
-                f.render_widget(help_message, chunks[0]);
-
-                let input = Paragraph::new(">>> ")
-                    .style(Style::default())
-                    .block(Block::default().borders(Borders::ALL).title("Console"));
-                f.render_widget(input, chunks[1]);
-
-                let output_msg = format!("{:?}", chunks);
-                let output = Paragraph::new(output_msg)
-                    .style(Style::default())
-                    .block(Block::default().borders(Borders::ALL).title("Output"));
-                f.render_widget(output, chunks[2]);
-
-                let f = f;
-                match self.events.recv_timeout(Duration::from_millis(15)) {
-                    Ok(event) => {
-                        let action = self
-                            .process_event(event)
-                            .map_or_else(|| Action::None, |x| x);
-                        match self.exec_action(action) {
-                            Some(Action::Exit) => self.state.terminate = true,
-                            Some(Action::Chain(chain)) => {
-                                self.exec_or_break(chain);
+                let chunks = Self::layout_for_frame(f.size());
+                let (input, output) =
+                    match self.events.recv_timeout(Duration::from_millis(15)) {
+                        Ok(event) => {
+                            let action = self
+                                .process_event(event)
+                                .map_or_else(|| Action::None, |x| x);
+                            match self.exec_action(action) {
+                                Some(Action::WriteInputText(text)) => (Some(text), None),
+                                Some(Action::Exit) => {
+                                    self.state.terminate = true;
+                                    (None, None)
+                                }
+                                Some(Action::Chain(chain)) => {
+                                    self.exec_or_break(chain);
+                                    (None, None)
+                                }
+                                Some(Action::None) | None => (None, None),
+                                _ => (
+                                    None,
+                                    Some(self.report_error(
+                                        "Cannot perform that action in this context.",
+                                    )),
+                                ),
                             }
-                            Some(Action::None) | None => {}
-                            _ => self.report_error("Cannot perform that action in this context."),
                         }
-                    }
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                    Err(_) => {
-                        self.state.terminate = true;
-                    }
-                }
-                Self::draw_frame(f);
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => (None, None),
+                        Err(_) => {
+                            self.state.terminate = true;
+                            (None, None)
+                        }
+                    };
+                let input = Self::draw_input_box(input);
+                f.render_widget(input, chunks[0]);
+                let output = Self::draw_output_box(output);
+                f.render_widget(output, chunks[1]);
             })?;
             if self.state.terminate {
                 break;
@@ -191,18 +180,7 @@ where
 
         terminal.clear()?;
         terminal.show_cursor()?;
-
-        // Clean up application activity
-        // write!(
-        //     self.stdout,
-        //     "{}{}{}{}",
-        //     termion::style::Reset,
-        //     termion::clear::All,
-        //     termion::cursor::Goto(1, 1),
-        //     termion::cursor::Show
-        // )
-        // .unwrap();
-        // self.flush();
+        terminal.flush()?;
         Ok(())
     }
 
@@ -260,7 +238,7 @@ where
                 None
             }
             "shortcuts" => {
-                self.print_multiline(SHORTCUTS_HELP, false);
+                self.print_text(SHORTCUTS_HELP, false);
                 None
             }
             _non_executable_cmd => Some(cmd),
@@ -402,7 +380,7 @@ where
         //     termion::style::Reset
         // )
         // .unwrap();
-        self.flush();
+        // self.flush();
         self.cursor.column = 5;
     }
 
@@ -447,13 +425,13 @@ where
         // };
     }
 
-    /// Prints a multiline text in the terminal.
-    pub fn print_multiline<'b>(&'b mut self, output: &'a str, info_box: bool) {
+    /// Prints a text in the terminal.
+    pub fn print_text<'b, T: Into<Text<'a>>>(&'b mut self, text: T, info_box: bool) {
         self.state.reading = false;
         let action = if info_box {
-            Action::WriteInfoText(Text::from(output))
+            Action::WriteInfoText(text.into())
         } else {
-            Action::WriteInputText(Text::from(output))
+            Action::WriteInputText(text.into())
         };
         self.action_queue.push(action);
 
@@ -502,12 +480,18 @@ where
         // write!(self.stdout, "{}", termion::clear::AfterCursor).unwrap();
     }
 
-    fn flush(&mut self) {
-        // self.stdout.flush().unwrap();
+    fn report_error(&mut self, msg: &str) -> Text {
+        todo!()
     }
+}
 
-    fn report_error(&mut self, msg: &str) {
-        self.print_str(msg, true);
+fn is_exit_event(ev: &Event) -> bool {
+    match ev {
+        Event::Key(key) if key.modifiers == KeyModifiers::CONTROL => match key.code {
+            KeyCode::Char('c') => true,
+            _ => false,
+        },
+        _ => false,
     }
 }
 
