@@ -15,13 +15,13 @@ impl<'a> SimagRepl<'_> {
     }
 }
 
-pub fn init_app() {
-    let app = SimagInterpreter::new();
-    let mut repl = SimagRepl::new(app);
+pub fn init_app() -> std::io::Result<()> {
+    let mut repl = SimagRepl::new(SimagInterpreter::new());
     repl.terminal.print_text(INFO);
-    repl.terminal.start_event_loop().unwrap();
+    repl.terminal.start_event_loop()
 }
 
-fn main() {
-    init_app()
+fn main() -> std::io::Result<()> {
+    init_app()?;
+    Ok(())
 }

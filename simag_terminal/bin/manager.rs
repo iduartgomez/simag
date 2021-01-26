@@ -54,7 +54,7 @@ impl Manager {
         Args { cmd, args: parsed }
     }
 
-    fn make(&self) -> Action<'static> {
+    fn make_cmd(&self) -> Action<'static> {
         let cmd = self.on_going_cmd.as_ref().unwrap();
         if cmd.args.is_empty() {
             let mut args = HashMap::new();
@@ -93,7 +93,7 @@ impl ReplInterpreter for Manager {
 
     fn cmd_executor<'b, 'a: 'b>(&'b mut self, command: String) -> Option<Action<'a>> {
         match command.as_str() {
-            "make" => Some(self.make()),
+            "make" => Some(self.make_cmd()),
             "help" => Some(Action::WriteInfoText(self.messages.help().clone())),
             "quit" => Some(self.clean_up()),
             "closing" => Some(Action::Chain(vec![
@@ -266,7 +266,7 @@ impl ConsoleMsg {
     }
 }
 
-pub fn init_app() {
+pub fn init_app() -> std::io::Result<()> {
     let info = Text::from(Spans::from(vec![
         Span::styled(
             " Welcome to the ",
@@ -292,12 +292,12 @@ pub fn init_app() {
         Span::styled(" ", Style::default().fg(Color::Black).bg(Color::White)),
     ]));
 
-    let manager = Manager::new();
-    let mut app = Application::new(manager);
+    let mut app = Application::new(Manager::new());
     app.print_text(info);
-    app.start_event_loop().unwrap();
+    app.start_event_loop()
 }
 
-fn main() {
-    init_app()
+fn main() -> std::io::Result<()> {
+    init_app()?;
+    Ok(())
 }
