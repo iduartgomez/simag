@@ -14,7 +14,7 @@ struct Manager {
     on_going_cmd: Option<Args>,
 }
 
-impl Manager {
+impl<'b> Manager {
     fn new() -> Manager {
         Manager {
             messages: ConsoleMsg::new(),
@@ -54,7 +54,7 @@ impl Manager {
         Args { cmd, args: parsed }
     }
 
-    fn make_cmd(&self) -> Action<'static> {
+    fn make_cmd<'a: 'b>(&'b self) -> Action<'a> {
         let cmd = self.on_going_cmd.as_ref().unwrap();
         if cmd.args.is_empty() {
             let mut args = HashMap::new();
@@ -71,12 +71,12 @@ impl Manager {
         Action::WriteInfoText(self.messages.done().clone())
     }
 
-    fn clean_up(&self) -> Action<'static> {
+    fn clean_up<'a: 'b>(&'b self) -> Action<'a> {
         let clean_up_pipe = vec![
             Action::WriteInfoText(Text::from("Closing gracefully, please wait ...")),
             Action::Command("closing".to_string()),
         ];
-        Action::Chain(clean_up_pipe)
+        Action::Chain(Box::new(clean_up_pipe.into_iter()))
     }
 }
 
@@ -96,12 +96,18 @@ impl ReplInterpreter for Manager {
             "make" => Some(self.make_cmd()),
             "help" => Some(Action::WriteInfoText(self.messages.help().clone())),
             "quit" => Some(self.clean_up()),
-            "closing" => Some(Action::Chain(vec![
-                Action::Sleep(2000),
-                Action::WriteInfoText(self.messages.done().clone()),
-                Action::Sleep(1000),
-                Action::Exit,
-            ])),
+            "closing" => {
+                let actions = Box::new(
+                    vec![
+                        Action::Sleep(2000),
+                        Action::WriteInfoText(self.messages.done().clone()),
+                        Action::Sleep(1000),
+                        Action::Exit,
+                    ]
+                    .into_iter(),
+                );
+                Some(Action::Chain(actions))
+            }
             _ => Some(Action::WriteInfoText(self.messages.unknown().clone())),
         }
     }
@@ -217,7 +223,7 @@ impl ConsoleMsg {
         self.messages.get("done").unwrap()
     }
 
-    fn cmd_errors(&self, err: &str, args: HashMap<&str, &'static str>) -> Action<'static> {
+    fn cmd_errors<'b, 'a: 'b>(&'b self, err: &str, args: HashMap<&'a str, &'a str>) -> Action<'a> {
         match err {
             "arg_num" => {
                 let mut msg_new = self.messages.get("arg_num").unwrap().clone();
@@ -250,7 +256,7 @@ impl ConsoleMsg {
         }
     }
 
-    fn help_for_cmd(&self, cmd: &Args) -> Action<'static> {
+    fn help_for_cmd<'b, 'a: 'b>(&'b self, cmd: &Args) -> Action<'a> {
         let cmd_help = Spans::from(vec![
             Span::from("Arguments for "),
             Span::styled(

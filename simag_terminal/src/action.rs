@@ -1,6 +1,5 @@
 use tui::text::Text;
 
-#[derive(PartialEq)]
 pub enum Action<'a> {
     /// Signal to the terminal that the interpreter is currently reading
     /// source interpretable instructions.
@@ -26,12 +25,20 @@ pub enum Action<'a> {
     /// Make the thread sleep for this ammount of ms
     Sleep(u64),
     /// Chain several actions together after processing an event
-    Chain(Vec<Action<'a>>),
+    Chain(Box<dyn Iterator<Item = Action<'a>> + 'a>),
     None,
 }
 
 impl<'a> Action<'a> {
     pub fn exit(&self) -> bool {
-        self == &Action::Exit
+        match self {
+            Action::Exit => true,
+            _ => false,
+        }
+    }
+
+    pub fn compose(self, other: Action<'a>) -> Self {
+        let composed = Box::new(vec![self, other].into_iter());
+        Action::Chain(composed)
     }
 }

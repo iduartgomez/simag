@@ -1,8 +1,8 @@
 mod action;
-mod cursor;
+mod application;
 mod interpreter;
-mod terminal;
+mod state;
 
 pub use action::Action;
+pub use application::Application;
 pub use interpreter::{ReplInterpreter, SimagInterpreter};
-pub use terminal::Application;
