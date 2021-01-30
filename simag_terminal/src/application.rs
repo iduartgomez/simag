@@ -50,9 +50,17 @@ where
         let mut terminal = TuiTerminal::new(backend).unwrap();
 
         terminal.clear()?;
-        self.state.newline();
+        let mut first = true;
         loop {
             terminal.draw(|f| {
+                let chunks = Self::layout_for_frame(f.size());
+                self.state.set_input_box(chunks[0]);
+                if first {
+                    // initialization actions
+                    self.state.initial_line();
+                    first = false;
+                }
+
                 match crossterm::event::poll(Duration::from_millis(10)) {
                     Ok(true) => {
                         match crossterm::event::read() {
@@ -88,23 +96,21 @@ where
                         self.state.terminate = true;
                     }
                 }
-                self.state.side_effects();
 
-                let chunks = Self::layout_for_frame(f.size());
-                self.state.input_box_size = chunks[0];
                 let input = Self::draw_input_box(self.state.get_current_input_box());
                 f.render_widget(input, chunks[0]);
 
-                self.state.info_box_size = chunks[1];
+                self.state.info_box = chunks[1];
                 let output = Self::draw_output_box(self.state.get_current_output_box());
                 f.render_widget(output, chunks[1]);
+
+                self.state.side_effects(f);
             })?;
             if self.state.terminate {
                 break;
             }
         }
         terminal.clear()?;
-        terminal.show_cursor()?;
         terminal.flush()?;
         Ok(())
     }
@@ -131,10 +137,26 @@ where
 
     fn exec_action<'b>(&'b mut self, action: Action<'a>) -> Option<Action<'a>> {
         match action {
+            Action::Command(cmd) => {
+                self.state.cmd_history.reset_call_stack();
+                self.state.cmd_history.push_in_call(cmd.clone());
+                if self.built_cmd_exec(&cmd) {
+                    if let Some(action) = self.interpreter.cmd_executor(&cmd) {
+                        return Some(
+                            self.exec_action(action)
+                                .map_or_else(|| Action::Newline, |a| a.compose(Action::Newline)),
+                        );
+                    }
+                }
+                if cmd == "clear" {
+                    self.state.initial_line();
+                } else {
+                    self.state.newline();
+                }
+            }
+            Action::Chain(chain) => return self.exec_or_break(chain),
             Action::Continue => {
-                // let stdout = &mut self.stdout;
                 self.state.cursor.effect_on = false;
-                // self.cursor.show(stdout);
             }
             Action::Read => {
                 self.state.reading = true;
@@ -145,27 +167,14 @@ where
                 self.state.newline();
             }
             Action::Discard => {
+                self.state.reading = true;
                 self.state.newline();
             }
-            Action::Command(cmd) => {
-                self.state.reset_call_stack();
-                self.state.push_in_call(cmd.clone());
-                if let Some(cmd) = self.built_cmd_exec(cmd) {
-                    if let Some(action) = self.interpreter.cmd_executor(cmd) {
-                        return Some(
-                            self.exec_action(action)
-                                .map_or_else(|| Action::Newline, |a| a.compose(Action::Newline)),
-                        );
-                    }
-                }
-                self.state.newline();
-            }
-            Action::WriteInfoText(text) => self.state.print_text(text),
-            Action::Chain(chain) => return self.exec_or_break(chain),
             Action::Newline => {
                 self.state.reading = self.interpreter.is_reading();
                 self.state.newline();
             }
+            Action::WriteInfoText(text) => self.state.print_text(text),
             Action::Sleep(val) => std::thread::sleep(Duration::from_millis(val)),
             Action::Exit => return Some(Action::Exit),
             _ => {}
@@ -173,20 +182,19 @@ where
         None
     }
 
-    /// Returns the input command only if it's not a builtin command,
-    /// produces a side-effect otherwise.
-    fn built_cmd_exec(&mut self, cmd: String) -> Option<String> {
-        match cmd.as_str() {
+    /// Returns true if the input command it's a builtin command, produces a side-effect otherwise.
+    fn built_cmd_exec(&mut self, cmd: &str) -> bool {
+        match cmd {
             "clear" => {
                 self.state.clear_input_box();
-                None
+                false
             }
             "shortcuts" => {
                 self.state.clear_info_box();
                 self.print_text(SHORTCUTS_HELP);
-                None
+                false
             }
-            _non_executable_cmd => Some(cmd),
+            _non_executable_cmd => true,
         }
     }
 
@@ -222,8 +230,8 @@ where
                         self.state.delete();
                         match self.interpreter.delete_last() {
                             Some(Action::Discard) => {
-                                self.state.cursor.effect_on = true;
                                 self.state.reading = false;
+                                self.state.cursor.effect_on = true;
                                 return Some(Action::None);
                             }
                             Some(other) => return Some(other),
@@ -274,7 +282,7 @@ where
     fn show_previous_command(&mut self) -> Option<Action<'a>> {
         if self.state.reading {
             None
-        } else if let Some(prev_cmd) = self.state.get_previous_call() {
+        } else if let Some(prev_cmd) = self.state.cmd_history.get_previous_call() {
             self.show_input_command(prev_cmd);
             Some(Action::Continue)
         } else {
@@ -286,13 +294,13 @@ where
     fn show_following_command(&mut self) -> Option<Action<'a>> {
         if self.state.reading {
             None
-        } else if let Some(following_cmd) = self.state.get_following_call() {
+        } else if let Some(following_cmd) = self.state.cmd_history.get_following_call() {
             self.show_input_command(following_cmd);
             Some(Action::Continue)
         } else {
             self.state.clear_input_line();
             self.interpreter.drop_command();
-            self.state.reset_call_stack();
+            self.state.cmd_history.reset_call_stack();
             None
         }
     }

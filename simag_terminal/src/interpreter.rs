@@ -58,7 +58,7 @@ pub trait ReplInterpreter {
 
     /// Execute a command and return the continuation action if there
     /// is one.
-    fn cmd_executor<'b, 'a: 'b>(&'b mut self, command: String) -> Option<Action<'a>>;
+    fn cmd_executor<'b, 'a: 'b>(&'b mut self, command: &str) -> Option<Action<'a>>;
 
     /// Drop last change of the input stream and return an optional action
     /// to be performed after rollingback last change.
@@ -207,8 +207,8 @@ impl<'a> ReplInterpreter for SimagInterpreter<'a> {
         self.command.truncate(0);
     }
 
-    fn cmd_executor<'b, 'c: 'b>(&'b mut self, command: String) -> Option<Action<'c>> {
-        match Command::from(command.as_str()) {
+    fn cmd_executor<'b, 'c: 'b>(&'b mut self, command: &str) -> Option<Action<'c>> {
+        match Command::from(command) {
             Command::Err => Some(Action::WriteInfoText(Text::from("Unknown command"))),
             Command::Help => Some(Action::WriteInfoText(Text::from(HELP_COMMAND))),
             Command::HelpCommands => Some(Action::WriteInfoText(Text::from(HELP_COMMANDS))),

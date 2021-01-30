@@ -91,8 +91,8 @@ impl ReplInterpreter for Manager {
         }
     }
 
-    fn cmd_executor<'b, 'a: 'b>(&'b mut self, command: String) -> Option<Action<'a>> {
-        match command.as_str() {
+    fn cmd_executor<'b, 'a: 'b>(&'b mut self, command: &str) -> Option<Action<'a>> {
+        match command {
             "make" => Some(self.make_cmd()),
             "help" => Some(Action::WriteInfoText(self.messages.help().clone())),
             "quit" => Some(self.clean_up()),
@@ -108,7 +108,7 @@ impl ReplInterpreter for Manager {
                 );
                 Some(Action::Chain(actions))
             }
-            _ => Some(Action::WriteInfoText(self.messages.unknown().clone())),
+            other_cmd => Some(Action::WriteInfoText(self.messages.unknown(other_cmd))),
         }
     }
 
@@ -174,7 +174,8 @@ impl ConsoleMsg {
         messages.insert("help", Text::from(HELP));
 
         let unknown_command = Text::from(Spans::from(vec![
-            Span::styled("Unknown command, write ", Style::default().fg(Color::Red)),
+            Span::styled("Unknown command ", Style::default().fg(Color::Red)),
+            Span::styled(", write ", Style::default().fg(Color::Red)),
             Span::styled(
                 "help",
                 Style::default()
@@ -199,11 +200,11 @@ impl ConsoleMsg {
                 "Wrong number of arguments (",
                 Style::default().fg(Color::Red),
             ),
-            Span::from("{}"),
+            Span::from(""),
             Span::styled("), for ", Style::default().fg(Color::Red)),
-            Span::from("{}"),
-            Span::styled("command, write ", Style::default().fg(Color::Red)),
-            Span::from("{}"),
+            Span::from(""),
+            Span::styled(" command, write ", Style::default().fg(Color::Red)),
+            Span::from(""),
             Span::styled(" for help", Style::default().fg(Color::Red)),
         ]));
         messages.insert("arg_num", arg_num);
@@ -211,8 +212,19 @@ impl ConsoleMsg {
         ConsoleMsg { messages }
     }
 
-    fn unknown(&self) -> &Text<'static> {
-        self.messages.get("unknown").unwrap()
+    fn unknown(&self, other_cmd: &str) -> Text<'static> {
+        let mut msg: Vec<Span> = self.messages.get("unknown").as_ref().unwrap().lines[0]
+            .0
+            .clone();
+        msg.insert(
+            1,
+            Span::styled(
+                other_cmd.to_owned(),
+                Style::default().bg(Color::White).fg(Color::Red),
+            )
+            .into(),
+        );
+        Text::from(Spans::from(msg))
     }
 
     fn help(&self) -> &Text<'static> {
@@ -239,7 +251,7 @@ impl ConsoleMsg {
                         .fg(Color::Black)
                         .add_modifier(Modifier::BOLD),
                 );
-                line.get_mut(1).map(|t| *t = cmd);
+                line.get_mut(3).map(|t| *t = cmd);
 
                 let helper = Span::styled(
                     *args.get("helper").unwrap(),
@@ -248,7 +260,7 @@ impl ConsoleMsg {
                         .fg(Color::Black)
                         .add_modifier(Modifier::BOLD),
                 );
-                line.get_mut(1).map(|t| *t = helper);
+                line.get_mut(5).map(|t| *t = helper);
 
                 Action::WriteInfoText(msg_new)
             }
