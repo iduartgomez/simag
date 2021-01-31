@@ -12,8 +12,6 @@ use tui::{
     Frame,
 };
 
-// const CURSOR_ON: char = '\u{2588}';
-
 pub(crate) struct AppState<'a> {
     /// in reading mode flag
     pub reading: bool,
@@ -47,7 +45,7 @@ impl<'a> AppState<'a> {
         }
     }
 
-    pub fn get_current_input_box(&self) -> Text {
+    pub fn input_box_frame_content(&self) -> Text {
         Text::from(
             self.input_box_content
                 .iter()
@@ -57,15 +55,21 @@ impl<'a> AppState<'a> {
         )
     }
 
-    pub fn get_current_output_box(&mut self) -> Text {
-        let spans_to_print: Vec<_> = if self.info_box_content.len() > self.info_box.height as usize
-        {
-            self.info_box_content[self.info_box.height as usize..]
-                .iter()
-                .cloned()
-                .collect()
-        } else {
-            self.info_box_content.clone()
+    pub fn info_box_frame_content(&mut self) -> Text {
+        let spans_to_print: Vec<_> = {
+            let diff = self
+                .info_box_content
+                .len()
+                .saturating_sub(self.info_box.height as usize - 2);
+            if diff > 0 {
+                self.info_box_content
+                    .iter()
+                    .skip(diff as usize)
+                    .cloned()
+                    .collect()
+            } else {
+                self.info_box_content.clone()
+            }
         };
         Text::from(spans_to_print)
     }
@@ -119,6 +123,9 @@ impl<'a> AppState<'a> {
         if self.cursor.y + 1 < input_area {
             self.cursor.y += 1;
         }
+        if self.input_box_content.len() as u16 >= (self.input_box.height - 2) {
+            self.input_box_content.remove(0);
+        }
         self.input_box_content.push(String::from(">>> "));
     }
 
@@ -133,6 +140,8 @@ impl<'a> AppState<'a> {
 
     pub fn clear_input_line(&mut self) {
         self.input_box_content.pop();
+        self.newline();
+        self.cursor.y -= 1;
     }
 
     // Delete previous character from the input box.

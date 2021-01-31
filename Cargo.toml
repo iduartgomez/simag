@@ -23,8 +23,7 @@ name = "simag"
 path = "bin/main.rs"
 
 [features]
-repl_unix = ["simag_term_utils"]
-repl_win = ["simag_term_utils"]
+repl = ["simag_term_utils"]
 
 [workspace]
 members = ["simag_core", "simag_networking", "simag_terminal"]

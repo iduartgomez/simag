@@ -1,7 +1,7 @@
 //! Terminal that controls the main application flow, includes the main event loop.
 use crate::{interpreter::ReplInterpreter, state::AppState, Action};
 use copypasta::ClipboardProvider;
-use crossterm::event::{Event, KeyCode, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyModifiers, MouseEventKind};
 use std::time::Duration;
 use tui::{
     backend::CrosstermBackend,
@@ -97,11 +97,11 @@ where
                     }
                 }
 
-                let input = Self::draw_input_box(self.state.get_current_input_box());
+                let input = Self::draw_input_box(self.state.input_box_frame_content());
                 f.render_widget(input, chunks[0]);
 
                 self.state.info_box = chunks[1];
-                let output = Self::draw_output_box(self.state.get_current_output_box());
+                let output = Self::draw_output_box(self.state.info_box_frame_content());
                 f.render_widget(output, chunks[1]);
 
                 self.state.side_effects(f);
@@ -132,14 +132,19 @@ where
     fn draw_output_box(text: Text) -> Paragraph {
         Paragraph::new(text)
             .style(Style::default())
-            .block(Block::default().borders(Borders::ALL).title(" Inspect "))
+            .block(Block::default().borders(Borders::ALL).title(" Ouput "))
     }
 
     fn exec_action<'b>(&'b mut self, action: Action<'a>) -> Option<Action<'a>> {
         match action {
+            Action::Chain(chain) => return self.exec_or_break(chain),
+            Action::Continue => {
+                self.state.cursor.effect_on = false;
+            }
             Action::Command(cmd) => {
                 self.state.cmd_history.reset_call_stack();
                 self.state.cmd_history.push_in_call(cmd.clone());
+                self.state.clear_info_box();
                 if self.built_cmd_exec(&cmd) {
                     if let Some(action) = self.interpreter.cmd_executor(&cmd) {
                         return Some(
@@ -153,10 +158,6 @@ where
                 } else {
                     self.state.newline();
                 }
-            }
-            Action::Chain(chain) => return self.exec_or_break(chain),
-            Action::Continue => {
-                self.state.cursor.effect_on = false;
             }
             Action::Read => {
                 self.state.reading = true;
@@ -175,6 +176,9 @@ where
                 self.state.newline();
             }
             Action::WriteInfoText(text) => self.state.print_text(text),
+            Action::WriteInputText(text) => {
+                text.chars().for_each(|c| self.state.input_char(c));
+            }
             Action::Sleep(val) => std::thread::sleep(Duration::from_millis(val)),
             Action::Exit => return Some(Action::Exit),
             _ => {}
@@ -186,6 +190,7 @@ where
     fn built_cmd_exec(&mut self, cmd: &str) -> bool {
         match cmd {
             "clear" => {
+                self.state.clear_info_box();
                 self.state.clear_input_box();
                 false
             }
@@ -218,41 +223,52 @@ where
     }
 
     fn process_event(&mut self, event: Event) -> Option<Action<'a>> {
-        if let Event::Key(key) = event {
-            let action = match key.code {
-                KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE => {
-                    self.state.input_char(c);
-                    self.interpreter.digest(c)
-                }
-                KeyCode::Enter => self.interpreter.digest('\n'),
-                KeyCode::Backspace => {
-                    if !self.state.cursor.at_start_of_the_line() {
-                        self.state.delete();
-                        match self.interpreter.delete_last() {
-                            Some(Action::Discard) => {
-                                self.state.reading = false;
-                                self.state.cursor.effect_on = true;
-                                return Some(Action::None);
-                            }
-                            Some(other) => return Some(other),
-                            None => {}
-                        }
+        match event {
+            Event::Key(key) => {
+                let action = match key.code {
+                    KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE => {
+                        self.state.input_char(c);
+                        self.interpreter.digest(c)
                     }
-                    Action::Continue
+                    KeyCode::Enter => self.interpreter.digest('\n'),
+                    KeyCode::Backspace => {
+                        if !self.state.cursor.at_start_of_the_line() {
+                            self.state.delete();
+                            match self.interpreter.delete_last() {
+                                Some(Action::Discard) => {
+                                    self.state.reading = false;
+                                    self.state.cursor.effect_on = true;
+                                    return Some(Action::None);
+                                }
+                                Some(other) => return Some(other),
+                                None => {}
+                            }
+                        }
+                        Action::Continue
+                    }
+                    KeyCode::Esc => Action::Exit,
+                    KeyCode::Char(c) if key.modifiers == KeyModifiers::CONTROL => {
+                        self.ctrl_action(c)
+                    }
+                    KeyCode::Up => {
+                        return self.show_previous_command();
+                    }
+                    KeyCode::Down => {
+                        return self.show_following_command();
+                    }
+                    _ => Action::Continue,
+                };
+                self.exec_action(action)
+            }
+            Event::Mouse(me) => {
+                match me.kind {
+                    MouseEventKind::ScrollDown => {}
+                    MouseEventKind::ScrollUp => {}
+                    _ => {}
                 }
-                KeyCode::Esc => Action::Exit,
-                KeyCode::Char(c) if key.modifiers == KeyModifiers::CONTROL => self.ctrl_action(c),
-                KeyCode::Up => {
-                    return self.show_previous_command();
-                }
-                KeyCode::Down => {
-                    return self.show_following_command();
-                }
-                _ => Action::Continue,
-            };
-            self.exec_action(action)
-        } else {
-            None
+                None
+            }
+            _ => None,
         }
     }
 
@@ -266,7 +282,7 @@ where
                     .clipboard
                     .get_contents()
                     .ok()
-                    .map(|string| Action::WriteInputText(Text::from(string)))
+                    .map(|string| Action::WriteInputText(string))
                     .unwrap_or_else(|| Action::None)
             }
             _ => Action::None,

@@ -8,7 +8,7 @@ pub enum Action<'a> {
     /// source of interpretable instructions.
     StopReading,
     /// Writes some text to the input box in the terminal
-    WriteInputText(Text<'a>),
+    WriteInputText(String),
     /// Writes some text to the output box in the terminal
     WriteInfoText(Text<'a>),
     /// Signal an interpretable command to the terminal main event loop
