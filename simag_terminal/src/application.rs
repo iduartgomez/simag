@@ -49,8 +49,11 @@ where
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = TuiTerminal::new(backend).unwrap();
 
+        let (init_cur_x_pos, _) = terminal.get_cursor()?;
         terminal.clear()?;
         let mut first = true;
+        // in case of chaining actions, we only allow one single action per frame render
+        let chaining: &mut Option<Box<dyn Iterator<Item = Action>>> = &mut None;
         loop {
             terminal.draw(|f| {
                 let chunks = Self::layout_for_frame(f.size());
@@ -61,37 +64,42 @@ where
                     first = false;
                 }
 
-                match crossterm::event::poll(Duration::from_millis(10)) {
-                    Ok(true) => {
-                        match crossterm::event::read() {
-                            Ok(event) => {
-                                let action = self
-                                    .process_event(event)
-                                    .map_or_else(|| Action::None, |x| x);
-                                match self.exec_action(action) {
-                                    Some(Action::Exit) => {
-                                        self.state.terminate = true;
+                match chaining {
+                    Some(chain) => {
+                        if let Some(action) = chain.next() {
+                            if let Some(inner_chain) = self.main_ev_loop_action(action) {
+                                let mut old_chain = Box::new(std::iter::once(Action::None))
+                                    as Box<dyn Iterator<Item = _>>;
+                                std::mem::swap(chain, &mut old_chain);
+                                *chaining = Some(Box::new(inner_chain.chain(old_chain)));
+                            }
+                        } else {
+                            *chaining = None;
+                        }
+                    }
+                    None => match crossterm::event::poll(Duration::from_millis(10)) {
+                        Ok(true) => {
+                            match crossterm::event::read() {
+                                Ok(event) => {
+                                    let action = self
+                                        .process_event(event)
+                                        .map_or_else(|| Action::None, |x| x);
+                                    if let Some(chain) = self.main_ev_loop_action(action) {
+                                        *chaining = Some(chain);
                                     }
-                                    Some(Action::Chain(chain)) => {
-                                        self.exec_or_break(chain);
-                                    }
-                                    Some(Action::None) | None => {}
-                                    _ => self.state.report_error(
-                                        "Cannot perform that action in this context.",
-                                    ),
                                 }
-                            }
-                            Err(err) => {
-                                self.state.print_error(&err);
-                                self.state.terminate = true;
-                            }
-                        };
-                    }
-                    Ok(false) => {}
-                    Err(err) => {
-                        self.state.print_error(&err);
-                        self.state.terminate = true;
-                    }
+                                Err(err) => {
+                                    self.state.print_error(&err);
+                                    self.state.terminate = true;
+                                }
+                            };
+                        }
+                        Ok(false) => {}
+                        Err(err) => {
+                            self.state.print_error(&err);
+                            self.state.terminate = true;
+                        }
+                    },
                 }
 
                 let input = Self::draw_input_box(self.state.input_box_frame_content());
@@ -108,6 +116,7 @@ where
             }
         }
         terminal.clear()?;
+        terminal.set_cursor(init_cur_x_pos, 0)?;
         terminal.flush()?;
         Ok(())
     }
@@ -132,9 +141,28 @@ where
             .block(Block::default().borders(Borders::ALL).title(" Ouput "))
     }
 
-    fn exec_action<'b>(&'b mut self, action: Action<'a>) -> Option<Action<'a>> {
+    fn main_ev_loop_action(
+        &mut self,
+        action: Action<'a>,
+    ) -> Option<Box<dyn Iterator<Item = Action<'a>> + 'a>> {
+        match self.exec_action(action) {
+            Some(Action::Exit) => {
+                self.state.terminate = true;
+            }
+            Some(Action::Chain(chain)) => {
+                return Some(chain);
+            }
+            Some(Action::None) | None => {}
+            _ => self
+                .state
+                .report_error("Cannot perform that action in this context."),
+        }
+        None
+    }
+
+    fn exec_action(&mut self, action: Action<'a>) -> Option<Action<'a>> {
         match action {
-            Action::Chain(chain) => return self.exec_or_break(chain),
+            Action::Chain(chain) => return Some(Action::Chain(chain)),
             Action::Continue => {
                 self.state.cursor.effect_on = false;
             }
@@ -142,7 +170,7 @@ where
                 self.state.cmd_history.reset_call_stack();
                 self.state.cmd_history.push_in_call(cmd.clone());
                 self.state.clear_info_box();
-                if self.built_cmd_exec(&cmd) {
+                if self.is_custom_cmd(&cmd) {
                     if let Some(action) = self.interpreter.cmd_executor(&cmd) {
                         return Some(
                             self.exec_action(action)
@@ -187,8 +215,8 @@ where
         None
     }
 
-    /// Returns true if the input command it's a builtin command, produces a side-effect otherwise.
-    fn built_cmd_exec(&mut self, cmd: &str) -> bool {
+    /// Returns true if the input command it's not a builtin command, produces a side-effect otherwise.
+    fn is_custom_cmd(&mut self, cmd: &str) -> bool {
         match cmd {
             "clear" => {
                 self.state.clear_info_box();
@@ -202,25 +230,6 @@ where
             }
             _non_executable_cmd => true,
         }
-    }
-
-    fn exec_or_break(&mut self, chain: impl Iterator<Item = Action<'a>>) -> Option<Action<'a>> {
-        let mut chain = Box::new(chain.into_iter()) as Box<dyn Iterator<Item = _>>;
-        loop {
-            let mut chained = Vec::new();
-            for action in chain.filter_map(|a| self.exec_action(a)) {
-                if let Action::Chain(new_chain) = action {
-                    chained.extend(new_chain);
-                } else if action.exit() {
-                    return Some(Action::Exit);
-                }
-            }
-            if chained.is_empty() {
-                break;
-            }
-            chain = Box::new(chained.into_iter());
-        }
-        None
     }
 
     fn process_event(&mut self, event: Event) -> Option<Action<'a>> {

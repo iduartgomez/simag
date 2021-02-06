@@ -74,6 +74,7 @@ impl<'b> Manager {
     fn clean_up<'a: 'b>(&'b self) -> Action<'a> {
         let clean_up_pipe = vec![
             Action::WriteInfoText(Text::from("Closing gracefully, please wait ...")),
+            Action::Sleep(1000),
             Action::Command("closing".to_string()),
         ];
         Action::Chain(Box::new(clean_up_pipe.into_iter()))
@@ -95,11 +96,11 @@ impl ReplInterpreter for Manager {
         match command {
             "make" => Some(self.make_cmd()),
             "help" => Some(Action::WriteInfoText(self.messages.help().clone())),
-            "quit" => Some(self.clean_up()),
+            "quit" | "exit" => Some(self.clean_up()),
             "closing" => {
                 let actions = Box::new(
                     vec![
-                        Action::Sleep(2000),
+                        Action::Sleep(1000),
                         Action::WriteInfoText(self.messages.done().clone()),
                         Action::Sleep(1000),
                         Action::Exit,
@@ -166,6 +167,7 @@ Help commands:
 * <COMMAND> --help > prints the help for the command
 * make > creates a new network 
 * quit > gracefully shut down the program and all the nodes
+* shortcuts > show available keyboard shortcuts
 ";
 
 impl ConsoleMsg {
