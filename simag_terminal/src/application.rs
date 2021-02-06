@@ -75,9 +75,6 @@ where
                                     Some(Action::Chain(chain)) => {
                                         self.exec_or_break(chain);
                                     }
-                                    Some(Action::Newline) => {
-                                        self.state.newline();
-                                    }
                                     Some(Action::None) | None => {}
                                     _ => self.state.report_error(
                                         "Cannot perform that action in this context.",
@@ -156,24 +153,28 @@ where
                 if cmd == "clear" {
                     self.state.initial_line();
                 } else {
-                    self.state.newline();
+                    self.state.newline_input();
                 }
             }
             Action::Read => {
                 self.state.reading = true;
-                self.state.newline();
+                self.state.newline_reading();
             }
             Action::StopReading => {
                 self.state.reading = false;
-                self.state.newline();
+                self.state.newline_input();
             }
             Action::Discard => {
                 self.state.reading = true;
-                self.state.newline();
+                self.state.newline_input();
             }
             Action::Newline => {
                 self.state.reading = self.interpreter.is_reading();
-                self.state.newline();
+                if self.state.reading {
+                    self.state.newline_reading();
+                } else {
+                    self.state.newline_input();
+                }
             }
             Action::WriteInfoText(text) => self.state.print_text(text),
             Action::WriteInputText(text) => {

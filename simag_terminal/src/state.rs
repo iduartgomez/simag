@@ -110,13 +110,7 @@ impl<'a> AppState<'a> {
         )))
     }
 
-    pub fn initial_line(&mut self) {
-        self.newline();
-        self.cursor.y -= 1;
-    }
-
-    /// Make a new line in the input box.
-    pub fn newline(&mut self) {
+    fn move_to_next_line(&mut self) {
         self.cursor.effect_on = true;
         self.cursor.x = 4;
         let input_area = self.input_box.height - 2; // ignore both margin rows
@@ -126,7 +120,22 @@ impl<'a> AppState<'a> {
         if self.input_box_content.len() as u16 >= (self.input_box.height - 2) {
             self.input_box_content.remove(0);
         }
+    }
+
+    pub fn initial_line(&mut self) {
+        self.newline_input();
+        self.cursor.y -= 1;
+    }
+
+    /// Make a new line in the input box.
+    pub fn newline_input(&mut self) {
+        self.move_to_next_line();
         self.input_box_content.push(String::from(">>> "));
+    }
+
+    pub fn newline_reading(&mut self) {
+        self.move_to_next_line();
+        self.input_box_content.push(String::from("... "));
     }
 
     pub fn clear_input_box(&mut self) {
@@ -140,7 +149,7 @@ impl<'a> AppState<'a> {
 
     pub fn clear_input_line(&mut self) {
         self.input_box_content.pop();
-        self.newline();
+        self.newline_input();
         self.cursor.y -= 1;
     }
 

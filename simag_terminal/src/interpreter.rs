@@ -89,8 +89,10 @@ pub trait ReplInterpreter {
         } else if currently_reading {
             self.set_reading(false);
             match self.evaluate() {
-                Ok(Action::WriteInputText(p)) => Action::WriteInputText(p),
-                Err(msg) => Action::WriteInfoText(Text::from(msg)),
+                Ok(Action::WriteInputText(p)) => {
+                    Action::WriteInputText(p).compose(Action::StopReading)
+                }
+                Err(msg) => Action::WriteInfoText(Text::from(msg)).compose(Action::StopReading),
                 _ => Action::StopReading,
             }
         } else if let Some(command) = self.queued_command() {
