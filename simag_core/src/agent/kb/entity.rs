@@ -121,9 +121,10 @@ impl Entity {
                 #[cfg(debug_assertions)]
                 {
                     log::trace!(
-                        "Updated existing class membership for {} context: {}",
+                        "Updated existing `{}` class membership {} with context:\n    {}",
+                        grounded,
                         self.name,
-                        grounded
+                        &*current
                     );
                 }
                 current.update(
@@ -136,9 +137,10 @@ impl Entity {
                 #[cfg(debug_assertions)]
                 {
                     log::trace!(
-                        "Updated existing class membership for {} w/o context: {}",
+                        "Updated existing `{}` class membership {} w/o context:\n    {}",
+                        grounded,
                         self.name,
-                        grounded
+                        &*current
                     );
                 }
                 current.update(agent, &*grounded, None);
