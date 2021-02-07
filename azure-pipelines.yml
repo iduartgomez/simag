@@ -86,6 +86,8 @@ jobs:
   - template: coverage.yml@templates
     parameters:
       token: $(CODECOV_TOKEN_SECRET)
+      doctests: true
+      args: "--workspace"
 
 resources:
   repositories:
