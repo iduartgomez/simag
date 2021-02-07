@@ -166,7 +166,7 @@ Help commands:
 * help > the help command
 * <COMMAND> --help > prints the help for the command
 * make > creates a new network 
-* quit > gracefully shut down the program and all the nodes
+* quit | exit > gracefully shut down the program and all the nodes
 * shortcuts > show available keyboard shortcuts
 ";
 

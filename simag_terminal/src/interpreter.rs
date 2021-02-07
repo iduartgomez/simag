@@ -34,6 +34,7 @@ List of valid commands:
 * help commands > this command, prints info about commands
 * help queries > how to query the engine
 * quit | exit > close down the program
+* shortcuts > show available keyboard shortcuts
 ";
 
 const HELP_QUERYING: &str = "\

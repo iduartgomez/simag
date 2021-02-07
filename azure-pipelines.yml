@@ -74,7 +74,7 @@ jobs:
       - template: install-rust.yml@templates
         parameters:
           rust: stable
-      - script: cargo check --workspac --features simag_networking,repl
+      - script: cargo check --workspace --features simag_networking,repl
         displayName: cargo check
       - script: cargo check --no-default-features --workspace
         displayName: cargo check --no-default-features
@@ -86,6 +86,7 @@ jobs:
   - template: coverage.yml@templates
     parameters:
       token: $(CODECOV_TOKEN_SECRET)
+      args: "--packages simag_core,simag_networking"
 
 resources:
   repositories:
