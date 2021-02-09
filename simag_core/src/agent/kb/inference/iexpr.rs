@@ -207,7 +207,7 @@ impl<'rep> Inference<'rep> {
             .for_each(|(var, classes)| {
                 for cls in classes {
                     let cls_name = cls.get_parent();
-                    if let Some(cls_curr) = self.kb.classes.get(cls_name) {
+                    if let Some(cls_curr) = self.kb.classes.get().get(cls_name) {
                         let members: Vec<Arc<GroundedMemb>> = cls_curr.get_members(cls);
                         for m in members {
                             let t = unsafe { &*(&*m as *const GroundedMemb) as &'rep GroundedMemb };
@@ -229,9 +229,9 @@ impl<'rep> Inference<'rep> {
             .func_queries_free
             .par_iter()
             .for_each(|(var, funcs)| {
+                let lock = self.kb.classes.get();
                 for func in funcs {
                     let func_name = func.get_name();
-                    let lock = &self.kb.classes;
                     if let Some(cls_curr) = lock.get(func_name) {
                         let members: Vec<Arc<GroundedFunc>> = cls_curr.get_funcs(func);
                         self.results.add_relationships(var.clone(), &members);
@@ -291,7 +291,7 @@ impl<'rep> Inference<'rep> {
                 for (point, obj) in not_retrieved_objs {
                     match &**obj {
                         GrTerminalKind::Entity(ent) => {
-                            if let Some(ent) = self.kb.entities.get(ent.as_str()) {
+                            if let Some(ent) = self.kb.entities.get().get(ent.as_str()) {
                                 let trial = MoveInfTrial {
                                     kb: self.kb,
                                     obj: Movable::Entity(&*ent),
@@ -303,7 +303,7 @@ impl<'rep> Inference<'rep> {
                             }
                         }
                         GrTerminalKind::Class(cls) => {
-                            if let Some(cls) = self.kb.classes.get(cls.as_str()) {
+                            if let Some(cls) = self.kb.classes.get().get(cls.as_str()) {
                                 let trial = MoveInfTrial {
                                     kb: self.kb,
                                     obj: Movable::Class(&*cls),
@@ -905,7 +905,7 @@ impl<'rep, 'inf> InfTrial<'rep, 'inf> {
             }
         }
         for cls in cls_ls {
-            if let Some(stored) = self.kb.classes.get(*cls) {
+            if let Some(stored) = self.kb.classes.get().get(*cls) {
                 let comp: HashSet<Arc<LogSentence>> = {
                     if let Some(beliefs) = stored.beliefs.get(*cls) {
                         HashSet::from_iter(beliefs.iter().cloned())

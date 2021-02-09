@@ -175,15 +175,18 @@ impl MoveFn {
                 .get_location(loc_assign)
                 .unwrap_or_else(|_| unreachable!("SIMAG - location not assigned in move fn"));
 
+            let classes = agent.classes.get();
+            let entities = agent.entities.get();
+
             for var in &self.vars {
                 let assigned = assignments[&**var];
                 match assigned.name {
                     GrTerminalKind::Class(cls) => {
-                        let c = agent.classes.get(cls).unwrap();
+                        let c = classes.get(cls).unwrap();
                         add_rec(&c.location, loc.clone());
                     }
                     GrTerminalKind::Entity(ent) => {
-                        let e = agent.entities.get(ent).unwrap();
+                        let e = entities.get(ent).unwrap();
                         add_rec(&e.location, loc.clone());
                     }
                 }

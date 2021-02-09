@@ -339,4 +339,8 @@ impl Entity {
             f.get_value()
         }
     }
+
+    pub(in crate::agent::kb) fn compact(&self) {
+        todo!()
+    }
 }

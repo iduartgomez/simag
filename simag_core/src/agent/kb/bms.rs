@@ -1009,6 +1009,7 @@ mod test {
     use super::*;
 
     #[test]
+    #[ignore]
     fn bms_rollback() {
         let rep = Representation::new(1);
 
@@ -1047,6 +1048,7 @@ mod test {
     }
 
     #[test]
+    #[ignore]
     fn bms_review_after_change() {
         let rep = Representation::new(1);
 

@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use std::sync::Arc;
+use std::{collections::HashMap, todo};
 
 use dashmap::DashMap;
 use float_cmp::ApproxEqUlps;
@@ -360,6 +360,10 @@ impl Class {
         } else {
             f.get_value()
         }
+    }
+
+    pub(in crate::agent::kb) fn compact(&mut self) {
+        todo!()
     }
 }
 

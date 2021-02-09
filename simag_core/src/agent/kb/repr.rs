@@ -13,7 +13,9 @@ use crate::agent::lang::{
     GroundedFunc, GroundedMemb, GroundedRef, LocFn, LogSentence, MoveFn, ParseErrF, ParseTree,
     Parser, Point, Predicate, ProofResContext, SentVarReq, Var,
 };
+use crossbeam::channel::Sender;
 use dashmap::DashMap;
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
 use std::rc::Rc;
@@ -22,6 +24,29 @@ use std::sync::Arc;
 // TODO: find better solution for self-referential borrows escaping self method scopes
 // this should remove the use of unsafe in this module which seems a little bit unnecessary?
 // Avoid copying/cloning if possible.
+
+pub(in crate::agent) struct InnerData<T>(Arc<RwLock<DashMap<String, T>>>);
+
+impl<T> InnerData<T> {
+    #[inline]
+    pub fn get(&self) -> RwLockReadGuard<DashMap<String, T>> {
+        self.0.read()
+    }
+
+    #[inline]
+    pub fn get_mut(&mut self) -> RwLockWriteGuard<DashMap<String, T>> {
+        self.0.write()
+    }
+}
+
+impl<T> Clone for InnerData<T> {
+    fn clone(&self) -> Self {
+        InnerData(self.0.clone())
+    }
+}
+
+type EntitiesData = InnerData<Entity>;
+type ClassesData = InnerData<Class>;
 
 /// A container for internal agent's representations.
 ///
@@ -37,8 +62,9 @@ use std::sync::Arc;
 ///     classes -> Sets of objects (entities or subclasses) that share a common property.
 ///     | This includes 'classes of relationships' and other 'functions'.
 pub(crate) struct Representation {
-    pub(in crate::agent) entities: DashMap<String, Entity>,
-    pub(in crate::agent) classes: DashMap<String, Class>,
+    pub(in crate::agent) entities: EntitiesData,
+    pub(in crate::agent) classes: ClassesData,
+    svc_th_msg_queue: Sender<BackgroundEvent>,
     threads: rayon::ThreadPool,
 }
 
@@ -55,14 +81,35 @@ impl Representation {
             crate::agent::config::tracing::Logger::get_logger();
         }
 
-        Representation {
-            entities: DashMap::new(),
-            classes: DashMap::new(),
+        let (svc_th_msg_queue, rx) = crossbeam::channel::unbounded();
+        let entities = InnerData(Arc::new(RwLock::new(DashMap::new())));
+        let classes = InnerData(Arc::new(RwLock::new(DashMap::new())));
+
+        let rep = Representation {
+            entities,
+            classes,
             threads: rayon::ThreadPoolBuilder::new()
                 .num_threads(threads)
                 .build()
                 .unwrap(),
-        }
+            svc_th_msg_queue,
+        };
+
+        let mut inner_data = InnerReprData {
+            entities: rep.entities.clone(),
+            classes: rep.classes.clone(),
+        };
+
+        rep.threads.spawn(move || {
+            for msg in rx.iter() {
+                match Representation::background_maintenance_service(msg, &mut inner_data) {
+                    Ok(()) => {}
+                    Err(()) => {}
+                }
+            }
+        });
+
+        rep
     }
 
     /// Parses a sentence (or several of them) into an usable formula
@@ -160,68 +207,74 @@ impl Representation {
         assert: &Arc<GroundedMemb>,
         context: Option<&T>,
     ) {
-        let parent_exists = self.classes.contains_key(assert.get_parent());
+        let entities = self.entities.get();
+        let classes = self.classes.get();
+
+        let parent_exists = classes.contains_key(assert.get_parent());
         if !parent_exists {
             let class = Class::new(assert.get_parent().to_string(), ClassKind::Membership);
-            self.classes.insert(class.name.clone(), class);
+            classes.insert(class.name.clone(), class);
         }
         let decl;
         let is_new: bool;
         match assert.get_name() {
             ClassTerm(class_name) => {
-                let class_exists = self.classes.contains_key(class_name);
+                let class_exists = classes.contains_key(class_name);
                 if class_exists {
-                    let class = self.classes.get(class_name).unwrap();
+                    let class = classes.get(class_name).unwrap();
                     is_new = class.add_or_update_class_membership(self, assert, context);
                     decl = ClassMember::Class(assert.clone());
                 } else {
                     let class = Class::new(class_name.to_owned(), ClassKind::Membership);
-                    self.classes.insert(class.name.clone(), class);
-                    let class = self.classes.get(class_name).unwrap();
+                    classes.insert(class.name.clone(), class);
+                    let class = classes.get(class_name).unwrap();
                     is_new = class.add_or_update_class_membership(self, assert, context);
                     decl = ClassMember::Class(assert.clone());
                 }
             }
             EntityTerm(subject) => {
-                let entity_exists = self.entities.contains_key(subject);
+                let entity_exists = entities.contains_key(subject);
                 if entity_exists {
-                    let entity = self.entities.get(subject).unwrap();
+                    let entity = entities.get(subject).unwrap();
                     is_new = entity.add_or_updated_class_membership(self, assert, context);
                     decl = ClassMember::Entity(assert.clone());
                 } else {
                     let entity = Entity::new(subject.to_string());
-                    self.entities.insert(entity.name.clone(), entity);
-                    let entity = self.entities.get(subject).unwrap();
+                    entities.insert(entity.name.clone(), entity);
+                    let entity = entities.get(subject).unwrap();
                     is_new = entity.add_or_updated_class_membership(self, assert, context);
                     decl = ClassMember::Entity(assert.clone());
                 }
             }
         }
         if is_new {
-            let parent = self.classes.get(assert.get_parent()).unwrap();
+            let parent = classes.get(assert.get_parent()).unwrap();
             parent.add_member(decl);
         }
     }
 
     fn upsert_objects_with_loc(&self, objs: impl Iterator<Item = (GrTerminalKind<String>, Point)>) {
+        let classes = self.classes.get();
+        let entities = self.entities.get();
+
         for (term, loc) in objs {
             match term {
                 ClassTerm(class_name) => {
-                    if let Some(class) = self.classes.get(&class_name) {
+                    if let Some(class) = classes.get(&class_name) {
                         (*class).with_location(loc, None);
                     } else {
                         let class = Class::new(class_name, ClassKind::Membership);
                         class.with_location(loc, None);
-                        self.classes.insert(class.name.clone(), class);
+                        classes.insert(class.name.clone(), class);
                     }
                 }
                 EntityTerm(subject) => {
-                    if let Some(entity) = self.entities.get(&subject) {
+                    if let Some(entity) = entities.get(&subject) {
                         (*entity).with_location(loc, None);
                     } else {
                         let entity = Entity::new(subject);
                         entity.with_location(loc, None);
-                        self.entities.insert(entity.name.clone(), entity);
+                        entities.insert(entity.name.clone(), entity);
                     }
                 }
             }
@@ -233,28 +286,31 @@ impl Representation {
         assert: &Arc<GroundedFunc>,
         context: Option<&T>,
     ) {
+        let classes = self.classes.get();
+        let entities = self.entities.get();
+
         // it doesn't matter this is overwritten, as if it exists, it exists for all
         let is_new = Rc::new(::std::cell::RefCell::new(true));
         let process_arg = |a: &GroundedMemb| {
             let is_new1;
             match a.get_name() {
                 ClassTerm(class_name) => {
-                    if let Some(class) = self.classes.get(class_name) {
+                    if let Some(class) = classes.get(class_name) {
                         is_new1 = class.add_relationship(self, assert, context);
                     } else {
                         let class = Class::new(class_name.to_owned(), ClassKind::Membership);
-                        self.classes.insert(class.name.clone(), class);
-                        let class = self.classes.get(class_name).unwrap();
+                        classes.insert(class.name.clone(), class);
+                        let class = classes.get(class_name).unwrap();
                         is_new1 = class.add_relationship(self, assert, context);
                     }
                 }
                 EntityTerm(subject) => {
-                    if let Some(entity) = self.entities.get(subject) {
+                    if let Some(entity) = entities.get(subject) {
                         is_new1 = entity.add_relationship(self, assert, context);
                     } else {
                         let entity = Entity::new(subject.to_owned());
-                        self.entities.insert(entity.name.clone(), entity);
-                        let entity = self.entities.get(subject).unwrap();
+                        entities.insert(entity.name.clone(), entity);
+                        let entity = entities.get(subject).unwrap();
                         is_new1 = entity.add_relationship(self, assert, context);
                     }
                 }
@@ -262,65 +318,79 @@ impl Representation {
             let new_check = is_new.clone();
             *new_check.borrow_mut() = is_new1;
         };
-        let relation_exists = self.classes.contains_key(assert.get_name());
+        let relation_exists = classes.contains_key(assert.get_name());
         if !relation_exists {
             let relationship = Class::new(assert.get_name().to_string(), ClassKind::Relationship);
-            self.classes.insert(relationship.name.clone(), relationship);
+            classes.insert(relationship.name.clone(), relationship);
         }
         for arg in assert.get_args() {
             process_arg(arg);
         }
         if *is_new.borrow() {
-            let parent = self.classes.get(assert.get_name()).unwrap();
+            let parent = classes.get(assert.get_name()).unwrap();
             parent.add_relation_to_class(assert.clone());
         }
     }
 
     fn add_belief(&self, belief: &Arc<LogSentence>) {
+        let entities = &*self.entities.get();
+        let classes = &*self.classes.get();
+
         fn update(
             subject: &str,
             name: &str,
             is_entity: bool,
             belief: &Arc<LogSentence>,
-            repr: &Representation,
+            entities: &DashMap<String, Entity>,
+            classes: &DashMap<String, Class>,
         ) {
             if is_entity {
-                if let Some(entity) = repr.entities.get(subject) {
+                if let Some(entity) = entities.get(subject) {
                     entity.add_belief(belief.clone(), subject);
                 } else {
                     let entity = Entity::new(subject.to_string());
                     entity.add_belief(belief.clone(), name);
-                    repr.entities.insert(subject.to_string(), entity);
+                    entities.insert(subject.to_string(), entity);
                 }
-            } else if let Some(class) = repr.classes.get(subject) {
+            } else if let Some(class) = classes.get(subject) {
                 class.add_belief(belief.clone(), name);
             } else {
                 let class = Class::new(subject.to_string(), ClassKind::Membership);
                 class.add_belief(belief.clone(), name);
-                repr.classes.insert(subject.to_string(), class);
+                classes.insert(subject.to_string(), class);
             }
         }
 
         for p in belief.get_all_predicates() {
             match *p {
                 Assert::ClassDecl(ref cls_decl) => {
-                    if let Some(class) = self.classes.get(cls_decl.get_name()) {
+                    if let Some(class) = classes.get(cls_decl.get_name()) {
                         class.add_belief(belief.clone(), cls_decl.get_name());
                     } else {
                         let class =
                             Class::new(cls_decl.get_name().to_string(), ClassKind::Membership);
                         class.add_belief(belief.clone(), cls_decl.get_name());
-                        self.classes.insert(class.name.clone(), class);
+                        classes.insert(class.name.clone(), class);
                     }
                     for arg in cls_decl.get_args() {
                         if !arg.is_var() {
                             match arg.get_name().into() {
-                                ClassTerm(class_name) => {
-                                    update(class_name, cls_decl.get_name(), false, &belief, self)
-                                }
-                                EntityTerm(subject_name) => {
-                                    update(subject_name, cls_decl.get_name(), true, &belief, self)
-                                }
+                                ClassTerm(class_name) => update(
+                                    class_name,
+                                    cls_decl.get_name(),
+                                    false,
+                                    &belief,
+                                    entities,
+                                    classes,
+                                ),
+                                EntityTerm(subject_name) => update(
+                                    subject_name,
+                                    cls_decl.get_name(),
+                                    true,
+                                    &belief,
+                                    entities,
+                                    classes,
+                                ),
                             }
                         }
                     }
@@ -329,23 +399,33 @@ impl Representation {
                     if !fn_decl.is_relational() {
                         continue;
                     }
-                    if let Some(class) = self.classes.get(fn_decl.get_name()) {
+                    if let Some(class) = classes.get(fn_decl.get_name()) {
                         class.add_belief(belief.clone(), fn_decl.get_name());
                     } else {
                         let class =
                             Class::new(fn_decl.get_name().to_string(), ClassKind::Relationship);
                         class.add_belief(belief.clone(), fn_decl.get_name());
-                        self.classes.insert(class.name.clone(), class);
+                        classes.insert(class.name.clone(), class);
                     }
                     for arg in fn_decl.get_args() {
                         if !arg.is_var() {
                             match arg.get_name().into() {
-                                ClassTerm(class_name) => {
-                                    update(class_name, fn_decl.get_name(), false, &belief, self)
-                                }
-                                EntityTerm(subject_name) => {
-                                    update(subject_name, fn_decl.get_name(), true, &belief, self)
-                                }
+                                ClassTerm(class_name) => update(
+                                    class_name,
+                                    fn_decl.get_name(),
+                                    false,
+                                    &belief,
+                                    entities,
+                                    classes,
+                                ),
+                                EntityTerm(subject_name) => update(
+                                    subject_name,
+                                    fn_decl.get_name(),
+                                    true,
+                                    &belief,
+                                    entities,
+                                    classes,
+                                ),
                             }
                         }
                     }
@@ -433,18 +513,21 @@ impl Representation {
         candidates: &HashMap<&Var, Vec<Arc<VarAssignment>>>,
         assigned: &'a mut HashSet<&'b str>,
     ) {
+        let entities = self.entities.get();
+        let classes = self.entities.get();
+
         assign.iter().for_each(|a| {
             let name = *a.name;
             if assigned.get(name) == None {
                 // add this sent as move_fn to the potential candidates
                 match a.name {
                     GrTerminalKind::Entity(_) => {
-                        if let Some(ent) = self.entities.get(name) {
+                        if let Some(ent) = entities.get(name) {
                             ent.move_beliefs.write().push(belief.clone());
                         }
                     }
                     GrTerminalKind::Class(_) => {
-                        if let Some(cls) = self.classes.get(name) {
+                        if let Some(cls) = classes.get(name) {
                             cls.move_beliefs.write().push(belief.clone());
                         }
                     }
@@ -487,10 +570,12 @@ impl Representation {
     }
 
     fn add_rule(&self, rule: &Arc<LogSentence>) {
+        let classes = self.classes.get();
+
         let preds = rule.get_all_predicates();
         for p in preds {
             let name = p.get_name();
-            if let Some(class) = self.classes.get(name) {
+            if let Some(class) = classes.get(name) {
                 class.add_rule(rule.clone());
             } else {
                 let nc = match *p {
@@ -499,7 +584,7 @@ impl Representation {
                     Assert::SpecialFunc(_) => unreachable!(),
                 };
                 nc.add_rule(rule.clone());
-                self.classes.insert(name.to_string(), nc);
+                classes.insert(name.to_string(), nc);
             }
         }
         rollback_from_rule(self, &rule);
@@ -511,9 +596,11 @@ impl Representation {
         &'a self,
         classes: &'b [&str],
     ) -> HashMap<&'b str, Vec<Arc<GroundedMemb>>> {
+        let sclasses = self.classes.get();
+
         let mut dict = HashMap::new();
         for cls in classes {
-            if let Some(klass) = self.classes.get(*cls) {
+            if let Some(klass) = sclasses.get(*cls) {
                 let mut v = vec![];
                 for e in &**klass.members.read() {
                     match *e {
@@ -538,9 +625,11 @@ impl Representation {
         &'a self,
         funcs: &'b [&'b FuncDecl],
     ) -> HashMap<&'b str, HashMap<&'a str, Vec<Arc<GroundedFunc>>>> {
+        let sclasses = self.classes.get();
+
         let mut dict = HashMap::new();
         for func in funcs {
-            if let Some(func_ref) = self.classes.get(&*func.get_name()) {
+            if let Some(func_ref) = sclasses.get(&*func.get_name()) {
                 let mut m = HashMap::new();
                 for e in &**func_ref.value().members.read() {
                     if let ClassMember::Func(ref f) = *e {
@@ -568,9 +657,13 @@ impl Representation {
         G: std::ops::Deref<Target = GrTerminalKind<S>>,
         S: AsRef<str>,
     {
+        let entities = self.entities.get();
+        let classes = self.entities.get();
+
         match *subject {
             EntityTerm(ref subject_name) => {
-                if let Some(entity) = self.entities.get(subject_name.as_ref()) {
+                // let entities = &*entities;
+                if let Some(entity) = entities.get(subject_name.as_ref()) {
                     match entity.belongs_to_class(class, false) {
                         Some(r) => Some(r),
                         None => None,
@@ -580,7 +673,7 @@ impl Representation {
                 }
             }
             ClassTerm(ref class_name) => {
-                if let Some(klass) = self.classes.get(class_name.as_ref()) {
+                if let Some(klass) = classes.get(class_name.as_ref()) {
                     match klass.belongs_to_class(class, false) {
                         Some(r) => Some(r),
                         None => None,
@@ -595,16 +688,19 @@ impl Representation {
     /// Takes a grounded predicate from a query and returns the membership truth value.
     /// It checks the truth value based on the time intervals of the predicate.
     pub(in crate::agent) fn class_membership_query(&self, pred: &GroundedMemb) -> Option<bool> {
+        let entities = self.entities.get();
+        let classes = self.entities.get();
+
         match pred.get_name() {
             EntityTerm(subject) => {
-                if let Some(entity) = self.entities.get(subject) {
+                if let Some(entity) = entities.get(subject) {
                     if let Some(current) = entity.belongs_to_class(pred.get_parent(), true) {
                         return current.compare(pred);
                     }
                 }
             }
             ClassTerm(class_name) => {
-                if let Some(class) = self.classes.get(class_name) {
+                if let Some(class) = classes.get(class_name) {
                     if let Some(current) = class.belongs_to_class(pred.get_parent(), true) {
                         return current.compare(pred);
                     }
@@ -618,13 +714,16 @@ impl Representation {
         &self,
         subject: &FreeClassMembership,
     ) -> Vec<Arc<GroundedMemb>> {
+        let entities = self.entities.get();
+        let classes = self.entities.get();
+
         if let EntityTerm(name) = subject.get_name().into() {
-            if let Some(entity) = self.entities.get(name) {
+            if let Some(entity) = entities.get(name) {
                 entity.get_class_membership(subject)
             } else {
                 vec![]
             }
-        } else if let Some(class) = self.classes.get(subject.get_name()) {
+        } else if let Some(class) = classes.get(subject.get_name()) {
             class.get_class_membership(subject)
         } else {
             vec![]
@@ -636,13 +735,16 @@ impl Representation {
         pred: &GroundedFunc,
         subject: &str,
     ) -> Option<bool> {
+        let entities = self.entities.get();
+        let classes = self.entities.get();
+
         if let EntityTerm(subject_name) = subject.into() {
-            if let Some(entity) = self.entities.get(subject_name) {
+            if let Some(entity) = entities.get(subject_name) {
                 if let Some(current) = entity.has_relationship(pred) {
                     return current.compare(pred);
                 }
             }
-        } else if let Some(class) = self.classes.get(subject) {
+        } else if let Some(class) = classes.get(subject) {
             if let Some(current) = class.has_relationship(pred) {
                 return current.compare(pred);
             }
@@ -655,8 +757,11 @@ impl Representation {
         pred: &GroundedFunc,
         subject: &str,
     ) -> Option<Arc<GroundedFunc>> {
+        let entities = self.entities.get();
+        let classes = self.entities.get();
+
         if let EntityTerm(subject_name) = subject.into() {
-            if let Some(entity) = self.entities.get(subject_name) {
+            if let Some(entity) = entities.get(subject_name) {
                 if let Some(current) = entity.has_relationship(pred) {
                     if current.compare_ignoring_times(pred) {
                         return Some(current);
@@ -665,7 +770,7 @@ impl Representation {
                     }
                 }
             }
-        } else if let Some(class) = self.classes.get(subject) {
+        } else if let Some(class) = classes.get(subject) {
             if let Some(current) = class.has_relationship(pred) {
                 if current.compare_ignoring_times(pred) {
                     return Some(current);
@@ -681,11 +786,14 @@ impl Representation {
         &self,
         func: &FuncDecl,
     ) -> HashMap<&str, Vec<Arc<GroundedFunc>>> {
+        let classes = self.entities.get();
+        let entities = self.entities.get();
+
         let mut res = HashMap::new();
         for (pos, arg) in func.get_args().iter().enumerate() {
             if !arg.is_var() {
                 if let EntityTerm(subject_name) = arg.get_name().into() {
-                    if let Some(entity) = self.entities.get(subject_name) {
+                    if let Some(entity) = entities.get(subject_name) {
                         let mut v: HashMap<&str, Vec<Arc<GroundedFunc>>> =
                             entity.get_relationships(pos, arg);
                         for (_, mut funcs) in v.drain() {
@@ -696,7 +804,7 @@ impl Representation {
                             res.entry(rel).or_insert_with(Vec::new).append(&mut funcs);
                         }
                     }
-                } else if let Some(class) = self.classes.get(arg.get_name()) {
+                } else if let Some(class) = classes.get(arg.get_name()) {
                     let mut v: HashMap<&str, Vec<Arc<GroundedFunc>>> =
                         class.get_relationships(pos, arg);
                     for (_, mut funcs) in v.drain() {
@@ -722,8 +830,8 @@ impl Representation {
     }
 
     pub fn clear(&mut self) {
-        self.entities.clear();
-        self.classes.clear();
+        self.entities.get().clear();
+        self.classes.get().clear();
     }
 
     #[allow(clippy::type_complexity)]
@@ -731,11 +839,14 @@ impl Representation {
         &self,
         objects: impl Iterator<Item = (&'a Arc<GrTerminalKind<T>>, &'a Point)>,
     ) -> Vec<(&'a Point, Arc<GrTerminalKind<T>>, Option<bool>)> {
+        let classes = self.entities.get();
+        let entities = self.entities.get();
+
         let mut answer = vec![];
         for (term, loc) in objects {
             match &**term {
                 ClassTerm(class_name) => {
-                    if let Some(class) = self.classes.get(class_name.as_ref()) {
+                    if let Some(class) = classes.get(class_name.as_ref()) {
                         let rec = class.location.get_record_at_location(loc, None);
                         if !rec.is_empty() {
                             answer.push((loc, term.clone(), Some(true)))
@@ -747,7 +858,7 @@ impl Representation {
                     }
                 }
                 EntityTerm(subject) => {
-                    if let Some(entity) = self.entities.get(subject.as_ref()) {
+                    if let Some(entity) = entities.get(subject.as_ref()) {
                         let rec = entity.location.get_record_at_location(loc, None);
                         if !rec.is_empty() {
                             answer.push((loc, term.clone(), Some(true)))
@@ -764,8 +875,11 @@ impl Representation {
     }
 
     pub(super) fn find_all_objs_in_loc<'a>(&self, loc: &'a Point) -> Vec<GrTerminalKind<String>> {
+        let classes = self.entities.get();
+        let entities = self.entities.get();
+
         let mut answer = vec![];
-        for class in &self.classes {
+        for class in &*classes {
             if class
                 .location
                 .get_record_at_location(loc, None)
@@ -777,7 +891,7 @@ impl Representation {
                 answer.push(GrTerminalKind::Class(class.key().to_owned()));
             }
         }
-        for entity in &self.entities {
+        for entity in &*entities {
             if entity
                 .location
                 .get_record_at_location(loc, None)
@@ -791,6 +905,40 @@ impl Representation {
         }
         answer
     }
+
+    /// Performs critical functions in the background service.
+    #[inline(always)]
+    fn background_maintenance_service(
+        msg: BackgroundEvent,
+        rep_data: &mut InnerReprData,
+    ) -> Result<(), ()> {
+        use BackgroundEvent::*;
+
+        match msg {
+            CompactBmsLog => {
+                for mut kv in rep_data.classes.get_mut().iter_mut() {
+                    let class = &mut *kv;
+                    class.compact();
+                }
+
+                for mut kv in rep_data.entities.get_mut().iter_mut() {
+                    let entity = &mut *kv;
+                    entity.compact();
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+enum BackgroundEvent {
+    CompactBmsLog,
+}
+
+struct InnerReprData {
+    entities: EntitiesData,
+    classes: ClassesData,
 }
 
 /// Error type for query failures.
@@ -871,7 +1019,8 @@ impl<'a> Answer<'a> {
 pub(super) fn lookahead_rules(agent: &Representation, name: &str, grounded: &GroundedRef) -> bool {
     use super::inference::rules_inference_lookahead;
     let rules: Vec<Arc<LogSentence>> = {
-        let class = agent.classes.get(name).unwrap();
+        let classes = agent.classes.get();
+        let class = classes.get(name).unwrap();
         let rules = &*class.rules.read();
         rules.clone()
     };
