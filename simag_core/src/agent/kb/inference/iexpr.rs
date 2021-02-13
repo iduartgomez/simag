@@ -229,9 +229,9 @@ impl<'rep> Inference<'rep> {
             .func_queries_free
             .par_iter()
             .for_each(|(var, funcs)| {
+                let lock = &*self.kb.classes;
                 for func in funcs {
                     let func_name = func.get_name();
-                    let lock = &self.kb.classes;
                     if let Some(cls_curr) = lock.get(func_name) {
                         let members: Vec<Arc<GroundedFunc>> = cls_curr.get_funcs(func);
                         self.results.add_relationships(var.clone(), &members);

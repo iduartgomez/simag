@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crossbeam::channel::Sender;
 use dashmap::DashMap;
 use float_cmp::ApproxEqUlps;
 use parking_lot::RwLock;
 
-use super::bms;
+use super::{bms, persist, repr::BackgroundTask};
 use crate::agent::kb::repr::{lookahead_rules, Representation};
 use crate::agent::lang::{
     FreeClassMembership, FreeMembershipToClass, FuncDecl, Grounded, GroundedFunc, GroundedMemb,
@@ -28,6 +29,7 @@ pub(in crate::agent) struct Class {
     classes: DashMap<String, Arc<GroundedMemb>>,
     relations: DashMap<String, Vec<Arc<GroundedFunc>>>,
     pub beliefs: DashMap<String, Vec<Arc<LogSentence>>>,
+    svc_queue: Sender<BackgroundTask>,
     pub(super) move_beliefs: RwLock<Vec<Arc<LogSentence>>>,
     pub rules: RwLock<Vec<Arc<LogSentence>>>,
     pub(in crate::agent::kb) members: RwLock<Vec<ClassMember>>,
@@ -35,12 +37,17 @@ pub(in crate::agent) struct Class {
 }
 
 impl Class {
-    pub(in crate::agent::kb) fn new(name: String, _kind: ClassKind) -> Class {
+    pub(in crate::agent::kb) fn new(
+        name: String,
+        _kind: ClassKind,
+        svc_queue: Sender<BackgroundTask>,
+    ) -> Class {
         Class {
             name,
             classes: DashMap::new(),
             relations: DashMap::new(),
             beliefs: DashMap::new(),
+            svc_queue,
             move_beliefs: RwLock::new(Vec::new()),
             rules: RwLock::new(Vec::new()),
             members: RwLock::new(Vec::new()),
@@ -114,6 +121,13 @@ impl Class {
                 bms::update_producers(&Grounded::Class(Arc::downgrade(&current.clone())), context);
             } else {
                 current.update(agent, &*grounded, None);
+            }
+            if let Some(bms) = &current.bms {
+                if bms.mark_for_sweep() {
+                    self.svc_queue
+                        .send(BackgroundTask::CompactBmsLog(bms.clone()))
+                        .expect("background service crashed");
+                }
             }
             false
         } else {
@@ -302,6 +316,11 @@ impl Class {
                         } else {
                             f.update(agent, &*func, None);
                         }
+                        if f.bms.mark_for_sweep() {
+                            self.svc_queue
+                                .send(BackgroundTask::CompactBmsLog(f.bms.clone()))
+                                .expect("background service crashed");
+                        }
                         found_rel = true;
                         break;
                     }
@@ -361,6 +380,8 @@ impl Class {
             f.get_value()
         }
     }
+
+    pub(super) fn persist(&mut self) {}
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

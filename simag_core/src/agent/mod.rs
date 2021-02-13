@@ -50,6 +50,30 @@ impl Agent {
         self
     }
 
+    /// Persistance enables eventual consistency between in-memory state and
+    /// the physical storage persisted state.
+    ///
+    /// Agents are memory-first data structures, and in-memory ops take preference over
+    /// secondary on-disk persistence. This means that in the event of crashes there
+    /// could be an inconsistency introduced if an agent is recreated from any persisted
+    /// data.
+    #[cfg(feature = "persistence")]
+    pub fn with_persistance(mut self) -> Self {
+        self.representation.enable_persistence();
+        self
+    }
+
+    #[cfg(feature = "persistence")]
+    pub fn enable_persistance(&mut self) -> &mut Self {
+        self.representation.enable_persistence();
+        self
+    }
+
+    #[cfg(feature = "persistence")]
+    pub fn disable_persistance(&mut self) {
+        self.representation.disable_persistence();
+    }
+
     /// Clean up all the knowledge of the agent.
     pub fn clear(&mut self) {
         self.representation.clear()

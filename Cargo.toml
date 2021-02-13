@@ -29,4 +29,4 @@ repl = ["simag_term_utils"]
 members = ["simag_core", "simag_networking", "simag_terminal"]
 
 [profile.release]
-debug = true
+debug = false

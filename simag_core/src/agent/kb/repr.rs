@@ -1,4 +1,7 @@
-use super::{bms::build_declaration_bms, entity::Entity};
+use super::{
+    bms::{build_declaration_bms, BmsWrapper, RecordHistory},
+    entity::Entity,
+};
 use crate::agent::kb::{
     class::*,
     inference::{
@@ -13,15 +16,57 @@ use crate::agent::lang::{
     GroundedFunc, GroundedMemb, GroundedRef, LocFn, LogSentence, MoveFn, ParseErrF, ParseTree,
     Parser, Point, Predicate, ProofResContext, SentVarReq, Var,
 };
+use crossbeam::channel::Sender;
 use dashmap::DashMap;
-use std::collections::{HashMap, HashSet};
-use std::iter::FromIterator;
-use std::rc::Rc;
-use std::sync::Arc;
+use parking_lot::{Condvar, Mutex};
+use std::{
+    collections::{HashMap, HashSet},
+    iter::FromIterator,
+    ops::Deref,
+    rc::Rc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+    time::Instant,
+};
 
 // TODO: find better solution for self-referential borrows escaping self method scopes
 // this should remove the use of unsafe in this module which seems a little bit unnecessary?
 // Avoid copying/cloning if possible.
+
+/// The idea behind this is to split events in two types run in the main and background thread:
+/// - shared events (main thread), only require a read lock into the inner data and
+///   can be shared between threads.
+/// - unique events (service thread), require a write lock since they may mutate the inner data.
+///
+/// There are two kind of unique events, those triggered by schedeluded maintenance tasks and those
+/// that are a byproduct of an evaluation (shared event types).
+/// When the repr is free to perform writes because there are no reads, it will place a local repr
+/// lock and process any scheduled unique events.
+///
+/// Since the locking is done only once when available this is a cheap operation and allows
+/// updating the repr state in an orderly fashion, following always the sequence: read -> write -> read.
+/// Likewise maintenace tasks are only performed when there are no more shared events in queue.
+pub(in crate::agent) struct InnerData<T>(Arc<DashMap<String, T>>);
+
+impl<T> Clone for InnerData<T> {
+    fn clone(&self) -> Self {
+        InnerData(self.0.clone())
+    }
+}
+
+impl<T> Deref for InnerData<T> {
+    type Target = DashMap<String, T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+type EntitiesData = InnerData<Entity>;
+type ClassesData = InnerData<Class>;
 
 /// A container for internal agent's representations.
 ///
@@ -31,15 +76,18 @@ use std::sync::Arc;
 /// The class includes methods to encode and decode the representations
 /// to/from data streams or idioms.
 ///
-/// Attributes:
-///     entities -> Unique members (entities) of their own set/class.
-///     | Entities are denoted with a $ symbol followed by an alphanumeric literal.
-///     classes -> Sets of objects (entities or subclasses) that share a common property.
-///     | This includes 'classes of relationships' and other 'functions'.
+/// ## Attributes
+///     - entities -> Unique members (entities) of their own set/class.
+///                   Entities are denoted with a $ symbol followed by an alphanumeric literal.
+///     - classes -> Sets of objects (entities or subclasses) that share a common property.
+///                  This includes 'classes of relationships' and other 'functions'.
 pub(crate) struct Representation {
-    pub(in crate::agent) entities: DashMap<String, Entity>,
-    pub(in crate::agent) classes: DashMap<String, Class>,
+    pub(in crate::agent) entities: EntitiesData,
+    pub(in crate::agent) classes: ClassesData,
+    svc_queue: Sender<BackgroundTask>,
     threads: rayon::ThreadPool,
+    readers: Arc<(Mutex<usize>, Condvar)>,
+    config: ReprConfig,
 }
 
 impl Default for Representation {
@@ -48,21 +96,133 @@ impl Default for Representation {
     }
 }
 
+struct ReprSharedData {
+    entities: EntitiesData,
+    classes: ClassesData,
+    config: ReprConfig,
+}
+
+impl ReprSharedData {
+    // TODO: this should be optimized and is a first naive implementation by:
+    // 1. checking if state has indeed changed since last persistence first
+    // 2. perform incremental persistence over different time chunks to not starve
+    //    the main thread
+    fn persist(&mut self) -> Result<(), ()> {
+        // perform secondary background service tasks if enough time has elapsed
+        if self.config.persist.load(Ordering::SeqCst) {
+            for mut entity in self.entities.iter_mut() {
+                entity.persist();
+            }
+            for mut class in self.classes.iter_mut() {
+                class.persist();
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Representation {
+    /// Time allocated for the service thread to execute a batch of tasks before starving
+    /// readers.
+    const BG_TASK_TIME_SLICE: Duration = Duration::from_nanos(100);
+    /// Frequency with which the background secondary tasks are to be performed.
+    const BG_SEC_TASK_FREQ: Duration = Duration::from_millis(1_000);
+
     pub fn new(threads: usize) -> Representation {
         #[cfg(any(test, debug_assertions))]
         {
             crate::agent::config::tracing::Logger::get_logger();
         }
 
-        Representation {
-            entities: DashMap::new(),
-            classes: DashMap::new(),
+        let (svc_th_msg_queue, rx) = crossbeam::channel::unbounded();
+        let entities = InnerData(Arc::new(DashMap::new()));
+        let classes = InnerData(Arc::new(DashMap::new()));
+
+        #[cfg(feature = "persistence")]
+        let config = ReprConfig::default();
+
+        let readers = Arc::new((Mutex::new(0), Condvar::new()));
+        // reserve at least one thread for the background thread
+        let rep = Representation {
+            entities,
+            classes,
             threads: rayon::ThreadPoolBuilder::new()
-                .num_threads(threads)
+                .num_threads(threads + 1)
                 .build()
                 .unwrap(),
-        }
+            svc_queue: svc_th_msg_queue,
+            readers: readers.clone(),
+            #[cfg(feature = "persistence")]
+            config: config.clone(),
+        };
+
+        let mut shared_data = ReprSharedData {
+            entities: rep.entities.clone(),
+            classes: rep.classes.clone(),
+            config: rep.config.clone(),
+        };
+
+        rep.threads.spawn(move || {
+            let (num_writers_lock, cvar) = &*readers;
+            let mut time_slice = Instant::now() + Self::BG_TASK_TIME_SLICE;
+            let mut last_bg_exec = Instant::now();
+            let mut potentially_disconnected = false;
+            loop {
+                let mut num_writers = num_writers_lock.lock();
+                if *num_writers > 0 {
+                    if cvar
+                        .wait_for(&mut num_writers, Duration::from_secs(10))
+                        .timed_out()
+                    {
+                        // timed out... parent thread may have been killed leaving the number of reads in
+                        // a corrupted state. We can double check this by checking if the other end of the channel
+                        // has been disconnected below
+                        potentially_disconnected = true;
+                    }
+                }
+                match rx.try_recv() {
+                    Ok(msg) => match Representation::background_service(msg) {
+                        Ok(()) => {}
+                        Err(()) => {}
+                    },
+                    Err(crossbeam::channel::TryRecvError::Empty) => {
+                        if last_bg_exec.elapsed() > Self::BG_SEC_TASK_FREQ {
+                            shared_data.persist().expect("failed to perform persist op");
+                            last_bg_exec = Instant::now();
+                        }
+                    }
+                    Err(crossbeam::channel::TryRecvError::Disconnected)
+                        if potentially_disconnected =>
+                    {
+                        // attempt to persist the current state a last time
+                        #[cfg(feature = "persistence")]
+                        shared_data.persist().expect("failed to perform persist op");
+                        break;
+                    }
+                    Err(crossbeam::channel::TryRecvError::Disconnected) => {
+                        // this should not be possible
+                        unreachable!()
+                    }
+                }
+                if Instant::now() > time_slice {
+                    std::mem::drop(num_writers);
+                    std::thread::sleep(Duration::from_nanos(100));
+                    time_slice = Instant::now() + Self::BG_TASK_TIME_SLICE;
+                }
+            }
+        });
+
+        rep
+    }
+
+    #[cfg(feature = "persistence")]
+    pub fn enable_persistence(&mut self) {
+        self.config.persist.swap(true, Ordering::SeqCst);
+    }
+
+    #[cfg(feature = "persistence")]
+    pub fn disable_persistence(&mut self) {
+        self.config.persist.swap(false, Ordering::SeqCst);
     }
 
     /// Parses a sentence (or several of them) into an usable formula
@@ -90,7 +250,9 @@ impl Representation {
         let pres = Parser::parse(source.as_ref(), true, &self.threads);
         if let Ok(mut sentences) = pres {
             let mut errors = Vec::new();
-            for _ in 0..sentences.len() {
+            let num_sentences = sentences.len();
+            self.add_readers(num_sentences);
+            for _ in 0..num_sentences {
                 match sentences.pop_front().unwrap() {
                     ParseTree::Assertion(assertions) => {
                         for assertion in assertions {
@@ -120,6 +282,7 @@ impl Representation {
                     ParseTree::ParseErr(err) => errors.push(err),
                 }
             }
+            self.rm_readers(num_sentences);
             if !errors.is_empty() {
                 Err(errors)
             } else {
@@ -130,18 +293,35 @@ impl Representation {
         }
     }
 
+    fn add_readers(&self, readers: usize) {
+        let mut num_readers = self.readers.0.lock();
+        *num_readers += readers;
+    }
+
+    fn rm_readers(&self, readers: usize) {
+        let mut lock = self.readers.0.lock();
+        *lock -= readers;
+        if *lock == 0 {
+            self.readers.1.notify_one();
+        }
+    }
+
     /// Asks the KB if some fact is true and returns the answer to the query.
     pub fn ask(&self, source: &str) -> Result<Answer, QueryErr> {
         let queries = Parser::parse(source, false, &self.threads);
         if let Ok(queries) = queries {
+            let num_readers = queries.len();
+            self.add_readers(num_readers);
             let pres = QueryInput::ManyQueries(queries);
-            self.ask_processed(pres, usize::max_value(), false)
+            let answ = self.ask_internal(pres, usize::max_value(), false);
+            self.rm_readers(num_readers);
+            answ
         } else {
             Err(QueryErr::ParseErr(queries.unwrap_err()))
         }
     }
 
-    pub(in crate::agent) fn ask_processed(
+    pub(in crate::agent) fn ask_internal(
         &self,
         source: QueryInput,
         depth: usize,
@@ -160,68 +340,83 @@ impl Representation {
         assert: &Arc<GroundedMemb>,
         context: Option<&T>,
     ) {
-        let parent_exists = self.classes.contains_key(assert.get_parent());
+        let entities = &*self.entities;
+        let classes = &*self.classes;
+
+        let parent_exists = classes.contains_key(assert.get_parent());
         if !parent_exists {
-            let class = Class::new(assert.get_parent().to_string(), ClassKind::Membership);
-            self.classes.insert(class.name.clone(), class);
+            let class = Class::new(
+                assert.get_parent().to_string(),
+                ClassKind::Membership,
+                self.svc_queue.clone(),
+            );
+            classes.insert(class.name.clone(), class);
         }
         let decl;
         let is_new: bool;
         match assert.get_name() {
             ClassTerm(class_name) => {
-                let class_exists = self.classes.contains_key(class_name);
+                let class_exists = classes.contains_key(class_name);
                 if class_exists {
-                    let class = self.classes.get(class_name).unwrap();
+                    let class = classes.get(class_name).unwrap();
                     is_new = class.add_or_update_class_membership(self, assert, context);
                     decl = ClassMember::Class(assert.clone());
                 } else {
-                    let class = Class::new(class_name.to_owned(), ClassKind::Membership);
-                    self.classes.insert(class.name.clone(), class);
-                    let class = self.classes.get(class_name).unwrap();
+                    let class = Class::new(
+                        class_name.to_owned(),
+                        ClassKind::Membership,
+                        self.svc_queue.clone(),
+                    );
+                    classes.insert(class.name.clone(), class);
+                    let class = classes.get(class_name).unwrap();
                     is_new = class.add_or_update_class_membership(self, assert, context);
                     decl = ClassMember::Class(assert.clone());
                 }
             }
             EntityTerm(subject) => {
-                let entity_exists = self.entities.contains_key(subject);
+                let entity_exists = entities.contains_key(subject);
                 if entity_exists {
-                    let entity = self.entities.get(subject).unwrap();
+                    let entity = entities.get(subject).unwrap();
                     is_new = entity.add_or_updated_class_membership(self, assert, context);
                     decl = ClassMember::Entity(assert.clone());
                 } else {
-                    let entity = Entity::new(subject.to_string());
-                    self.entities.insert(entity.name.clone(), entity);
-                    let entity = self.entities.get(subject).unwrap();
+                    let entity = Entity::new(subject.to_string(), self.svc_queue.clone());
+                    entities.insert(entity.name.clone(), entity);
+                    let entity = entities.get(subject).unwrap();
                     is_new = entity.add_or_updated_class_membership(self, assert, context);
                     decl = ClassMember::Entity(assert.clone());
                 }
             }
         }
         if is_new {
-            let parent = self.classes.get(assert.get_parent()).unwrap();
+            let parent = classes.get(assert.get_parent()).unwrap();
             parent.add_member(decl);
         }
     }
 
     fn upsert_objects_with_loc(&self, objs: impl Iterator<Item = (GrTerminalKind<String>, Point)>) {
+        let classes = &*self.classes;
+        let entities = &*self.entities;
+
         for (term, loc) in objs {
             match term {
                 ClassTerm(class_name) => {
-                    if let Some(class) = self.classes.get(&class_name) {
+                    if let Some(class) = classes.get(&class_name) {
                         (*class).with_location(loc, None);
                     } else {
-                        let class = Class::new(class_name, ClassKind::Membership);
+                        let class =
+                            Class::new(class_name, ClassKind::Membership, self.svc_queue.clone());
                         class.with_location(loc, None);
-                        self.classes.insert(class.name.clone(), class);
+                        classes.insert(class.name.clone(), class);
                     }
                 }
                 EntityTerm(subject) => {
-                    if let Some(entity) = self.entities.get(&subject) {
+                    if let Some(entity) = entities.get(&subject) {
                         (*entity).with_location(loc, None);
                     } else {
-                        let entity = Entity::new(subject);
+                        let entity = Entity::new(subject, self.svc_queue.clone());
                         entity.with_location(loc, None);
-                        self.entities.insert(entity.name.clone(), entity);
+                        entities.insert(entity.name.clone(), entity);
                     }
                 }
             }
@@ -233,28 +428,35 @@ impl Representation {
         assert: &Arc<GroundedFunc>,
         context: Option<&T>,
     ) {
+        let classes = &*self.classes;
+        let entities = &*self.entities;
+
         // it doesn't matter this is overwritten, as if it exists, it exists for all
         let is_new = Rc::new(::std::cell::RefCell::new(true));
         let process_arg = |a: &GroundedMemb| {
             let is_new1;
             match a.get_name() {
                 ClassTerm(class_name) => {
-                    if let Some(class) = self.classes.get(class_name) {
+                    if let Some(class) = classes.get(class_name) {
                         is_new1 = class.add_relationship(self, assert, context);
                     } else {
-                        let class = Class::new(class_name.to_owned(), ClassKind::Membership);
-                        self.classes.insert(class.name.clone(), class);
-                        let class = self.classes.get(class_name).unwrap();
+                        let class = Class::new(
+                            class_name.to_owned(),
+                            ClassKind::Membership,
+                            self.svc_queue.clone(),
+                        );
+                        classes.insert(class.name.clone(), class);
+                        let class = classes.get(class_name).unwrap();
                         is_new1 = class.add_relationship(self, assert, context);
                     }
                 }
                 EntityTerm(subject) => {
-                    if let Some(entity) = self.entities.get(subject) {
+                    if let Some(entity) = entities.get(subject) {
                         is_new1 = entity.add_relationship(self, assert, context);
                     } else {
-                        let entity = Entity::new(subject.to_owned());
-                        self.entities.insert(entity.name.clone(), entity);
-                        let entity = self.entities.get(subject).unwrap();
+                        let entity = Entity::new(subject.to_owned(), self.svc_queue.clone());
+                        entities.insert(entity.name.clone(), entity);
+                        let entity = entities.get(subject).unwrap();
                         is_new1 = entity.add_relationship(self, assert, context);
                     }
                 }
@@ -262,64 +464,72 @@ impl Representation {
             let new_check = is_new.clone();
             *new_check.borrow_mut() = is_new1;
         };
-        let relation_exists = self.classes.contains_key(assert.get_name());
+        let relation_exists = classes.contains_key(assert.get_name());
         if !relation_exists {
-            let relationship = Class::new(assert.get_name().to_string(), ClassKind::Relationship);
-            self.classes.insert(relationship.name.clone(), relationship);
+            let relationship = Class::new(
+                assert.get_name().to_string(),
+                ClassKind::Relationship,
+                self.svc_queue.clone(),
+            );
+            classes.insert(relationship.name.clone(), relationship);
         }
         for arg in assert.get_args() {
             process_arg(arg);
         }
         if *is_new.borrow() {
-            let parent = self.classes.get(assert.get_name()).unwrap();
+            let parent = classes.get(assert.get_name()).unwrap();
             parent.add_relation_to_class(assert.clone());
         }
     }
 
     fn add_belief(&self, belief: &Arc<LogSentence>) {
-        fn update(
-            subject: &str,
-            name: &str,
-            is_entity: bool,
-            belief: &Arc<LogSentence>,
-            repr: &Representation,
-        ) {
+        let entities = &*self.entities;
+        let classes = &*self.classes;
+
+        let update = |subject: &str, name: &str, is_entity: bool, belief: &Arc<LogSentence>| {
             if is_entity {
-                if let Some(entity) = repr.entities.get(subject) {
+                if let Some(entity) = entities.get(subject) {
                     entity.add_belief(belief.clone(), subject);
                 } else {
-                    let entity = Entity::new(subject.to_string());
+                    let entity = Entity::new(subject.to_string(), self.svc_queue.clone());
                     entity.add_belief(belief.clone(), name);
-                    repr.entities.insert(subject.to_string(), entity);
+                    entities.insert(subject.to_string(), entity);
                 }
-            } else if let Some(class) = repr.classes.get(subject) {
+            } else if let Some(class) = classes.get(subject) {
                 class.add_belief(belief.clone(), name);
             } else {
-                let class = Class::new(subject.to_string(), ClassKind::Membership);
+                let class = Class::new(
+                    subject.to_string(),
+                    ClassKind::Membership,
+                    self.svc_queue.clone(),
+                );
                 class.add_belief(belief.clone(), name);
-                repr.classes.insert(subject.to_string(), class);
+                classes.insert(subject.to_string(), class);
             }
-        }
+        };
 
         for p in belief.get_all_predicates() {
             match *p {
                 Assert::ClassDecl(ref cls_decl) => {
-                    if let Some(class) = self.classes.get(cls_decl.get_name()) {
+                    if let Some(class) = classes.get(cls_decl.get_name()) {
                         class.add_belief(belief.clone(), cls_decl.get_name());
                     } else {
-                        let class =
-                            Class::new(cls_decl.get_name().to_string(), ClassKind::Membership);
+                        let class = Class::new(
+                            cls_decl.get_name().to_string(),
+                            ClassKind::Membership,
+                            self.svc_queue.clone(),
+                        );
                         class.add_belief(belief.clone(), cls_decl.get_name());
-                        self.classes.insert(class.name.clone(), class);
+                        classes.insert(class.name.clone(), class);
                     }
                     for arg in cls_decl.get_args() {
                         if !arg.is_var() {
                             match arg.get_name().into() {
                                 ClassTerm(class_name) => {
-                                    update(class_name, cls_decl.get_name(), false, &belief, self)
+                                    update(class_name, cls_decl.get_name(), false, &belief)
                                 }
                                 EntityTerm(subject_name) => {
-                                    update(subject_name, cls_decl.get_name(), true, &belief, self)
+                                    update(subject_name, cls_decl.get_name(), true, &belief)
                                 }
                             }
                         }
@@ -329,22 +539,25 @@ impl Representation {
                     if !fn_decl.is_relational() {
                         continue;
                     }
-                    if let Some(class) = self.classes.get(fn_decl.get_name()) {
+                    if let Some(class) = classes.get(fn_decl.get_name()) {
                         class.add_belief(belief.clone(), fn_decl.get_name());
                     } else {
-                        let class =
-                            Class::new(fn_decl.get_name().to_string(), ClassKind::Relationship);
+                        let class = Class::new(
+                            fn_decl.get_name().to_string(),
+                            ClassKind::Relationship,
+                            self.svc_queue.clone(),
+                        );
                         class.add_belief(belief.clone(), fn_decl.get_name());
-                        self.classes.insert(class.name.clone(), class);
+                        classes.insert(class.name.clone(), class);
                     }
                     for arg in fn_decl.get_args() {
                         if !arg.is_var() {
                             match arg.get_name().into() {
                                 ClassTerm(class_name) => {
-                                    update(class_name, fn_decl.get_name(), false, &belief, self)
+                                    update(class_name, fn_decl.get_name(), false, &belief)
                                 }
                                 EntityTerm(subject_name) => {
-                                    update(subject_name, fn_decl.get_name(), true, &belief, self)
+                                    update(subject_name, fn_decl.get_name(), true, &belief)
                                 }
                             }
                         }
@@ -365,7 +578,7 @@ impl Representation {
                                         free,
                                         entity.name.as_ref(),
                                     ));
-                                    self.ask_processed(QueryInput::AskClassMember(grfact), 0, true)
+                                    self.ask_internal(QueryInput::AskClassMember(grfact), 0, true)
                                         .unwrap();
                                 }
                             }
@@ -383,7 +596,7 @@ impl Representation {
                     for args in mapped {
                         let args = HashMap::from_iter(args.iter().map(|&(v, ref a)| (v, &**a)));
                         if let Ok(grfunc) = GroundedFunc::from_free(func_decl, Some(&args), &f) {
-                            self.ask_processed(
+                            self.ask_internal(
                                 QueryInput::AskRelationalFunc(Arc::new(grfunc)),
                                 0,
                                 true,
@@ -433,18 +646,21 @@ impl Representation {
         candidates: &HashMap<&Var, Vec<Arc<VarAssignment>>>,
         assigned: &'a mut HashSet<&'b str>,
     ) {
+        let entities = &*self.entities;
+        let classes = &*self.classes;
+
         assign.iter().for_each(|a| {
             let name = *a.name;
             if assigned.get(name) == None {
                 // add this sent as move_fn to the potential candidates
                 match a.name {
                     GrTerminalKind::Entity(_) => {
-                        if let Some(ent) = self.entities.get(name) {
+                        if let Some(ent) = entities.get(name) {
                             ent.move_beliefs.write().push(belief.clone());
                         }
                     }
                     GrTerminalKind::Class(_) => {
-                        if let Some(cls) = self.classes.get(name) {
+                        if let Some(cls) = classes.get(name) {
                             cls.move_beliefs.write().push(belief.clone());
                         }
                     }
@@ -462,7 +678,7 @@ impl Representation {
                 {
                     if let Some(pos) = &pos {
                         // ask if the obj is in that location
-                        self.ask_processed(
+                        self.ask_internal(
                             QueryInput::AskLocation(LocFn::from((arg, pos.clone()))),
                             0,
                             true,
@@ -474,7 +690,7 @@ impl Representation {
                         let locs = move_fn.get_location(&loc_assign).unwrap();
                         let loc = locs.get_last_value().1.unwrap();
                         pos = Some(loc.clone());
-                        self.ask_processed(
+                        self.ask_internal(
                             QueryInput::AskLocation(LocFn::from((arg, loc))),
                             0,
                             true,
@@ -487,19 +703,29 @@ impl Representation {
     }
 
     fn add_rule(&self, rule: &Arc<LogSentence>) {
+        let classes = &*self.classes;
+
         let preds = rule.get_all_predicates();
         for p in preds {
             let name = p.get_name();
-            if let Some(class) = self.classes.get(name) {
+            if let Some(class) = classes.get(name) {
                 class.add_rule(rule.clone());
             } else {
                 let nc = match *p {
-                    Assert::ClassDecl(_) => Class::new(name.to_string(), ClassKind::Membership),
-                    Assert::FuncDecl(_) => Class::new(name.to_string(), ClassKind::Relationship),
+                    Assert::ClassDecl(_) => Class::new(
+                        name.to_string(),
+                        ClassKind::Membership,
+                        self.svc_queue.clone(),
+                    ),
+                    Assert::FuncDecl(_) => Class::new(
+                        name.to_string(),
+                        ClassKind::Relationship,
+                        self.svc_queue.clone(),
+                    ),
                     Assert::SpecialFunc(_) => unreachable!(),
                 };
                 nc.add_rule(rule.clone());
-                self.classes.insert(name.to_string(), nc);
+                classes.insert(name.to_string(), nc);
             }
         }
         rollback_from_rule(self, &rule);
@@ -511,9 +737,11 @@ impl Representation {
         &'a self,
         classes: &'b [&str],
     ) -> HashMap<&'b str, Vec<Arc<GroundedMemb>>> {
+        let sclasses = &*self.classes;
+
         let mut dict = HashMap::new();
         for cls in classes {
-            if let Some(klass) = self.classes.get(*cls) {
+            if let Some(klass) = sclasses.get(*cls) {
                 let mut v = vec![];
                 for e in &**klass.members.read() {
                     match *e {
@@ -538,9 +766,11 @@ impl Representation {
         &'a self,
         funcs: &'b [&'b FuncDecl],
     ) -> HashMap<&'b str, HashMap<&'a str, Vec<Arc<GroundedFunc>>>> {
+        let sclasses = &*self.classes;
+
         let mut dict = HashMap::new();
         for func in funcs {
-            if let Some(func_ref) = self.classes.get(&*func.get_name()) {
+            if let Some(func_ref) = sclasses.get(&*func.get_name()) {
                 let mut m = HashMap::new();
                 for e in &**func_ref.value().members.read() {
                     if let ClassMember::Func(ref f) = *e {
@@ -568,9 +798,13 @@ impl Representation {
         G: std::ops::Deref<Target = GrTerminalKind<S>>,
         S: AsRef<str>,
     {
+        let entities = &*self.entities;
+        let classes = &*self.classes;
+
         match *subject {
             EntityTerm(ref subject_name) => {
-                if let Some(entity) = self.entities.get(subject_name.as_ref()) {
+                // let entities = &*entities;
+                if let Some(entity) = entities.get(subject_name.as_ref()) {
                     match entity.belongs_to_class(class, false) {
                         Some(r) => Some(r),
                         None => None,
@@ -580,7 +814,7 @@ impl Representation {
                 }
             }
             ClassTerm(ref class_name) => {
-                if let Some(klass) = self.classes.get(class_name.as_ref()) {
+                if let Some(klass) = classes.get(class_name.as_ref()) {
                     match klass.belongs_to_class(class, false) {
                         Some(r) => Some(r),
                         None => None,
@@ -595,16 +829,19 @@ impl Representation {
     /// Takes a grounded predicate from a query and returns the membership truth value.
     /// It checks the truth value based on the time intervals of the predicate.
     pub(in crate::agent) fn class_membership_query(&self, pred: &GroundedMemb) -> Option<bool> {
+        let entities = &*self.entities;
+        let classes = &*self.classes;
+
         match pred.get_name() {
             EntityTerm(subject) => {
-                if let Some(entity) = self.entities.get(subject) {
+                if let Some(entity) = entities.get(subject) {
                     if let Some(current) = entity.belongs_to_class(pred.get_parent(), true) {
                         return current.compare(pred);
                     }
                 }
             }
             ClassTerm(class_name) => {
-                if let Some(class) = self.classes.get(class_name) {
+                if let Some(class) = classes.get(class_name) {
                     if let Some(current) = class.belongs_to_class(pred.get_parent(), true) {
                         return current.compare(pred);
                     }
@@ -618,13 +855,16 @@ impl Representation {
         &self,
         subject: &FreeClassMembership,
     ) -> Vec<Arc<GroundedMemb>> {
+        let entities = &*self.entities;
+        let classes = &*self.classes;
+
         if let EntityTerm(name) = subject.get_name().into() {
-            if let Some(entity) = self.entities.get(name) {
+            if let Some(entity) = entities.get(name) {
                 entity.get_class_membership(subject)
             } else {
                 vec![]
             }
-        } else if let Some(class) = self.classes.get(subject.get_name()) {
+        } else if let Some(class) = classes.get(subject.get_name()) {
             class.get_class_membership(subject)
         } else {
             vec![]
@@ -636,13 +876,16 @@ impl Representation {
         pred: &GroundedFunc,
         subject: &str,
     ) -> Option<bool> {
+        let entities = &*self.entities;
+        let classes = &*self.classes;
+
         if let EntityTerm(subject_name) = subject.into() {
-            if let Some(entity) = self.entities.get(subject_name) {
+            if let Some(entity) = entities.get(subject_name) {
                 if let Some(current) = entity.has_relationship(pred) {
                     return current.compare(pred);
                 }
             }
-        } else if let Some(class) = self.classes.get(subject) {
+        } else if let Some(class) = classes.get(subject) {
             if let Some(current) = class.has_relationship(pred) {
                 return current.compare(pred);
             }
@@ -655,8 +898,11 @@ impl Representation {
         pred: &GroundedFunc,
         subject: &str,
     ) -> Option<Arc<GroundedFunc>> {
+        let entities = &*self.entities;
+        let classes = &*self.classes;
+
         if let EntityTerm(subject_name) = subject.into() {
-            if let Some(entity) = self.entities.get(subject_name) {
+            if let Some(entity) = entities.get(subject_name) {
                 if let Some(current) = entity.has_relationship(pred) {
                     if current.compare_ignoring_times(pred) {
                         return Some(current);
@@ -665,7 +911,7 @@ impl Representation {
                     }
                 }
             }
-        } else if let Some(class) = self.classes.get(subject) {
+        } else if let Some(class) = classes.get(subject) {
             if let Some(current) = class.has_relationship(pred) {
                 if current.compare_ignoring_times(pred) {
                     return Some(current);
@@ -681,11 +927,14 @@ impl Representation {
         &self,
         func: &FuncDecl,
     ) -> HashMap<&str, Vec<Arc<GroundedFunc>>> {
+        let classes = &*self.classes;
+        let entities = &*self.entities;
+
         let mut res = HashMap::new();
         for (pos, arg) in func.get_args().iter().enumerate() {
             if !arg.is_var() {
                 if let EntityTerm(subject_name) = arg.get_name().into() {
-                    if let Some(entity) = self.entities.get(subject_name) {
+                    if let Some(entity) = entities.get(subject_name) {
                         let mut v: HashMap<&str, Vec<Arc<GroundedFunc>>> =
                             entity.get_relationships(pos, arg);
                         for (_, mut funcs) in v.drain() {
@@ -696,7 +945,7 @@ impl Representation {
                             res.entry(rel).or_insert_with(Vec::new).append(&mut funcs);
                         }
                     }
-                } else if let Some(class) = self.classes.get(arg.get_name()) {
+                } else if let Some(class) = classes.get(arg.get_name()) {
                     let mut v: HashMap<&str, Vec<Arc<GroundedFunc>>> =
                         class.get_relationships(pos, arg);
                     for (_, mut funcs) in v.drain() {
@@ -731,11 +980,14 @@ impl Representation {
         &self,
         objects: impl Iterator<Item = (&'a Arc<GrTerminalKind<T>>, &'a Point)>,
     ) -> Vec<(&'a Point, Arc<GrTerminalKind<T>>, Option<bool>)> {
+        let classes = &*self.classes;
+        let entities = &*self.entities;
+
         let mut answer = vec![];
         for (term, loc) in objects {
             match &**term {
                 ClassTerm(class_name) => {
-                    if let Some(class) = self.classes.get(class_name.as_ref()) {
+                    if let Some(class) = classes.get(class_name.as_ref()) {
                         let rec = class.location.get_record_at_location(loc, None);
                         if !rec.is_empty() {
                             answer.push((loc, term.clone(), Some(true)))
@@ -747,7 +999,7 @@ impl Representation {
                     }
                 }
                 EntityTerm(subject) => {
-                    if let Some(entity) = self.entities.get(subject.as_ref()) {
+                    if let Some(entity) = entities.get(subject.as_ref()) {
                         let rec = entity.location.get_record_at_location(loc, None);
                         if !rec.is_empty() {
                             answer.push((loc, term.clone(), Some(true)))
@@ -764,8 +1016,11 @@ impl Representation {
     }
 
     pub(super) fn find_all_objs_in_loc<'a>(&self, loc: &'a Point) -> Vec<GrTerminalKind<String>> {
+        let classes = &*self.classes;
+        let entities = &*self.entities;
+
         let mut answer = vec![];
-        for class in &self.classes {
+        for class in &*classes {
             if class
                 .location
                 .get_record_at_location(loc, None)
@@ -777,7 +1032,7 @@ impl Representation {
                 answer.push(GrTerminalKind::Class(class.key().to_owned()));
             }
         }
-        for entity in &self.entities {
+        for entity in &*entities {
             if entity
                 .location
                 .get_record_at_location(loc, None)
@@ -791,6 +1046,37 @@ impl Representation {
         }
         answer
     }
+
+    /// Performs critical functions in the background service.
+    #[inline(always)]
+    fn background_service(msg: BackgroundTask) -> Result<(), ()> {
+        use BackgroundTask::*;
+
+        match msg {
+            CompactBmsLog(rec) => rec.compact_record_log(),
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(feature = "persistence")]
+#[derive(Clone)]
+struct ReprConfig {
+    persist: Arc<AtomicBool>,
+}
+
+#[cfg(feature = "persistence")]
+impl Default for ReprConfig {
+    fn default() -> Self {
+        ReprConfig {
+            persist: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+pub(super) enum BackgroundTask {
+    CompactBmsLog(Arc<BmsWrapper<RecordHistory>>),
 }
 
 /// Error type for query failures.
@@ -871,7 +1157,8 @@ impl<'a> Answer<'a> {
 pub(super) fn lookahead_rules(agent: &Representation, name: &str, grounded: &GroundedRef) -> bool {
     use super::inference::rules_inference_lookahead;
     let rules: Vec<Arc<LogSentence>> = {
-        let class = agent.classes.get(name).unwrap();
+        let classes = &*agent.classes;
+        let class = classes.get(name).unwrap();
         let rules = &*class.rules.read();
         rules.clone()
     };

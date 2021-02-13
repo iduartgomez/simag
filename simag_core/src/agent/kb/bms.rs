@@ -5,7 +5,10 @@
 //! 2) Detecting inconsistences between new and old beliefs.
 //! 3) Fixing those inconsitences.
 pub(in crate::agent) use self::errors::BmsError;
-use super::{inference::QueryInput, repr::Representation};
+use super::{
+    inference::QueryInput,
+    repr::{ Representation},
+};
 use crate::agent::{
     lang::{
         ClassDecl, Grounded, GroundedMemb, GroundedRef, Point, ProofResContext, SentID, SpatialOps,
@@ -27,7 +30,10 @@ use std::{
     },
 };
 
-const CLEAN_UP_THRESHOLD: usize = 100;
+/// Trigger threshold for log compation event.
+const LOG_COMPACT_THRESHOLD: usize = 100;
+/// Max number of records to keep after compacting the log.
+const LOG_MAX_SIZE: usize = 20;
 const WRITE_LOCK_RETRIES: usize = 100;
 
 /// Acts as a wrapper for the Belief Maintenance System for a given agent.
@@ -39,6 +45,8 @@ pub(in crate::agent) struct BmsWrapper<T>
 where
     T: BmsKind,
 {
+    /// The semantics of this collection depends on the type of the wrapper. For the record history type variant
+    /// is the log of values, sorted by increasing register time, associated with the owning object.
     records: RwLock<Vec<BmsRecord>>,
     /// set if it's a predicate with the time of query execution
     pred: Option<Time>,
@@ -419,7 +427,7 @@ impl BmsWrapper<RecordHistory> {
                     };
                     if ask {
                         let answ = agent
-                            .ask_processed(QueryInput::AskRelationalFunc(func.clone()), 0, true)
+                            .ask_internal(QueryInput::AskRelationalFunc(func.clone()), 0, true)
                             .unwrap()
                             .get_results_single();
                         if answ.is_none() {
@@ -458,7 +466,7 @@ impl BmsWrapper<RecordHistory> {
                     };
                     if ask {
                         let answ = agent
-                            .ask_processed(QueryInput::AskClassMember(cls.clone()), 0, true)
+                            .ask_internal(QueryInput::AskClassMember(cls.clone()), 0, true)
                             .unwrap()
                             .get_results_single();
                         if answ.is_none() {
@@ -570,7 +578,6 @@ impl BmsWrapper<RecordHistory> {
                 records.sort_by(|a, b| a.time.cmp(&b.time));
             }
         }
-        self.cleanup_records()
     }
 
     pub fn records_log_size(&self) -> usize {
@@ -608,24 +615,55 @@ impl BmsWrapper<RecordHistory> {
         record.add_produced_entry((produced, with_val));
     }
 
-    fn cleanup_records(&self) {
+    /// Compacts the record log, this function is lossy and information may be potentially lost
+    /// and irrecoverable, meaning that rollbacks won't be possible for those values lost.
+    pub(super) fn compact_record_log(&self) {
         let records = &mut *self.acquire_write_lock();
-        if records.len() < CLEAN_UP_THRESHOLD {
-            // only perform a cleanup if more than 100 records have been registered
-            return;
-        }
-
+        // potentially remove any rec which didn't produce anything itself
+        let mut remove_ls: Vec<usize> = vec![];
+        // if necessary, rm the oldest records
+        let mut maybe_rm = vec![];
+        let need_to_clean = records.len() - LOG_MAX_SIZE;
+        let mut clean_counter = need_to_clean;
         // keep the last two records regardless
         let last_two = records.len() - 2;
-        let mut remove_ls: Vec<usize> = vec![];
         for (i, rec) in records[..last_two].iter().enumerate() {
-            if rec.produced.is_empty() && rec.was_produced.is_some() {
-                remove_ls.push(i);
+            if clean_counter == 0 {
+                break;
             }
+            if rec.produced.is_empty() {
+                remove_ls.push(i);
+                clean_counter -= 1;
+            } else if remove_ls.len() < need_to_clean && clean_counter > 0 {
+                maybe_rm.push(i);
+                clean_counter -= 1;
+            }
+        }
+
+        if remove_ls.len() < records.len() - LOG_MAX_SIZE {
+            let required = records.len() - remove_ls.len() - LOG_MAX_SIZE;
+            let extra_to_rm = if maybe_rm.len() < required {
+                maybe_rm.drain(..)
+            } else {
+                maybe_rm.drain(..required)
+            };
+            remove_ls.extend(extra_to_rm);
+            remove_ls.sort();
         }
         remove_ls.reverse();
         for pos in remove_ls {
             records.remove(pos);
+        }
+    }
+
+    /// Returns whether or not this bms should be marked for sweeping garbage.
+    pub(super) fn mark_for_sweep(&self) -> bool {
+        let records = &*self.acquire_read_lock();
+        // only perform a cleanup if more than 100 records have been registered
+        if records.len() < LOG_COMPACT_THRESHOLD {
+            false
+        } else {
+            true
         }
     }
 }
@@ -867,6 +905,7 @@ pub(in crate::agent) struct BmsRecord {
     time: Time,
     location: Option<Point>,
     value: Option<f32>,
+    /// whether this record was a byproduct of a sentence evaluation or a declaration
     was_produced: Option<(SentID, Time)>,
 }
 
@@ -978,7 +1017,7 @@ mod test {
 
     #[test]
     fn bms_rollback() {
-        let rep = Representation::default();
+        let rep = Representation::new(1);
 
         let fol = "
             (ugly[$Pancho=0])
@@ -1015,7 +1054,7 @@ mod test {
 
     #[test]
     fn bms_review_after_change() {
-        let rep = Representation::default();
+        let rep = Representation::new(1);
 
         let fol = "            
             ( meat[$M1=1] )
@@ -1045,6 +1084,42 @@ mod test {
         {
             let answ = rep.ask("(fat[$Pancho=1])");
             assert_eq!(answ.unwrap().get_results_single(), Some(true));
+        }
+    }
+
+    #[test]
+    fn log_compaction() {
+        // clean up to the maintenace limit, when all records didn't produce anything
+        {
+            let bms = BmsWrapper::<RecordHistory>::new();
+            (0..LOG_COMPACT_THRESHOLD + 10).for_each(|_| {
+                bms.add_new_record(None, None, None, None);
+            });
+
+            bms.compact_record_log();
+            assert_eq!(bms.acquire_read_lock().len(), LOG_MAX_SIZE);
+        }
+
+        // should only remove as many as necessary produced to meet the cleanup threshold
+        {
+            let bms = BmsWrapper::<RecordHistory>::new();
+            (0..LOG_COMPACT_THRESHOLD + 10).for_each(|_| {
+                bms.add_new_record(None, None, None, None);
+            });
+            {
+                let recs = &mut *bms.acquire_write_lock();
+                let mock_gr_cls = Arc::new(GroundedMemb::gen_mock());
+                for (i, rec) in recs.iter_mut().enumerate() {
+                    if i % 2 == 0 {
+                        let mock_produced =
+                            (Grounded::Class(Arc::downgrade(&mock_gr_cls.clone())), None);
+                        rec.produced.push(mock_produced);
+                    }
+                }
+            }
+
+            bms.compact_record_log();
+            assert_eq!(bms.acquire_read_lock().len(), LOG_MAX_SIZE);
         }
     }
 }

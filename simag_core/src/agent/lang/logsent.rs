@@ -108,7 +108,7 @@ impl<'a> LogSentence {
             }
         };
         #[cfg(debug_assertions)]
-        {
+        if !time_assign.is_empty() {
             log::trace!(
                 "Time variables assignments: {}",
                 time_assign

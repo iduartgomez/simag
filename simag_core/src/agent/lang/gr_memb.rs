@@ -318,6 +318,17 @@ impl GroundedMemb {
         let val_rhs: Option<f32> = *other_value_lock;
         Self::compare_two_grounded_eq(val_lhs, val_rhs, op_lhs, op_rhs)
     }
+
+    #[cfg(test)]
+    pub fn gen_mock() -> Self {
+        GroundedMemb {
+            term: GrTerminalKind::Class("".to_owned()),
+            value: RwLock::new(None),
+            operator: None,
+            parent: String::default(),
+            bms: None,
+        }
+    }
 }
 
 impl std::clone::Clone for GroundedMemb {

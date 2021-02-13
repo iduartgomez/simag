@@ -1,18 +1,19 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-
-use dashmap::DashMap;
-use float_cmp::ApproxEqUlps;
-
-use super::bms;
-use crate::agent::kb::repr::{lookahead_rules, Representation};
+use crate::agent::kb::{
+    bms,
+    repr::{lookahead_rules, BackgroundTask, Representation},
+};
 use crate::agent::lang::{
     FreeClassMembership, Grounded, GroundedFunc, GroundedMemb, GroundedRef, LogSentence, Operator,
     Point, Predicate, ProofResContext, Time,
 };
 use crate::FLOAT_EQ_ULPS;
 use bms::{BmsWrapper, RecordHistory};
+use crossbeam::channel::Sender;
+use dashmap::DashMap;
+use float_cmp::ApproxEqUlps;
 use parking_lot::RwLock;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// An entity is a singleton, the unique member of it's own class.
 ///
@@ -46,17 +47,19 @@ pub(crate) struct Entity {
     classes: DashMap<String, Arc<GroundedMemb>>,
     relations: DashMap<String, Vec<Arc<GroundedFunc>>>,
     beliefs: DashMap<String, Vec<Arc<LogSentence>>>,
+    svc_queue: Sender<BackgroundTask>,
     pub(super) move_beliefs: RwLock<Vec<Arc<LogSentence>>>,
     pub(in crate::agent) location: BmsWrapper<RecordHistory>,
 }
 
 impl Entity {
-    pub(in crate::agent::kb) fn new(name: String) -> Entity {
+    pub(in crate::agent::kb) fn new(name: String, svc_queue: Sender<BackgroundTask>) -> Entity {
         Entity {
             name,
             classes: DashMap::new(),
             relations: DashMap::new(),
             beliefs: DashMap::new(),
+            svc_queue,
             move_beliefs: RwLock::new(Vec::new()),
             location: BmsWrapper::<RecordHistory>::new(),
         }
@@ -121,9 +124,10 @@ impl Entity {
                 #[cfg(debug_assertions)]
                 {
                     log::trace!(
-                        "Updated existing class membership for {} context: {}",
+                        "Updated existing `{}` class membership {} with context:\n    {}",
+                        grounded,
                         self.name,
-                        grounded
+                        &*current
                     );
                 }
                 current.update(
@@ -136,12 +140,20 @@ impl Entity {
                 #[cfg(debug_assertions)]
                 {
                     log::trace!(
-                        "Updated existing class membership for {} w/o context: {}",
+                        "Updated existing `{}` class membership {} w/o context:\n    {}",
+                        grounded,
                         self.name,
-                        grounded
+                        &*current
                     );
                 }
                 current.update(agent, &*grounded, None);
+            }
+            if let Some(bms) = &current.bms {
+                if bms.mark_for_sweep() {
+                    self.svc_queue
+                        .send(BackgroundTask::CompactBmsLog(bms.clone()))
+                        .expect("background service crashed");
+                }
             }
             false
         } else {
@@ -286,6 +298,11 @@ impl Entity {
                             }
                         }
                         found_rel = true;
+                        if f.bms.mark_for_sweep() {
+                            self.svc_queue
+                                .send(BackgroundTask::CompactBmsLog(f.bms.clone()))
+                                .expect("background service crashed");
+                        }
                         break;
                     }
                 }
@@ -337,4 +354,6 @@ impl Entity {
             f.get_value()
         }
     }
+
+    pub(super) fn persist(&mut self) {}
 }

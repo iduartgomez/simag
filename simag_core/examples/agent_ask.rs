@@ -34,7 +34,7 @@ const ASK_SETUP: &[&str] = &[
 
 const ASK_QUESTION: &[&str] = &[
     // 0
-    "( professor[$Lucy=1] )",
+    "(professor[$Lucy=1])",
     // 1
     "(criminal[$West=1] and hostile[$Nono=1] and weapon[$M1=1])",
     // 2
@@ -42,24 +42,23 @@ const ASK_QUESTION: &[&str] = &[
 ];
 
 fn new_knowledge(agent: &mut Agent) {
-    for _ in 0..10 {
+    for _ in 0..100 {
         agent.clear();
         for s in ASK_SETUP {
             agent.tell(s).unwrap();
         }
         for q in ASK_QUESTION {
             let _r = agent.ask(q).unwrap();
-            // eprintln!("query: {}, result: {:?}", q, _r.get_results_single());
         }
     }
 }
 
-fn old_knowledge(agent: Arc<Agent>, threads: usize, iters_per_reader: usize) {
+fn old_knowledge(agent: Arc<Agent>, num_threads: usize, iters_per_reader: usize, capacity: f64) {
     // load at 75% capacity
-    let paralellism: usize = threads / 4 * 3;
+    let paralellism: usize = (num_threads as f64 * capacity) as usize;
     println!(
-        "testing with {} parallel readers; {} asks each",
-        paralellism, iters_per_reader
+        "testing with {} parallel readers running in {} threads; {} asks each",
+        paralellism, num_threads, iters_per_reader
     );
 
     for s in ASK_SETUP {
@@ -67,7 +66,7 @@ fn old_knowledge(agent: Arc<Agent>, threads: usize, iters_per_reader: usize) {
     }
 
     let mut threads = Vec::with_capacity(paralellism);
-    let t0 = Instant::now();
+    let exec = Instant::now();
     for _ in 0..paralellism {
         let ag_cl = agent.clone();
         threads.push(std::thread::spawn(move || {
@@ -78,23 +77,39 @@ fn old_knowledge(agent: Arc<Agent>, threads: usize, iters_per_reader: usize) {
             }
         }));
     }
-
     threads.into_iter().fold(Ok(()), |_, h| h.join()).unwrap();
-    let t1 = Instant::now();
 
-    let diff = (t1 - t0).as_nanos() as f64 / 1e9;
+    let elapsed = exec.elapsed().as_nanos() as f64 / 1e9;
     let total = paralellism * iters_per_reader;
     println!(
         "took {:.2} secs to process a total of {} requests, ~{} req/sec",
-        diff,
+        elapsed,
         total,
-        (total as f64 / diff).round()
+        (total as f64 / elapsed).round()
+    );
+    println!(
+        "throughput per thread: {} msg/thread/sec",
+        (total as f64 / num_threads as f64 / elapsed).round()
     );
 }
 
 fn main() {
-    let threads = num_cpus::get();
+    /*
+    take with a pinch of salt, but sweet spot in a Linux x86_64 machine seems
+    to be ~5-6 avg. readers per core for this kind of load; OS scheduling withstanding
+    */
+    let capacity: f64 = std::env::args()
+        .skip(1)
+        .next()
+        .map::<f64, _>(|arg| arg.parse().unwrap())
+        .unwrap_or_else(|| 0.75);
+    let threads: usize = std::env::args()
+        .skip(2)
+        .next()
+        .map::<usize, _>(|arg| arg.parse().unwrap())
+        .unwrap_or_else(num_cpus::get);
+
     let mut agent = Agent::default().with_threads(threads);
     new_knowledge(&mut agent);
-    old_knowledge(Arc::new(agent), threads, 10_000);
+    old_knowledge(Arc::new(agent), threads, 10_000, capacity);
 }
