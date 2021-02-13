@@ -5,7 +5,10 @@
 //! 2) Detecting inconsistences between new and old beliefs.
 //! 3) Fixing those inconsitences.
 pub(in crate::agent) use self::errors::BmsError;
-use super::{inference::QueryInput, repr::Representation};
+use super::{
+    inference::QueryInput,
+    repr::{BackgroundEvent, Representation},
+};
 use crate::agent::{
     lang::{
         ClassDecl, Grounded, GroundedMemb, GroundedRef, Point, ProofResContext, SentID, SpatialOps,
@@ -14,6 +17,7 @@ use crate::agent::{
     ParseErrF,
 };
 use chrono::Utc;
+use crossbeam::channel::Sender;
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::mem;
 use std::{cmp::Ordering as CmpOrdering, time::Duration};
@@ -575,7 +579,6 @@ impl BmsWrapper<RecordHistory> {
                 records.sort_by(|a, b| a.time.cmp(&b.time));
             }
         }
-        self.compact_record_log()
     }
 
     pub fn records_log_size(&self) -> usize {
@@ -613,16 +616,10 @@ impl BmsWrapper<RecordHistory> {
         record.add_produced_entry((produced, with_val));
     }
 
-    // TODO: this function is to be called by the background cleaning service thread
     /// Compacts the record log, this function is lossy and information may be potentially lost
     /// and irrecoverable, meaning that rollbacks won't be possible for those values lost.
-    fn compact_record_log(&self) {
+    pub(super) fn compact_record_log(&self) {
         let records = &mut *self.acquire_write_lock();
-        if records.len() < LOG_COMPACT_THRESHOLD {
-            // only perform a cleanup if more than 100 records have been registered
-            return;
-        }
-
         // potentially remove any rec which didn't produce anything itself
         let mut remove_ls: Vec<usize> = vec![];
         // if necessary, rm the oldest records
@@ -657,6 +654,17 @@ impl BmsWrapper<RecordHistory> {
         remove_ls.reverse();
         for pos in remove_ls {
             records.remove(pos);
+        }
+    }
+
+    /// Returns whether or not this bms should be marked for sweeping garbage.
+    pub(super) fn mark_for_sweep(&self) -> bool {
+        let records = &*self.acquire_read_lock();
+        // only perform a cleanup if more than 100 records have been registered
+        if records.len() < LOG_COMPACT_THRESHOLD {
+            false
+        } else {
+            true
         }
     }
 }
@@ -1009,7 +1017,7 @@ mod test {
     use super::*;
 
     #[test]
-    #[ignore]
+    // #[ignore]
     fn bms_rollback() {
         let rep = Representation::new(1);
 
@@ -1032,7 +1040,6 @@ mod test {
             assert_eq!(answ.unwrap().get_results_single(), Some(true));
         }
 
-        log::info!("NEW FACTS!!!!");
         let fol = "
             (run[$Pancho=1])
             (let x in
@@ -1048,7 +1055,7 @@ mod test {
     }
 
     #[test]
-    #[ignore]
+    // #[ignore]
     fn bms_review_after_change() {
         let rep = Representation::new(1);
 

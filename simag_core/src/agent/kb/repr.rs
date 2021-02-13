@@ -1,4 +1,7 @@
-use super::{bms::build_declaration_bms, entity::Entity};
+use super::{
+    bms::{build_declaration_bms, BmsWrapper, RecordHistory},
+    entity::Entity,
+};
 use crate::agent::kb::{
     class::*,
     inference::{
@@ -15,16 +18,32 @@ use crate::agent::lang::{
 };
 use crossbeam::channel::Sender;
 use dashmap::DashMap;
-use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::collections::{HashMap, HashSet};
-use std::iter::FromIterator;
+use parking_lot::{Condvar, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
+use std::{iter::FromIterator, time::Instant};
 
 // TODO: find better solution for self-referential borrows escaping self method scopes
 // this should remove the use of unsafe in this module which seems a little bit unnecessary?
 // Avoid copying/cloning if possible.
 
+/// The idea behind this is to split events in two types run in the main and background thread:
+/// - shared events (main thread), only require a read lock into the inner data and
+///   can be shared between threads.
+/// - unique events (service thread), require a write lock since they may mutate the inner data.
+///
+/// There are two kind of unique events, those triggered by schedeluded maintenance tasks and those
+/// that are a byproduct of an evaluation (shared event types).
+/// When the repr is free to perform writes because there are no reads, it will place a local repr
+/// lock and process any scheduled unique events.
+///
+/// Since the locking is done only once when available this is a cheap operation and allows
+/// updating the repr state in an orderly fashion, following always the sequence: read -> write -> read.
+/// Likewise maintenace tasks are only performed when there are no more shared events in queue.
 pub(in crate::agent) struct InnerData<T>(Arc<RwLock<DashMap<String, T>>>);
 
 impl<T> InnerData<T> {
@@ -56,16 +75,17 @@ type ClassesData = InnerData<Class>;
 /// The class includes methods to encode and decode the representations
 /// to/from data streams or idioms.
 ///
-/// Attributes:
-///     entities -> Unique members (entities) of their own set/class.
-///     | Entities are denoted with a $ symbol followed by an alphanumeric literal.
-///     classes -> Sets of objects (entities or subclasses) that share a common property.
-///     | This includes 'classes of relationships' and other 'functions'.
+/// ## Attributes
+///     - entities -> Unique members (entities) of their own set/class.
+///                   Entities are denoted with a $ symbol followed by an alphanumeric literal.
+///     - classes -> Sets of objects (entities or subclasses) that share a common property.
+///                  This includes 'classes of relationships' and other 'functions'.
 pub(crate) struct Representation {
     pub(in crate::agent) entities: EntitiesData,
     pub(in crate::agent) classes: ClassesData,
-    svc_th_msg_queue: Sender<BackgroundEvent>,
+    svc_queue: Sender<BackgroundEvent>,
     threads: rayon::ThreadPool,
+    readers: Arc<(Mutex<usize>, Condvar)>,
 }
 
 impl Default for Representation {
@@ -75,36 +95,57 @@ impl Default for Representation {
 }
 
 impl Representation {
+    /// Time allocated for the service thread to execute a batch of tasks before starving
+    /// readers.
+    const BACKGROUND_TASK_TIME_SLICE: Duration = Duration::from_millis(10);
+    /// Wait time to receive new events before executing other actions.
+    const WAIT_TIME_BACKGROUND: Duration = Duration::from_nanos(100);
+
     pub fn new(threads: usize) -> Representation {
         #[cfg(any(test, debug_assertions))]
         {
             crate::agent::config::tracing::Logger::get_logger();
         }
 
-        let (svc_th_msg_queue, rx) = crossbeam::channel::unbounded();
+        let (svc_th_msg_queue, rx) = crossbeam::channel::bounded(100);
         let entities = InnerData(Arc::new(RwLock::new(DashMap::new())));
         let classes = InnerData(Arc::new(RwLock::new(DashMap::new())));
 
+        let readers = Arc::new((Mutex::new(0), Condvar::new()));
+        // reserve at least one thread for the background thread
         let rep = Representation {
             entities,
             classes,
             threads: rayon::ThreadPoolBuilder::new()
-                .num_threads(threads)
+                .num_threads(threads + 1)
                 .build()
                 .unwrap(),
-            svc_th_msg_queue,
-        };
-
-        let mut inner_data = InnerReprData {
-            entities: rep.entities.clone(),
-            classes: rep.classes.clone(),
+            svc_queue: svc_th_msg_queue,
+            readers: readers.clone(),
         };
 
         rep.threads.spawn(move || {
-            for msg in rx.iter() {
-                match Representation::background_maintenance_service(msg, &mut inner_data) {
-                    Ok(()) => {}
-                    Err(()) => {}
+            let (num_writers_lock, cvar) = &*readers;
+            let mut time_slice = Instant::now() + Self::BACKGROUND_TASK_TIME_SLICE;
+            loop {
+                let mut num_writers = num_writers_lock.lock();
+                if *num_writers > 0 {
+                    cvar.wait(&mut num_writers);
+                }
+                match rx.recv_timeout(Self::WAIT_TIME_BACKGROUND) {
+                    Ok(msg) => match Representation::background_service(msg) {
+                        Ok(()) => {}
+                        Err(()) => {}
+                    },
+                    Err(crossbeam::channel::RecvTimeoutError::Timeout) => {
+                        // perform secondary background service actions
+                    }
+                    Err(crossbeam::channel::RecvTimeoutError::Disconnected) => break,
+                }
+                if Instant::now() > time_slice {
+                    std::mem::drop(num_writers);
+                    std::thread::sleep(Duration::from_nanos(100));
+                    time_slice = Instant::now() + Self::BACKGROUND_TASK_TIME_SLICE;
                 }
             }
         });
@@ -137,7 +178,9 @@ impl Representation {
         let pres = Parser::parse(source.as_ref(), true, &self.threads);
         if let Ok(mut sentences) = pres {
             let mut errors = Vec::new();
-            for _ in 0..sentences.len() {
+            let num_sentences = sentences.len();
+            self.add_readers(num_sentences);
+            for _ in 0..num_sentences {
                 match sentences.pop_front().unwrap() {
                     ParseTree::Assertion(assertions) => {
                         for assertion in assertions {
@@ -167,6 +210,7 @@ impl Representation {
                     ParseTree::ParseErr(err) => errors.push(err),
                 }
             }
+            self.rm_readers(num_sentences);
             if !errors.is_empty() {
                 Err(errors)
             } else {
@@ -177,12 +221,29 @@ impl Representation {
         }
     }
 
+    fn add_readers(&self, readers: usize) {
+        let mut num_readers = self.readers.0.lock();
+        *num_readers += readers;
+    }
+
+    fn rm_readers(&self, readers: usize) {
+        let mut lock = self.readers.0.lock();
+        *lock -= readers;
+        if *lock == 0 {
+            self.readers.1.notify_one();
+        }
+    }
+
     /// Asks the KB if some fact is true and returns the answer to the query.
     pub fn ask(&self, source: &str) -> Result<Answer, QueryErr> {
         let queries = Parser::parse(source, false, &self.threads);
         if let Ok(queries) = queries {
+            let num_readers = queries.len();
+            self.add_readers(num_readers);
             let pres = QueryInput::ManyQueries(queries);
-            self.ask_processed(pres, usize::max_value(), false)
+            let answ = self.ask_processed(pres, usize::max_value(), false);
+            self.rm_readers(num_readers);
+            answ
         } else {
             Err(QueryErr::ParseErr(queries.unwrap_err()))
         }
@@ -239,7 +300,7 @@ impl Representation {
                     is_new = entity.add_or_updated_class_membership(self, assert, context);
                     decl = ClassMember::Entity(assert.clone());
                 } else {
-                    let entity = Entity::new(subject.to_string());
+                    let entity = Entity::new(subject.to_string(), self.svc_queue.clone());
                     entities.insert(entity.name.clone(), entity);
                     let entity = entities.get(subject).unwrap();
                     is_new = entity.add_or_updated_class_membership(self, assert, context);
@@ -272,7 +333,7 @@ impl Representation {
                     if let Some(entity) = entities.get(&subject) {
                         (*entity).with_location(loc, None);
                     } else {
-                        let entity = Entity::new(subject);
+                        let entity = Entity::new(subject, self.svc_queue.clone());
                         entity.with_location(loc, None);
                         entities.insert(entity.name.clone(), entity);
                     }
@@ -308,7 +369,7 @@ impl Representation {
                     if let Some(entity) = entities.get(subject) {
                         is_new1 = entity.add_relationship(self, assert, context);
                     } else {
-                        let entity = Entity::new(subject.to_owned());
+                        let entity = Entity::new(subject.to_owned(), self.svc_queue.clone());
                         entities.insert(entity.name.clone(), entity);
                         let entity = entities.get(subject).unwrap();
                         is_new1 = entity.add_relationship(self, assert, context);
@@ -336,19 +397,12 @@ impl Representation {
         let entities = &*self.entities.get();
         let classes = &*self.classes.get();
 
-        fn update(
-            subject: &str,
-            name: &str,
-            is_entity: bool,
-            belief: &Arc<LogSentence>,
-            entities: &DashMap<String, Entity>,
-            classes: &DashMap<String, Class>,
-        ) {
+        let update = |subject: &str, name: &str, is_entity: bool, belief: &Arc<LogSentence>| {
             if is_entity {
                 if let Some(entity) = entities.get(subject) {
                     entity.add_belief(belief.clone(), subject);
                 } else {
-                    let entity = Entity::new(subject.to_string());
+                    let entity = Entity::new(subject.to_string(), self.svc_queue.clone());
                     entity.add_belief(belief.clone(), name);
                     entities.insert(subject.to_string(), entity);
                 }
@@ -359,7 +413,7 @@ impl Representation {
                 class.add_belief(belief.clone(), name);
                 classes.insert(subject.to_string(), class);
             }
-        }
+        };
 
         for p in belief.get_all_predicates() {
             match *p {
@@ -375,22 +429,12 @@ impl Representation {
                     for arg in cls_decl.get_args() {
                         if !arg.is_var() {
                             match arg.get_name().into() {
-                                ClassTerm(class_name) => update(
-                                    class_name,
-                                    cls_decl.get_name(),
-                                    false,
-                                    &belief,
-                                    entities,
-                                    classes,
-                                ),
-                                EntityTerm(subject_name) => update(
-                                    subject_name,
-                                    cls_decl.get_name(),
-                                    true,
-                                    &belief,
-                                    entities,
-                                    classes,
-                                ),
+                                ClassTerm(class_name) => {
+                                    update(class_name, cls_decl.get_name(), false, &belief)
+                                }
+                                EntityTerm(subject_name) => {
+                                    update(subject_name, cls_decl.get_name(), true, &belief)
+                                }
                             }
                         }
                     }
@@ -410,22 +454,12 @@ impl Representation {
                     for arg in fn_decl.get_args() {
                         if !arg.is_var() {
                             match arg.get_name().into() {
-                                ClassTerm(class_name) => update(
-                                    class_name,
-                                    fn_decl.get_name(),
-                                    false,
-                                    &belief,
-                                    entities,
-                                    classes,
-                                ),
-                                EntityTerm(subject_name) => update(
-                                    subject_name,
-                                    fn_decl.get_name(),
-                                    true,
-                                    &belief,
-                                    entities,
-                                    classes,
-                                ),
+                                ClassTerm(class_name) => {
+                                    update(class_name, fn_decl.get_name(), false, &belief)
+                                }
+                                EntityTerm(subject_name) => {
+                                    update(subject_name, fn_decl.get_name(), true, &belief)
+                                }
                             }
                         }
                     }
@@ -908,37 +942,19 @@ impl Representation {
 
     /// Performs critical functions in the background service.
     #[inline(always)]
-    fn background_maintenance_service(
-        msg: BackgroundEvent,
-        rep_data: &mut InnerReprData,
-    ) -> Result<(), ()> {
+    fn background_service(msg: BackgroundEvent) -> Result<(), ()> {
         use BackgroundEvent::*;
 
         match msg {
-            CompactBmsLog => {
-                for mut kv in rep_data.classes.get_mut().iter_mut() {
-                    let class = &mut *kv;
-                    class.compact();
-                }
-
-                for mut kv in rep_data.entities.get_mut().iter_mut() {
-                    let entity = &mut *kv;
-                    entity.compact();
-                }
-            }
+            CompactBmsLog(rec) => rec.compact_record_log(),
         }
 
         Ok(())
     }
 }
 
-enum BackgroundEvent {
-    CompactBmsLog,
-}
-
-struct InnerReprData {
-    entities: EntitiesData,
-    classes: ClassesData,
+pub(super) enum BackgroundEvent {
+    CompactBmsLog(Arc<BmsWrapper<RecordHistory>>),
 }
 
 /// Error type for query failures.
