@@ -173,7 +173,7 @@ impl FuncDecl {
         if self.args.is_some() {
             for a in self.args.as_ref().unwrap() {
                 if let Predicate::FreeMembershipToClass(ref term) = *a {
-                    if &*term.term == var {
+                    if &term.term == var {
                         return true;
                     }
                 } else {
@@ -232,7 +232,7 @@ impl FuncDecl {
                 for arg in self.get_args() {
                     if let Predicate::FreeMembershipToClass(ref arg) = *arg {
                         let assignments = var_assign.as_ref().unwrap();
-                        if let Some(entity) = assignments.get(&*arg.term) {
+                        if let Some(entity) = assignments.get(&arg.term) {
                             if let Some(current) = entity.get_relationship(&grfunc) {
                                 return Some(Arc::new((&*current.bms).try_into().unwrap_or_else(
                                     |_| unreachable!("SIMAG - illegal conversion"),
@@ -385,7 +385,7 @@ impl<T: ProofResContext> LogSentResolution<T> for FuncDecl {
             if let Ok(grfunc) = GroundedFunc::from_free(self, assignments, time_assign) {
                 for arg in self.get_args() {
                     if let Predicate::FreeMembershipToClass(ref arg) = *arg {
-                        if let Some(entity) = assigned.get(&*arg.term) {
+                        if let Some(entity) = assigned.get(&arg.term) {
                             if let Some(current) = entity.get_relationship(&grfunc) {
                                 let a = Grounded::Function(Arc::downgrade(&current.clone()));
                                 context.push_antecedents(a);

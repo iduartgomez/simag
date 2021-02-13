@@ -8,7 +8,18 @@ use super::{
     Operator, ParseErrF,
 };
 use crate::agent::kb::bms::{BmsWrapper, IsTimeData};
-use std::convert::TryFrom;
+use std::{
+    convert::TryFrom,
+    sync::atomic::{AtomicUsize, Ordering},
+};
+
+static NEXT_ADDRESS: AtomicUsize = AtomicUsize::new(0);
+
+/// Obtain a new address from the virtual address space.
+#[inline]
+fn get_new_address() -> usize {
+    NEXT_ADDRESS.fetch_add(1, Ordering::SeqCst)
+}
 
 /// Variable equality is bassed on physical address, to compare term equality use the
 /// `name_eq` method.
@@ -16,6 +27,7 @@ use std::convert::TryFrom;
 pub(in crate::agent) struct Var {
     pub name: String,
     pub ty: TypeDef,
+    pub address: usize,
     assigned_val: Option<ConstraintValue>,
 }
 
@@ -25,6 +37,7 @@ impl<'a> From<&'a str> for Var {
             name: name.to_owned(),
             ty: TypeDef::Erased,
             assigned_val: None,
+            address: get_new_address(),
         }
     }
 }
@@ -68,6 +81,7 @@ impl<'a> std::convert::TryFrom<(&'a VarBorrowed<'a>, &'a ParseContext)> for Var 
             name,
             ty,
             assigned_val,
+            address: get_new_address(),
         })
     }
 }
@@ -97,13 +111,13 @@ impl Var {
     }
 
     pub fn generate_uid(&self) -> Vec<u8> {
-        format!("{:?}", self as *const Var).into_bytes()
+        self.address.to_le_bytes().iter().copied().collect()
     }
 }
 
 impl std::cmp::PartialEq for Var {
     fn eq(&self, other: &Var) -> bool {
-        (self as *const Var) == (other as *const Var)
+        self.address == other.address
     }
 }
 
@@ -111,8 +125,7 @@ impl std::cmp::Eq for Var {}
 
 impl std::hash::Hash for Var {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        let address = &*self as *const Var as usize;
-        address.hash(state);
+        self.address.hash(state);
     }
 }
 

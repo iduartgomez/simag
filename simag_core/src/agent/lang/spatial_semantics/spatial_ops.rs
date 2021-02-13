@@ -50,7 +50,7 @@ pub(in crate::agent) trait SpatialOps: OpArgsOps {
         if let Some(args) = self.get_op_args() {
             for arg in args {
                 if let OpArg::Spatial(AssignThisToVar(ref var1)) = *arg {
-                    return var1.as_ref() == var0;
+                    return var1 == var0;
                 }
             }
             false

@@ -48,7 +48,7 @@ impl<'a> Predicate {
         if name.is_grounded() {
             match Terminal::from(&arg.term, context) {
                 Ok(Terminal::FreeTerm(ft)) => {
-                    let t = FreeMembershipToClass::try_new(ft, arg.uval, name)?;
+                    let t = FreeMembershipToClass::try_new(&ft, arg.uval, name)?;
                     Ok(Predicate::FreeMembershipToClass(t))
                 }
                 Ok(Terminal::GroundedTerm(gt)) => {
@@ -71,7 +71,7 @@ impl<'a> Predicate {
             match Terminal::from(&arg.term, context) {
                 Ok(Terminal::FreeTerm(_)) if is_func.is_none() => Err(ParseErrF::BothAreVars),
                 Ok(Terminal::FreeTerm(ft)) => {
-                    let t = FreeMembershipToClass::try_new(ft, arg.uval, name)?;
+                    let t = FreeMembershipToClass::try_new(&ft, arg.uval, name)?;
                     Ok(Predicate::FreeMembershipToClass(t))
                 }
                 Ok(Terminal::GroundedTerm(gt)) => {
@@ -194,7 +194,7 @@ impl<'a> GroundedRef<'a> {
 /// E.g.: (let x in some\[x\])
 #[derive(Debug, Clone)]
 pub(in crate::agent) struct FreeMembershipToClass {
-    pub(in crate::agent::lang) term: Arc<Var>,
+    pub(in crate::agent::lang) term: Var,
     pub(in crate::agent::lang) value: Option<f32>,
     pub(in crate::agent::lang) operator: Option<Operator>,
     pub(in crate::agent::lang) parent: Terminal,
@@ -202,13 +202,13 @@ pub(in crate::agent) struct FreeMembershipToClass {
 
 impl FreeMembershipToClass {
     fn try_new(
-        term: Arc<Var>,
+        term: &Var,
         uval: Option<UVal>,
         parent: &Terminal,
     ) -> Result<FreeMembershipToClass, ParseErrF> {
         let (val, op) = match_uval(uval)?;
         Ok(FreeMembershipToClass {
-            term,
+            term: term.clone(),
             value: val,
             operator: op,
             parent: parent.clone(),
@@ -238,11 +238,11 @@ impl FreeMembershipToClass {
 
     #[inline]
     pub fn get_var_ref(&self) -> &Var {
-        &*self.term
+        &self.term
     }
 
     #[inline]
-    pub fn get_var(&self) -> Arc<Var> {
+    pub fn get_var(&self) -> Var {
         self.term.clone()
     }
 
@@ -292,7 +292,7 @@ pub(in crate::agent) struct FreeClassMembership {
     term: String,
     pub(in crate::agent::lang) value: Option<f32>,
     operator: Option<Operator>,
-    parent: Arc<Var>,
+    parent: Var,
     times: BmsWrapper<IsTimeData>,
 }
 
@@ -323,7 +323,7 @@ impl FreeClassMembership {
         if let Some(ref cmp) = self.operator {
             cmp.generate_uid(&mut id);
         }
-        let mut var = format!("{:?}", &*self.parent as *const Var).into_bytes();
+        let mut var = format!("{:?}", self.parent).into_bytes();
         id.append(&mut var);
         id.push(b'>');
         id
@@ -363,7 +363,7 @@ impl FreeClassMembership {
     }
 
     #[inline]
-    pub fn get_var(&self) -> Arc<Var> {
+    pub fn get_var(&self) -> Var {
         self.parent.clone()
     }
 }
@@ -710,7 +710,7 @@ impl<'a> ConstraintValue {
     }
 
     #[inline]
-    pub fn get_var(&self) -> Arc<Var> {
+    pub fn get_var(&self) -> Var {
         match self {
             ConstraintValue::Terminal(term) => term.get_var(),
             _ => unreachable!(),

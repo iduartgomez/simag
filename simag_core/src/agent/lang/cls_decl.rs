@@ -120,7 +120,7 @@ impl ClassDecl {
     pub(in crate::agent::lang) fn contains_var(&self, var: &Var) -> bool {
         for a in &self.args {
             match *a {
-                Predicate::FreeMembershipToClass(ref term) if &*term.term == var => return true,
+                Predicate::FreeMembershipToClass(ref term) if &term.term == var => return true,
                 _ => continue,
             }
         }
@@ -164,7 +164,7 @@ impl ClassDecl {
         match *arg {
             Predicate::FreeMembershipToClass(ref free) => {
                 var_assign?;
-                if let Some(entity) = var_assign.as_ref().unwrap().get(&*free.term) {
+                if let Some(entity) = var_assign.as_ref().unwrap().get(&free.term) {
                     if let Some(grounded) = entity.get_class(free.parent.get_name()) {
                         if free.grounded_eq(grounded) {
                             return grounded.bms.as_ref().map(|bms| {
@@ -281,7 +281,7 @@ impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
             match *a {
                 Predicate::FreeMembershipToClass(ref free) => {
                     assignments?;
-                    if let Some(entity) = assignments.as_ref().unwrap().get(&*free.term) {
+                    if let Some(entity) = assignments.as_ref().unwrap().get(&free.term) {
                         if let Some(current) = entity.get_class(free.parent.get_name()) {
                             context.push_antecedents(Grounded::Class(Arc::downgrade(
                                 &current.clone(),
@@ -351,7 +351,7 @@ impl<T: ProofResContext> LogSentResolution<T> for ClassDecl {
         for a in &self.args {
             let grfact = match *a {
                 Predicate::FreeMembershipToClass(ref free) => {
-                    if let Some(entity) = assignments.as_ref().unwrap().get(&*free.term) {
+                    if let Some(entity) = assignments.as_ref().unwrap().get(&free.term) {
                         GroundedMemb::from_free(free, &*entity.name)
                     } else {
                         break;

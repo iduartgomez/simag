@@ -1204,12 +1204,12 @@ pub(in crate::agent) enum QueryInput {
 
 #[derive(Debug)]
 pub(in crate::agent::kb) struct QueryProcessed {
-    cls_queries_free: HashMap<Arc<Var>, Vec<FreeMembershipToClass>>,
+    cls_queries_free: HashMap<Var, Vec<FreeMembershipToClass>>,
     cls_queries_grounded: HashMap<String, Vec<Arc<GroundedMemb>>>,
-    cls_memb_query: HashMap<Arc<Var>, Vec<FreeClassMembership>>,
-    func_queries_free: HashMap<Arc<Var>, Vec<Arc<FuncDecl>>>,
+    cls_memb_query: HashMap<Var, Vec<FreeClassMembership>>,
+    func_queries_free: HashMap<Var, Vec<Arc<FuncDecl>>>,
     func_queries_grounded: Vec<Arc<GroundedFunc>>,
-    func_memb_query: HashMap<Arc<Var>, Vec<Arc<FuncDecl>>>,
+    func_memb_query: HashMap<Var, Vec<Arc<FuncDecl>>>,
     loc_query: Vec<LocFn<String>>,
 }
 
@@ -1378,7 +1378,7 @@ impl QueryProcessed {
     }
 
     #[inline]
-    fn push_to_clsquery_free(&mut self, term: Arc<Var>, cls: FreeMembershipToClass) {
+    fn push_to_clsquery_free(&mut self, term: Var, cls: FreeMembershipToClass) {
         self.cls_queries_free
             .entry(term)
             .or_insert_with(Vec::new)
@@ -1391,7 +1391,7 @@ impl QueryProcessed {
     }
 
     #[inline]
-    fn push_to_fnquery_free(&mut self, term: Arc<Var>, func: Arc<FuncDecl>) {
+    fn push_to_fnquery_free(&mut self, term: Var, func: Arc<FuncDecl>) {
         self.func_queries_free
             .entry(term)
             .or_insert_with(Vec::new)

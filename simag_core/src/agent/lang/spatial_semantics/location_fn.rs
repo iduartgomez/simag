@@ -24,14 +24,15 @@ where
 #[derive(Debug, Clone)]
 enum ObjLocation {
     Reified(Point),
-    Free(Arc<Var>),
+    #[allow(dead_code)]
+    Free(Var),
 }
 use ObjLocation::*;
 
 impl<T: AsRef<str>> LocFn<T> {
     pub fn contains_var(&self, var: &Var) -> bool {
         self.locations.iter().any(|e| match &e.2 {
-            ObjLocation::Free(c_var) => &**c_var == var,
+            ObjLocation::Free(c_var) => c_var == var,
             _ => false,
         })
     }

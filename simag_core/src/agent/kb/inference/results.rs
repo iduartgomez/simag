@@ -22,8 +22,8 @@ type LocationByVar = (Point, Arc<GrTerminalKind<String>>);
 #[derive(Debug)]
 pub(in crate::agent::kb) struct InfResults<'rep> {
     pub grounded_queries: DashMap<QueryPred, GroundedResults<'rep>>,
-    membership: DashMap<Arc<Var>, QueryResMemb<'rep>>,
-    relationships: DashMap<Arc<Var>, QueryResRels<'rep>>,
+    membership: DashMap<Var, QueryResMemb<'rep>>,
+    relationships: DashMap<Var, QueryResRels<'rep>>,
     objs_by_loc: DashMap<Point, HashSet<LocResult>>,
     all_objs_in_loc: DashMap<LocationByVar, Vec<GrTerminalKind<String>>>,
     query: Arc<QueryProcessed>,
@@ -58,7 +58,7 @@ impl<'rep> InfResults<'rep> {
         }
     }
 
-    pub fn add_membership(&self, var: Arc<Var>, name: &'rep str, membership: Arc<GroundedMemb>) {
+    pub fn add_membership(&self, var: Var, name: &'rep str, membership: Arc<GroundedMemb>) {
         self.membership
             .entry(var)
             .or_insert_with(HashMap::new)
@@ -67,7 +67,7 @@ impl<'rep> InfResults<'rep> {
             .push(membership);
     }
 
-    pub fn add_relationships(&self, var: Arc<Var>, rel: &[Arc<GroundedFunc>]) {
+    pub fn add_relationships(&self, var: Var, rel: &[Arc<GroundedFunc>]) {
         for func in rel {
             for obj in func.get_args_names() {
                 // Safety: guaranteed this lives as long as Self<'rep> where 'rep is the lifetime of the owning Rep

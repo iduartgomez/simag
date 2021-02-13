@@ -46,7 +46,7 @@ pub(in crate::agent) struct LogSentence {
     pub has_time_vars: usize,
     pub has_spatial_vars: usize,
     particles: Vec<Particle>,
-    vars: Vec<Arc<Var>>,
+    vars: Vec<Var>,
     skolem: Vec<Arc<Skolem>>,
     /// position of the root at the particles vec
     root: usize,
@@ -193,7 +193,7 @@ impl<'a> LogSentence {
     pub fn extract_all_predicates(
         self,
     ) -> (
-        impl IntoIterator<Item = Arc<Var>>,
+        impl IntoIterator<Item = Var>,
         impl IntoIterator<Item = Assert>,
     ) {
         let LogSentence {
@@ -261,7 +261,7 @@ impl<'a> LogSentence {
                         if pred.get_time_decl(&*var) {
                             let times = pred.get_times(agent, var_assign);
                             if let Some(time) = times {
-                                time_assign.insert(&**var, time);
+                                time_assign.insert(&*var, time);
                             }
                             continue 'outer;
                         }
@@ -269,7 +269,7 @@ impl<'a> LogSentence {
                 }
                 TypeDef::TimeDecl => {
                     let times = Arc::new(var.get_time());
-                    time_assign.insert(&**var, times);
+                    time_assign.insert(&*var, times);
                 }
                 TypeDef::Location => {
                     for pred in &self.predicates.0 {
@@ -277,7 +277,7 @@ impl<'a> LogSentence {
                         if pred.get_loc_decl(&*var) {
                             let location = pred.get_location(agent, var_assign);
                             if let Some(loc) = location {
-                                loc_assign.insert(&**var, loc);
+                                loc_assign.insert(&*var, loc);
                             }
                             continue 'outer;
                         }
@@ -696,7 +696,7 @@ impl<'a> std::iter::Iterator for SentVarReq<'a> {
                         var_req.push(*a)
                     }
                 }
-                requeriments.insert(&**var, var_req);
+                requeriments.insert(&*var, var_req);
             }
             Some(requeriments)
         } else {
@@ -1451,13 +1451,13 @@ pub(in crate::agent) struct ParseContext {
     pub in_assertion: bool,
     pub is_tell: bool,
     pub depth: usize,
-    pub vars: Vec<Arc<Var>>,
+    pub vars: Vec<Var>,
     pub skols: Vec<Arc<Skolem>>,
     particles: HashSet<Particle>,
     particles_num: usize,
-    shadowing_vars: HashMap<Arc<Var>, (usize, Arc<Var>)>,
+    shadowing_vars: HashMap<Var, (usize, Var)>,
     shadowing_skols: HashMap<Arc<Skolem>, (usize, Arc<Skolem>)>,
-    all_vars: Vec<Arc<Var>>,
+    all_vars: Vec<Var>,
     all_skols: Vec<Arc<Skolem>>,
     in_rhs: bool,
 }
@@ -1490,7 +1490,7 @@ impl ParseContext {
     pub fn push_var(&mut self, decl: &VarDeclBorrowed) -> Result<(), ParseErrF> {
         match decl {
             VarDeclBorrowed::Var(ref var) => {
-                let var = Arc::new(Var::try_from((var, &*self))?);
+                let var = Var::try_from((var, &*self))?;
                 self.vars.push(var.clone());
                 self.all_vars.push(var);
                 Ok(())
@@ -1509,7 +1509,7 @@ impl ParseContext {
         match decl {
             VarDeclBorrowed::Var(ref var) => {
                 let var = &Var::try_from((var, self))?;
-                Ok(self.vars.iter().any(|x| var.name_eq(x.as_ref())))
+                Ok(self.vars.iter().any(|x| var.name_eq(x)))
             }
             VarDeclBorrowed::Skolem(ref var) => {
                 let var = Skolem::try_from((var, self))?;
@@ -1655,7 +1655,7 @@ mod ast_walker {
             ASTNode::Scope(ref ast) => {
                 fn drop_local_vars(context: &mut ParseContext, v_cnt: usize) {
                     let l = context.vars.len() - v_cnt;
-                    let local_vars = context.vars.drain(l..).collect::<Vec<Arc<Var>>>();
+                    let local_vars = context.vars.drain(l..).collect::<Vec<Var>>();
                     for v in local_vars {
                         if context.shadowing_vars.contains_key(&v) {
                             let (idx, shadowed) = context.shadowing_vars.remove(&v).unwrap();
@@ -1789,7 +1789,7 @@ mod ast_walker {
         v_cnt: &mut usize,
         s_cnt: &mut usize,
     ) -> Result<(), LogSentErr> {
-        let mut swap_vars: Vec<(usize, Arc<Var>, Arc<Var>)> = Vec::new();
+        let mut swap_vars: Vec<(usize, Var, Var)> = Vec::new();
         let mut swap_skolem: Vec<(usize, Arc<Skolem>, Arc<Skolem>)> = Vec::new();
         for v in vars {
             match *v {
@@ -1797,7 +1797,7 @@ mod ast_walker {
                 VarDeclBorrowed::Var(ref v) => {
                     let var = match Var::try_from((v, &*context)) {
                         Err(err) => return Err(LogSentErr::Boxed(Box::new(err))),
-                        Ok(val) => Arc::new(val),
+                        Ok(val) => val,
                     };
                     for (i, v) in context.vars.iter().enumerate() {
                         if v.name == var.name {

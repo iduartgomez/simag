@@ -25,7 +25,7 @@ use SpatialArg::*;
 #[derive(Debug, Clone)]
 pub(in crate::agent) struct MoveFn {
     // this rarely will contain more than 2 vars
-    vars: SmallVec<[Arc<Var>; 2]>,
+    vars: SmallVec<[Var; 2]>,
     spatial_arg: SpatialArg,
     time_arg: Option<TimeArg>,
 }
@@ -36,7 +36,7 @@ impl MoveFn {
         if let Some(args) = &decl.args {
             for arg in args {
                 match Terminal::from(&arg.term, context)? {
-                    Terminal::FreeTerm(var) => vars.push(var),
+                    Terminal::FreeTerm(var) => vars.push(var.as_ref().clone()),
                     _ => return Err(ParseErrF::WrongDef),
                 }
             }
@@ -85,7 +85,7 @@ impl MoveFn {
 
     pub fn contains_var(&self, var: &Var) -> bool {
         for arg in &self.vars {
-            if &**arg == var {
+            if arg == var {
                 return true;
             }
         }
@@ -108,8 +108,8 @@ impl MoveFn {
     ) -> Result<BmsWrapper<IsSpatialData>, ()> {
         match &self.spatial_arg {
             FromVarToVar(v0, v1) => {
-                let mut l0 = (&*loc_assign[&**v0]).clone();
-                let l1 = &loc_assign[&**v1];
+                let mut l0 = (&*loc_assign[&*v0]).clone();
+                let l1 = &loc_assign[&*v1];
                 if l0.merge_from_to(l1).is_ok() {
                     Ok(l0)
                 } else {
@@ -117,7 +117,7 @@ impl MoveFn {
                 }
             }
             FromVarToVal(v0, l1) => {
-                let mut l0 = (&*loc_assign[&**v0]).clone();
+                let mut l0 = (&*loc_assign[&*v0]).clone();
                 let l1 = BmsWrapper::<IsSpatialData>::new(Some(l1.clone()));
                 if l0.merge_from_to(&l1).is_ok() {
                     Ok(l0)
@@ -127,7 +127,7 @@ impl MoveFn {
             }
             FromValToVar(l0, v1) => {
                 let mut l0 = BmsWrapper::<IsSpatialData>::new(Some(l0.clone()));
-                let l1 = &loc_assign[&**v1];
+                let l1 = &loc_assign[&*v1];
                 if l0.merge_from_to(&l1).is_ok() {
                     Ok(l0)
                 } else {
@@ -144,7 +144,7 @@ impl MoveFn {
                 }
             }
             ToVar(v0) => {
-                let l0 = &loc_assign[&**v0];
+                let l0 = &loc_assign[&*v0];
                 Ok((&**l0).clone())
             }
             ToVal(l0) => Ok(BmsWrapper::<IsSpatialData>::new(Some(l0.clone()))),
@@ -179,7 +179,7 @@ impl MoveFn {
             let entities = &*agent.entities;
 
             for var in &self.vars {
-                let assigned = assignments[&**var];
+                let assigned = assignments[var];
                 match assigned.name {
                     GrTerminalKind::Class(cls) => {
                         let c = classes.get(cls).unwrap();

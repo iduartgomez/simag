@@ -20,8 +20,8 @@ use chrono::Duration;
 /// Special built-in function for time calculus.
 #[derive(Debug, Clone)]
 pub(in crate::agent) struct TimeCalcFn {
-    var0: Arc<Var>,
-    var1: Arc<Var>,
+    var0: Var,
+    var1: Var,
     op: Operator,
 }
 
@@ -56,7 +56,7 @@ impl TimeCalcFn {
     }
 
     pub fn contains_var(&self, var: &Var) -> bool {
-        for arg in [&*self.var0, &*self.var1].iter() {
+        for arg in [&self.var0, &self.var1].iter() {
             if *arg == var {
                 return true;
             }
@@ -78,8 +78,8 @@ impl TimeCalcFn {
         &self,
         assignments: &HashMap<&Var, Arc<BmsWrapper<IsTimeData>>>,
     ) -> bool {
-        let arg0 = assignments.get(&*self.var0).unwrap().get_last_time();
-        let arg1 = assignments.get(&*self.var1).unwrap().get_last_time();
+        let arg0 = assignments.get(&self.var0).unwrap().get_last_time();
+        let arg1 = assignments.get(&self.var1).unwrap().get_last_time();
 
         match self.op {
             Operator::Equal => {

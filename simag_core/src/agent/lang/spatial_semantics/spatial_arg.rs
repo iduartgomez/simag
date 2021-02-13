@@ -1,4 +1,4 @@
-use std::{convert::TryFrom, iter::FromIterator, sync::Arc};
+use std::{convert::TryFrom, iter::FromIterator};
 
 use super::{Point, SpatialFnErr};
 use crate::agent::{
@@ -13,14 +13,14 @@ use crate::agent::{
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(in crate::agent) enum SpatialArg {
-    AssignThisToVar(Arc<Var>),
+    AssignThisToVar(Var),
     /// is a place declaration
     DeclLocation(Point),
-    FromVarToVar(Arc<Var>, Arc<Var>),
-    FromVarToVal(Arc<Var>, Point),
-    FromValToVar(Point, Arc<Var>),
+    FromVarToVar(Var, Var),
+    FromVarToVal(Var, Point),
+    FromValToVar(Point, Var),
     FromValToVal(Point, Point),
-    ToVar(Arc<Var>),
+    ToVar(Var),
     ToVal(Point),
 }
 use SpatialArg::*;

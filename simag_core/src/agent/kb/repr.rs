@@ -87,6 +87,7 @@ pub(crate) struct Representation {
     svc_queue: Sender<BackgroundTask>,
     threads: rayon::ThreadPool,
     readers: Arc<(Mutex<usize>, Condvar)>,
+    #[cfg(feature = "persistence")]
     config: ReprConfig,
 }
 
@@ -99,6 +100,7 @@ impl Default for Representation {
 struct ReprSharedData {
     entities: EntitiesData,
     classes: ClassesData,
+    #[cfg(feature = "persistence")]
     config: ReprConfig,
 }
 
@@ -107,6 +109,7 @@ impl ReprSharedData {
     // 1. checking if state has indeed changed since last persistence first
     // 2. perform incremental persistence over different time chunks to not starve
     //    the main thread
+    #[cfg(feature = "persistence")]
     fn persist(&mut self) -> Result<(), ()> {
         // perform secondary background service tasks if enough time has elapsed
         if self.config.persist.load(Ordering::SeqCst) {
@@ -156,9 +159,11 @@ impl Representation {
             config: config.clone(),
         };
 
+        #[allow(unused_mut, unused_variables)]
         let mut shared_data = ReprSharedData {
             entities: rep.entities.clone(),
             classes: rep.classes.clone(),
+            #[cfg(feature = "persistence")]
             config: rep.config.clone(),
         };
 
@@ -186,7 +191,13 @@ impl Representation {
                         Err(()) => {}
                     },
                     Err(crossbeam::channel::TryRecvError::Empty) => {
+                        if potentially_disconnected {
+                            // wasn't really disconnected, just starved because concurrent reads, try again
+                            potentially_disconnected = false;
+                            continue;
+                        }
                         if last_bg_exec.elapsed() > Self::BG_SEC_TASK_FREQ {
+                            #[cfg(feature = "persistence")]
                             shared_data.persist().expect("failed to perform persist op");
                             last_bg_exec = Instant::now();
                         }
@@ -200,8 +211,7 @@ impl Representation {
                         break;
                     }
                     Err(crossbeam::channel::TryRecvError::Disconnected) => {
-                        // this should not be possible
-                        unreachable!()
+                        break;
                     }
                 }
                 if Instant::now() > time_slice {

@@ -37,7 +37,7 @@ pub(in crate::agent) trait TimeOps: OpArgsOps {
                     if v.is_some() {
                         unreachable!("SIMAG - can only set time value once")
                     }
-                    if let Some(val) = assignments.get(&**var) {
+                    if let Some(val) = assignments.get(&*var) {
                         v = Some((&**val).clone());
                     }
                 }
@@ -70,7 +70,7 @@ pub(in crate::agent) trait TimeOps: OpArgsOps {
         if let Some(args) = self.get_op_args() {
             for arg in args {
                 if let OpArg::Time(AssignThisToVar(ref var1)) = *arg {
-                    return var1.as_ref() == var0;
+                    return var1 == var0;
                 }
             }
             false

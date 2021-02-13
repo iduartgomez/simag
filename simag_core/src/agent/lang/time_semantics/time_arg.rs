@@ -10,14 +10,14 @@ use parser::OpArgBorrowed;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(in crate::agent) enum TimeArg {
-    AssignThisToVar(Arc<Var>),
+    AssignThisToVar(Var),
     /// is a time declaration
     DeclTime(TimeFn),
-    SinceVar(Arc<Var>),
+    SinceVar(Var),
     // UntilVar(Arc<Var>),
-    SinceVarUntilVar(Arc<Var>, Arc<Var>),
-    SinceVarUntilTime(Arc<Var>, TimeFn),
-    SinceTimeUntilVar(TimeFn, Arc<Var>),
+    SinceVarUntilVar(Var, Var),
+    SinceVarUntilTime(Var, TimeFn),
+    SinceTimeUntilVar(TimeFn, Var),
     SinceTimeUntilTime(TimeFn, TimeFn),
 }
 use TimeArg::*;
@@ -39,24 +39,24 @@ impl TimeArg {
         match self {
             DeclTime(time_fn) => time_fn.payload_from_time_arg(value),
             SinceVar(var) => {
-                let assignment = &**(assignments.get(&**var).unwrap());
+                let assignment = &**(assignments.get(&*var).unwrap());
                 assignment.clone()
             }
             SinceVarUntilVar(v0, v1) => {
-                let mut v0 = (&**assignments.get(&**v0).unwrap()).clone();
-                let v1 = &**(assignments.get(&**v1).unwrap());
+                let mut v0 = (&**assignments.get(&*v0).unwrap()).clone();
+                let v1 = &**(assignments.get(&*v1).unwrap());
                 v0.merge_since_until(v1).unwrap();
                 v0
             }
             SinceVarUntilTime(v0, t1) => {
-                let mut v0 = (&**assignments.get(&**v0).unwrap()).clone();
+                let mut v0 = (&**assignments.get(&*v0).unwrap()).clone();
                 let t1 = t1.payload_from_time_arg(value);
                 v0.merge_since_until(&t1).unwrap();
                 v0
             }
             SinceTimeUntilVar(t0, v1) => {
                 let mut t0 = t0.payload_from_time_arg(value);
-                let v1 = (&**assignments.get(&**v1).unwrap()).clone();
+                let v1 = (&**assignments.get(&*v1).unwrap()).clone();
                 t0.merge_since_until(&v1).unwrap();
                 t0
             }
@@ -72,8 +72,8 @@ impl TimeArg {
 
     pub fn contains_var(&self, var: &Var) -> bool {
         match self {
-            SinceVar(this_var) => var == &**this_var,
-            SinceVarUntilVar(v0, v1) => &**v0 == var || &**v1 == var,
+            SinceVar(this_var) => var == &*this_var,
+            SinceVarUntilVar(v0, v1) => &*v0 == var || &*v1 == var,
             _ => false,
         }
     }

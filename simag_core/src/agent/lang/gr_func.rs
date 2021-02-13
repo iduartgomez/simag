@@ -116,7 +116,7 @@ impl GroundedFunc {
                     } else {
                         return Err(());
                     };
-                    if let Some(entity) = assigned.get(&*free.term) {
+                    if let Some(entity) = assigned.get(&free.term) {
                         GroundedMemb::from_free(free, &*entity.name)
                     } else {
                         return Err(());

@@ -1,12 +1,12 @@
 use std::iter::FromIterator;
+use std::ops::Deref;
 use std::str;
-use std::{ops::Deref, sync::Arc};
 
 use super::{errors::ParseErrF, logsent::ParseContext, parser::TerminalBorrowed, var::Var};
 
 #[derive(Debug, PartialEq, Clone, Eq, Hash)]
 pub(in crate::agent) enum Terminal {
-    FreeTerm(Arc<Var>),
+    FreeTerm(Box<Var>),
     GroundedTerm(String),
 }
 
@@ -22,7 +22,7 @@ impl<'a> Terminal {
         }
         for v in &context.vars {
             if v.name == name {
-                return Ok(Terminal::FreeTerm(v.clone()));
+                return Ok(Terminal::FreeTerm(Box::new(v.clone())));
             }
         }
         Ok(Terminal::GroundedTerm(name))
@@ -35,7 +35,7 @@ impl<'a> Terminal {
         }
         for v in &context.vars {
             if v.name == name {
-                return Ok(Terminal::FreeTerm(v.clone()));
+                return Ok(Terminal::FreeTerm(Box::new(v.clone())));
             }
         }
         Ok(Terminal::GroundedTerm(name))
@@ -81,9 +81,9 @@ impl<'a> Terminal {
         }
     }
 
-    pub fn get_var(&self) -> Arc<Var> {
-        if let Terminal::FreeTerm(ref var) = *self {
-            var.clone()
+    pub fn get_var(&self) -> Var {
+        if let Terminal::FreeTerm(var) = self {
+            (&**var).clone()
         } else {
             unreachable!("SIMAG - called `get_var` on a non-var term")
         }
