@@ -285,7 +285,11 @@ impl Representation {
 
         let parent_exists = classes.contains_key(assert.get_parent());
         if !parent_exists {
-            let class = Class::new(assert.get_parent().to_string(), ClassKind::Membership);
+            let class = Class::new(
+                assert.get_parent().to_string(),
+                ClassKind::Membership,
+                self.svc_queue.clone(),
+            );
             classes.insert(class.name.clone(), class);
         }
         let decl;
@@ -298,7 +302,11 @@ impl Representation {
                     is_new = class.add_or_update_class_membership(self, assert, context);
                     decl = ClassMember::Class(assert.clone());
                 } else {
-                    let class = Class::new(class_name.to_owned(), ClassKind::Membership);
+                    let class = Class::new(
+                        class_name.to_owned(),
+                        ClassKind::Membership,
+                        self.svc_queue.clone(),
+                    );
                     classes.insert(class.name.clone(), class);
                     let class = classes.get(class_name).unwrap();
                     is_new = class.add_or_update_class_membership(self, assert, context);
@@ -336,7 +344,8 @@ impl Representation {
                     if let Some(class) = classes.get(&class_name) {
                         (*class).with_location(loc, None);
                     } else {
-                        let class = Class::new(class_name, ClassKind::Membership);
+                        let class =
+                            Class::new(class_name, ClassKind::Membership, self.svc_queue.clone());
                         class.with_location(loc, None);
                         classes.insert(class.name.clone(), class);
                     }
@@ -371,7 +380,11 @@ impl Representation {
                     if let Some(class) = classes.get(class_name) {
                         is_new1 = class.add_relationship(self, assert, context);
                     } else {
-                        let class = Class::new(class_name.to_owned(), ClassKind::Membership);
+                        let class = Class::new(
+                            class_name.to_owned(),
+                            ClassKind::Membership,
+                            self.svc_queue.clone(),
+                        );
                         classes.insert(class.name.clone(), class);
                         let class = classes.get(class_name).unwrap();
                         is_new1 = class.add_relationship(self, assert, context);
@@ -393,7 +406,11 @@ impl Representation {
         };
         let relation_exists = classes.contains_key(assert.get_name());
         if !relation_exists {
-            let relationship = Class::new(assert.get_name().to_string(), ClassKind::Relationship);
+            let relationship = Class::new(
+                assert.get_name().to_string(),
+                ClassKind::Relationship,
+                self.svc_queue.clone(),
+            );
             classes.insert(relationship.name.clone(), relationship);
         }
         for arg in assert.get_args() {
@@ -421,7 +438,11 @@ impl Representation {
             } else if let Some(class) = classes.get(subject) {
                 class.add_belief(belief.clone(), name);
             } else {
-                let class = Class::new(subject.to_string(), ClassKind::Membership);
+                let class = Class::new(
+                    subject.to_string(),
+                    ClassKind::Membership,
+                    self.svc_queue.clone(),
+                );
                 class.add_belief(belief.clone(), name);
                 classes.insert(subject.to_string(), class);
             }
@@ -433,8 +454,11 @@ impl Representation {
                     if let Some(class) = classes.get(cls_decl.get_name()) {
                         class.add_belief(belief.clone(), cls_decl.get_name());
                     } else {
-                        let class =
-                            Class::new(cls_decl.get_name().to_string(), ClassKind::Membership);
+                        let class = Class::new(
+                            cls_decl.get_name().to_string(),
+                            ClassKind::Membership,
+                            self.svc_queue.clone(),
+                        );
                         class.add_belief(belief.clone(), cls_decl.get_name());
                         classes.insert(class.name.clone(), class);
                     }
@@ -458,8 +482,11 @@ impl Representation {
                     if let Some(class) = classes.get(fn_decl.get_name()) {
                         class.add_belief(belief.clone(), fn_decl.get_name());
                     } else {
-                        let class =
-                            Class::new(fn_decl.get_name().to_string(), ClassKind::Relationship);
+                        let class = Class::new(
+                            fn_decl.get_name().to_string(),
+                            ClassKind::Relationship,
+                            self.svc_queue.clone(),
+                        );
                         class.add_belief(belief.clone(), fn_decl.get_name());
                         classes.insert(class.name.clone(), class);
                     }
@@ -625,8 +652,16 @@ impl Representation {
                 class.add_rule(rule.clone());
             } else {
                 let nc = match *p {
-                    Assert::ClassDecl(_) => Class::new(name.to_string(), ClassKind::Membership),
-                    Assert::FuncDecl(_) => Class::new(name.to_string(), ClassKind::Relationship),
+                    Assert::ClassDecl(_) => Class::new(
+                        name.to_string(),
+                        ClassKind::Membership,
+                        self.svc_queue.clone(),
+                    ),
+                    Assert::FuncDecl(_) => Class::new(
+                        name.to_string(),
+                        ClassKind::Relationship,
+                        self.svc_queue.clone(),
+                    ),
                     Assert::SpecialFunc(_) => unreachable!(),
                 };
                 nc.add_rule(rule.clone());

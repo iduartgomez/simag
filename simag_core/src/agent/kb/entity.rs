@@ -148,7 +148,13 @@ impl Entity {
                 }
                 current.update(agent, &*grounded, None);
             }
-            
+            if let Some(bms) = &current.bms {
+                if bms.mark_for_sweep() {
+                    self.svc_queue
+                        .send(BackgroundEvent::CompactBmsLog(bms.clone()))
+                        .expect("background service crashed");
+                }
+            }
             false
         } else {
             if let Some(context) = context {
