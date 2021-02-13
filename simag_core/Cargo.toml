@@ -5,7 +5,7 @@ authors = ["Ignacio Duart Gómez <iduartgomez@gmail.com>"]
 edition = "2018"
 
 [features]
-persistence = ["serde"]
+persistence = ["serde", "bincode"]
 
 [dependencies]
 bincode = { version = "1.3", optional = true }

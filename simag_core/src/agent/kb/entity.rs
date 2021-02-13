@@ -354,4 +354,6 @@ impl Entity {
             f.get_value()
         }
     }
+
+    pub(super) fn persist(&mut self) {}
 }

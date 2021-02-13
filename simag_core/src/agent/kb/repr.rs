@@ -19,13 +19,18 @@ use crate::agent::lang::{
 use crossbeam::channel::Sender;
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex};
-use std::sync::Arc;
 use std::{
     collections::{HashMap, HashSet},
+    iter::FromIterator,
+    ops::Deref,
+    rc::Rc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::Duration,
+    time::Instant,
 };
-use std::{iter::FromIterator, time::Instant};
-use std::{ops::Deref, rc::Rc};
 
 // TODO: find better solution for self-referential borrows escaping self method scopes
 // this should remove the use of unsafe in this module which seems a little bit unnecessary?
@@ -44,23 +49,13 @@ use std::{ops::Deref, rc::Rc};
 /// Since the locking is done only once when available this is a cheap operation and allows
 /// updating the repr state in an orderly fashion, following always the sequence: read -> write -> read.
 /// Likewise maintenace tasks are only performed when there are no more shared events in queue.
-pub(in crate::agent) struct InnerData<T>(DashMap<String, T>);
+pub(in crate::agent) struct InnerData<T>(Arc<DashMap<String, T>>);
 
-// impl<T> InnerData<T> {
-//     #[inline]
-//     pub fn get(&self) -> RwLockReadGuard<DashMap<String, T>> {
-//         self.0.read()
-//     }
-//     #[inline]
-//     pub fn get_mut(&mut self) -> RwLockWriteGuard<DashMap<String, T>> {
-//         self.0.write()
-//     }
-// }
-// impl<T> Clone for InnerData<T> {
-//     fn clone(&self) -> Self {
-//         InnerData(self.0.clone())
-//     }
-// }
+impl<T> Clone for InnerData<T> {
+    fn clone(&self) -> Self {
+        InnerData(self.0.clone())
+    }
+}
 
 impl<T> Deref for InnerData<T> {
     type Target = DashMap<String, T>;
@@ -92,11 +87,37 @@ pub(crate) struct Representation {
     svc_queue: Sender<BackgroundTask>,
     threads: rayon::ThreadPool,
     readers: Arc<(Mutex<usize>, Condvar)>,
+    config: ReprConfig,
 }
 
 impl Default for Representation {
     fn default() -> Self {
         Representation::new(num_cpus::get())
+    }
+}
+
+struct ReprSharedData {
+    entities: EntitiesData,
+    classes: ClassesData,
+    config: ReprConfig,
+}
+
+impl ReprSharedData {
+    // TODO: this should be optimized and is a first naive implementation by:
+    // 1. checking if state has indeed changed since last persistence first
+    // 2. perform incremental persistence over different time chunks to not starve
+    //    the main thread
+    fn persist(&mut self) -> Result<(), ()> {
+        // perform secondary background service tasks if enough time has elapsed
+        if self.config.persist.load(Ordering::SeqCst) {
+            for mut entity in self.entities.iter_mut() {
+                entity.persist();
+            }
+            for mut class in self.classes.iter_mut() {
+                class.persist();
+            }
+        }
+        Ok(())
     }
 }
 
@@ -114,8 +135,11 @@ impl Representation {
         }
 
         let (svc_th_msg_queue, rx) = crossbeam::channel::unbounded();
-        let entities = InnerData(DashMap::new());
-        let classes = InnerData(DashMap::new());
+        let entities = InnerData(Arc::new(DashMap::new()));
+        let classes = InnerData(Arc::new(DashMap::new()));
+
+        #[cfg(feature = "persistence")]
+        let config = ReprConfig::default();
 
         let readers = Arc::new((Mutex::new(0), Condvar::new()));
         // reserve at least one thread for the background thread
@@ -128,16 +152,33 @@ impl Representation {
                 .unwrap(),
             svc_queue: svc_th_msg_queue,
             readers: readers.clone(),
+            #[cfg(feature = "persistence")]
+            config: config.clone(),
+        };
+
+        let mut shared_data = ReprSharedData {
+            entities: rep.entities.clone(),
+            classes: rep.classes.clone(),
+            config: rep.config.clone(),
         };
 
         rep.threads.spawn(move || {
             let (num_writers_lock, cvar) = &*readers;
             let mut time_slice = Instant::now() + Self::BG_TASK_TIME_SLICE;
             let mut last_bg_exec = Instant::now();
+            let mut potentially_disconnected = false;
             loop {
                 let mut num_writers = num_writers_lock.lock();
                 if *num_writers > 0 {
-                    cvar.wait(&mut num_writers);
+                    if cvar
+                        .wait_for(&mut num_writers, Duration::from_secs(10))
+                        .timed_out()
+                    {
+                        // timed out... parent thread may have been killed leaving the number of reads in
+                        // a corrupted state. We can double check this by checking if the other end of the channel
+                        // has been disconnected below
+                        potentially_disconnected = true;
+                    }
                 }
                 match rx.try_recv() {
                     Ok(msg) => match Representation::background_service(msg) {
@@ -146,11 +187,22 @@ impl Representation {
                     },
                     Err(crossbeam::channel::TryRecvError::Empty) => {
                         if last_bg_exec.elapsed() > Self::BG_SEC_TASK_FREQ {
-                            // perform secondary background service tasks if enough time has elapsed
+                            shared_data.persist().expect("failed to perform persist op");
                             last_bg_exec = Instant::now();
                         }
                     }
-                    Err(crossbeam::channel::TryRecvError::Disconnected) => break,
+                    Err(crossbeam::channel::TryRecvError::Disconnected)
+                        if potentially_disconnected =>
+                    {
+                        // attempt to persist the current state a last time
+                        #[cfg(feature = "persistence")]
+                        shared_data.persist().expect("failed to perform persist op");
+                        break;
+                    }
+                    Err(crossbeam::channel::TryRecvError::Disconnected) => {
+                        // this should not be possible
+                        unreachable!()
+                    }
                 }
                 if Instant::now() > time_slice {
                     std::mem::drop(num_writers);
@@ -161,6 +213,16 @@ impl Representation {
         });
 
         rep
+    }
+
+    #[cfg(feature = "persistence")]
+    pub fn enable_persistence(&mut self) {
+        self.config.persist.swap(true, Ordering::SeqCst);
+    }
+
+    #[cfg(feature = "persistence")]
+    pub fn disable_persistence(&mut self) {
+        self.config.persist.swap(false, Ordering::SeqCst);
     }
 
     /// Parses a sentence (or several of them) into an usable formula
@@ -995,6 +1057,21 @@ impl Representation {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(feature = "persistence")]
+#[derive(Clone)]
+struct ReprConfig {
+    persist: Arc<AtomicBool>,
+}
+
+#[cfg(feature = "persistence")]
+impl Default for ReprConfig {
+    fn default() -> Self {
+        ReprConfig {
+            persist: Arc::new(AtomicBool::new(false)),
+        }
     }
 }
 
