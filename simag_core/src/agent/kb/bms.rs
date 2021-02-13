@@ -427,7 +427,7 @@ impl BmsWrapper<RecordHistory> {
                     };
                     if ask {
                         let answ = agent
-                            .ask_processed(QueryInput::AskRelationalFunc(func.clone()), 0, true)
+                            .ask_internal(QueryInput::AskRelationalFunc(func.clone()), 0, true)
                             .unwrap()
                             .get_results_single();
                         if answ.is_none() {
@@ -466,7 +466,7 @@ impl BmsWrapper<RecordHistory> {
                     };
                     if ask {
                         let answ = agent
-                            .ask_processed(QueryInput::AskClassMember(cls.clone()), 0, true)
+                            .ask_internal(QueryInput::AskClassMember(cls.clone()), 0, true)
                             .unwrap()
                             .get_results_single();
                         if answ.is_none() {

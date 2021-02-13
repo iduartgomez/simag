@@ -6,7 +6,7 @@ use dashmap::DashMap;
 use float_cmp::ApproxEqUlps;
 use parking_lot::RwLock;
 
-use super::{bms, repr::BackgroundEvent};
+use super::{bms, repr::BackgroundTask};
 use crate::agent::kb::repr::{lookahead_rules, Representation};
 use crate::agent::lang::{
     FreeClassMembership, FreeMembershipToClass, FuncDecl, Grounded, GroundedFunc, GroundedMemb,
@@ -29,7 +29,7 @@ pub(in crate::agent) struct Class {
     classes: DashMap<String, Arc<GroundedMemb>>,
     relations: DashMap<String, Vec<Arc<GroundedFunc>>>,
     pub beliefs: DashMap<String, Vec<Arc<LogSentence>>>,
-    svc_queue: Sender<BackgroundEvent>,
+    svc_queue: Sender<BackgroundTask>,
     pub(super) move_beliefs: RwLock<Vec<Arc<LogSentence>>>,
     pub rules: RwLock<Vec<Arc<LogSentence>>>,
     pub(in crate::agent::kb) members: RwLock<Vec<ClassMember>>,
@@ -40,7 +40,7 @@ impl Class {
     pub(in crate::agent::kb) fn new(
         name: String,
         _kind: ClassKind,
-        svc_queue: Sender<BackgroundEvent>,
+        svc_queue: Sender<BackgroundTask>,
     ) -> Class {
         Class {
             name,
@@ -125,7 +125,7 @@ impl Class {
             if let Some(bms) = &current.bms {
                 if bms.mark_for_sweep() {
                     self.svc_queue
-                        .send(BackgroundEvent::CompactBmsLog(bms.clone()))
+                        .send(BackgroundTask::CompactBmsLog(bms.clone()))
                         .expect("background service crashed");
                 }
             }
@@ -318,7 +318,7 @@ impl Class {
                         }
                         if f.bms.mark_for_sweep() {
                             self.svc_queue
-                                .send(BackgroundEvent::CompactBmsLog(f.bms.clone()))
+                                .send(BackgroundTask::CompactBmsLog(f.bms.clone()))
                                 .expect("background service crashed");
                         }
                         found_rel = true;

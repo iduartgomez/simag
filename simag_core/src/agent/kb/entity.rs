@@ -1,6 +1,6 @@
 use crate::agent::kb::{
     bms,
-    repr::{lookahead_rules, BackgroundEvent, Representation},
+    repr::{lookahead_rules, BackgroundTask, Representation},
 };
 use crate::agent::lang::{
     FreeClassMembership, Grounded, GroundedFunc, GroundedMemb, GroundedRef, LogSentence, Operator,
@@ -47,13 +47,13 @@ pub(crate) struct Entity {
     classes: DashMap<String, Arc<GroundedMemb>>,
     relations: DashMap<String, Vec<Arc<GroundedFunc>>>,
     beliefs: DashMap<String, Vec<Arc<LogSentence>>>,
-    svc_queue: Sender<BackgroundEvent>,
+    svc_queue: Sender<BackgroundTask>,
     pub(super) move_beliefs: RwLock<Vec<Arc<LogSentence>>>,
     pub(in crate::agent) location: BmsWrapper<RecordHistory>,
 }
 
 impl Entity {
-    pub(in crate::agent::kb) fn new(name: String, svc_queue: Sender<BackgroundEvent>) -> Entity {
+    pub(in crate::agent::kb) fn new(name: String, svc_queue: Sender<BackgroundTask>) -> Entity {
         Entity {
             name,
             classes: DashMap::new(),
@@ -151,7 +151,7 @@ impl Entity {
             if let Some(bms) = &current.bms {
                 if bms.mark_for_sweep() {
                     self.svc_queue
-                        .send(BackgroundEvent::CompactBmsLog(bms.clone()))
+                        .send(BackgroundTask::CompactBmsLog(bms.clone()))
                         .expect("background service crashed");
                 }
             }
@@ -300,7 +300,7 @@ impl Entity {
                         found_rel = true;
                         if f.bms.mark_for_sweep() {
                             self.svc_queue
-                                .send(BackgroundEvent::CompactBmsLog(f.bms.clone()))
+                                .send(BackgroundTask::CompactBmsLog(f.bms.clone()))
                                 .expect("background service crashed");
                         }
                         break;

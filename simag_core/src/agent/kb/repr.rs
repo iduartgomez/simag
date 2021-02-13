@@ -89,7 +89,7 @@ type ClassesData = InnerData<Class>;
 pub(crate) struct Representation {
     pub(in crate::agent) entities: EntitiesData,
     pub(in crate::agent) classes: ClassesData,
-    svc_queue: Sender<BackgroundEvent>,
+    svc_queue: Sender<BackgroundTask>,
     threads: rayon::ThreadPool,
     readers: Arc<(Mutex<usize>, Condvar)>,
 }
@@ -106,8 +106,6 @@ impl Representation {
     const BG_TASK_TIME_SLICE: Duration = Duration::from_nanos(100);
     /// Frequency with which the background secondary tasks are to be performed.
     const BG_SEC_TASK_FREQ: Duration = Duration::from_millis(1_000);
-    /// Wait time to receive new events before executing other actions.
-    const WAIT_TIME_BACKGROUND: Duration = Duration::from_nanos(10);
 
     pub fn new(threads: usize) -> Representation {
         #[cfg(any(test, debug_assertions))]
@@ -115,7 +113,7 @@ impl Representation {
             crate::agent::config::tracing::Logger::get_logger();
         }
 
-        let (svc_th_msg_queue, rx) = crossbeam::channel::bounded(100);
+        let (svc_th_msg_queue, rx) = crossbeam::channel::unbounded();
         let entities = InnerData(DashMap::new());
         let classes = InnerData(DashMap::new());
 
@@ -141,18 +139,18 @@ impl Representation {
                 if *num_writers > 0 {
                     cvar.wait(&mut num_writers);
                 }
-                match rx.recv_timeout(Self::WAIT_TIME_BACKGROUND) {
+                match rx.try_recv() {
                     Ok(msg) => match Representation::background_service(msg) {
                         Ok(()) => {}
                         Err(()) => {}
                     },
-                    Err(crossbeam::channel::RecvTimeoutError::Timeout) => {
+                    Err(crossbeam::channel::TryRecvError::Empty) => {
                         if last_bg_exec.elapsed() > Self::BG_SEC_TASK_FREQ {
-                            // perform secondary background service actions if enough time has elapsed
+                            // perform secondary background service tasks if enough time has elapsed
                             last_bg_exec = Instant::now();
                         }
                     }
-                    Err(crossbeam::channel::RecvTimeoutError::Disconnected) => break,
+                    Err(crossbeam::channel::TryRecvError::Disconnected) => break,
                 }
                 if Instant::now() > time_slice {
                     std::mem::drop(num_writers);
@@ -253,7 +251,7 @@ impl Representation {
             let num_readers = queries.len();
             self.add_readers(num_readers);
             let pres = QueryInput::ManyQueries(queries);
-            let answ = self.ask_processed(pres, usize::max_value(), false);
+            let answ = self.ask_internal(pres, usize::max_value(), false);
             self.rm_readers(num_readers);
             answ
         } else {
@@ -261,7 +259,7 @@ impl Representation {
         }
     }
 
-    pub(in crate::agent) fn ask_processed(
+    pub(in crate::agent) fn ask_internal(
         &self,
         source: QueryInput,
         depth: usize,
@@ -518,7 +516,7 @@ impl Representation {
                                         free,
                                         entity.name.as_ref(),
                                     ));
-                                    self.ask_processed(QueryInput::AskClassMember(grfact), 0, true)
+                                    self.ask_internal(QueryInput::AskClassMember(grfact), 0, true)
                                         .unwrap();
                                 }
                             }
@@ -536,7 +534,7 @@ impl Representation {
                     for args in mapped {
                         let args = HashMap::from_iter(args.iter().map(|&(v, ref a)| (v, &**a)));
                         if let Ok(grfunc) = GroundedFunc::from_free(func_decl, Some(&args), &f) {
-                            self.ask_processed(
+                            self.ask_internal(
                                 QueryInput::AskRelationalFunc(Arc::new(grfunc)),
                                 0,
                                 true,
@@ -618,7 +616,7 @@ impl Representation {
                 {
                     if let Some(pos) = &pos {
                         // ask if the obj is in that location
-                        self.ask_processed(
+                        self.ask_internal(
                             QueryInput::AskLocation(LocFn::from((arg, pos.clone()))),
                             0,
                             true,
@@ -630,7 +628,7 @@ impl Representation {
                         let locs = move_fn.get_location(&loc_assign).unwrap();
                         let loc = locs.get_last_value().1.unwrap();
                         pos = Some(loc.clone());
-                        self.ask_processed(
+                        self.ask_internal(
                             QueryInput::AskLocation(LocFn::from((arg, loc))),
                             0,
                             true,
@@ -989,8 +987,8 @@ impl Representation {
 
     /// Performs critical functions in the background service.
     #[inline(always)]
-    fn background_service(msg: BackgroundEvent) -> Result<(), ()> {
-        use BackgroundEvent::*;
+    fn background_service(msg: BackgroundTask) -> Result<(), ()> {
+        use BackgroundTask::*;
 
         match msg {
             CompactBmsLog(rec) => rec.compact_record_log(),
@@ -1000,7 +998,7 @@ impl Representation {
     }
 }
 
-pub(super) enum BackgroundEvent {
+pub(super) enum BackgroundTask {
     CompactBmsLog(Arc<BmsWrapper<RecordHistory>>),
 }
 
