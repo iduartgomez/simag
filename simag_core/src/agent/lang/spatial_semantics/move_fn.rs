@@ -175,8 +175,8 @@ impl MoveFn {
                 .get_location(loc_assign)
                 .unwrap_or_else(|_| unreachable!("SIMAG - location not assigned in move fn"));
 
-            let classes = agent.classes.get();
-            let entities = agent.entities.get();
+            let classes = &*agent.classes;
+            let entities = &*agent.entities;
 
             for var in &self.vars {
                 let assigned = assignments[&**var];

@@ -7,7 +7,7 @@
 pub(in crate::agent) use self::errors::BmsError;
 use super::{
     inference::QueryInput,
-    repr::{BackgroundEvent, Representation},
+    repr::{ Representation},
 };
 use crate::agent::{
     lang::{
@@ -17,7 +17,6 @@ use crate::agent::{
     ParseErrF,
 };
 use chrono::Utc;
-use crossbeam::channel::Sender;
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::mem;
 use std::{cmp::Ordering as CmpOrdering, time::Duration};
@@ -1017,7 +1016,6 @@ mod test {
     use super::*;
 
     #[test]
-    // #[ignore]
     fn bms_rollback() {
         let rep = Representation::new(1);
 
@@ -1055,7 +1053,6 @@ mod test {
     }
 
     #[test]
-    // #[ignore]
     fn bms_review_after_change() {
         let rep = Representation::new(1);
 

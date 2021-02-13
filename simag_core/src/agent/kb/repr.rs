@@ -18,14 +18,14 @@ use crate::agent::lang::{
 };
 use crossbeam::channel::Sender;
 use dashmap::DashMap;
-use parking_lot::{Condvar, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::rc::Rc;
+use parking_lot::{Condvar, Mutex};
 use std::sync::Arc;
 use std::{
     collections::{HashMap, HashSet},
     time::Duration,
 };
 use std::{iter::FromIterator, time::Instant};
+use std::{ops::Deref, rc::Rc};
 
 // TODO: find better solution for self-referential borrows escaping self method scopes
 // this should remove the use of unsafe in this module which seems a little bit unnecessary?
@@ -44,23 +44,29 @@ use std::{iter::FromIterator, time::Instant};
 /// Since the locking is done only once when available this is a cheap operation and allows
 /// updating the repr state in an orderly fashion, following always the sequence: read -> write -> read.
 /// Likewise maintenace tasks are only performed when there are no more shared events in queue.
-pub(in crate::agent) struct InnerData<T>(Arc<RwLock<DashMap<String, T>>>);
+pub(in crate::agent) struct InnerData<T>(DashMap<String, T>);
 
-impl<T> InnerData<T> {
-    #[inline]
-    pub fn get(&self) -> RwLockReadGuard<DashMap<String, T>> {
-        self.0.read()
-    }
+// impl<T> InnerData<T> {
+//     #[inline]
+//     pub fn get(&self) -> RwLockReadGuard<DashMap<String, T>> {
+//         self.0.read()
+//     }
+//     #[inline]
+//     pub fn get_mut(&mut self) -> RwLockWriteGuard<DashMap<String, T>> {
+//         self.0.write()
+//     }
+// }
+// impl<T> Clone for InnerData<T> {
+//     fn clone(&self) -> Self {
+//         InnerData(self.0.clone())
+//     }
+// }
 
-    #[inline]
-    pub fn get_mut(&mut self) -> RwLockWriteGuard<DashMap<String, T>> {
-        self.0.write()
-    }
-}
+impl<T> Deref for InnerData<T> {
+    type Target = DashMap<String, T>;
 
-impl<T> Clone for InnerData<T> {
-    fn clone(&self) -> Self {
-        InnerData(self.0.clone())
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -97,9 +103,11 @@ impl Default for Representation {
 impl Representation {
     /// Time allocated for the service thread to execute a batch of tasks before starving
     /// readers.
-    const BACKGROUND_TASK_TIME_SLICE: Duration = Duration::from_millis(10);
+    const BG_TASK_TIME_SLICE: Duration = Duration::from_nanos(100);
+    /// Frequency with which the background secondary tasks are to be performed.
+    const BG_SEC_TASK_FREQ: Duration = Duration::from_millis(1_000);
     /// Wait time to receive new events before executing other actions.
-    const WAIT_TIME_BACKGROUND: Duration = Duration::from_nanos(100);
+    const WAIT_TIME_BACKGROUND: Duration = Duration::from_nanos(10);
 
     pub fn new(threads: usize) -> Representation {
         #[cfg(any(test, debug_assertions))]
@@ -108,8 +116,8 @@ impl Representation {
         }
 
         let (svc_th_msg_queue, rx) = crossbeam::channel::bounded(100);
-        let entities = InnerData(Arc::new(RwLock::new(DashMap::new())));
-        let classes = InnerData(Arc::new(RwLock::new(DashMap::new())));
+        let entities = InnerData(DashMap::new());
+        let classes = InnerData(DashMap::new());
 
         let readers = Arc::new((Mutex::new(0), Condvar::new()));
         // reserve at least one thread for the background thread
@@ -126,7 +134,8 @@ impl Representation {
 
         rep.threads.spawn(move || {
             let (num_writers_lock, cvar) = &*readers;
-            let mut time_slice = Instant::now() + Self::BACKGROUND_TASK_TIME_SLICE;
+            let mut time_slice = Instant::now() + Self::BG_TASK_TIME_SLICE;
+            let mut last_bg_exec = Instant::now();
             loop {
                 let mut num_writers = num_writers_lock.lock();
                 if *num_writers > 0 {
@@ -138,14 +147,17 @@ impl Representation {
                         Err(()) => {}
                     },
                     Err(crossbeam::channel::RecvTimeoutError::Timeout) => {
-                        // perform secondary background service actions
+                        if last_bg_exec.elapsed() > Self::BG_SEC_TASK_FREQ {
+                            // perform secondary background service actions if enough time has elapsed
+                            last_bg_exec = Instant::now();
+                        }
                     }
                     Err(crossbeam::channel::RecvTimeoutError::Disconnected) => break,
                 }
                 if Instant::now() > time_slice {
                     std::mem::drop(num_writers);
                     std::thread::sleep(Duration::from_nanos(100));
-                    time_slice = Instant::now() + Self::BACKGROUND_TASK_TIME_SLICE;
+                    time_slice = Instant::now() + Self::BG_TASK_TIME_SLICE;
                 }
             }
         });
@@ -268,8 +280,8 @@ impl Representation {
         assert: &Arc<GroundedMemb>,
         context: Option<&T>,
     ) {
-        let entities = self.entities.get();
-        let classes = self.classes.get();
+        let entities = &*self.entities;
+        let classes = &*self.classes;
 
         let parent_exists = classes.contains_key(assert.get_parent());
         if !parent_exists {
@@ -315,8 +327,8 @@ impl Representation {
     }
 
     fn upsert_objects_with_loc(&self, objs: impl Iterator<Item = (GrTerminalKind<String>, Point)>) {
-        let classes = self.classes.get();
-        let entities = self.entities.get();
+        let classes = &*self.classes;
+        let entities = &*self.entities;
 
         for (term, loc) in objs {
             match term {
@@ -347,8 +359,8 @@ impl Representation {
         assert: &Arc<GroundedFunc>,
         context: Option<&T>,
     ) {
-        let classes = self.classes.get();
-        let entities = self.entities.get();
+        let classes = &*self.classes;
+        let entities = &*self.entities;
 
         // it doesn't matter this is overwritten, as if it exists, it exists for all
         let is_new = Rc::new(::std::cell::RefCell::new(true));
@@ -394,8 +406,8 @@ impl Representation {
     }
 
     fn add_belief(&self, belief: &Arc<LogSentence>) {
-        let entities = &*self.entities.get();
-        let classes = &*self.classes.get();
+        let entities = &*self.entities;
+        let classes = &*self.classes;
 
         let update = |subject: &str, name: &str, is_entity: bool, belief: &Arc<LogSentence>| {
             if is_entity {
@@ -547,8 +559,8 @@ impl Representation {
         candidates: &HashMap<&Var, Vec<Arc<VarAssignment>>>,
         assigned: &'a mut HashSet<&'b str>,
     ) {
-        let entities = self.entities.get();
-        let classes = self.entities.get();
+        let entities = &*self.entities;
+        let classes = &*self.classes;
 
         assign.iter().for_each(|a| {
             let name = *a.name;
@@ -604,7 +616,7 @@ impl Representation {
     }
 
     fn add_rule(&self, rule: &Arc<LogSentence>) {
-        let classes = self.classes.get();
+        let classes = &*self.classes;
 
         let preds = rule.get_all_predicates();
         for p in preds {
@@ -630,7 +642,7 @@ impl Representation {
         &'a self,
         classes: &'b [&str],
     ) -> HashMap<&'b str, Vec<Arc<GroundedMemb>>> {
-        let sclasses = self.classes.get();
+        let sclasses = &*self.classes;
 
         let mut dict = HashMap::new();
         for cls in classes {
@@ -659,7 +671,7 @@ impl Representation {
         &'a self,
         funcs: &'b [&'b FuncDecl],
     ) -> HashMap<&'b str, HashMap<&'a str, Vec<Arc<GroundedFunc>>>> {
-        let sclasses = self.classes.get();
+        let sclasses = &*self.classes;
 
         let mut dict = HashMap::new();
         for func in funcs {
@@ -691,8 +703,8 @@ impl Representation {
         G: std::ops::Deref<Target = GrTerminalKind<S>>,
         S: AsRef<str>,
     {
-        let entities = self.entities.get();
-        let classes = self.entities.get();
+        let entities = &*self.entities;
+        let classes = &*self.classes;
 
         match *subject {
             EntityTerm(ref subject_name) => {
@@ -722,8 +734,8 @@ impl Representation {
     /// Takes a grounded predicate from a query and returns the membership truth value.
     /// It checks the truth value based on the time intervals of the predicate.
     pub(in crate::agent) fn class_membership_query(&self, pred: &GroundedMemb) -> Option<bool> {
-        let entities = self.entities.get();
-        let classes = self.entities.get();
+        let entities = &*self.entities;
+        let classes = &*self.classes;
 
         match pred.get_name() {
             EntityTerm(subject) => {
@@ -748,8 +760,8 @@ impl Representation {
         &self,
         subject: &FreeClassMembership,
     ) -> Vec<Arc<GroundedMemb>> {
-        let entities = self.entities.get();
-        let classes = self.entities.get();
+        let entities = &*self.entities;
+        let classes = &*self.classes;
 
         if let EntityTerm(name) = subject.get_name().into() {
             if let Some(entity) = entities.get(name) {
@@ -769,8 +781,8 @@ impl Representation {
         pred: &GroundedFunc,
         subject: &str,
     ) -> Option<bool> {
-        let entities = self.entities.get();
-        let classes = self.entities.get();
+        let entities = &*self.entities;
+        let classes = &*self.classes;
 
         if let EntityTerm(subject_name) = subject.into() {
             if let Some(entity) = entities.get(subject_name) {
@@ -791,8 +803,8 @@ impl Representation {
         pred: &GroundedFunc,
         subject: &str,
     ) -> Option<Arc<GroundedFunc>> {
-        let entities = self.entities.get();
-        let classes = self.entities.get();
+        let entities = &*self.entities;
+        let classes = &*self.classes;
 
         if let EntityTerm(subject_name) = subject.into() {
             if let Some(entity) = entities.get(subject_name) {
@@ -820,8 +832,8 @@ impl Representation {
         &self,
         func: &FuncDecl,
     ) -> HashMap<&str, Vec<Arc<GroundedFunc>>> {
-        let classes = self.entities.get();
-        let entities = self.entities.get();
+        let classes = &*self.classes;
+        let entities = &*self.entities;
 
         let mut res = HashMap::new();
         for (pos, arg) in func.get_args().iter().enumerate() {
@@ -864,8 +876,8 @@ impl Representation {
     }
 
     pub fn clear(&mut self) {
-        self.entities.get().clear();
-        self.classes.get().clear();
+        self.entities.clear();
+        self.classes.clear();
     }
 
     #[allow(clippy::type_complexity)]
@@ -873,8 +885,8 @@ impl Representation {
         &self,
         objects: impl Iterator<Item = (&'a Arc<GrTerminalKind<T>>, &'a Point)>,
     ) -> Vec<(&'a Point, Arc<GrTerminalKind<T>>, Option<bool>)> {
-        let classes = self.entities.get();
-        let entities = self.entities.get();
+        let classes = &*self.classes;
+        let entities = &*self.entities;
 
         let mut answer = vec![];
         for (term, loc) in objects {
@@ -909,8 +921,8 @@ impl Representation {
     }
 
     pub(super) fn find_all_objs_in_loc<'a>(&self, loc: &'a Point) -> Vec<GrTerminalKind<String>> {
-        let classes = self.entities.get();
-        let entities = self.entities.get();
+        let classes = &*self.classes;
+        let entities = &*self.entities;
 
         let mut answer = vec![];
         for class in &*classes {
@@ -1035,7 +1047,7 @@ impl<'a> Answer<'a> {
 pub(super) fn lookahead_rules(agent: &Representation, name: &str, grounded: &GroundedRef) -> bool {
     use super::inference::rules_inference_lookahead;
     let rules: Vec<Arc<LogSentence>> = {
-        let classes = agent.classes.get();
+        let classes = &*agent.classes;
         let class = classes.get(name).unwrap();
         let rules = &*class.rules.read();
         rules.clone()

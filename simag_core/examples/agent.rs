@@ -67,7 +67,7 @@ fn old_knowledge(agent: Arc<Agent>, threads: usize, iters_per_reader: usize) {
     }
 
     let mut threads = Vec::with_capacity(paralellism);
-    let t0 = Instant::now();
+    let exec = Instant::now();
     for _ in 0..paralellism {
         let ag_cl = agent.clone();
         threads.push(std::thread::spawn(move || {
@@ -80,15 +80,14 @@ fn old_knowledge(agent: Arc<Agent>, threads: usize, iters_per_reader: usize) {
     }
 
     threads.into_iter().fold(Ok(()), |_, h| h.join()).unwrap();
-    let t1 = Instant::now();
 
-    let diff = (t1 - t0).as_nanos() as f64 / 1e9;
+    let elapsed = exec.elapsed().as_nanos() as f64 / 1e9;
     let total = paralellism * iters_per_reader;
     println!(
         "took {:.2} secs to process a total of {} requests, ~{} req/sec",
-        diff,
+        elapsed,
         total,
-        (total as f64 / diff).round()
+        (total as f64 / elapsed).round()
     );
 }
 

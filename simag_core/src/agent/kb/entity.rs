@@ -148,6 +148,7 @@ impl Entity {
                 }
                 current.update(agent, &*grounded, None);
             }
+            
             false
         } else {
             if let Some(context) = context {
@@ -346,9 +347,5 @@ impl Entity {
         } else {
             f.get_value()
         }
-    }
-
-    pub(in crate::agent::kb) fn compact(&self) {
-        todo!()
     }
 }
