@@ -11,7 +11,7 @@ extern crate num_cpus;
 extern crate rayon;
 
 mod agent;
-mod static_arenas;
+mod static_var_map;
 
 pub use self::agent::{Agent, Answer, QueryErr};
 

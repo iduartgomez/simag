@@ -1,10 +1,12 @@
+use super::{errors::ParseErrF, logsent::ParseContext, parser::TerminalBorrowed, var::Var};
+#[cfg(feature = "persistence")]
+use serde::{Deserialize, Serialize};
 use std::iter::FromIterator;
 use std::ops::Deref;
 use std::str;
 
-use super::{errors::ParseErrF, logsent::ParseContext, parser::TerminalBorrowed, var::Var};
-
 #[derive(Debug, PartialEq, Clone, Eq, Hash)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) enum Terminal {
     FreeTerm(Box<Var>),
     GroundedTerm(String),
@@ -93,6 +95,7 @@ impl<'a> Terminal {
 /// Represents a grounded, existing, object which can be a single
 /// individual entity or a class of entities.
 #[derive(Debug, PartialEq, Clone, Eq, Hash)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) enum GrTerminalKind<T>
 where
     T: AsRef<str>,

@@ -1,11 +1,3 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-
-use crossbeam::channel::Sender;
-use dashmap::DashMap;
-use float_cmp::ApproxEqUlps;
-use parking_lot::RwLock;
-
 use super::{bms, repr::BackgroundTask};
 use crate::agent::kb::repr::{lookahead_rules, Representation};
 use crate::agent::lang::{
@@ -14,6 +6,12 @@ use crate::agent::lang::{
 };
 use crate::FLOAT_EQ_ULPS;
 use bms::{BmsWrapper, RecordHistory};
+use crossbeam::channel::Sender;
+use dashmap::DashMap;
+use float_cmp::ApproxEqUlps;
+use parking_lot::RwLock;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// A class is a set of entities that share some properties.
 /// It can be a subset of others supersets, and viceversa.
@@ -381,7 +379,7 @@ impl Class {
         }
     }
 
-    pub(super) fn persist(&mut self) {}
+    pub(super) fn persist(&self) {}
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

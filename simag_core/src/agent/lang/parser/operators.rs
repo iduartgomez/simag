@@ -1,8 +1,11 @@
 use super::*;
 use nom::{branch::alt, bytes::complete::tag};
+#[cfg(feature = "persistence")]
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 #[allow(unused)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) enum Operator {
     // equality operators:
     Equal,

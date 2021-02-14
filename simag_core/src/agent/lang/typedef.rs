@@ -1,3 +1,7 @@
+#[cfg(feature = "persistence")]
+use serde::{Deserialize, Serialize};
+
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub(in crate::agent) enum TypeDef {
     Erased,

@@ -1,20 +1,21 @@
+use super::ParseErrF;
+pub(super) use errors::SpatialFnErr;
+pub(in crate::agent) use location_fn::LocFn;
+pub(in crate::agent) use move_fn::MoveFn;
+#[cfg(feature = "persistence")]
+use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
+pub(super) use spatial_arg::SpatialArg;
+pub(in crate::agent) use spatial_ops::SpatialOps;
+use std::convert::TryFrom;
+
 mod location_fn;
 mod move_fn;
 mod spatial_arg;
 mod spatial_ops;
 
-use std::convert::TryFrom;
-
-use smallvec::SmallVec;
-
-use super::ParseErrF;
-pub(super) use errors::SpatialFnErr;
-pub(in crate::agent) use location_fn::LocFn;
-pub(in crate::agent) use move_fn::MoveFn;
-pub(super) use spatial_arg::SpatialArg;
-pub(in crate::agent) use spatial_ops::SpatialOps;
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub struct Point(i64, i64, i64);
 
 impl Point {

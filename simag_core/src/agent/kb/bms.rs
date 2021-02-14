@@ -5,10 +5,7 @@
 //! 2) Detecting inconsistences between new and old beliefs.
 //! 3) Fixing those inconsitences.
 pub(in crate::agent) use self::errors::BmsError;
-use super::{
-    inference::QueryInput,
-    repr::{ Representation},
-};
+use super::{inference::QueryInput, repr::Representation};
 use crate::agent::{
     lang::{
         ClassDecl, Grounded, GroundedMemb, GroundedRef, Point, ProofResContext, SentID, SpatialOps,
@@ -30,6 +27,11 @@ use std::{
     },
 };
 
+#[cfg(feature = "persistence")]
+use crate::agent::persist;
+#[cfg(feature = "persistence")]
+use serde::{Deserialize, Serialize};
+
 /// Trigger threshold for log compation event.
 const LOG_COMPACT_THRESHOLD: usize = 100;
 /// Max number of records to keep after compacting the log.
@@ -41,12 +43,20 @@ const WRITE_LOCK_RETRIES: usize = 100;
 /// Serves to keep the believes alive in memory, fix inconsistencies and
 /// serialize any information.
 #[derive(Debug)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) struct BmsWrapper<T>
 where
     T: BmsKind,
 {
     /// The semantics of this collection depends on the type of the wrapper. For the record history type variant
     /// is the log of values, sorted by increasing register time, associated with the owning object.
+    #[cfg_attr(
+        feature = "persistence",
+        serde(
+            serialize_with = "persist::ser_locked",
+            deserialize_with = "persist::deser_locked"
+        )
+    )]
     records: RwLock<Vec<BmsRecord>>,
     /// set if it's a predicate with the time of query execution
     pred: Option<Time>,
@@ -391,7 +401,7 @@ impl BmsWrapper<RecordHistory> {
         };
         records.push(record);
         // FIXME: records always should be sorted by time, but this makes some tests fail
-        records.sort_by(|a, b| a.time.cmp(&b.time));
+        // records.sort_by(|a, b| a.time.cmp(&b.time));
     }
 
     /// Look for all the changes that were produced, before an update,
@@ -909,9 +919,96 @@ pub(in crate::agent) struct BmsRecord {
     was_produced: Option<(SentID, Time)>,
 }
 
+impl Default for BmsRecord {
+    fn default() -> Self {
+        BmsRecord {
+            produced: Vec::default(),
+            time: Utc::now(),
+            location: None,
+            value: None,
+            was_produced: None,
+        }
+    }
+}
+
 impl BmsRecord {
     fn add_produced_entry(&mut self, entry: (Grounded, Option<f32>)) {
         self.produced.push(entry);
+    }
+}
+
+#[cfg(feature = "persistence")]
+mod serialization {
+    use serde::{
+        de::{Error, SeqAccess, Visitor},
+        ser::SerializeStruct,
+    };
+
+    use super::*;
+
+    const REC_FIELDS: [&'static str; 4] = ["time", "location", "value", "was_produced"];
+
+    impl Serialize for BmsRecord {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            // FIXME: properly ser/deser "produced" field
+            let mut record = serializer.serialize_struct("BmsRecord", 4)?;
+            record.serialize_field(REC_FIELDS[0], &self.time)?;
+            record.serialize_field(REC_FIELDS[1], &self.location)?;
+            record.serialize_field(REC_FIELDS[2], &self.value)?;
+            record.serialize_field(REC_FIELDS[3], &self.was_produced)?;
+            record.end()
+        }
+    }
+
+    struct BmsRecordVisitor;
+
+    impl<'de> Visitor<'de> for BmsRecordVisitor {
+        type Value = BmsRecord;
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            Ok(BmsRecord {
+                time: seq
+                    .next_element()?
+                    .ok_or_else(|| Error::invalid_length(0, &self))?,
+                location: seq
+                    .next_element()?
+                    .ok_or_else(|| Error::invalid_length(1, &self))?,
+                value: seq
+                    .next_element()?
+                    .ok_or_else(|| Error::invalid_length(2, &self))?,
+                was_produced: seq
+                    .next_element()?
+                    .ok_or_else(|| Error::invalid_length(3, &self))?,
+                produced: Vec::default(),
+            })
+        }
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("struct BmsRecord")
+        }
+    }
+
+    impl<'de> Deserialize<'de> for BmsRecord {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            deserializer.deserialize_struct("BmsRecord", &REC_FIELDS, BmsRecordVisitor)
+        }
+    }
+
+    #[test]
+    #[cfg(test)]
+    fn serde_bms_record() {
+        let rec = BmsRecord::default();
+        let serialized = bincode::serialize(&rec).unwrap();
+        let _deserialized: BmsRecord = bincode::deserialize(&serialized).unwrap();
     }
 }
 

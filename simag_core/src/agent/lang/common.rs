@@ -1,9 +1,3 @@
-use std::collections::HashMap;
-use std::convert::TryFrom;
-use std::iter::FromIterator;
-use std::str;
-use std::sync::{Arc, Weak};
-
 use super::{
     cls_decl::ClassDecl,
     errors::ParseErrF,
@@ -21,6 +15,11 @@ use crate::agent::{
 };
 use crate::FLOAT_EQ_ULPS;
 use float_cmp::ApproxEqUlps;
+use std::collections::HashMap;
+use std::convert::TryFrom;
+use std::iter::FromIterator;
+use std::str;
+use std::sync::{Arc, Weak};
 
 // Predicate types:
 

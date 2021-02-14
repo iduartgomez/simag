@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 use dashmap::DashMap;
+#[cfg(feature = "persistence")]
+use serde::{Deserialize, Serialize};
 use std::{
     collections::hash_map::RandomState,
     hash::{BuildHasher, Hash, Hasher},
@@ -7,12 +9,13 @@ use std::{
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct VariableId {
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
+pub(crate) struct IdToken {
     key: u64,
     map_id: usize,
 }
 
-impl VariableId {
+impl IdToken {
     pub fn generate_uid(&self) -> Vec<u8> {
         let mut uid = self
             .map_id
@@ -25,7 +28,7 @@ impl VariableId {
     }
 }
 
-impl Hash for VariableId {
+impl Hash for IdToken {
     fn hash<H: Hasher>(&self, state: &mut H) {
         // safely ignore map_id
         state.write_u64(self.key);
@@ -59,7 +62,8 @@ impl BuildHasher for NoOpHasher {
     }
 }
 
-pub(crate) struct TableData<T>(DashMap<VariableId, Box<T>, NoOpHasher>)
+/// Data structure which holds the inner data of the variable map.
+pub(crate) struct TableData<T>(DashMap<IdToken, Box<T>, NoOpHasher>)
 where
     T: 'static + ?Sized;
 
@@ -76,16 +80,17 @@ where
 
 static NEXT_MAP_ID: AtomicUsize = AtomicUsize::new(0);
 
-/// A static map of variables and it's values.
+/// A static map of variables (identified by a token) and their assigned static values.
 ///
-/// This map only allows for values which are healp allocated and with static addresses
-/// for the duration of the program. It's an append only map.
+/// This map only allows for values which are heap allocated, with a stable memory addresses
+/// for the duration of the program. It's an append-only map and values cannot be modified after
+/// insertion.
 ///
-/// The references returned are to the underlying data and with a static lifetime.
+/// The references returned are to the underlying values data and with a static lifetime.
 ///
 /// # Warnings
 /// Don't store anything that requires destructors run, as the behaviour is platform-specific
-/// on exist.
+/// on exit.
 #[derive(Clone)]
 pub(crate) struct VariableMap<T: 'static + ?Sized> {
     items: &'static TableData<T>,
@@ -95,10 +100,9 @@ pub(crate) struct VariableMap<T: 'static + ?Sized> {
     ///
     /// Here we use the default hasher in the std lib which is guaranteed to be secure.
     hash_builder: RandomState,
+    /// Unique identifier of this map
     map_id: usize,
 }
-
-// impl Into<&'static
 
 impl<T> VariableMap<T>
 where
@@ -112,7 +116,7 @@ where
         }
     }
 
-    pub fn get(&self, index: &VariableId) -> Option<&'static T> {
+    pub fn get(&self, index: &IdToken) -> Option<&'static T> {
         if index.map_id != self.map_id {
             return None;
         }
@@ -124,19 +128,19 @@ where
     }
 
     /// Adds a new item to the table if it didn't exists previously, otherwise is a no-op.
-    pub fn push<Boxable: Into<Box<T>>>(&self, item: Boxable) -> VariableId {
+    pub fn push<Boxable: Into<Box<T>>>(&self, item: Boxable) -> IdToken {
         let boxed = item.into();
         let mut hasher = self.hash_builder.build_hasher();
         boxed.as_ref().hash(&mut hasher);
         let key = hasher.finish();
         self.items
             .0
-            .entry(VariableId {
+            .entry(IdToken {
                 key,
                 map_id: self.map_id,
             })
             .or_insert(boxed);
-        VariableId {
+        IdToken {
             key,
             map_id: self.map_id,
         }

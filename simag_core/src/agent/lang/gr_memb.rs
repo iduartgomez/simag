@@ -1,6 +1,3 @@
-use std::str;
-use std::sync::Arc;
-
 use super::{
     errors::ParseErrF,
     logsent::{ParseContext, SentID},
@@ -14,6 +11,13 @@ use crate::agent::{
 use crate::FLOAT_EQ_ULPS;
 use float_cmp::ApproxEqUlps;
 use parking_lot::RwLock;
+#[cfg(feature = "persistence")]
+use serde::{Deserialize, Serialize};
+use std::str;
+use std::sync::Arc;
+
+#[cfg(feature = "persistence")]
+use crate::agent::persist;
 
 /// Grounded membership of an entity to a class.
 ///
@@ -21,11 +25,26 @@ use parking_lot::RwLock;
 /// sentences or processed from `ClassDecl` on `tell` mode.
 ///
 /// E.g.: abc\[$def=1\]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) struct GroundedMemb {
     pub(in crate::agent::lang) term: GrTerminalKind<String>,
+    #[cfg_attr(
+        feature = "persistence",
+        serde(
+            serialize_with = "persist::ser_locked",
+            deserialize_with = "persist::deser_locked"
+        )
+    )]
     pub(in crate::agent::lang) value: RwLock<Option<f32>>,
     pub(in crate::agent::lang) operator: Option<Operator>,
     pub(in crate::agent::lang) parent: String,
+    #[cfg_attr(
+        feature = "persistence",
+        serde(
+            serialize_with = "persist::ser_optional_bms",
+            deserialize_with = "persist::deser_optional_bms"
+        )
+    )]
     pub bms: Option<Arc<BmsWrapper<RecordHistory>>>,
 }
 

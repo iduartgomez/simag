@@ -9,28 +9,41 @@ use super::{
 };
 use crate::{
     agent::kb::bms::{BmsWrapper, IsTimeData},
-    static_arenas::{TableData, VariableId, VariableMap},
+    static_var_map::{IdToken, TableData, VariableMap},
 };
 use once_cell::sync::Lazy;
-use std::{convert::TryFrom, hash::Hash};
+#[cfg(feature = "persistence")]
+use serde::{Deserialize, Serialize};
+use std::{
+    convert::TryFrom,
+    hash::Hash,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 static VAR_STORAGE: Lazy<TableData<str>> = Lazy::new(TableData::init_static);
 static VAR_TABLE: Lazy<VariableMap<str>> = Lazy::new(|| VariableMap::new(&*VAR_STORAGE));
 
+static NEXT_VARIABLE: AtomicUsize = AtomicUsize::new(0);
+
 /// Variable equality is bassed on physical address, to compare term equality use the
 /// `name_eq` method.
 #[derive(Clone)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) struct Var {
     pub ty: TypeDef,
-    id: VariableId,
+    token_id: IdToken,
+    var_id: usize,
+    #[cfg_attr(feature = "persistence", serde(skip_serializing, skip_deserializing))]
     assigned_val: Option<ConstraintValue>,
 }
 
 impl<'a> From<&'a str> for Var {
     fn from(name: &'a str) -> Self {
         let id = VAR_TABLE.push(name.to_owned());
+        let var_id = NEXT_VARIABLE.fetch_add(1, Ordering::SeqCst);
         Var {
-            id,
+            token_id: id,
+            var_id,
             ty: TypeDef::Erased,
             assigned_val: None,
         }
@@ -72,9 +85,11 @@ impl<'a> std::convert::TryFrom<(&'a VarBorrowed<'a>, &'a ParseContext)> for Var 
         if super::reserved(name.as_bytes()) {
             return Err(ParseErrF::ReservedKW(name.to_owned()));
         }
-        let id = VAR_TABLE.push(name.to_owned());
+        let token_id = VAR_TABLE.push(name.to_owned());
+        let var_id = NEXT_VARIABLE.fetch_add(1, Ordering::SeqCst);
         Ok(Var {
-            id,
+            token_id,
+            var_id,
             ty,
             assigned_val,
         })
@@ -106,17 +121,21 @@ impl Var {
     }
 
     pub fn generate_uid(&self) -> Vec<u8> {
-        self.id.generate_uid()
+        self.var_id
+            .to_le_bytes()
+            .iter()
+            .copied()
+            .collect::<Vec<_>>()
     }
 
     pub fn get_name(&self) -> &str {
-        VAR_TABLE.get(&self.id).unwrap()
+        VAR_TABLE.get(&self.token_id).unwrap()
     }
 }
 
 impl std::cmp::PartialEq for Var {
     fn eq(&self, other: &Var) -> bool {
-        self.id == other.id
+        self.token_id == other.token_id
     }
 }
 
@@ -124,7 +143,7 @@ impl std::cmp::Eq for Var {}
 
 impl Hash for Var {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
+        self.token_id.hash(state);
     }
 }
 
@@ -153,14 +172,14 @@ pub(in crate::agent) trait VarEq {
 impl VarEq for Var {
     #[inline]
     fn name_eq(&self, var: &Var) -> bool {
-        self.get_name() == var.get_name()
+        self.token_id == var.token_id
     }
 }
 
 impl<'a> VarEq for &'a Var {
     #[inline]
     fn name_eq(&self, var: &Var) -> bool {
-        self.get_name() == var.get_name()
+        self.token_id == var.token_id
     }
 }
 

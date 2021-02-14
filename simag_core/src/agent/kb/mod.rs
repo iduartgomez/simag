@@ -6,8 +6,6 @@ pub(in crate::agent) mod bms;
 pub(self) mod class;
 pub(self) mod entity;
 mod inference;
-#[cfg(feature = "persistence")]
-mod persist;
 pub(super) mod repr;
 
 #[cfg(test)]

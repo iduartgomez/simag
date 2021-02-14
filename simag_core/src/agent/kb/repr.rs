@@ -1,3 +1,17 @@
+use std::{
+    collections::{HashMap, HashSet},
+    iter::FromIterator,
+    ops::Deref,
+    rc::Rc,
+    sync::{atomic::AtomicBool, Arc},
+    time::Duration,
+    time::Instant,
+};
+
+use crossbeam::channel::Sender;
+use dashmap::DashMap;
+use parking_lot::{Condvar, Mutex};
+
 use super::{
     bms::{build_declaration_bms, BmsWrapper, RecordHistory},
     entity::Entity,
@@ -16,21 +30,9 @@ use crate::agent::lang::{
     GroundedFunc, GroundedMemb, GroundedRef, LocFn, LogSentence, MoveFn, ParseErrF, ParseTree,
     Parser, Point, Predicate, ProofResContext, SentVarReq, Var,
 };
-use crossbeam::channel::Sender;
-use dashmap::DashMap;
-use parking_lot::{Condvar, Mutex};
-use std::{
-    collections::{HashMap, HashSet},
-    iter::FromIterator,
-    ops::Deref,
-    rc::Rc,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    time::Duration,
-    time::Instant,
-};
+
+#[cfg(feature = "persistence")]
+use std::sync::atomic::Ordering;
 
 // TODO: find better solution for self-referential borrows escaping self method scopes
 // this should remove the use of unsafe in this module which seems a little bit unnecessary?
@@ -76,18 +78,17 @@ type ClassesData = InnerData<Class>;
 /// The class includes methods to encode and decode the representations
 /// to/from data streams or idioms.
 ///
-/// ## Attributes
-///     - entities -> Unique members (entities) of their own set/class.
-///                   Entities are denoted with a $ symbol followed by an alphanumeric literal.
-///     - classes -> Sets of objects (entities or subclasses) that share a common property.
-///                  This includes 'classes of relationships' and other 'functions'.
+/// # Attributes
+/// - entities -> Unique members (entities) of their own set/class.
+///   Entities are denoted with a $ symbol followed by an alphanumeric literal.
+/// - classes -> Sets of objects (entities or subclasses) that share a common property.
+///   This includes 'classes of relationships' and other 'functions'.
 pub(crate) struct Representation {
     pub(in crate::agent) entities: EntitiesData,
     pub(in crate::agent) classes: ClassesData,
     svc_queue: Sender<BackgroundTask>,
     threads: rayon::ThreadPool,
     readers: Arc<(Mutex<usize>, Condvar)>,
-    #[cfg(feature = "persistence")]
     config: ReprConfig,
 }
 
@@ -100,7 +101,6 @@ impl Default for Representation {
 struct ReprSharedData {
     entities: EntitiesData,
     classes: ClassesData,
-    #[cfg(feature = "persistence")]
     config: ReprConfig,
 }
 
@@ -113,10 +113,10 @@ impl ReprSharedData {
     fn persist(&mut self) -> Result<(), ()> {
         // perform secondary background service tasks if enough time has elapsed
         if self.config.persist.load(Ordering::SeqCst) {
-            for mut entity in self.entities.iter_mut() {
+            for entity in self.entities.iter_mut() {
                 entity.persist();
             }
-            for mut class in self.classes.iter_mut() {
+            for class in self.classes.iter_mut() {
                 class.persist();
             }
         }
@@ -129,7 +129,7 @@ impl Representation {
     /// readers.
     const BG_TASK_TIME_SLICE: Duration = Duration::from_nanos(100);
     /// Frequency with which the background secondary tasks are to be performed.
-    const BG_SEC_TASK_FREQ: Duration = Duration::from_millis(1_000);
+    const BG_SEC_TASK_FREQ: Duration = Duration::from_secs(1);
 
     pub fn new(threads: usize) -> Representation {
         #[cfg(any(test, debug_assertions))]
@@ -141,7 +141,6 @@ impl Representation {
         let entities = InnerData(Arc::new(DashMap::new()));
         let classes = InnerData(Arc::new(DashMap::new()));
 
-        #[cfg(feature = "persistence")]
         let config = ReprConfig::default();
 
         let readers = Arc::new((Mutex::new(0), Condvar::new()));
@@ -155,7 +154,6 @@ impl Representation {
                 .unwrap(),
             svc_queue: svc_th_msg_queue,
             readers: readers.clone(),
-            #[cfg(feature = "persistence")]
             config: config.clone(),
         };
 
@@ -163,7 +161,6 @@ impl Representation {
         let mut shared_data = ReprSharedData {
             entities: rep.entities.clone(),
             classes: rep.classes.clone(),
-            #[cfg(feature = "persistence")]
             config: rep.config.clone(),
         };
 
@@ -1070,13 +1067,12 @@ impl Representation {
     }
 }
 
-#[cfg(feature = "persistence")]
 #[derive(Clone)]
+#[allow(dead_code)]
 struct ReprConfig {
     persist: Arc<AtomicBool>,
 }
 
-#[cfg(feature = "persistence")]
 impl Default for ReprConfig {
     fn default() -> Self {
         ReprConfig {

@@ -355,5 +355,11 @@ impl Entity {
         }
     }
 
-    pub(super) fn persist(&mut self) {}
+    #[cfg(feature = "persistence")]
+    pub(super) fn persist(&self) {
+        for entity in self.classes.iter() {
+            let entity = &**entity;
+            let _serialized = bincode::serialize(entity).unwrap();
+        }
+    }
 }
