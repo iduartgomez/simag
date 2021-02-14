@@ -89,9 +89,9 @@ impl ClassDecl {
 
     #[inline]
     pub fn get_name(&self) -> &str {
-        match self.name {
-            Terminal::FreeTerm(ref var) => &var.name,
-            Terminal::GroundedTerm(ref name) => name,
+        match &self.name {
+            Terminal::FreeTerm(var) => var.get_name(),
+            Terminal::GroundedTerm(name) => name,
         }
     }
 

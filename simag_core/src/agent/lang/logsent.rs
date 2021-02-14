@@ -1800,7 +1800,7 @@ mod ast_walker {
                         Ok(val) => val,
                     };
                     for (i, v) in context.vars.iter().enumerate() {
-                        if v.name == var.name {
+                        if v.name_eq(&var) {
                             swap_vars.push((i, v.clone(), var.clone()));
                         }
                     }

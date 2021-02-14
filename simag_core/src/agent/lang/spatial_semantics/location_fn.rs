@@ -102,7 +102,7 @@ impl<'a> std::convert::TryFrom<(&'a FuncDeclBorrowed<'a>, &'a mut ParseContext)>
                     let term = GrTerminalKind::from(&**term);
                     let mut is_var = false;
                     for v in &context.vars {
-                        if v.name.as_str() == Into::<&str>::into(&term) {
+                        if v.name_eq(Into::<&str>::into(&term)) {
                             is_var = true;
                             break;
                         }

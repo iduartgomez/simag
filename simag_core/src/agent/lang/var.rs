@@ -7,37 +7,32 @@ use super::{
     typedef::TypeDef,
     Operator, ParseErrF,
 };
-use crate::agent::kb::bms::{BmsWrapper, IsTimeData};
-use std::{
-    convert::TryFrom,
-    sync::atomic::{AtomicUsize, Ordering},
+use crate::{
+    agent::kb::bms::{BmsWrapper, IsTimeData},
+    static_arenas::{TableData, VariableId, VariableMap},
 };
+use once_cell::sync::Lazy;
+use std::{convert::TryFrom, hash::Hash};
 
-static NEXT_ADDRESS: AtomicUsize = AtomicUsize::new(0);
-
-/// Obtain a new address from the virtual address space.
-#[inline]
-fn get_new_address() -> usize {
-    NEXT_ADDRESS.fetch_add(1, Ordering::SeqCst)
-}
+static VAR_STORAGE: Lazy<TableData<str>> = Lazy::new(TableData::init_static);
+static VAR_TABLE: Lazy<VariableMap<str>> = Lazy::new(|| VariableMap::new(&*VAR_STORAGE));
 
 /// Variable equality is bassed on physical address, to compare term equality use the
 /// `name_eq` method.
 #[derive(Clone)]
 pub(in crate::agent) struct Var {
-    pub name: String,
     pub ty: TypeDef,
-    pub address: usize,
+    id: VariableId,
     assigned_val: Option<ConstraintValue>,
 }
 
 impl<'a> From<&'a str> for Var {
     fn from(name: &'a str) -> Self {
+        let id = VAR_TABLE.push(name.to_owned());
         Var {
-            name: name.to_owned(),
+            id,
             ty: TypeDef::Erased,
             assigned_val: None,
-            address: get_new_address(),
         }
     }
 }
@@ -73,15 +68,15 @@ impl<'a> std::convert::TryFrom<(&'a VarBorrowed<'a>, &'a ParseContext)> for Var 
             _ => return Err(ParseErrF::TypeUnsupported),
         };
 
-        let name = std::str::from_utf8(name).unwrap().to_owned();
+        let name = std::str::from_utf8(name).unwrap();
         if super::reserved(name.as_bytes()) {
-            return Err(ParseErrF::ReservedKW(name));
+            return Err(ParseErrF::ReservedKW(name.to_owned()));
         }
+        let id = VAR_TABLE.push(name.to_owned());
         Ok(Var {
-            name,
+            id,
             ty,
             assigned_val,
-            address: get_new_address(),
         })
     }
 }
@@ -106,26 +101,30 @@ impl Var {
         }
     }
 
-    pub fn name_eq(&self, other: &Var) -> bool {
-        self.name == other.name
+    pub fn name_eq<T: VarEq>(&self, other: T) -> bool {
+        other.name_eq(self)
     }
 
     pub fn generate_uid(&self) -> Vec<u8> {
-        self.address.to_le_bytes().iter().copied().collect()
+        self.id.generate_uid()
+    }
+
+    pub fn get_name(&self) -> &str {
+        VAR_TABLE.get(&self.id).unwrap()
     }
 }
 
 impl std::cmp::PartialEq for Var {
     fn eq(&self, other: &Var) -> bool {
-        self.address == other.address
+        self.id == other.id
     }
 }
 
 impl std::cmp::Eq for Var {}
 
-impl std::hash::Hash for Var {
+impl Hash for Var {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.address.hash(state);
+        self.id.hash(state);
     }
 }
 
@@ -137,11 +136,36 @@ impl std::fmt::Debug for Var {
 
 impl std::fmt::Display for Var {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let name = self.get_name();
         if let Some(a) = &self.assigned_val {
             let a = format!("{:?}", a);
-            write!(f, "{}: {} = {}", self.name, self.ty, a)
+            write!(f, "{}: {} = {}", name, self.ty, a)
         } else {
-            write!(f, "{}: {}", self.name, self.ty)
+            write!(f, "{}: {}", name, self.ty)
         }
+    }
+}
+
+pub(in crate::agent) trait VarEq {
+    fn name_eq(&self, var: &Var) -> bool;
+}
+
+impl VarEq for Var {
+    #[inline]
+    fn name_eq(&self, var: &Var) -> bool {
+        self.get_name() == var.get_name()
+    }
+}
+
+impl<'a> VarEq for &'a Var {
+    #[inline]
+    fn name_eq(&self, var: &Var) -> bool {
+        self.get_name() == var.get_name()
+    }
+}
+
+impl<'a> VarEq for &'a str {
+    fn name_eq(&self, var: &Var) -> bool {
+        self == &var.get_name()
     }
 }

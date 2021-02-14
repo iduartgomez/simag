@@ -494,7 +494,7 @@ impl<'rep> ProofArgs<'rep> {
         use std::collections::hash_map::DefaultHasher;
         let mut s = DefaultHasher::new();
         for &(var, ref assigned) in input {
-            var.name.as_bytes().hash(&mut s);
+            var.get_name().as_bytes().hash(&mut s);
             assigned.name.as_bytes().hash(&mut s);
         }
         s.finish()
@@ -1086,7 +1086,7 @@ impl<'a> ArgsProduct<'a> {
         }
 
         // This ensures the lazy iterator algorithm later works correctly
-        var_assignments.sort_by_key(|k| (k.1.len(), &k.0.name));
+        var_assignments.sort_by_key(|k| (k.1.len(), k.0.get_name()));
 
         if !var_assignments.is_empty() {
             Some(ArgsProduct {

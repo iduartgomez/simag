@@ -62,7 +62,7 @@ impl FuncDecl {
     #[inline]
     pub fn get_name(&self) -> &str {
         match self.name {
-            Terminal::FreeTerm(ref var) => &var.name,
+            Terminal::FreeTerm(ref var) => var.get_name(),
             Terminal::GroundedTerm(ref name) => name,
         }
     }

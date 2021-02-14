@@ -16,29 +16,29 @@ impl<'a> Terminal {
         context: &mut ParseContext,
     ) -> Result<Terminal, ParseErrF> {
         let &TerminalBorrowed(slice) = other;
-        let name = str::from_utf8(slice).unwrap().to_owned();
+        let name = str::from_utf8(slice).unwrap();
         if super::reserved(name.as_bytes()) {
-            return Err(ParseErrF::ReservedKW(name));
+            return Err(ParseErrF::ReservedKW(name.to_owned()));
         }
         for v in &context.vars {
-            if v.name == name {
+            if v.name_eq(name) {
                 return Ok(Terminal::FreeTerm(Box::new(v.clone())));
             }
         }
-        Ok(Terminal::GroundedTerm(name))
+        Ok(Terminal::GroundedTerm(name.to_owned()))
     }
 
     pub(super) fn from_slice(slice: &[u8], context: &ParseContext) -> Result<Terminal, ParseErrF> {
-        let name = str::from_utf8(slice).unwrap().to_owned();
+        let name = str::from_utf8(slice).unwrap();
         if super::reserved(slice) {
-            return Err(ParseErrF::ReservedKW(name));
+            return Err(ParseErrF::ReservedKW(name.to_owned()));
         }
         for v in &context.vars {
-            if v.name == name {
+            if v.name_eq(name) {
                 return Ok(Terminal::FreeTerm(Box::new(v.clone())));
             }
         }
-        Ok(Terminal::GroundedTerm(name))
+        Ok(Terminal::GroundedTerm(name.to_owned()))
     }
 
     pub(in crate::agent::lang) fn generate_uid(&self) -> Vec<u8> {
