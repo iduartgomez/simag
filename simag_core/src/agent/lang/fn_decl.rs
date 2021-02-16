@@ -325,7 +325,7 @@ impl Into<GroundedFunc> for FuncDecl {
             name,
             args: [first.unwrap(), second.unwrap()],
             third,
-            bms: Arc::new(final_bms.with_ow_val(ow)),
+            bms: Box::pin(final_bms.with_ow_val(ow)),
         }
     }
 }

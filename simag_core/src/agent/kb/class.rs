@@ -31,7 +31,7 @@ pub(in crate::agent) struct Class {
     pub(super) move_beliefs: RwLock<Vec<Arc<LogSentence>>>,
     pub rules: RwLock<Vec<Arc<LogSentence>>>,
     pub(in crate::agent::kb) members: RwLock<Vec<ClassMember>>,
-    pub(in crate::agent) location: BmsWrapper<RecordHistory>,
+    pub location: BmsWrapper<RecordHistory>,
 }
 
 impl Class {
@@ -123,7 +123,7 @@ impl Class {
             if let Some(bms) = &current.bms {
                 if bms.mark_for_sweep() {
                     self.svc_queue
-                        .send(BackgroundTask::CompactBmsLog(bms.clone()))
+                        .send(BackgroundTask::CompactBmsLog(&**bms as *const _))
                         .expect("background service crashed");
                 }
             }
@@ -316,7 +316,7 @@ impl Class {
                         }
                         if f.bms.mark_for_sweep() {
                             self.svc_queue
-                                .send(BackgroundTask::CompactBmsLog(f.bms.clone()))
+                                .send(BackgroundTask::CompactBmsLog(&*f.bms as *const _))
                                 .expect("background service crashed");
                         }
                         found_rel = true;
@@ -379,6 +379,7 @@ impl Class {
         }
     }
 
+    #[cfg(feature = "persistence")]
     pub(super) fn persist(&self) {}
 }
 

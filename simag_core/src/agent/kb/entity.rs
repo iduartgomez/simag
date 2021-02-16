@@ -151,7 +151,7 @@ impl Entity {
             if let Some(bms) = &current.bms {
                 if bms.mark_for_sweep() {
                     self.svc_queue
-                        .send(BackgroundTask::CompactBmsLog(bms.clone()))
+                        .send(BackgroundTask::CompactBmsLog(&**bms as *const _))
                         .expect("background service crashed");
                 }
             }
@@ -300,7 +300,9 @@ impl Entity {
                         found_rel = true;
                         if f.bms.mark_for_sweep() {
                             self.svc_queue
-                                .send(BackgroundTask::CompactBmsLog(f.bms.clone()))
+                                .send(BackgroundTask::CompactBmsLog(
+                                    &*f.bms as *const BmsWrapper<_>,
+                                ))
                                 .expect("background service crashed");
                         }
                         break;

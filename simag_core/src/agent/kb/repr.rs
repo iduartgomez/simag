@@ -92,38 +92,6 @@ pub(crate) struct Representation {
     config: ReprConfig,
 }
 
-impl Default for Representation {
-    fn default() -> Self {
-        Representation::new(num_cpus::get())
-    }
-}
-
-struct ReprSharedData {
-    entities: EntitiesData,
-    classes: ClassesData,
-    config: ReprConfig,
-}
-
-impl ReprSharedData {
-    // TODO: this should be optimized and is a first naive implementation by:
-    // 1. checking if state has indeed changed since last persistence first
-    // 2. perform incremental persistence over different time chunks to not starve
-    //    the main thread
-    #[cfg(feature = "persistence")]
-    fn persist(&mut self) -> Result<(), ()> {
-        // perform secondary background service tasks if enough time has elapsed
-        if self.config.persist.load(Ordering::SeqCst) {
-            for entity in self.entities.iter_mut() {
-                entity.persist();
-            }
-            for class in self.classes.iter_mut() {
-                class.persist();
-            }
-        }
-        Ok(())
-    }
-}
-
 impl Representation {
     /// Time allocated for the service thread to execute a batch of tasks before starving
     /// readers.
@@ -185,7 +153,10 @@ impl Representation {
                 match rx.try_recv() {
                     Ok(msg) => match Representation::background_service(msg) {
                         Ok(()) => {}
-                        Err(()) => {}
+                        Err(()) => {
+                            std::mem::drop(num_writers);
+                            break;
+                        }
                     },
                     Err(crossbeam::channel::TryRecvError::Empty) => {
                         if potentially_disconnected {
@@ -1060,9 +1031,62 @@ impl Representation {
         use BackgroundTask::*;
 
         match msg {
-            CompactBmsLog(rec) => rec.compact_record_log(),
+            CompactBmsLog(rec) => {
+                let rec = rec;
+                if !rec.is_null() {
+                    let rec = unsafe { &*rec as &BmsWrapper<_> };
+                    rec.compact_record_log();
+                }
+            }
+            Shutdown => return Err(()),
         }
 
+        Ok(())
+    }
+}
+
+impl Default for Representation {
+    fn default() -> Self {
+        Representation::new(num_cpus::get())
+    }
+}
+
+impl Drop for Representation {
+    fn drop(&mut self) {
+        loop {
+            match self.svc_queue.try_send(BackgroundTask::Shutdown) {
+                Err(crossbeam::channel::TrySendError::Disconnected(_)) => break,
+                Ok(()) | Err(_) => {
+                    // keep retrying
+                }
+            }
+        }
+    }
+}
+
+#[allow(dead_code)]
+struct ReprSharedData {
+    entities: EntitiesData,
+    classes: ClassesData,
+    config: ReprConfig,
+}
+
+impl ReprSharedData {
+    // TODO: this should be optimized and is a first naive implementation by:
+    // 1. checking if state has indeed changed since last persistence first
+    // 2. perform incremental persistence over different time chunks to not starve
+    //    the main thread
+    #[cfg(feature = "persistence")]
+    fn persist(&mut self) -> Result<(), ()> {
+        // perform secondary background service tasks if enough time has elapsed
+        if self.config.persist.load(Ordering::SeqCst) {
+            for entity in self.entities.iter_mut() {
+                entity.persist();
+            }
+            for class in self.classes.iter_mut() {
+                class.persist();
+            }
+        }
         Ok(())
     }
 }
@@ -1082,8 +1106,16 @@ impl Default for ReprConfig {
 }
 
 pub(super) enum BackgroundTask {
-    CompactBmsLog(Arc<BmsWrapper<RecordHistory>>),
+    /// Compact a log that was marked for sweep at this address.
+    /// Safety: Those are pinned and guaranteed to have stable addresses,
+    /// so are largely safe to dereference.
+    /// It shouldn't be freed either cause the parent object won't be dropped until
+    /// all the messages before receiving a shutdown signal have been processed.
+    CompactBmsLog(*const BmsWrapper<RecordHistory>),
+    Shutdown,
 }
+
+unsafe impl Send for BackgroundTask {}
 
 /// Error type for query failures.
 ///

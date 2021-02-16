@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 use std::str;
 use std::sync::Arc;
+use std::{collections::HashMap, pin::Pin};
 
 use super::{
     common::{GroundedRef, Predicate},
@@ -23,7 +23,7 @@ pub(in crate::agent) struct GroundedFunc {
     pub(in crate::agent::lang) name: String,
     pub(in crate::agent::lang) args: [GroundedMemb; 2],
     pub(in crate::agent::lang) third: Option<GroundedMemb>,
-    pub bms: Arc<BmsWrapper<RecordHistory>>,
+    pub bms: Pin<Box<BmsWrapper<RecordHistory>>>,
 }
 
 impl GroundedFunc {
@@ -139,7 +139,7 @@ impl GroundedFunc {
             name,
             args: [first.unwrap(), second.unwrap()],
             third,
-            bms: Arc::new(time_data.into()),
+            bms: Box::pin(time_data.into()),
         })
     }
 
@@ -246,7 +246,7 @@ impl std::clone::Clone for GroundedFunc {
             name: self.name.clone(),
             args: [self.args[0].clone(), self.args[1].clone()],
             third: self.third.clone(),
-            bms: Arc::new((&*self.bms).clone()),
+            bms: self.bms.clone(),
         }
     }
 }

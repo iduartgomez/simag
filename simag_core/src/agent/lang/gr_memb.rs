@@ -13,8 +13,7 @@ use float_cmp::ApproxEqUlps;
 use parking_lot::RwLock;
 #[cfg(feature = "persistence")]
 use serde::{Deserialize, Serialize};
-use std::str;
-use std::sync::Arc;
+use std::{pin::Pin, str};
 
 #[cfg(feature = "persistence")]
 use crate::agent::persist;
@@ -45,7 +44,7 @@ pub(in crate::agent) struct GroundedMemb {
             deserialize_with = "persist::deser_optional_bms"
         )
     )]
-    pub bms: Option<Arc<BmsWrapper<RecordHistory>>>,
+    pub bms: Option<Pin<Box<BmsWrapper<RecordHistory>>>>,
 }
 
 impl GroundedMemb {
@@ -82,7 +81,7 @@ impl GroundedMemb {
             val = Some(match val0 {
                 Number::UnsignedInteger(val) => {
                     if val == 0 || val == 1 {
-                        bms = Some(Arc::new(make_bms(val as f32)));
+                        bms = Some(Box::pin(make_bms(val as f32)));
                         val as f32
                     } else {
                         return Err(ParseErrF::IUVal(val as f32));
@@ -90,7 +89,7 @@ impl GroundedMemb {
                 }
                 Number::UnsignedFloat(val) => {
                     if val >= 0. && val <= 1. {
-                        bms = Some(Arc::new(make_bms(val)));
+                        bms = Some(Box::pin(make_bms(val)));
                         val
                     } else {
                         return Err(ParseErrF::IUVal(val as f32));
@@ -110,7 +109,7 @@ impl GroundedMemb {
         } else if is_func.filter(|x| *x == 0).is_some() || is_func.is_none() {
             op = Some(Operator::Equal);
             val = Some(1.0);
-            bms = Some(Arc::new(make_bms(1.0)));
+            bms = Some(Box::pin(make_bms(1.0)));
         }
 
         Ok(GroundedMemb {
@@ -190,7 +189,7 @@ impl GroundedMemb {
         let val = if free.value.is_some() {
             let t_bms = BmsWrapper::<RecordHistory>::new();
             t_bms.add_new_record(None, None, free.value, None);
-            bms = Some(Arc::new(t_bms));
+            bms = Some(Box::pin(t_bms));
             Some(free.value.unwrap())
         } else {
             bms = None;
@@ -290,8 +289,8 @@ impl GroundedMemb {
         if pred.bms.is_none() {
             return Some(self.compare_ignoring_times(pred));
         }
-        let self_bms = &**self.bms.as_ref().unwrap();
-        let pred_bms = &**pred.bms.as_ref().unwrap();
+        let self_bms = self.bms.as_ref().unwrap();
+        let pred_bms = pred.bms.as_ref().unwrap();
         // block both BMS for the duration of the comparison
         let self_lock = &*self_bms.acquire_read_lock();
         let pred_lock = &*pred_bms.acquire_read_lock();
@@ -395,7 +394,7 @@ impl HasBms for GroundedMemb {
     type BmsType = BmsWrapper<RecordHistory>;
 
     fn get_bms(&self) -> Option<&Self::BmsType> {
-        self.bms.as_deref()
+        self.bms.as_ref().map(|i| &**i)
     }
 
     fn get_value(&self) -> Option<f32> {

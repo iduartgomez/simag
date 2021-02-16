@@ -21,10 +21,7 @@ use std::{
     collections::HashMap,
     convert::TryFrom,
     marker::PhantomData,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 #[cfg(feature = "persistence")]
@@ -1054,7 +1051,7 @@ pub(in crate::agent) fn build_declaration_bms(
                 let records = &mut *t.acquire_write_lock();
                 records.first_mut().unwrap().value = val;
             }
-            *bms = Arc::new(t);
+            *bms = Box::pin(t);
             if a.is_time_interval() {
                 // if it's a time interval make sure the last value is None
                 a.update_value(None);
@@ -1110,6 +1107,8 @@ pub(in crate::agent) mod errors {
 
 #[cfg(test)]
 mod test {
+    use std::sync::Arc;
+
     use super::*;
 
     #[test]

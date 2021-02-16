@@ -103,7 +103,7 @@ pub(in crate::agent::kb) fn rules_inference_rollback(
             .iter()
             .filter(|x| solved_proof.was_false_fn(x))
             .collect();
-        funcs.sort_by(|a, b| a.bms.cmp_by_time(&*b.bms));
+        funcs.sort_by(|a, b| a.bms.cmp_by_time(&b.bms));
         let mut classes: Vec<_> = gr_classes
             .iter()
             .filter(|x| solved_proof.was_false_cls(x))

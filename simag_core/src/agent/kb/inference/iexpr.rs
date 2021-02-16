@@ -1259,7 +1259,7 @@ impl QueryProcessed {
             for a in Arc::get_mut(&mut cdecl).ok_or_else(|| ())?.get_args_mut() {
                 if let Predicate::GroundedMemb(t) = a {
                     if let Some(bms) = t.bms.as_mut() {
-                        Arc::get_mut(bms).ok_or_else(|| ())?.of_predicate();
+                        bms.of_predicate();
                     }
                 }
             }
@@ -1300,7 +1300,7 @@ impl QueryProcessed {
                 Terminal::GroundedTerm(_) => {
                     if fdecl.is_grounded() {
                         let mut fgr: GroundedFunc = Arc::try_unwrap(fdecl).map_err(|_| ())?.into();
-                        Arc::get_mut(&mut fgr.bms).unwrap().of_predicate();
+                        fgr.bms.of_predicate();
                         query.push_to_fnquery_grounded(fgr);
                     } else {
                         for a in fdecl.get_args() {

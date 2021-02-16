@@ -1,5 +1,5 @@
 //! Persistence layer and facilities to allow efficient storage of representation data structures.
-use std::sync::Arc;
+use std::pin::Pin;
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Deserializer};
@@ -25,7 +25,7 @@ where
 }
 
 pub(in crate::agent) fn ser_optional_bms<S, T>(
-    val: &Option<Arc<BmsWrapper<T>>>,
+    val: &Option<Pin<Box<BmsWrapper<T>>>>,
     serializer: S,
 ) -> Result<S::Ok, S::Error>
 where
@@ -40,11 +40,11 @@ where
 
 pub(in crate::agent) fn deser_optional_bms<'de, D, T>(
     deserializer: D,
-) -> Result<Option<Arc<BmsWrapper<T>>>, D::Error>
+) -> Result<Option<Pin<Box<BmsWrapper<T>>>>, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: BmsKind,
 {
     let val: Option<BmsWrapper<T>> = Deserialize::deserialize(deserializer)?;
-    Ok(val.map(|v| Arc::new(v)))
+    Ok(val.map(|v| Box::pin(v)))
 }
