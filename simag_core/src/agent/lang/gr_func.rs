@@ -1,7 +1,3 @@
-use std::str;
-use std::sync::Arc;
-use std::{collections::HashMap, pin::Pin};
-
 use super::{
     common::{GroundedRef, Predicate},
     fn_decl::FuncDecl,
@@ -13,16 +9,32 @@ use crate::agent::{
     kb::{repr::Representation, VarAssignment},
     lang::Time,
 };
+use std::str;
+use std::sync::Arc;
+use std::{collections::HashMap, pin::Pin};
+
+#[cfg(feature = "persistence")]
+use crate::agent::storage;
+#[cfg(feature = "persistence")]
+use serde::{Deserialize, Serialize};
 
 /// Grounded relational functions describe relations between two objects,
 /// or two objets and a third indirect object.
 ///
 /// Are not meant to be instantiated directly, but asserted from logic
 /// sentences or processed from `FuncDecl` on `tell` mode.
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) struct GroundedFunc {
     pub(in crate::agent::lang) name: String,
     pub(in crate::agent::lang) args: [GroundedMemb; 2],
     pub(in crate::agent::lang) third: Option<GroundedMemb>,
+    #[cfg_attr(
+        feature = "persistence",
+        serde(
+            serialize_with = "storage::ser_pinned",
+            deserialize_with = "storage::deser_pinned"
+        )
+    )]
     pub bms: Pin<Box<BmsWrapper<RecordHistory>>>,
 }
 

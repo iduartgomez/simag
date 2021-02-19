@@ -1,7 +1,3 @@
-use std::collections::HashMap;
-use std::convert::TryFrom;
-use std::sync::Arc;
-
 use super::TimeFnErr;
 use crate::agent::{
     kb::bms::{BmsWrapper, IsTimeData},
@@ -16,9 +12,16 @@ use crate::agent::{
 };
 use crate::TIME_EQ_DIFF;
 use chrono::Duration;
+use std::collections::HashMap;
+use std::convert::TryFrom;
+use std::sync::Arc;
+
+#[cfg(feature = "persistence")]
+use serde::{Deserialize, Serialize};
 
 /// Special built-in function for time calculus.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) struct TimeCalcFn {
     var0: Var,
     var1: Var,

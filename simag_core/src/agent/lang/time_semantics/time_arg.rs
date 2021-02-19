@@ -1,14 +1,17 @@
-use std::collections::HashMap;
-use std::convert::TryFrom;
-use std::sync::Arc;
-
 use super::*;
 use crate::agent::kb::bms::{BmsWrapper, IsTimeData};
 use crate::agent::lang::{common::ConstraintValue, logsent::ParseContext, parser::Operator, *};
 use chrono::{DateTime, Utc};
 use parser::OpArgBorrowed;
+use std::collections::HashMap;
+use std::convert::TryFrom;
+use std::sync::Arc;
+
+#[cfg(feature = "persistence")]
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) enum TimeArg {
     AssignThisToVar(Var),
     /// is a time declaration
@@ -262,6 +265,7 @@ impl<'a> TryFrom<(&'a OpArgBorrowed<'a>, &'a ParseContext)> for TimeArg {
 
 /// Used for instantiating time values during runtime.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) enum TimeFn {
     /// Instantiate to current value.
     Now,

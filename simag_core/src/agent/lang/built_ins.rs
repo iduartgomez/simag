@@ -1,5 +1,3 @@
-use std::{collections::HashMap, sync::Arc};
-
 use super::{
     logsent::ParseContext,
     parser::FuncDeclBorrowed,
@@ -8,6 +6,10 @@ use super::{
     ParseErrF, Var,
 };
 use crate::agent::kb::bms::{BmsWrapper, IsSpatialData, IsTimeData};
+use std::{collections::HashMap, sync::Arc};
+
+#[cfg(feature = "persistence")]
+use serde::{Deserialize, Serialize};
 
 pub const MOVE_FN: &[u8] = b"move";
 pub const LOCATION_FN: &[u8] = b"location";
@@ -15,6 +17,7 @@ pub const TIME_CALC_FN: &[u8] = b"time_calc";
 
 /// Special built-in functions callable in logical sentences.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) enum BuiltIns<T = String>
 where
     T: AsRef<str>,

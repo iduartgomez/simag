@@ -1,7 +1,3 @@
-use std::collections::HashMap;
-use std::convert::{TryFrom, TryInto};
-use std::{iter::FromIterator, sync::Arc};
-
 use super::{
     common::*,
     logsent::{LogSentResolution, ParseContext},
@@ -15,8 +11,15 @@ use crate::agent::kb::{
     VarAssignment,
 };
 use spatial_semantics::{SpatialArg, SpatialOps};
+use std::collections::HashMap;
+use std::convert::{TryFrom, TryInto};
+use std::{iter::FromIterator, sync::Arc};
+
+#[cfg(feature = "persistence")]
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) struct ClassDecl {
     name: Terminal,
     args: Vec<Predicate>,

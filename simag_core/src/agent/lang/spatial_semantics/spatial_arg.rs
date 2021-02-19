@@ -1,5 +1,3 @@
-use std::{convert::TryFrom, iter::FromIterator};
-
 use super::{Point, SpatialFnErr};
 use crate::agent::{
     lang::{
@@ -10,8 +8,13 @@ use crate::agent::{
     },
     ParseErrF,
 };
+use std::{convert::TryFrom, iter::FromIterator};
+
+#[cfg(feature = "persistence")]
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) enum SpatialArg {
     AssignThisToVar(Var),
     /// is a place declaration

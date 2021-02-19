@@ -11,12 +11,12 @@ use crate::agent::{
 use crate::FLOAT_EQ_ULPS;
 use float_cmp::ApproxEqUlps;
 use parking_lot::RwLock;
-#[cfg(feature = "persistence")]
-use serde::{Deserialize, Serialize};
 use std::{pin::Pin, str};
 
 #[cfg(feature = "persistence")]
-use crate::agent::persist;
+use crate::agent::storage;
+#[cfg(feature = "persistence")]
+use serde::{Deserialize, Serialize};
 
 /// Grounded membership of an entity to a class.
 ///
@@ -30,8 +30,8 @@ pub(in crate::agent) struct GroundedMemb {
     #[cfg_attr(
         feature = "persistence",
         serde(
-            serialize_with = "persist::ser_locked",
-            deserialize_with = "persist::deser_locked"
+            serialize_with = "storage::ser_locked",
+            deserialize_with = "storage::deser_locked"
         )
     )]
     pub(in crate::agent::lang) value: RwLock<Option<f32>>,
@@ -40,8 +40,8 @@ pub(in crate::agent) struct GroundedMemb {
     #[cfg_attr(
         feature = "persistence",
         serde(
-            serialize_with = "persist::ser_optional_bms",
-            deserialize_with = "persist::deser_optional_bms"
+            serialize_with = "storage::ser_optional_bms",
+            deserialize_with = "storage::deser_optional_bms"
         )
     )]
     pub bms: Option<Pin<Box<BmsWrapper<RecordHistory>>>>,

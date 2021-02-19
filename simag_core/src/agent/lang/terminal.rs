@@ -1,9 +1,10 @@
 use super::{errors::ParseErrF, logsent::ParseContext, parser::TerminalBorrowed, var::Var};
-#[cfg(feature = "persistence")]
-use serde::{Deserialize, Serialize};
 use std::iter::FromIterator;
 use std::ops::Deref;
 use std::str;
+
+#[cfg(feature = "persistence")]
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Clone, Eq, Hash)]
 #[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]

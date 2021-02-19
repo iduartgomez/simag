@@ -6,15 +6,6 @@
 //! `LogSentence` types are akin to minimal working compiled programs formed
 //! by compounded expressions which will evaluate with the current knowledge
 //! when called and perform any subtitution in the knowledge base if pertinent.
-
-use std::collections::{HashMap, HashSet};
-use std::convert::TryFrom;
-use std::fmt;
-use std::iter::FromIterator;
-use std::sync::Arc;
-
-use chrono::Utc;
-
 use self::ast_walker::PIntermediate;
 use super::{
     cls_decl::ClassDecl,
@@ -31,8 +22,17 @@ use crate::agent::{
     kb::repr::Representation,
     kb::VarAssignment,
 };
+use chrono::Utc;
+use std::collections::{HashMap, HashSet};
+use std::convert::TryFrom;
+use std::fmt;
+use std::iter::FromIterator;
+use std::sync::Arc;
 pub(in crate::agent) type SentID = u64;
 pub use self::errors::LogSentErr;
+
+#[cfg(feature = "persistence")]
+use serde::{Deserialize, Serialize};
 
 /// Type to store a first-order logic complex sentence.
 ///
@@ -40,6 +40,7 @@ pub use self::errors::LogSentErr;
 /// it in an usable form for the agent to classify and reason about
 /// objects and relations, cannot be instantiated directly.
 #[derive(Debug)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) struct LogSentence {
     pub id: SentID,
     pub created: Time,
@@ -47,7 +48,7 @@ pub(in crate::agent) struct LogSentence {
     pub has_spatial_vars: usize,
     particles: Vec<Particle>,
     vars: Vec<Var>,
-    skolem: Vec<Arc<Skolem>>,
+    skolem: Vec<Skolem>,
     /// position of the root at the particles vec
     root: usize,
     predicates: (Vec<usize>, Vec<usize>),
@@ -720,6 +721,7 @@ impl std::hash::Hash for LogSentence {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) enum SentKind {
     IExpr,
     Expr,
@@ -736,6 +738,7 @@ impl SentKind {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 struct LogicIndCond {
     next_rhs: usize,
     next_lhs: usize,
@@ -809,6 +812,7 @@ impl fmt::Display for LogicIndCond {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 struct LogicEquivalence {
     next_rhs: usize,
     next_lhs: usize,
@@ -890,6 +894,7 @@ impl fmt::Display for LogicEquivalence {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 struct LogicImplication {
     next_rhs: usize,
     next_lhs: usize,
@@ -959,6 +964,7 @@ impl fmt::Display for LogicImplication {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 struct LogicConjunction {
     next_rhs: usize,
     next_lhs: usize,
@@ -1052,6 +1058,7 @@ impl fmt::Display for LogicConjunction {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 struct LogicDisjunction {
     next_rhs: usize,
     next_lhs: usize,
@@ -1154,6 +1161,7 @@ impl fmt::Display for LogicDisjunction {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 struct LogicAtom {
     pred: Assert,
 }
@@ -1216,6 +1224,7 @@ impl fmt::Display for LogicAtom {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 /// EnumVariant(<position at the sentence vec>, <kind>)
 enum Particle {
     Atom(usize, LogicAtom),
@@ -1452,13 +1461,13 @@ pub(in crate::agent) struct ParseContext {
     pub is_tell: bool,
     pub depth: usize,
     pub vars: Vec<Var>,
-    pub skols: Vec<Arc<Skolem>>,
+    pub skols: Vec<Skolem>,
     particles: HashSet<Particle>,
     particles_num: usize,
     shadowing_vars: HashMap<Var, (usize, Var)>,
-    shadowing_skols: HashMap<Arc<Skolem>, (usize, Arc<Skolem>)>,
+    shadowing_skols: HashMap<Skolem, (usize, Skolem)>,
     all_vars: Vec<Var>,
-    all_skols: Vec<Arc<Skolem>>,
+    all_skols: Vec<Skolem>,
     in_rhs: bool,
 }
 
@@ -1496,7 +1505,7 @@ impl ParseContext {
                 Ok(())
             }
             VarDeclBorrowed::Skolem(ref var) => {
-                let var = Arc::new(Skolem::try_from((var, &*self))?);
+                let var = Skolem::try_from((var, &*self))?;
                 self.skols.push(var.clone());
                 self.all_skols.push(var);
                 Ok(())
@@ -1513,7 +1522,7 @@ impl ParseContext {
             }
             VarDeclBorrowed::Skolem(ref var) => {
                 let var = Skolem::try_from((var, self))?;
-                Ok(self.skols.iter().any(|x| var.name_eq(x.as_ref())))
+                Ok(self.skols.iter().any(|x| var.name_eq(x)))
             }
         }
     }
@@ -1666,7 +1675,7 @@ mod ast_walker {
 
                 fn drop_local_skolems(context: &mut ParseContext, s_cnt: usize) {
                     let l = context.skols.len() - s_cnt;
-                    let local_skolem = context.skols.drain(l..).collect::<Vec<Arc<Skolem>>>();
+                    let local_skolem = context.skols.drain(l..).collect::<Vec<Skolem>>();
                     for v in local_skolem {
                         if context.shadowing_skols.contains_key(&v) {
                             let (idx, shadowed) = context.shadowing_skols.remove(&v).unwrap();
@@ -1790,7 +1799,7 @@ mod ast_walker {
         s_cnt: &mut usize,
     ) -> Result<(), LogSentErr> {
         let mut swap_vars: Vec<(usize, Var, Var)> = Vec::new();
-        let mut swap_skolem: Vec<(usize, Arc<Skolem>, Arc<Skolem>)> = Vec::new();
+        let mut swap_skolem: Vec<(usize, Skolem, Skolem)> = Vec::new();
         for v in vars {
             match *v {
                 // if there is a var in context with the current name, shadow it
@@ -1811,7 +1820,7 @@ mod ast_walker {
                 VarDeclBorrowed::Skolem(ref s) => {
                     let skolem = match Skolem::try_from((s, &*context)) {
                         Err(err) => return Err(LogSentErr::Boxed(Box::new(err))),
-                        Ok(val) => Arc::new(val),
+                        Ok(val) => val,
                     };
                     for (i, v) in context.skols.iter().enumerate() {
                         if v.name == skolem.name {

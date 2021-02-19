@@ -1,5 +1,3 @@
-use std::convert::TryFrom;
-
 use super::{
     common::ConstraintValue,
     logsent::ParseContext,
@@ -8,11 +6,17 @@ use super::{
     typedef::TypeDef,
     Operator, ParseErrF,
 };
+use std::convert::TryFrom;
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[cfg(feature = "persistence")]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) struct Skolem {
     pub name: String,
     ty: TypeDef,
+    #[cfg_attr(feature = "persistence", serde(skip_serializing, skip_deserializing))]
     assigned_val: Option<ConstraintValue>,
 }
 

@@ -2,7 +2,7 @@ pub(self) mod config;
 mod kb;
 mod lang;
 #[cfg(feature = "persistence")]
-mod persist;
+mod storage;
 
 pub(crate) use self::kb::repr::Representation;
 pub use self::kb::repr::{Answer, QueryErr};

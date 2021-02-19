@@ -271,19 +271,6 @@ impl Representation {
         }
     }
 
-    fn add_readers(&self, readers: usize) {
-        let mut num_readers = self.readers.0.lock();
-        *num_readers += readers;
-    }
-
-    fn rm_readers(&self, readers: usize) {
-        let mut lock = self.readers.0.lock();
-        *lock -= readers;
-        if *lock == 0 {
-            self.readers.1.notify_one();
-        }
-    }
-
     /// Asks the KB if some fact is true and returns the answer to the query.
     pub fn ask(&self, source: &str) -> Result<Answer, QueryErr> {
         let queries = Parser::parse(source, false, &self.threads);
@@ -311,6 +298,19 @@ impl Representation {
         };
         inf.infer_facts();
         Ok(inf.get_results())
+    }
+
+    fn add_readers(&self, readers: usize) {
+        let mut num_readers = self.readers.0.lock();
+        *num_readers += readers;
+    }
+
+    fn rm_readers(&self, readers: usize) {
+        let mut lock = self.readers.0.lock();
+        *lock -= readers;
+        if *lock == 0 {
+            self.readers.1.notify_one();
+        }
     }
 
     pub(in crate::agent) fn up_membership<T: ProofResContext>(
@@ -1077,15 +1077,14 @@ impl ReprSharedData {
     // 2. perform incremental persistence over different time chunks to not starve
     //    the main thread
     #[cfg(feature = "persistence")]
-    fn persist(&mut self) -> Result<(), ()> {
-        // perform secondary background service tasks if enough time has elapsed
+    fn persist(&mut self) -> bincode::Result<()> {
         if self.config.persist.load(Ordering::SeqCst) {
             for entity in self.entities.iter_mut() {
-                entity.persist();
+                entity.persist()?;
             }
-            for class in self.classes.iter_mut() {
-                class.persist();
-            }
+            // for class in self.classes.iter_mut() {
+            //     class.persist();
+            // }
         }
         Ok(())
     }

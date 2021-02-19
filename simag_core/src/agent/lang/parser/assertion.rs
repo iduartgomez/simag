@@ -8,6 +8,9 @@ use nom::combinator::{map, opt};
 use nom::multi::separated_list1;
 use nom::sequence::tuple;
 
+#[cfg(feature = "persistence")]
+use serde::{Deserialize, Serialize};
+
 pub(super) fn assert_knowledge(input: &[u8]) -> IResult<&[u8], AssertBorrowed> {
     alt!(
         input,
@@ -212,6 +215,7 @@ pub(in crate::agent) struct FuncDeclBorrowed<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) enum FuncVariants {
     Relational,
     NonRelational,

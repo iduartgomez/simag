@@ -1,6 +1,3 @@
-use std::convert::TryFrom;
-use std::{collections::HashMap, sync::Arc};
-
 use super::SpatialArg;
 use crate::agent::{
     kb::{
@@ -20,9 +17,15 @@ use crate::agent::{
     ParseErrF, Representation,
 };
 use smallvec::SmallVec;
+use std::convert::TryFrom;
+use std::{collections::HashMap, sync::Arc};
 use SpatialArg::*;
 
+#[cfg(feature = "persistence")]
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) struct MoveFn {
     // this rarely will contain more than 2 vars
     vars: SmallVec<[Var; 2]>,

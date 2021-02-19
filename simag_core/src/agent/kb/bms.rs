@@ -25,7 +25,7 @@ use std::{
 };
 
 #[cfg(feature = "persistence")]
-use crate::agent::persist;
+use crate::agent::storage;
 #[cfg(feature = "persistence")]
 use serde::{Deserialize, Serialize};
 
@@ -50,8 +50,8 @@ where
     #[cfg_attr(
         feature = "persistence",
         serde(
-            serialize_with = "persist::ser_locked",
-            deserialize_with = "persist::deser_locked"
+            serialize_with = "storage::ser_locked",
+            deserialize_with = "storage::deser_locked"
         )
     )]
     records: RwLock<Vec<BmsRecord>>,

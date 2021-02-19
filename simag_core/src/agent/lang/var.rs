@@ -12,13 +12,14 @@ use crate::{
     static_var_map::{IdToken, TableData, VariableMap},
 };
 use once_cell::sync::Lazy;
-#[cfg(feature = "persistence")]
-use serde::{Deserialize, Serialize};
 use std::{
     convert::TryFrom,
     hash::Hash,
     sync::atomic::{AtomicUsize, Ordering},
 };
+
+#[cfg(feature = "persistence")]
+use serde::{Deserialize, Serialize};
 
 static VAR_STORAGE: Lazy<TableData<str>> = Lazy::new(TableData::init_static);
 static VAR_TABLE: Lazy<VariableMap<str>> = Lazy::new(|| VariableMap::new(&*VAR_STORAGE));

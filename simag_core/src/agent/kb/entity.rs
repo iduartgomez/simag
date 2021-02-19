@@ -12,8 +12,8 @@ use crossbeam::channel::Sender;
 use dashmap::DashMap;
 use float_cmp::ApproxEqUlps;
 use parking_lot::RwLock;
-use std::collections::HashMap;
 use std::sync::Arc;
+use std::{collections::HashMap, ops::Deref};
 
 /// An entity is a singleton, the unique member of it's own class.
 ///
@@ -358,10 +358,116 @@ impl Entity {
     }
 
     #[cfg(feature = "persistence")]
-    pub(super) fn persist(&self) {
-        for entity in self.classes.iter() {
-            let entity = &**entity;
-            let _serialized = bincode::serialize(entity).unwrap();
-        }
+    pub(super) fn persist(&self) -> bincode::Result<()> {
+        let blob = serialization::serialize(self)?;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "persistence")]
+mod serialization {
+    use super::*;
+    use bincode::Result;
+    use serde::{Deserialize, Serialize};
+
+    /// The name of the parent obj (class, func or entity)
+    type BinParentName = Vec<u8>;
+
+    #[derive(Serialize, Deserialize)]
+    struct BinGrFuncRecord {
+        address: usize,
+        func: Vec<u8>,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    struct BinGrMembRecord {
+        address: usize,
+        memb: Vec<u8>,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    struct BinLogSentRecord {
+        address: usize,
+        sent: Vec<u8>,
+    }
+
+    /// Deserializable blob of data representing all the information to construct an Entity
+    #[derive(Serialize, Deserialize)]
+    pub(super) struct EntityBlob {
+        classes: Vec<(BinParentName, BinGrMembRecord)>,
+        relations: Vec<(BinParentName, Vec<BinGrFuncRecord>)>,
+        beliefs: Vec<(BinParentName, Vec<BinLogSentRecord>)>,
+        move_beliefs: Vec<BinLogSentRecord>,
+        location: BmsWrapper<RecordHistory>,
+    }
+
+    pub(super) fn serialize(entity: &Entity) -> Result<EntityBlob> {
+        let classes: Result<Vec<(_, _)>> = entity
+            .classes
+            .iter()
+            .map(|kv| {
+                let name = bincode::serialize(kv.key())?;
+                let address = Arc::as_ptr(kv.value()) as usize;
+                let memb = bincode::serialize::<GroundedMemb>(&**kv.value())?;
+                Ok((name, BinGrMembRecord { memb, address }))
+            })
+            .collect();
+
+        let relations: Result<Vec<(_, _)>> = entity
+            .relations
+            .iter()
+            .map(|kv| {
+                let name = bincode::serialize(kv.key())?;
+                let funcs: bincode::Result<Vec<_>> = kv
+                    .value()
+                    .iter()
+                    .map(|f| {
+                        let address = Arc::as_ptr(f) as usize;
+                        let func = bincode::serialize::<GroundedFunc>(f.deref())?;
+                        Ok(BinGrFuncRecord { func, address })
+                    })
+                    .collect();
+                Ok((name, funcs?))
+            })
+            .collect();
+
+        let beliefs: Result<Vec<(_, _)>> = entity
+            .beliefs
+            .iter()
+            .map(|kv| {
+                let name = bincode::serialize(kv.key())?;
+                let bfs: bincode::Result<Vec<_>> = kv
+                    .value()
+                    .iter()
+                    .map(|f| {
+                        let address = Arc::as_ptr(f) as usize;
+                        let sent = bincode::serialize::<LogSentence>(f.deref())?;
+                        Ok(BinLogSentRecord { sent, address })
+                    })
+                    .collect();
+                Ok((name, bfs?))
+            })
+            .collect();
+
+        let move_beliefs: Result<Vec<_>> = {
+            let lock = entity.move_beliefs.read();
+            lock.iter()
+                .map(|s| {
+                    let address = Arc::as_ptr(s) as usize;
+                    let sent = bincode::serialize::<LogSentence>(s.deref())?;
+                    Ok(BinLogSentRecord { sent, address })
+                })
+                .collect()
+        };
+
+        let blob = EntityBlob {
+            classes: classes?,
+            relations: relations?,
+            beliefs: beliefs?,
+            move_beliefs: move_beliefs?,
+            location: entity.location.clone(),
+        };
+
+        Ok(blob)
     }
 }

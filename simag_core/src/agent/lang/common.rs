@@ -21,9 +21,13 @@ use std::iter::FromIterator;
 use std::str;
 use std::sync::{Arc, Weak};
 
+#[cfg(feature = "persistence")]
+use serde::{Deserialize, Serialize};
+
 // Predicate types:
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) enum Predicate {
     /// (let x in some\[x\])
     FreeMembershipToClass(FreeMembershipToClass),
@@ -192,6 +196,7 @@ impl<'a> GroundedRef<'a> {
 /// Any entities that belong to a class. Does not include support for time values (yet).
 /// E.g.: (let x in some\[x\])
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) struct FreeMembershipToClass {
     pub(in crate::agent::lang) term: Var,
     pub(in crate::agent::lang) value: Option<f32>,
@@ -287,6 +292,7 @@ impl FreeMembershipToClass {
 
 /// Reified object, free class belongship. E.g.: x\[$Lucy>0.5\]
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) struct FreeClassMembership {
     term: String,
     pub(in crate::agent::lang) value: Option<f32>,
@@ -411,6 +417,7 @@ fn match_uval(uval: Option<UVal>) -> Result<UValDestruct, ParseErrF> {
 // Assert types:
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) enum Assert {
     FuncDecl(FuncDecl),
     ClassDecl(ClassDecl),
@@ -575,6 +582,7 @@ impl Assert {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) enum OpArg {
     // TODO: split `generic` in two variants, one with 2nd operand and one w/o
     /// Generic optional argument which includes one binding value and optionally a second operand to compare against
@@ -662,6 +670,7 @@ impl<'a> OpArg {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub(in crate::agent) enum ConstraintValue {
     Terminal(Terminal),
     String(String),
