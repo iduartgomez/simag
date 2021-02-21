@@ -24,14 +24,20 @@ use std::sync::Arc;
 /// (to a fuzzy degree).
 pub(in crate::agent) struct Class {
     pub name: String,
-    classes: DashMap<String, Arc<GroundedMemb>>,
-    relations: DashMap<String, Vec<Arc<GroundedFunc>>>,
-    pub beliefs: DashMap<String, Vec<Arc<LogSentence>>>,
-    svc_queue: Sender<BackgroundTask>,
-    pub(super) move_beliefs: RwLock<Vec<Arc<LogSentence>>>,
-    pub rules: RwLock<Vec<Arc<LogSentence>>>,
-    pub(in crate::agent::kb) members: RwLock<Vec<ClassMember>>,
     pub location: BmsWrapper<RecordHistory>,
+    pub(super) members: RwLock<Vec<ClassMember>>,
+    /// LogSentence are shared amongst all the predicate members. Shared ptr has to be preserved.
+    pub(super) beliefs: DashMap<String, Vec<Arc<LogSentence>>>,
+    /// LogSentence are shared amongst all the predicate members. Shared ptr has to be preserved.
+    pub(super) rules: RwLock<Vec<Arc<LogSentence>>>,
+    /// LogSentence are shared amongst all the predicate members. Shared ptr has to be preserved.
+    pub(super) move_beliefs: RwLock<Vec<Arc<LogSentence>>>,
+    /// The GroundedMemb is shared with the parent class. Shared ptr relationship  has to be preserved.
+    classes: DashMap<String, Arc<GroundedMemb>>,
+    /// The GroundedFunc is shared with the represented relationship and every member of the relationship.
+    /// Shared ptr relationship has to be preserved.
+    relations: DashMap<String, Vec<Arc<GroundedFunc>>>,
+    svc_queue: Sender<BackgroundTask>,
 }
 
 impl Class {
@@ -369,6 +375,10 @@ impl Class {
 
     pub(in crate::agent::kb) fn add_rule(&self, rule: Arc<LogSentence>) {
         self.rules.write().push(rule);
+    }
+
+    pub(in crate::agent::kb) fn add_move_belief(&self, belief: &Arc<LogSentence>) {
+        self.move_beliefs.write().push(belief.clone());
     }
 
     fn get_value_at_time(f: &Arc<GroundedFunc>, at_time: Option<Time>) -> Option<f32> {

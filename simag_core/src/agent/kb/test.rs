@@ -195,7 +195,7 @@ fn repr_inference_time_calc_1() {
         ( fn::eat(since '2014-07-05T10:25:00Z')[$M1=1,$Pancho] )
     ";
     let q01_01 = "(fat(since 'now')[$Pancho=1])";
-    let rep = Representation::new(1);
+    let rep = Representation::default();
     rep.tell(test_01).unwrap();
     assert_eq!(rep.ask(q01_01).unwrap().get_results_single(), Some(true));
     // FIXME: fails
@@ -218,14 +218,14 @@ fn repr_inference_time_calc_1() {
         ( meat[$M1=1] )
         ( fat(since '2018-07-05T10:25:00Z')[$Pancho=1] )
     ";
-    let rep = Representation::new(1);
+    let rep = Representation::default();
     rep.tell(test_02).unwrap();
     let q02_01 = "(fn::eat(since 'now')[$M1=1,$Pancho])";
     let result = rep.ask(q02_01).unwrap().get_results_single();
     assert_eq!(result, Some(true));
 
     // Test 03
-    let rep = Representation::new(1);
+    let rep = Representation::default();
     let test_03_00 = "
         (meat[$M1=1])
         (dog[$Pancho=1])

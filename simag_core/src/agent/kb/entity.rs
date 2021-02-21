@@ -12,8 +12,8 @@ use crossbeam::channel::Sender;
 use dashmap::DashMap;
 use float_cmp::ApproxEqUlps;
 use parking_lot::RwLock;
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::{collections::HashMap, ops::Deref};
 
 /// An entity is a singleton, the unique member of it's own class.
 ///
@@ -42,14 +42,19 @@ use std::{collections::HashMap, ops::Deref};
 ///       representation.
 ///     * relations: Functions between objects and/or classes.
 ///
-pub(crate) struct Entity {
+pub(in crate::agent) struct Entity {
     pub name: String,
+    pub location: BmsWrapper<RecordHistory>,
+    /// LogSentence are shared amongst all the predicate members. Shared ptr has to be preserved.
+    pub(super) move_beliefs: RwLock<Vec<Arc<LogSentence>>>,
+    /// The GroundedMemb is shared with the parent class. Shared ptr relationship  has to be preserved.
     classes: DashMap<String, Arc<GroundedMemb>>,
+    /// The GroundedFunc is shared with the represented relationship and every member of the relationship.
+    /// Shared ptr relationship has to be preserved.
     relations: DashMap<String, Vec<Arc<GroundedFunc>>>,
+    /// LogSentence are shared amongst all the predicate members. Shared ptr has to be preserved.
     beliefs: DashMap<String, Vec<Arc<LogSentence>>>,
     svc_queue: Sender<BackgroundTask>,
-    pub(super) move_beliefs: RwLock<Vec<Arc<LogSentence>>>,
-    pub(in crate::agent) location: BmsWrapper<RecordHistory>,
 }
 
 impl Entity {
@@ -349,6 +354,10 @@ impl Entity {
         }
     }
 
+    pub(in crate::agent::kb) fn add_move_belief(&self, belief: &Arc<LogSentence>) {
+        self.move_beliefs.write().push(belief.clone());
+    }
+
     fn get_value_at_time(f: &Arc<GroundedFunc>, at_time: Option<Time>) -> Option<f32> {
         if let Some(at_time) = at_time {
             f.bms.get_record_at_time(at_time).0
@@ -358,42 +367,25 @@ impl Entity {
     }
 
     #[cfg(feature = "persistence")]
-    pub(super) fn persist(&self) -> bincode::Result<()> {
+    pub(super) fn persist(&self) -> bincode::Result<serialization::EntityBlob> {
         let blob = serialization::serialize(self)?;
-        Ok(())
+        Ok(blob)
     }
 }
 
 #[cfg(feature = "persistence")]
 mod serialization {
     use super::*;
+    use crate::agent::kb::storage::{
+        BinGrFuncRecord, BinGrMembRecord, BinLogSentRecord, BinParentName,
+    };
     use bincode::Result;
     use serde::{Deserialize, Serialize};
+    use std::ops::Deref;
 
-    /// The name of the parent obj (class, func or entity)
-    type BinParentName = Vec<u8>;
-
+    /// Deserializable blob of data representing all the information to construct an Entity.
     #[derive(Serialize, Deserialize)]
-    struct BinGrFuncRecord {
-        address: usize,
-        func: Vec<u8>,
-    }
-
-    #[derive(Serialize, Deserialize)]
-    struct BinGrMembRecord {
-        address: usize,
-        memb: Vec<u8>,
-    }
-
-    #[derive(Serialize, Deserialize)]
-    struct BinLogSentRecord {
-        address: usize,
-        sent: Vec<u8>,
-    }
-
-    /// Deserializable blob of data representing all the information to construct an Entity
-    #[derive(Serialize, Deserialize)]
-    pub(super) struct EntityBlob {
+    pub(in crate::agent::kb) struct EntityBlob {
         classes: Vec<(BinParentName, BinGrMembRecord)>,
         relations: Vec<(BinParentName, Vec<BinGrFuncRecord>)>,
         beliefs: Vec<(BinParentName, Vec<BinLogSentRecord>)>,

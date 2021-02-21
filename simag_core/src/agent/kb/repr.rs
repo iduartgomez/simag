@@ -8,16 +8,14 @@ use std::{
     time::Instant,
 };
 
-use crossbeam::channel::Sender;
+use crossbeam::channel::{Receiver, Sender};
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex};
 
-use super::{
-    bms::{build_declaration_bms, BmsWrapper, RecordHistory},
-    entity::Entity,
-};
 use crate::agent::kb::{
+    bms::{build_declaration_bms, BmsWrapper, RecordHistory},
     class::*,
+    entity::Entity,
     inference::{
         meet_sent_requirements, ArgsProduct, GroundedResult, IExprResult, InfResults, Inference,
         QueryInput,
@@ -31,6 +29,8 @@ use crate::agent::lang::{
     Parser, Point, Predicate, ProofResContext, SentVarReq, Var,
 };
 
+#[cfg(feature = "persistence")]
+use super::storage::ReprStorage;
 #[cfg(feature = "persistence")]
 use std::sync::atomic::Ordering;
 
@@ -67,9 +67,6 @@ impl<T> Deref for InnerData<T> {
     }
 }
 
-type EntitiesData = InnerData<Entity>;
-type ClassesData = InnerData<Class>;
-
 /// A container for internal agent's representations.
 ///
 /// An agent can have any number of such representations at any moment,
@@ -84,12 +81,13 @@ type ClassesData = InnerData<Class>;
 /// - classes -> Sets of objects (entities or subclasses) that share a common property.
 ///   This includes 'classes of relationships' and other 'functions'.
 pub(crate) struct Representation {
-    pub(in crate::agent) entities: EntitiesData,
-    pub(in crate::agent) classes: ClassesData,
+    pub(super) id: uuid::Uuid,
+    config: ReprConfig,
+    pub(in crate::agent) entities: InnerData<Entity>,
+    pub(in crate::agent) classes: InnerData<Class>,
     svc_queue: Sender<BackgroundTask>,
     threads: rayon::ThreadPool,
     readers: Arc<(Mutex<usize>, Condvar)>,
-    config: ReprConfig,
 }
 
 impl Representation {
@@ -99,98 +97,64 @@ impl Representation {
     /// Frequency with which the background secondary tasks are to be performed.
     const BG_SEC_TASK_FREQ: Duration = Duration::from_secs(1);
 
-    pub fn new(threads: usize) -> Representation {
-        #[cfg(any(test, debug_assertions))]
-        {
-            crate::agent::config::tracing::Logger::get_logger();
-        }
-
-        let (svc_th_msg_queue, rx) = crossbeam::channel::unbounded();
-        let entities = InnerData(Arc::new(DashMap::new()));
-        let classes = InnerData(Arc::new(DashMap::new()));
-
-        let config = ReprConfig::default();
-
-        let readers = Arc::new((Mutex::new(0), Condvar::new()));
-        // reserve at least one thread for the background thread
-        let rep = Representation {
-            entities,
-            classes,
-            threads: rayon::ThreadPoolBuilder::new()
-                .num_threads(threads + 1)
-                .build()
-                .unwrap(),
-            svc_queue: svc_th_msg_queue,
-            readers: readers.clone(),
-            config: config.clone(),
+    #[cfg(feature = "persistence")]
+    pub fn new(threads: usize) -> std::io::Result<Representation> {
+        let (rep, bg_task_rcv) = Self::internal_new(threads);
+        let shared_data = ReprSharedData {
+            entities: rep.entities.clone(),
+            classes: rep.classes.clone(),
+            config: rep.config.clone(),
+            readers: rep.readers.clone(),
+            bg_task_rcv,
+            storage_layer: ReprStorage::new(rep.id.clone(), None)?,
         };
+        rep.threads.spawn(move || bg_thread(shared_data));
+        Ok(rep)
+    }
 
+    #[cfg(not(feature = "persistence"))]
+    pub fn new(threads: usize) -> Representation {
+        let (rep, bg_task_rcv) = Self::internal_new(threads);
         #[allow(unused_mut, unused_variables)]
         let mut shared_data = ReprSharedData {
             entities: rep.entities.clone(),
             classes: rep.classes.clone(),
             config: rep.config.clone(),
+            readers: rep.readers.clone(),
+            bg_task_rcv,
         };
-
-        rep.threads.spawn(move || {
-            let (num_writers_lock, cvar) = &*readers;
-            let mut time_slice = Instant::now() + Self::BG_TASK_TIME_SLICE;
-            let mut last_bg_exec = Instant::now();
-            let mut potentially_disconnected = false;
-            loop {
-                let mut num_writers = num_writers_lock.lock();
-                if *num_writers > 0 {
-                    if cvar
-                        .wait_for(&mut num_writers, Duration::from_secs(10))
-                        .timed_out()
-                    {
-                        // timed out... parent thread may have been killed leaving the number of reads in
-                        // a corrupted state. We can double check this by checking if the other end of the channel
-                        // has been disconnected below
-                        potentially_disconnected = true;
-                    }
-                }
-                match rx.try_recv() {
-                    Ok(msg) => match Representation::background_service(msg) {
-                        Ok(()) => {}
-                        Err(()) => {
-                            std::mem::drop(num_writers);
-                            break;
-                        }
-                    },
-                    Err(crossbeam::channel::TryRecvError::Empty) => {
-                        if potentially_disconnected {
-                            // wasn't really disconnected, just starved because concurrent reads, try again
-                            potentially_disconnected = false;
-                            continue;
-                        }
-                        if last_bg_exec.elapsed() > Self::BG_SEC_TASK_FREQ {
-                            #[cfg(feature = "persistence")]
-                            shared_data.persist().expect("failed to perform persist op");
-                            last_bg_exec = Instant::now();
-                        }
-                    }
-                    Err(crossbeam::channel::TryRecvError::Disconnected)
-                        if potentially_disconnected =>
-                    {
-                        // attempt to persist the current state a last time
-                        #[cfg(feature = "persistence")]
-                        shared_data.persist().expect("failed to perform persist op");
-                        break;
-                    }
-                    Err(crossbeam::channel::TryRecvError::Disconnected) => {
-                        break;
-                    }
-                }
-                if Instant::now() > time_slice {
-                    std::mem::drop(num_writers);
-                    std::thread::sleep(Duration::from_nanos(100));
-                    time_slice = Instant::now() + Self::BG_TASK_TIME_SLICE;
-                }
-            }
-        });
-
+        rep.threads.spawn(move || bg_thread(shared_data));
         rep
+    }
+
+    fn internal_new(threads: usize) -> (Self, Receiver<BackgroundTask>) {
+        #[cfg(any(test, debug_assertions))]
+        {
+            crate::agent::config::tracing::Logger::get_logger();
+        }
+
+        let (svc_th_msg_queue, bg_task_rcv) = crossbeam::channel::unbounded();
+        let entities = InnerData(Arc::new(DashMap::new()));
+        let classes = InnerData(Arc::new(DashMap::new()));
+        let config = ReprConfig::default();
+        let readers = Arc::new((Mutex::new(0), Condvar::new()));
+
+        // reserve at least one thread for the background thread
+        (
+            Representation {
+                id: uuid::Uuid::new_v4(),
+                config,
+                entities,
+                classes,
+                threads: rayon::ThreadPoolBuilder::new()
+                    .num_threads(threads + 1)
+                    .build()
+                    .unwrap(),
+                svc_queue: svc_th_msg_queue,
+                readers: readers,
+            },
+            bg_task_rcv,
+        )
     }
 
     #[cfg(feature = "persistence")]
@@ -634,12 +598,12 @@ impl Representation {
                 match a.name {
                     GrTerminalKind::Entity(_) => {
                         if let Some(ent) = entities.get(name) {
-                            ent.move_beliefs.write().push(belief.clone());
+                            ent.add_move_belief(belief);
                         }
                     }
                     GrTerminalKind::Class(_) => {
                         if let Some(cls) = classes.get(name) {
-                            cls.move_beliefs.write().push(belief.clone());
+                            cls.add_move_belief(belief);
                         }
                     }
                 }
@@ -1024,30 +988,19 @@ impl Representation {
         }
         answer
     }
-
-    /// Performs critical functions in the background service.
-    #[inline(always)]
-    fn background_service(msg: BackgroundTask) -> Result<(), ()> {
-        use BackgroundTask::*;
-
-        match msg {
-            CompactBmsLog(rec) => {
-                let rec = rec;
-                if !rec.is_null() {
-                    let rec = unsafe { &*rec as &BmsWrapper<_> };
-                    rec.compact_record_log();
-                }
-            }
-            Shutdown => return Err(()),
-        }
-
-        Ok(())
-    }
 }
 
+#[cfg(not(feature = "persistence"))]
 impl Default for Representation {
     fn default() -> Self {
         Representation::new(num_cpus::get())
+    }
+}
+
+#[cfg(feature = "persistence")]
+impl Default for Representation {
+    fn default() -> Self {
+        Representation::new(num_cpus::get()).unwrap()
     }
 }
 
@@ -1064,11 +1017,29 @@ impl Drop for Representation {
     }
 }
 
-#[allow(dead_code)]
+#[derive(Clone)]
+struct ReprConfig {
+    #[cfg(feature = "persistence")]
+    persist: Arc<AtomicBool>,
+}
+
+impl Default for ReprConfig {
+    fn default() -> Self {
+        ReprConfig {
+            #[cfg(feature = "persistence")]
+            persist: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
 struct ReprSharedData {
-    entities: EntitiesData,
-    classes: ClassesData,
+    entities: InnerData<Entity>,
+    classes: InnerData<Class>,
     config: ReprConfig,
+    readers: Arc<(Mutex<usize>, Condvar)>,
+    bg_task_rcv: Receiver<BackgroundTask>,
+    #[cfg(feature = "persistence")]
+    storage_layer: ReprStorage,
 }
 
 impl ReprSharedData {
@@ -1077,31 +1048,89 @@ impl ReprSharedData {
     // 2. perform incremental persistence over different time chunks to not starve
     //    the main thread
     #[cfg(feature = "persistence")]
-    fn persist(&mut self) -> bincode::Result<()> {
+    fn persist(&self) -> bincode::Result<()> {
         if self.config.persist.load(Ordering::SeqCst) {
             for entity in self.entities.iter_mut() {
                 entity.persist()?;
             }
-            // for class in self.classes.iter_mut() {
-            //     class.persist();
-            // }
         }
         Ok(())
     }
 }
 
-#[derive(Clone)]
-#[allow(dead_code)]
-struct ReprConfig {
-    persist: Arc<AtomicBool>,
-}
-
-impl Default for ReprConfig {
-    fn default() -> Self {
-        ReprConfig {
-            persist: Arc::new(AtomicBool::new(false)),
+fn bg_thread(shared_data: ReprSharedData) {
+    let (num_writers_lock, cvar) = &*shared_data.readers;
+    let mut time_slice = Instant::now() + Representation::BG_TASK_TIME_SLICE;
+    let mut last_bg_exec = Instant::now();
+    let mut potentially_disconnected = false;
+    loop {
+        let mut num_writers = num_writers_lock.lock();
+        if *num_writers > 0 {
+            if cvar
+                .wait_for(&mut num_writers, Duration::from_secs(10))
+                .timed_out()
+            {
+                // timed out... parent thread may have been killed leaving the number of reads in
+                // a corrupted state. We can double check this by checking if the other end of the channel
+                // has been disconnected below
+                potentially_disconnected = true;
+            }
+        }
+        match shared_data.bg_task_rcv.try_recv() {
+            Ok(msg) => match background_service(msg) {
+                Ok(()) => {}
+                Err(()) => {
+                    std::mem::drop(num_writers);
+                    break;
+                }
+            },
+            Err(crossbeam::channel::TryRecvError::Empty) => {
+                if potentially_disconnected {
+                    // wasn't really disconnected, just starved because concurrent reads, try again
+                    potentially_disconnected = false;
+                    continue;
+                }
+                if last_bg_exec.elapsed() > Representation::BG_SEC_TASK_FREQ {
+                    #[cfg(feature = "persistence")]
+                    shared_data.persist().expect("failed to perform persist op");
+                    last_bg_exec = Instant::now();
+                }
+            }
+            Err(crossbeam::channel::TryRecvError::Disconnected) if potentially_disconnected => {
+                // attempt to persist the current state a last time
+                #[cfg(feature = "persistence")]
+                shared_data.persist().expect("failed to perform persist op");
+                break;
+            }
+            Err(crossbeam::channel::TryRecvError::Disconnected) => {
+                break;
+            }
+        }
+        if Instant::now() > time_slice {
+            std::mem::drop(num_writers);
+            std::thread::sleep(Duration::from_nanos(100));
+            time_slice = Instant::now() + Representation::BG_TASK_TIME_SLICE;
         }
     }
+}
+
+/// Performs critical functions in the background service.
+#[inline(always)]
+fn background_service(msg: BackgroundTask) -> Result<(), ()> {
+    use BackgroundTask::*;
+
+    match msg {
+        CompactBmsLog(rec) => {
+            let rec = rec;
+            if !rec.is_null() {
+                let rec = unsafe { &*rec as &BmsWrapper<_> };
+                rec.compact_record_log();
+            }
+        }
+        Shutdown => return Err(()),
+    }
+
+    Ok(())
 }
 
 pub(super) enum BackgroundTask {

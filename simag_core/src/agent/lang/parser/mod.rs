@@ -81,8 +81,12 @@ impl Parser {
     /// It includes a a scanner and parser for the synthatical analysis which translate
     /// to the **program** in form of parse trees to be feed to an agent, which will then
     /// translate to the appropiate data structures for further use.
-    pub fn parse(
-        input: &str,
+    ///
+    /// # Safety
+    /// Valid UTF-8 strings are expected to be received here, as bytes may be manipulated
+    /// later with those expectations unsafely, DO NOT CHANGE!
+    pub(in crate::agent) fn parse(
+        input: &str, /* this must be valid utf-8 */
         tell: bool,
         tpool: &rayon::ThreadPool,
     ) -> Result<VecDeque<ParseTree>, ParseErrF> {
