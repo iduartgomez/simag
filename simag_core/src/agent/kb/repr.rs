@@ -30,7 +30,7 @@ use crate::agent::lang::{
 };
 
 #[cfg(feature = "persistence")]
-use super::storage::ReprStorage;
+use super::storage::ReprStorageManager;
 #[cfg(feature = "persistence")]
 use std::sync::atomic::Ordering;
 
@@ -106,7 +106,7 @@ impl Representation {
             config: rep.config.clone(),
             readers: rep.readers.clone(),
             bg_task_rcv,
-            storage_layer: ReprStorage::new(rep.id.clone(), None)?,
+            storage_layer: ReprStorageManager::new(rep.id.clone(), None)?,
         };
         rep.threads.spawn(move || bg_thread(shared_data));
         Ok(rep)
@@ -1039,7 +1039,7 @@ struct ReprSharedData {
     readers: Arc<(Mutex<usize>, Condvar)>,
     bg_task_rcv: Receiver<BackgroundTask>,
     #[cfg(feature = "persistence")]
-    storage_layer: ReprStorage,
+    storage_layer: ReprStorageManager,
 }
 
 impl ReprSharedData {
@@ -1048,18 +1048,25 @@ impl ReprSharedData {
     // 2. perform incremental persistence over different time chunks to not starve
     //    the main thread
     #[cfg(feature = "persistence")]
-    fn persist(&self) -> bincode::Result<()> {
+    fn persist(&mut self) -> bincode::Result<()> {
         if self.config.persist.load(Ordering::SeqCst) {
-            for entity in self.entities.iter_mut() {
-                entity.persist()?;
+            let entities: Result<Vec<_>, _> = self
+                .entities
+                .iter_mut()
+                .map(|entity| entity.persist())
+                .collect();
+            for mut ent in entities? {
+                ent.classes.drain(..).for_each(|cls| {
+                    self.storage_layer.insert_rec(cls);
+                })
             }
         }
         Ok(())
     }
 }
 
-fn bg_thread(shared_data: ReprSharedData) {
-    let (num_writers_lock, cvar) = &*shared_data.readers;
+fn bg_thread(mut shared_data: ReprSharedData) {
+    let (num_writers_lock, cvar) = &*shared_data.readers.clone();
     let mut time_slice = Instant::now() + Representation::BG_TASK_TIME_SLICE;
     let mut last_bg_exec = Instant::now();
     let mut potentially_disconnected = false;
@@ -1076,7 +1083,8 @@ fn bg_thread(shared_data: ReprSharedData) {
                 potentially_disconnected = true;
             }
         }
-        match shared_data.bg_task_rcv.try_recv() {
+        let msg = shared_data.bg_task_rcv.try_recv();
+        match msg {
             Ok(msg) => match background_service(msg) {
                 Ok(()) => {}
                 Err(()) => {

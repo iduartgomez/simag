@@ -377,67 +377,55 @@ impl Entity {
 mod serialization {
     use super::*;
     use crate::agent::kb::storage::{
-        BinGrFuncRecord, BinGrMembRecord, BinLogSentRecord, BinParentName,
+        BinGrFuncRecord, BinGrMembRecord, BinLogSentRecord, ToBinaryObject,
     };
     use bincode::Result;
-    use serde::{Deserialize, Serialize};
     use std::ops::Deref;
 
     /// Deserializable blob of data representing all the information to construct an Entity.
-    #[derive(Serialize, Deserialize)]
     pub(in crate::agent::kb) struct EntityBlob {
-        classes: Vec<(BinParentName, BinGrMembRecord)>,
-        relations: Vec<(BinParentName, Vec<BinGrFuncRecord>)>,
-        beliefs: Vec<(BinParentName, Vec<BinLogSentRecord>)>,
+        pub classes: Vec<BinGrMembRecord>,
+        pub relations: Vec<Vec<BinGrFuncRecord>>,
+        beliefs: Vec<Vec<BinLogSentRecord>>,
         move_beliefs: Vec<BinLogSentRecord>,
         location: BmsWrapper<RecordHistory>,
     }
 
     pub(super) fn serialize(entity: &Entity) -> Result<EntityBlob> {
-        let classes: Result<Vec<(_, _)>> = entity
+        let classes: Result<Vec<_>> = entity
             .classes
             .iter()
             .map(|kv| {
-                let name = bincode::serialize(kv.key())?;
-                let address = Arc::as_ptr(kv.value()) as usize;
-                let memb = bincode::serialize::<GroundedMemb>(&**kv.value())?;
-                Ok((name, BinGrMembRecord { memb, address }))
+                let address = Arc::as_ptr(kv.value()) as u64;
+                BinGrMembRecord::build(address.into(), kv.key(), kv.value())
             })
             .collect();
 
-        let relations: Result<Vec<(_, _)>> = entity
+        let relations: Result<Vec<_>> = entity
             .relations
             .iter()
             .map(|kv| {
-                let name = bincode::serialize(kv.key())?;
-                let funcs: bincode::Result<Vec<_>> = kv
-                    .value()
+                kv.value()
                     .iter()
                     .map(|f| {
-                        let address = Arc::as_ptr(f) as usize;
-                        let func = bincode::serialize::<GroundedFunc>(f.deref())?;
-                        Ok(BinGrFuncRecord { func, address })
+                        let address = Arc::as_ptr(f) as u64;
+                        BinGrFuncRecord::build(address.into(), kv.key(), f.deref())
                     })
-                    .collect();
-                Ok((name, funcs?))
+                    .collect()
             })
             .collect();
 
-        let beliefs: Result<Vec<(_, _)>> = entity
+        let beliefs: Result<Vec<_>> = entity
             .beliefs
             .iter()
             .map(|kv| {
-                let name = bincode::serialize(kv.key())?;
-                let bfs: bincode::Result<Vec<_>> = kv
-                    .value()
+                kv.value()
                     .iter()
                     .map(|f| {
-                        let address = Arc::as_ptr(f) as usize;
-                        let sent = bincode::serialize::<LogSentence>(f.deref())?;
-                        Ok(BinLogSentRecord { sent, address })
+                        let address = Arc::as_ptr(f) as u64;
+                        BinLogSentRecord::build(address.into(), kv.key(), f.deref())
                     })
-                    .collect();
-                Ok((name, bfs?))
+                    .collect()
             })
             .collect();
 
@@ -445,9 +433,8 @@ mod serialization {
             let lock = entity.move_beliefs.read();
             lock.iter()
                 .map(|s| {
-                    let address = Arc::as_ptr(s) as usize;
-                    let sent = bincode::serialize::<LogSentence>(s.deref())?;
-                    Ok(BinLogSentRecord { sent, address })
+                    let address = Arc::as_ptr(s) as u64;
+                    BinLogSentRecord::build(address.into(), "", s.deref())
                 })
                 .collect()
         };
