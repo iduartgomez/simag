@@ -1,7 +1,7 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     convert::TryFrom,
-    fs::File,
+    fs::{File, OpenOptions},
     io,
     iter::FromIterator,
     ops::Deref,
@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// In-memory address for a record.
-#[derive(PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash, Clone, Copy)]
 pub(super) struct MemAddr(u64);
 
 impl From<u64> for MemAddr {
@@ -34,15 +34,16 @@ impl Deref for MemAddr {
 }
 
 /// File addresss from which to fetch data from (based on the length of the record).
-struct DiskAddr(u64);
+#[derive(Clone, Copy)]
+struct DiscAddr(u64);
 
-impl From<u64> for DiskAddr {
+impl From<u64> for DiscAddr {
     fn from(addr: u64) -> Self {
-        DiskAddr(addr)
+        DiscAddr(addr)
     }
 }
 
-impl Deref for DiskAddr {
+impl Deref for DiscAddr {
     type Target = u64;
 
     fn deref(&self) -> &Self::Target {
@@ -75,6 +76,7 @@ where
 
 macro_rules! binary_storage {
     ( struct $bin:ident -> $type:expr) => {
+        #[derive(Clone)]
         pub(super) struct $bin {
             /// the current physical address, used to preserve relationships
             address: MemAddr,
@@ -120,16 +122,15 @@ pub(super) struct ReprStorageManager {
     /// C0 in-memory tree, buffer for data waiting to be flushed to disk.
     /// This is only for record data, meaning records which hold a stable address in memory
     /// which is used as a key.
-    level0_map: BTreeMap<MemAddr, Vec<u8>>,
+    level0_map: BTreeMap<MemAddr, Record>,
     buffer_size: u64,
-    file_size: u64,
     page_manager: PageManager,
 }
 
 impl ReprStorageManager {
     /// Create a new ReprStorage for the given representation, will be stored at the given directory
     /// if provided or in a temporary directory otherwise.
-    pub fn new(id: Uuid, path: Option<&Path>) -> Result<Self, io::Error> {
+    pub fn new(id: Uuid, path: Option<&Path>) -> io::Result<Self> {
         let file_dir = if let Some(path) = path {
             let md = path.metadata()?;
             if !md.is_dir() {
@@ -140,82 +141,60 @@ impl ReprStorageManager {
             }
             path.into()
         } else {
-            std::env::temp_dir().join(format!("simag-{}", id))
+            let p = std::env::temp_dir().join(format!("simag-{}", id));
+            if !p.exists() {
+                std::fs::create_dir(&p)?;
+            }
+            p
         };
-
-        // let file = OpenOptions::new()
-        //     .read(true)
-        //     .write(true)
-        //     .truncate(false)
-        //     .create(true)
-        //     .open(&location)?;
 
         Ok(ReprStorageManager {
             level0_map: BTreeMap::new(),
             buffer_size: 0,
-            file_size: 0,
-            page_manager: PageManager::new(file_dir),
+            page_manager: PageManager::new(file_dir, id),
         })
     }
 
     /// Inserts a new record, if it exists the new record will be updated.
     ///
     /// Internally this does not flush to disk, but only stores the data in the record buffer.
-    pub fn insert_rec<O>(&mut self, rec: O)
+    pub fn insert_rec<O>(&mut self, rec: O) -> io::Result<()>
     where
         O: ToBinaryObject,
     {
         let (mem_addr, data) = rec.destruct();
-        if self.buffer_size + data.len() as u64 > PageManager::PAGE_SIZE {
+        let rec = Record::new(O::get_type_id(), mem_addr, data);
+        if self.buffer_size + rec.len() as u64 > PageManager::PAGE_SIZE {
             // should flush first
-            self.flush::<O>();
+            self.flush()?;
             self.buffer_size = 0;
         }
-        self.buffer_size += data.len() as u64;
-        self.level0_map.insert(mem_addr, data);
+        self.buffer_size += rec.len() as u64;
+        self.level0_map.insert(mem_addr, rec);
+        Ok(())
     }
 
-    pub fn flush<O: ToBinaryObject>(&mut self) {
+    pub fn flush(&mut self) -> io::Result<()> {
         let mut to_flush = BTreeMap::new();
-        let type_id = O::get_type_id() as u8;
         std::mem::swap(&mut to_flush, &mut self.level0_map);
         let mut buffer = Vec::with_capacity(PageManager::PAGE_SIZE as usize);
-        //key_addr: BTreeMap<MemAddr, (DiskAddr, RecordLength)>
-        let mut table_data = HashMap::new();
+        let mut table_data = BTreeMap::new();
         let mut addr = 0u64;
         for (mem_addr, rec) in to_flush.into_iter() {
             let len = rec.len() as u64;
-            // add [type_id: u8, mem_addr: u64 as [u8], size: u64 as [u8]], total 17 bytes header
-            buffer.push(type_id);
-            buffer.extend((&*mem_addr).to_le_bytes().as_ref());
-            buffer.extend(&len.to_le_bytes());
-            // add the value itself
-            buffer.extend(rec);
+            let type_id = rec.type_id();
+            rec.append_to_buf(&mut buffer);
             table_data.insert(
                 mem_addr,
-                DiskRecord {
-                    type_id: O::get_type_id(),
-                    addr: DiskAddr::from(addr),
+                DiscRecordRef {
+                    type_id,
+                    addr: DiscAddr::from(addr),
                     len,
                 },
             );
             addr += len;
         }
-
-        if (buffer.len() as u64) < PageManager::PAGE_SIZE {
-            // Fill with zeros the remaining until the page is full.
-            let remainder = PageManager::PAGE_SIZE - (buffer.len() as u64);
-            let remaining = vec![0; remainder as usize];
-            buffer.extend(remaining);
-        }
-        debug_assert_eq!(buffer.len() as u64, PageManager::PAGE_SIZE);
-
-        // self.page_manager;
-        // #[cfg(unix)]
-        // {
-        //     self.file.write_at(&buffer, self.file_size).unwrap();
-        // }
-        self.file_size = buffer.len() as u64;
+        self.page_manager.spill_to_disk(buffer, table_data)
     }
 }
 
@@ -223,57 +202,94 @@ impl TryFrom<&Path> for ReprStorageManager {
     type Error = bincode::Error;
 
     fn try_from(path: &Path) -> Result<Self, Self::Error> {
-        let file = File::open(path)?;
-
+        let _file = File::open(path)?;
         todo!()
     }
 }
 
-struct DiskRecord {
+/// A record prepared to be stored on disk.
+struct Record {
     type_id: TypeId,
-    addr: DiskAddr,
-    len: RecordLength,
+    mem_addr: MemAddr,
+    data: Vec<u8>,
+    /// computed lenth after encoding to bytes
+    length: u64,
 }
 
-impl Into<[u8; 17]> for DiskRecord {
-    fn into(self) -> [u8; 17] {
-        let mut bytes = [0u8; 17];
-        bytes[0] = self.type_id as u8;
-        let (_, pos_part) = bytes.split_at_mut(1);
-        pos_part.copy_from_slice((&*self.addr).to_le_bytes().as_ref());
-        let (_, len_part) = bytes.split_at_mut(9);
-        len_part.copy_from_slice(self.len.to_le_bytes().as_ref());
-        bytes
+impl Record {
+    fn new(type_id: TypeId, mem_addr: MemAddr, data: Vec<u8>) -> Self {
+        let length = data.len() as u64 + 17;
+        Record {
+            type_id,
+            mem_addr,
+            data,
+            length,
+        }
     }
+
+    #[inline]
+    fn len(&self) -> u64 {
+        self.length
+    }
+
+    fn append_to_buf(self, buffer: &mut Vec<u8>) {
+        let Record {
+            type_id,
+            mem_addr,
+            data,
+            ..
+        } = self;
+        let header = Self::make_header(type_id, mem_addr, data.len() as u64);
+        buffer.extend(&header);
+        buffer.extend(data);
+    }
+
+    fn type_id(&self) -> TypeId {
+        self.type_id
+    }
+
+    #[inline(always)]
+    fn make_header(type_id: TypeId, mem_addr: MemAddr, len: u64) -> [u8; 17] {
+        let mut header = [0u8; 17];
+        let addr_part = &mut header[0..8];
+        addr_part.copy_from_slice((&*mem_addr).to_le_bytes().as_ref());
+        header[8] = type_id as u8;
+        let len_part = &mut header[9..];
+        len_part.copy_from_slice(len.to_le_bytes().as_ref());
+        header
+    }
+}
+
+struct DiscRecordRef {
+    type_id: TypeId,
+    addr: DiscAddr,
+    len: RecordLength,
 }
 
 static NEXT_PAGE_ID: AtomicUsize = AtomicUsize::new(0);
 type PageId = usize;
 
 struct PageMeta {
-    /// Current size of page.
-    size: u64,
+    id: PageId,
+    offset: u64,
+    /// Current free space of page.
+    free_space: u64,
     /// In representations a lot of records map well to key-values tuples, where the key is
     /// the shared memory address pointer and the value the underlying data.
     /// On pages we append the record to the log, and later on we can merge the data
     /// using the address as a key, fetching from the registered file disk address.
-    key_addr: BTreeMap<MemAddr, (DiskAddr, RecordLength)>,
+    key_addr: BTreeMap<MemAddr, DiscRecordRef>,
 }
 
-enum MapLevel {
-    Level0,
-    Level1,
-    Level2,
-    Level3,
-}
-
+/// Manages pages and file synchronization with memory data for log record-like data.
 struct PageManager {
+    id: Uuid,
     file_dir: PathBuf,
-    levels: [BTreeMap<PageId, PageMeta>; 3],
+    levels: [Vec<PageMeta>; 3],
 }
 
 impl PageManager {
-    /// Modern disks sectors are usually 4KB bytes wide, and are optimized for such size writes/reads.
+    /// Modern disks blocks are usually 4KB bytes wide, and are optimized for such size writes/reads.
     /// All the pages must be then a multiple of this so they are written to block effitiently.
     const PAGE_SIZE: u64 = 1024 * 4;
 
@@ -281,43 +297,84 @@ impl PageManager {
     /// Max size for all the pages
     const LEVEL1_SIZE: u64 = 1024 * 1024 * 10; // 10MB
     const LEVEL1_NUM_PAGES: u64 = Self::LEVEL1_SIZE / Self::PAGE_SIZE;
-    const LEVEL2_SIZE: u64 = Self::LEVEL1_SIZE ^ 10; // 100 MB
+    const LEVEL2_SIZE: u64 = Self::LEVEL1_SIZE * 10; // 100 MB
     const LEVEL2_NUM_PAGES: u64 = Self::LEVEL2_SIZE / Self::PAGE_SIZE;
     // LEVEL3 size is unbounded
     const LEVEL3_MAX_FILE_SIZE: u64 = Self::LEVEL2_SIZE;
 
-    fn new(file_dir: PathBuf) -> PageManager {
-        let level1_map = BTreeMap::from_iter((0..Self::LEVEL1_NUM_PAGES).map(|_| {
-            (
-                NEXT_PAGE_ID.load(Ordering::SeqCst),
-                PageMeta {
-                    size: 0,
-                    key_addr: BTreeMap::new(),
-                },
-            )
+    fn new(file_dir: PathBuf, id: Uuid) -> PageManager {
+        let mut lvl1_offset = 0;
+        let lvl1_pages = Vec::from_iter((0..Self::LEVEL1_NUM_PAGES).map(|_| {
+            let p = PageMeta {
+                id: NEXT_PAGE_ID.load(Ordering::SeqCst),
+                offset: lvl1_offset,
+                free_space: Self::PAGE_SIZE,
+                key_addr: BTreeMap::new(),
+            };
+            lvl1_offset += Self::PAGE_SIZE;
+            p
         }));
-        debug_assert_eq!(level1_map.len() as u64, Self::LEVEL1_NUM_PAGES);
+        debug_assert_eq!(lvl1_pages.len() as u64, Self::LEVEL1_NUM_PAGES);
 
-        let level2_map = BTreeMap::from_iter((0..Self::LEVEL2_NUM_PAGES).map(|_| {
-            (
-                NEXT_PAGE_ID.load(Ordering::SeqCst),
-                PageMeta {
-                    size: 0,
-                    key_addr: BTreeMap::new(),
-                },
-            )
+        let mut lvl2_offset = 0;
+        let lvl2_pages = Vec::from_iter((0..Self::LEVEL2_NUM_PAGES).map(|_| {
+            let p = PageMeta {
+                id: NEXT_PAGE_ID.load(Ordering::SeqCst),
+                offset: lvl2_offset,
+                free_space: Self::PAGE_SIZE * 10,
+                key_addr: BTreeMap::new(),
+            };
+            lvl2_offset += Self::PAGE_SIZE;
+            p
         }));
-        debug_assert_eq!(level2_map.len() as u64, Self::LEVEL2_NUM_PAGES);
+        debug_assert_eq!(lvl2_pages.len() as u64, Self::LEVEL2_NUM_PAGES);
 
         PageManager {
+            id,
             file_dir,
-            levels: [level1_map, level2_map, BTreeMap::new()],
+            levels: [lvl1_pages, lvl2_pages, Vec::new()],
         }
     }
 
     #[inline(always)]
-    fn spill_to_disk(&mut self, data: Vec<u8>) {
-        let level1_map = &mut self.levels[0];
+    fn spill_to_disk(
+        &mut self,
+        mut buffer: Vec<u8>,
+        table_map: BTreeMap<MemAddr, DiscRecordRef>,
+    ) -> io::Result<()> {
+        let p = self.file_dir.join("data0.dat");
+
+        let lvl1_pages = &mut self.levels[0];
+        lvl1_pages.sort_unstable_by_key(|e| e.free_space);
+        if lvl1_pages[0].free_space >= buffer.len() as u64 {
+            let page = &mut lvl1_pages[0];
+            let buf_len = buffer.len() as u64;
+            if buf_len < page.free_space {
+                // Fill with zeros the remaining until the page is full.
+                let remainder = page.free_space - buf_len;
+                let remaining = vec![0; remainder as usize];
+                buffer.extend(remaining);
+            }
+
+            let file = OpenOptions::new()
+                .write(true)
+                .truncate(false)
+                .create(true)
+                .open(&p)?;
+
+            let offset = page.offset + (Self::PAGE_SIZE - page.free_space);
+            #[cfg(unix)]
+            {
+                file.write_at(&buffer, offset)?;
+            }
+
+            for (addr, rec) in table_map {
+                page.key_addr.insert(addr, rec);
+            }
+            page.free_space -= buf_len;
+        }
+
+        Ok(())
     }
 }
 
@@ -326,17 +383,20 @@ mod test {
     use super::*;
 
     #[test]
-    fn flush_data() -> Result<(), std::io::Error> {
+    fn flush_data() -> io::Result<()> {
         let mut rep = ReprStorageManager::new(Uuid::nil(), None)?;
         let record = String::from("test_data").into_bytes();
         let rec = BinGrMembRecord {
             address: 0x1234u64.into(),
             record,
         };
-
-        rep.insert_rec(rec);
-        rep.flush::<BinGrMembRecord>();
-
+        for _ in 0..3 {
+            rep.insert_rec(rec.clone())?;
+            rep.flush()?;
+        }
+        rep.insert_rec(rec.clone())?;
+        rep.insert_rec(rec)?;
+        rep.flush()?;
         Ok(())
     }
 }
