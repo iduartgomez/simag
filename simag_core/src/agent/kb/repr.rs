@@ -1056,9 +1056,10 @@ impl ReprSharedData {
                 .map(|entity| entity.persist())
                 .collect();
             for mut ent in entities? {
-                ent.classes.drain(..).for_each(|cls| {
-                    self.storage_layer.insert_rec(cls);
-                })
+                ent.classes.drain(..).fold(Ok(()), |res, cls| match res {
+                    Err(err) => Err(err),
+                    Ok(()) => self.storage_layer.insert_rec(cls),
+                })?;
             }
         }
         Ok(())
