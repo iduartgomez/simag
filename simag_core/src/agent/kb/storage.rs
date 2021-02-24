@@ -423,9 +423,19 @@ impl PageManager {
     }
 
     fn compact(&mut self, lvl: Table) -> io::Result<()> {
-        let (merge_target, target_size) = match lvl {
-            Table::Level1 => (&mut self.levels_pages[0], Self::LEVEL1_SIZE / 4),
-            Table::Level2 => (&mut self.levels_pages[1], Self::LEVEL2_SIZE / 4),
+        let (merge_src_pages, merge_src_data, merge_target, target_size) = match lvl {
+            Table::Level1 => (
+                &mut self.levels_pages[0],
+                &mut self.lvl1_data,
+                Table::Level2,
+                Self::LEVEL1_SIZE / 4,
+            ),
+            Table::Level2 => (
+                &mut self.levels_pages[1],
+                &mut self.lvl2_data,
+                Table::Level3,
+                Self::LEVEL2_SIZE / 4,
+            ),
             _ => unreachable!(),
         };
 
@@ -433,28 +443,117 @@ impl PageManager {
         // just keep the last pointer per key
         let mut merged_data = BTreeMap::new();
         let mut size = 0u64;
-        'merge: for page in merge_target {
-            for (k, v) in page.key_addr.iter() {
-                let new_len = size + v.length;
-                if new_len > target_size {
-                    break 'merge;
+        for page in merge_src_pages {
+            if page.free_space < (target_size - size) {
+                // empty all addresses
+                let mut page_addresses = BTreeMap::new();
+                std::mem::swap(&mut page_addresses, &mut page.key_addr);
+                for (addr, rec) in page_addresses {
+                    size += rec.length;
+                    merged_data.insert(addr, rec);
                 }
-                merged_data.insert(k, v);
-                size = new_len;
+                page.free_space = Self::PAGE_SIZE;
+            } else {
+                let mut keys_to_rm = vec![];
+                for (k, v) in page.key_addr.iter() {
+                    let new_len = size + v.length;
+                    if new_len > target_size {
+                        break;
+                    }
+                    keys_to_rm.push(*k);
+                    size = new_len;
+                }
+                // TODO: need to consolidate the lingering empty space in this page
+                for key in keys_to_rm {
+                    if let Some(page) = page.key_addr.remove(&key) {
+                        merged_data.insert(key, page);
+                    }
+                }
+                break;
             }
         }
 
-        let mut buf = vec![0u8; target_size as usize];
-        let mut cursor = 0usize;
-        for disc_ref in merged_data.values() {
-            #[cfg(unix)]
-            {
-                self.lvl1_data.read_exact_at(
-                    &mut buf[cursor..(cursor + disc_ref.length as usize)],
-                    *disc_ref.addr,
-                )?;
+        // read the data from disc to memory
+        struct LoadedRec {
+            type_id: BinType,
+            length: RecordLength,
+            page_num: usize,
+        }
+
+        let mut pages_buf =
+            vec![vec![0u8; Self::PAGE_SIZE as usize]; (target_size / Self::PAGE_SIZE) as usize];
+        let mut readed = vec![];
+        for (page_num, buf) in pages_buf.iter_mut().enumerate() {
+            let mut r_cursor = 0usize;
+            let mut copied = vec![];
+            for (addr, rec) in merged_data.iter() {
+                if (r_cursor + rec.length as usize) <= Self::PAGE_SIZE as usize {
+                    #[cfg(unix)]
+                    {
+                        merge_src_data.read_exact_at(
+                            &mut buf[r_cursor..(r_cursor + rec.length as usize)],
+                            *rec.addr,
+                        )?;
+                    }
+                    r_cursor += rec.length as usize;
+                    copied.push(*addr);
+                } else {
+                    break;
+                }
             }
-            cursor += disc_ref.length as usize;
+            // remove entries already copied to buffer so they are not reprocessed
+            for addr in copied {
+                if let Some(rec) = merged_data.remove(&addr) {
+                    readed.push((
+                        addr,
+                        LoadedRec {
+                            type_id: rec.type_id,
+                            length: rec.length,
+                            page_num,
+                        },
+                    ));
+                }
+            }
+        }
+        assert!(merged_data.is_empty());
+
+        match merge_target {
+            Table::Level2 => {
+                let target_pages = &mut self.levels_pages[1];
+                let target_file = &mut self.lvl2_data;
+                let mut curr_page_buf = 0;
+                for page in target_pages.iter_mut() {
+                    if page.free_space > 0 && curr_page_buf + 1 < pages_buf.len() {
+                        let page_buf = &pages_buf[curr_page_buf];
+                        #[cfg(unix)]
+                        {
+                            target_file.write_at(page_buf, page.offset)?;
+                        }
+                        curr_page_buf += 1;
+                        page.free_space = 0;
+                    } else {
+                        break;
+                    }
+                    let mut w_cursor = page.offset;
+                    for (addr, rec) in readed.iter() {
+                        if rec.page_num == curr_page_buf {
+                            let rec = DiscRecordRef {
+                                type_id: rec.type_id,
+                                addr: DiscAddr(w_cursor),
+                                length: rec.length,
+                            };
+                            w_cursor += rec.length;
+                            page.key_addr.insert(*addr, rec);
+                        }
+                    }
+                }
+                if curr_page_buf + 1 < pages_buf.len() {
+                    // no space left at lvl2, trigger a compaction from lvl2 to lvl3
+                    todo!()
+                }
+            }
+            Table::Level3 => {}
+            _ => unreachable!(),
         }
 
         Ok(())
@@ -481,14 +580,14 @@ mod test {
         for _ in 0..iters {
             let k: u64 = rand::random();
             sample.extend(&k.to_be_bytes());
-            sample.extend((0..48).map(|_| rand::random::<u8>()));
+            sample.extend((0..128).map(|_| rand::random::<u8>()));
         }
         sample
     }
 
     #[test]
     fn flush_data() -> io::Result<()> {
-        const NUM_REC: usize = 400;
+        const NUM_REC: usize = 500_000;
         let sample = raw_sample(NUM_REC);
         let mut u = Unstructured::new(&sample);
         let mut rep = ReprStorageManager::new(Uuid::nil(), None)?;
