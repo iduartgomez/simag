@@ -106,7 +106,7 @@ impl Representation {
             config: rep.config.clone(),
             readers: rep.readers.clone(),
             bg_task_rcv,
-            storage_layer: ReprStorageManager::new(rep.id.clone(), None)?,
+            storage_layer: ReprStorageManager::new(rep.id.clone(), None, None)?,
         };
         rep.threads.spawn(move || bg_thread(shared_data));
         Ok(rep)

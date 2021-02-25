@@ -6,7 +6,6 @@ use std::{
     iter::FromIterator,
     ops::Deref,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicUsize, Ordering},
 };
 
 #[cfg(unix)]
@@ -80,7 +79,7 @@ where
 macro_rules! binary_storage {
     ( struct $bin:ident -> $type:expr) => {
         #[derive(Clone)]
-        // #[cfg_attr(test, derive(Arbitrary))]
+        #[cfg_attr(test, derive(Arbitrary))]
         pub(super) struct $bin {
             /// the current physical address, used to preserve relationships
             address: MemAddr,
@@ -106,18 +105,6 @@ macro_rules! binary_storage {
 
             fn get_type() -> BinType {
                 $type
-            }
-        }
-
-        #[cfg(test)]
-        impl Arbitrary for $bin {
-            fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
-                let iter = u.arbitrary_iter::<u8>()?;
-                let record: Result<Vec<_>, _> = iter.collect();
-                Ok($bin {
-                    address: u.arbitrary()?,
-                    record: record?,
-                })
             }
         }
     };
@@ -146,7 +133,7 @@ pub(super) struct ReprStorageManager {
 impl ReprStorageManager {
     /// Create a new ReprStorage for the given representation, will be stored at the given directory
     /// if provided or in a temporary directory otherwise.
-    pub fn new(id: Uuid, path: Option<&Path>) -> io::Result<Self> {
+    pub fn new(id: Uuid, path: Option<&Path>, lvl1_size: Option<u64>) -> io::Result<Self> {
         let file_dir = if let Some(path) = path {
             let md = path.metadata()?;
             if !md.is_dir() {
@@ -167,7 +154,7 @@ impl ReprStorageManager {
         Ok(ReprStorageManager {
             level0_map: BTreeMap::new(),
             buffer_size: 0,
-            page_manager: PageManager::new(file_dir, id)?,
+            page_manager: PageManager::new(file_dir, lvl1_size)?,
         })
     }
 
@@ -284,11 +271,7 @@ struct DiscRecordRef {
     length: RecordLength,
 }
 
-static NEXT_PAGE_ID: AtomicUsize = AtomicUsize::new(0);
-type PageId = usize;
-
 struct PageMeta {
-    id: PageId,
     offset: u64,
     /// Current free space of page.
     free_space: u64,
@@ -301,20 +284,30 @@ struct PageMeta {
 
 /// Manages pages and file synchronization with memory data for log record-like data.
 struct PageManager {
-    id: Uuid,
-    file_dir: PathBuf,
     lvl1_data: File,
     lvl2_data: File,
     lvl3_data: Vec<File>,
     levels_pages: [Vec<PageMeta>; 3],
     current_page: [usize; 3],
+    config: PageManagerConfig,
+}
+
+struct PageManagerConfig {
+    file_dir: PathBuf,
+    lvl1_size: u64,
+    lvl2_size: u64,
 }
 
 enum Table {
-    Level0,
     Level1,
     Level2,
     Level3,
+}
+
+struct CachedRec {
+    type_id: BinType,
+    length: RecordLength,
+    page_num: usize,
 }
 
 impl PageManager {
@@ -325,17 +318,33 @@ impl PageManager {
     /// The LEVEL0 tree is maintained in-memory.
     /// Max size for all the pages
     const LEVEL1_SIZE: u64 = 1024 * 1024 * 8; // 8MB
-    const LEVEL1_NUM_PAGES: u64 = Self::LEVEL1_SIZE / Self::PAGE_SIZE;
     const LEVEL2_SIZE: u64 = Self::LEVEL1_SIZE * 8; // 64 MB
-    const LEVEL2_NUM_PAGES: u64 = Self::LEVEL2_SIZE / Self::PAGE_SIZE;
-    // LEVEL3 size is unbounded
     const LEVEL3_MAX_FILE_SIZE: u64 = Self::LEVEL2_SIZE * 8;
 
-    fn new(file_dir: PathBuf, id: Uuid) -> io::Result<PageManager> {
+    fn new(file_dir: PathBuf, lvl1_size: Option<u64>) -> io::Result<PageManager> {
+        let config = {
+            let (lvl1_size, lvl2_size) = if let Some(lvl1_size) = lvl1_size {
+                // should be a multiple of page size and > 0
+                assert!(lvl1_size > 0);
+                assert_eq!(lvl1_size % Self::PAGE_SIZE, 0);
+                (lvl1_size, lvl1_size * 8)
+            } else {
+                (Self::LEVEL1_SIZE, Self::LEVEL2_SIZE)
+            };
+
+            PageManagerConfig {
+                file_dir,
+                lvl1_size,
+                lvl2_size,
+            }
+        };
+
+        let lvl1_num_pages = config.lvl1_size / Self::PAGE_SIZE;
+        let lvl2_num_pages = config.lvl2_size / Self::PAGE_SIZE;
+
         let mut lvl1_offset = 0;
-        let lvl1_pages = Vec::from_iter((0..Self::LEVEL1_NUM_PAGES).map(|_| {
+        let lvl1_pages = Vec::from_iter((0..lvl1_num_pages).map(|_| {
             let p = PageMeta {
-                id: NEXT_PAGE_ID.fetch_add(1, Ordering::SeqCst),
                 offset: lvl1_offset,
                 free_space: Self::PAGE_SIZE,
                 key_addr: BTreeMap::new(),
@@ -343,12 +352,11 @@ impl PageManager {
             lvl1_offset += Self::PAGE_SIZE;
             p
         }));
-        debug_assert_eq!(lvl1_pages.len() as u64, Self::LEVEL1_NUM_PAGES);
+        debug_assert_eq!(lvl1_pages.len() as u64, lvl1_num_pages);
 
         let mut lvl2_offset = 0;
-        let lvl2_pages = Vec::from_iter((0..Self::LEVEL2_NUM_PAGES).map(|_| {
+        let lvl2_pages = Vec::from_iter((0..lvl2_num_pages).map(|_| {
             let p = PageMeta {
-                id: NEXT_PAGE_ID.fetch_add(1, Ordering::SeqCst),
                 offset: lvl2_offset,
                 free_space: Self::PAGE_SIZE * 10,
                 key_addr: BTreeMap::new(),
@@ -356,22 +364,21 @@ impl PageManager {
             lvl2_offset += Self::PAGE_SIZE;
             p
         }));
-        debug_assert_eq!(lvl2_pages.len() as u64, Self::LEVEL2_NUM_PAGES);
+        debug_assert_eq!(lvl2_pages.len() as u64, lvl2_num_pages);
 
-        let lvl1_path = file_dir.join("simag.1.dat");
+        let lvl1_path = config.file_dir.join("simag.1.dat");
         let lvl1_data = Self::open_dat_file(&lvl1_path)?;
 
-        let lvl2_path = file_dir.join("simag.2.dat");
+        let lvl2_path = config.file_dir.join("simag.2.dat");
         let lvl2_data = Self::open_dat_file(&lvl2_path)?;
 
         Ok(PageManager {
-            id,
-            file_dir,
             lvl1_data,
             lvl2_data,
             lvl3_data: Vec::new(),
             levels_pages: [lvl1_pages, lvl2_pages, Vec::new()],
             current_page: [0; 3],
+            config,
         })
     }
 
@@ -418,7 +425,6 @@ impl PageManager {
 
         // lvl1 pages are full, merge to lvl 2
         self.compact(Table::Level1)?;
-
         Ok(())
     }
 
@@ -428,13 +434,13 @@ impl PageManager {
                 &mut self.levels_pages[0],
                 &mut self.lvl1_data,
                 Table::Level2,
-                Self::LEVEL1_SIZE / 4,
+                self.config.lvl1_size / 4,
             ),
             Table::Level2 => (
                 &mut self.levels_pages[1],
                 &mut self.lvl2_data,
                 Table::Level3,
-                Self::LEVEL2_SIZE / 4,
+                self.config.lvl2_size / 4,
             ),
             _ => unreachable!(),
         };
@@ -444,9 +450,13 @@ impl PageManager {
         let mut merged_data = BTreeMap::new();
         let mut size = 0u64;
         for page in merge_src_pages {
-            if page.free_space < (target_size - size) {
-                // empty all addresses
+            let expected_max_size = size + Self::PAGE_SIZE;
+            if expected_max_size < target_size && page.free_space < (target_size - size) {
+                // the whole page can be swapped, empty all addresses
                 let mut page_addresses = BTreeMap::new();
+                // FIXME: this could be a data loss since we haven't yet written anything to disc
+                // but are removing the info from disc locations, making them irrecoverable;
+                // fix when the key dict is persisted
                 std::mem::swap(&mut page_addresses, &mut page.key_addr);
                 for (addr, rec) in page_addresses {
                     size += rec.length;
@@ -454,6 +464,7 @@ impl PageManager {
                 }
                 page.free_space = Self::PAGE_SIZE;
             } else {
+                // only need to swap out partially some of the memory
                 let mut keys_to_rm = vec![];
                 for (k, v) in page.key_addr.iter() {
                     let new_len = size + v.length;
@@ -474,48 +485,8 @@ impl PageManager {
         }
 
         // read the data from disc to memory
-        struct LoadedRec {
-            type_id: BinType,
-            length: RecordLength,
-            page_num: usize,
-        }
-
-        let mut pages_buf =
-            vec![vec![0u8; Self::PAGE_SIZE as usize]; (target_size / Self::PAGE_SIZE) as usize];
-        let mut readed = vec![];
-        for (page_num, buf) in pages_buf.iter_mut().enumerate() {
-            let mut r_cursor = 0usize;
-            let mut copied = vec![];
-            for (addr, rec) in merged_data.iter() {
-                if (r_cursor + rec.length as usize) <= Self::PAGE_SIZE as usize {
-                    #[cfg(unix)]
-                    {
-                        merge_src_data.read_exact_at(
-                            &mut buf[r_cursor..(r_cursor + rec.length as usize)],
-                            *rec.addr,
-                        )?;
-                    }
-                    r_cursor += rec.length as usize;
-                    copied.push(*addr);
-                } else {
-                    break;
-                }
-            }
-            // remove entries already copied to buffer so they are not reprocessed
-            for addr in copied {
-                if let Some(rec) = merged_data.remove(&addr) {
-                    readed.push((
-                        addr,
-                        LoadedRec {
-                            type_id: rec.type_id,
-                            length: rec.length,
-                            page_num,
-                        },
-                    ));
-                }
-            }
-        }
-        assert!(merged_data.is_empty());
+        let mut pages_buf = vec![vec![0u8; Self::PAGE_SIZE as usize]; Self::required_pages(size)];
+        let cached = Self::fetch_data(&mut pages_buf, &mut merged_data, merge_src_data)?;
 
         match merge_target {
             Table::Level2 => {
@@ -523,20 +494,17 @@ impl PageManager {
                 let target_file = &mut self.lvl2_data;
                 let mut curr_page_buf = 0;
                 for page in target_pages.iter_mut() {
-                    if page.free_space > 0 && curr_page_buf + 1 < pages_buf.len() {
+                    if page.free_space > 0 && curr_page_buf + 1 <= pages_buf.len() {
                         let page_buf = &pages_buf[curr_page_buf];
                         #[cfg(unix)]
                         {
                             target_file.write_at(page_buf, page.offset)?;
                         }
-                        curr_page_buf += 1;
                         page.free_space = 0;
-                    } else {
-                        break;
-                    }
-                    let mut w_cursor = page.offset;
-                    for (addr, rec) in readed.iter() {
-                        if rec.page_num == curr_page_buf {
+                        let mut w_cursor = page.offset;
+                        for (addr, rec) in
+                            cached.iter().filter(|(_, r)| r.page_num == curr_page_buf)
+                        {
                             let rec = DiscRecordRef {
                                 type_id: rec.type_id,
                                 addr: DiscAddr(w_cursor),
@@ -545,6 +513,9 @@ impl PageManager {
                             w_cursor += rec.length;
                             page.key_addr.insert(*addr, rec);
                         }
+                        curr_page_buf += 1;
+                    } else {
+                        break;
                     }
                 }
                 if curr_page_buf + 1 < pages_buf.len() {
@@ -557,6 +528,65 @@ impl PageManager {
         }
 
         Ok(())
+    }
+
+    /// Read bytes from disk into the pages buffer from a given map of disc references and a src file.
+    fn fetch_data(
+        pages_buf: &mut Vec<Vec<u8>>,
+        src_refs: &mut BTreeMap<MemAddr, DiscRecordRef>,
+        src: &mut File,
+    ) -> io::Result<Vec<(MemAddr, CachedRec)>> {
+        let mut cached = vec![];
+        for (page_num, buf) in pages_buf.iter_mut().enumerate() {
+            let mut r_cursor = 0usize;
+            let mut copied = vec![];
+            for (addr, rec) in src_refs.iter() {
+                if (r_cursor + rec.length as usize) <= Self::PAGE_SIZE as usize {
+                    #[cfg(unix)]
+                    {
+                        src.read_exact_at(
+                            &mut buf[r_cursor..(r_cursor + rec.length as usize)],
+                            *rec.addr,
+                        )?;
+                    }
+                    r_cursor += rec.length as usize;
+                    copied.push(*addr);
+                } else {
+                    break;
+                }
+            }
+            // remove entries already copied to buffer so they are not reprocessed
+            for addr in copied {
+                if let Some(rec) = src_refs.remove(&addr) {
+                    cached.push((
+                        addr,
+                        CachedRec {
+                            type_id: rec.type_id,
+                            length: rec.length,
+                            page_num,
+                        },
+                    ));
+                }
+            }
+        }
+
+        debug_assert!(src_refs.is_empty());
+        Ok(cached)
+    }
+
+    /// Return the amount of pages needed to fit the given amount of bytes.
+    fn required_pages(target: u64) -> usize {
+        if Self::PAGE_SIZE > target {
+            return 1;
+        }
+        let z = Self::PAGE_SIZE / 2;
+        let n = target + z;
+        let pages_amt = (n - (n % Self::PAGE_SIZE)) / Self::PAGE_SIZE;
+        if Self::PAGE_SIZE * pages_amt > target {
+            pages_amt as usize
+        } else {
+            (pages_amt + 1) as usize
+        }
     }
 
     fn open_dat_file(path: &Path) -> io::Result<File> {
@@ -575,40 +605,47 @@ mod test {
     use arbitrary::Unstructured;
     use rand::Rng;
 
+    const LVL1_TEST_SIZE: u64 = 4096 * 4;
+
     fn raw_sample(iters: usize) -> Vec<u8> {
         let mut sample = Vec::new();
         for _ in 0..iters {
             let k: u64 = rand::random();
             sample.extend(&k.to_be_bytes());
-            sample.extend((0..128).map(|_| rand::random::<u8>()));
+            sample.extend((0..10).map(|_| rand::random::<u8>()));
         }
         sample
     }
 
-    #[test]
-    fn flush_data() -> io::Result<()> {
-        const NUM_REC: usize = 500_000;
-        let sample = raw_sample(NUM_REC);
-        let mut u = Unstructured::new(&sample);
-        let mut rep = ReprStorageManager::new(Uuid::nil(), None)?;
-
+    fn insert_rnd_data_in_storage(num_recs: usize, rep: &mut ReprStorageManager) -> io::Result<()> {
+        let sample = raw_sample(num_recs);
+        let mut unstr = Unstructured::new(&sample);
         let mut rng = rand::thread_rng();
-        for _ in 0..NUM_REC {
+        for _ in 0..num_recs {
             match rng.gen_range(0..3) {
                 0 => {
-                    let rec: BinGrFuncRecord = u.arbitrary().unwrap();
+                    let rec: BinGrFuncRecord = unstr.arbitrary().unwrap();
                     rep.insert_rec(rec)?;
                 }
                 1 => {
-                    let rec: BinGrMembRecord = u.arbitrary().unwrap();
+                    let rec: BinGrMembRecord = unstr.arbitrary().unwrap();
                     rep.insert_rec(rec)?;
                 }
                 _ => {
-                    let rec: BinLogSentRecord = u.arbitrary().unwrap();
+                    let rec: BinLogSentRecord = unstr.arbitrary().unwrap();
                     rep.insert_rec(rec)?;
                 }
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn flush_data() -> io::Result<()> {
+        const NUM_RECS: usize = 500_000;
+        let mut rep = ReprStorageManager::new(Uuid::nil(), None, None)?;
+        insert_rnd_data_in_storage(NUM_RECS, &mut rep)?;
+
         rep.flush()?;
         Ok(())
     }

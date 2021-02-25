@@ -32,7 +32,7 @@ version = "1.6"
 features = ["serde"]
 
 [dev-dependencies]
-arbitrary = { version = "0.4", features = ["derive"] }
+arbitrary = { version = "1", features = ["derive"] }
 criterion = "^0.3.2"
 rand = "0.8"
 
