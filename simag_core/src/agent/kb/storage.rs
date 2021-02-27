@@ -451,7 +451,7 @@ impl PageManager {
         let mut size = 0u64;
         for page in merge_src_pages {
             let expected_max_size = size + Self::PAGE_SIZE;
-            if expected_max_size < target_size && page.free_space < (target_size - size) {
+            if expected_max_size <= target_size && page.free_space < (target_size - size) {
                 // the whole page can be swapped, empty all addresses
                 let mut page_addresses = BTreeMap::new();
                 // FIXME: this could be a data loss since we haven't yet written anything to disc
@@ -460,7 +460,9 @@ impl PageManager {
                 std::mem::swap(&mut page_addresses, &mut page.key_addr);
                 for (addr, rec) in page_addresses {
                     size += rec.length;
-                    merged_data.insert(addr, rec);
+                    if let Some(prev_inserted) = merged_data.insert(addr, rec) {
+                        size -= prev_inserted.length;
+                    }
                 }
                 page.free_space = Self::PAGE_SIZE;
             } else {
@@ -477,16 +479,21 @@ impl PageManager {
                 // TODO: need to consolidate the lingering empty space in this page
                 for key in keys_to_rm {
                     if let Some(page) = page.key_addr.remove(&key) {
-                        merged_data.insert(key, page);
+                        if let Some(prev_inserted) = merged_data.insert(key, page) {
+                            size -= prev_inserted.length;
+                        }
                     }
                 }
                 break;
             }
         }
+        debug_assert!(target_size > size);
+        debug_assert!(merged_data.values().fold(0u64, |acc, v| { acc + v.length }) < target_size);
 
         // read the data from disc to memory
         let mut pages_buf = vec![vec![0u8; Self::PAGE_SIZE as usize]; Self::required_pages(size)];
-        let cached = Self::fetch_data(&mut pages_buf, &mut merged_data, merge_src_data)?;
+        debug_assert!(pages_buf.len() * pages_buf[0].len() == target_size as usize);
+        let cached = Self::fetch_data(&mut pages_buf, merged_data, merge_src_data)?;
 
         match merge_target {
             Table::Level2 => {
@@ -533,44 +540,46 @@ impl PageManager {
     /// Read bytes from disk into the pages buffer from a given map of disc references and a src file.
     fn fetch_data(
         pages_buf: &mut Vec<Vec<u8>>,
-        src_refs: &mut BTreeMap<MemAddr, DiscRecordRef>,
+        src_refs: BTreeMap<MemAddr, DiscRecordRef>,
         src: &mut File,
     ) -> io::Result<Vec<(MemAddr, CachedRec)>> {
-        let mut cached = vec![];
-        for (page_num, buf) in pages_buf.iter_mut().enumerate() {
-            let mut r_cursor = 0usize;
-            let mut copied = vec![];
-            for (addr, rec) in src_refs.iter() {
-                if (r_cursor + rec.length as usize) <= Self::PAGE_SIZE as usize {
-                    #[cfg(unix)]
-                    {
-                        src.read_exact_at(
-                            &mut buf[r_cursor..(r_cursor + rec.length as usize)],
-                            *rec.addr,
-                        )?;
-                    }
-                    r_cursor += rec.length as usize;
-                    copied.push(*addr);
-                } else {
-                    break;
+        let mut cached = Vec::with_capacity(src_refs.len());
+        let mut page_num = 0;
+        let mut r_cursor = 0usize;
+        for (addr, rec) in src_refs.into_iter() {
+            let page_buf = &mut pages_buf[page_num];
+            if (r_cursor + rec.length as usize) <= Self::PAGE_SIZE as usize {
+                // fill this page buffer
+                #[cfg(unix)]
+                {
+                    src.read_exact_at(
+                        &mut page_buf[r_cursor..(r_cursor + rec.length as usize)],
+                        *rec.addr,
+                    )?;
+                }
+                r_cursor += rec.length as usize;
+            // copied.push(*addr);
+            } else {
+                page_num += 1;
+                r_cursor = 0;
+                let page_buf = &mut pages_buf[page_num];
+                #[cfg(unix)]
+                {
+                    src.read_exact_at(
+                        &mut page_buf[r_cursor..(r_cursor + rec.length as usize)],
+                        *rec.addr,
+                    )?;
                 }
             }
-            // remove entries already copied to buffer so they are not reprocessed
-            for addr in copied {
-                if let Some(rec) = src_refs.remove(&addr) {
-                    cached.push((
-                        addr,
-                        CachedRec {
-                            type_id: rec.type_id,
-                            length: rec.length,
-                            page_num,
-                        },
-                    ));
-                }
-            }
+            cached.push((
+                addr,
+                CachedRec {
+                    type_id: rec.type_id,
+                    length: rec.length,
+                    page_num,
+                },
+            ));
         }
-
-        debug_assert!(src_refs.is_empty());
         Ok(cached)
     }
 
@@ -582,7 +591,7 @@ impl PageManager {
         let z = Self::PAGE_SIZE / 2;
         let n = target + z;
         let pages_amt = (n - (n % Self::PAGE_SIZE)) / Self::PAGE_SIZE;
-        if Self::PAGE_SIZE * pages_amt > target {
+        if Self::PAGE_SIZE * pages_amt >= target {
             pages_amt as usize
         } else {
             (pages_amt + 1) as usize
@@ -648,5 +657,15 @@ mod test {
 
         rep.flush()?;
         Ok(())
+    }
+
+    #[test]
+    fn expected_buf_size() {
+        assert_eq!(PageManager::required_pages(PageManager::PAGE_SIZE / 2), 1);
+        assert_eq!(PageManager::required_pages(PageManager::PAGE_SIZE), 1);
+        assert_eq!(
+            PageManager::required_pages((PageManager::PAGE_SIZE as f64 * 1.5).round() as u64),
+            2
+        );
     }
 }

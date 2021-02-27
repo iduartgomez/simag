@@ -9,19 +9,18 @@ persistence = ["serde", "bincode"]
 
 [dependencies]
 bincode = { version = "1.3", optional = true }
-# bitfield = { version = "0.13.2", optional = true }
 crossbeam = "0.8"
 dashmap = { version = "4.0" }
 env_logger = "0.8"
 float-cmp = "0.8"
-nom = { version = "6.0.1" }
+nom = "6.1"
 num_cpus = "1.13"
 log = "0.4"
-once_cell = "1.5"
+once_cell = "1.7"
 parking_lot = "0.11"
 rayon = "1.5"
 serde = { version = "1.0", optional = true, features = ["derive", "rc"] }
-uuid = { version = "0.8.2", features = ["v4"]}
+uuid = { version = "0.8", features = ["v4"]}
 
 [dependencies.chrono]
 version = "0.4"
