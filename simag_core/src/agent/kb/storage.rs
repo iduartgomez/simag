@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// In-memory address for a record.
-#[derive(PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash, Clone, Copy)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash, Clone, Copy, Debug)]
 #[cfg_attr(test, derive(Arbitrary))]
 pub(super) struct MemAddr(u64);
 
@@ -265,6 +265,7 @@ impl Record {
     }
 }
 
+#[derive(Clone)]
 struct DiscRecordRef {
     type_id: BinType,
     addr: DiscAddr,
@@ -445,16 +446,31 @@ impl PageManager {
             _ => unreachable!(),
         };
 
+        // merge the pages
+        let (merged_data, size) = Self::merge_pages(merge_src_pages, target_size);
+        // read the data from disc to memory
+        let mut pages_buf = vec![vec![0u8; Self::PAGE_SIZE as usize]; Self::required_pages(size)];
+        debug_assert!(pages_buf.len() * pages_buf[0].len() == target_size as usize);
+        let cached = Self::fetch_data(&mut pages_buf, merged_data, merge_src_data)?;
+        self.write_merged_data(merge_target, pages_buf, cached)
+    }
+
+    /// Merge a serie of pages targetting a max size for the merge.
+    /// Returns a map of the memory addresses of the objects being merged and their location on disc.
+    fn merge_pages(
+        src_pages: &mut Vec<PageMeta>,
+        target_size: u64,
+    ) -> (BTreeMap<MemAddr, DiscRecordRef>, u64) {
         // pages are sorted by insertion order, so don't need to do anything
         // just keep the last pointer per key
         let mut merged_data = BTreeMap::new();
         let mut size = 0u64;
-        for page in merge_src_pages {
+        for page in src_pages {
             let expected_max_size = size + Self::PAGE_SIZE;
             if expected_max_size <= target_size && page.free_space < (target_size - size) {
                 // the whole page can be swapped, empty all addresses
                 let mut page_addresses = BTreeMap::new();
-                // FIXME: this could be a data loss since we haven't yet written anything to disc
+                // FIXME: this could potentially be a data loss since we haven't yet written anything to disc
                 // but are removing the info from disc locations, making them irrecoverable;
                 // fix when the key dict is persisted
                 std::mem::swap(&mut page_addresses, &mut page.key_addr);
@@ -469,6 +485,9 @@ impl PageManager {
                 // only need to swap out partially some of the memory
                 let mut keys_to_rm = vec![];
                 for (k, v) in page.key_addr.iter() {
+                    if merged_data.contains_key(k) {
+                        continue;
+                    }
                     let new_len = size + v.length;
                     if new_len > target_size {
                         break;
@@ -484,57 +503,14 @@ impl PageManager {
                         }
                     }
                 }
-                break;
-            }
-        }
-        debug_assert!(target_size > size);
-        debug_assert!(merged_data.values().fold(0u64, |acc, v| { acc + v.length }) < target_size);
-
-        // read the data from disc to memory
-        let mut pages_buf = vec![vec![0u8; Self::PAGE_SIZE as usize]; Self::required_pages(size)];
-        debug_assert!(pages_buf.len() * pages_buf[0].len() == target_size as usize);
-        let cached = Self::fetch_data(&mut pages_buf, merged_data, merge_src_data)?;
-
-        match merge_target {
-            Table::Level2 => {
-                let target_pages = &mut self.levels_pages[1];
-                let target_file = &mut self.lvl2_data;
-                let mut curr_page_buf = 0;
-                for page in target_pages.iter_mut() {
-                    if page.free_space > 0 && curr_page_buf + 1 <= pages_buf.len() {
-                        let page_buf = &pages_buf[curr_page_buf];
-                        #[cfg(unix)]
-                        {
-                            target_file.write_at(page_buf, page.offset)?;
-                        }
-                        page.free_space = 0;
-                        let mut w_cursor = page.offset;
-                        for (addr, rec) in
-                            cached.iter().filter(|(_, r)| r.page_num == curr_page_buf)
-                        {
-                            let rec = DiscRecordRef {
-                                type_id: rec.type_id,
-                                addr: DiscAddr(w_cursor),
-                                length: rec.length,
-                            };
-                            w_cursor += rec.length;
-                            page.key_addr.insert(*addr, rec);
-                        }
-                        curr_page_buf += 1;
-                    } else {
-                        break;
-                    }
-                }
-                if curr_page_buf + 1 < pages_buf.len() {
-                    // no space left at lvl2, trigger a compaction from lvl2 to lvl3
-                    todo!()
+                if !(size < target_size) {
+                    break;
                 }
             }
-            Table::Level3 => {}
-            _ => unreachable!(),
         }
-
-        Ok(())
+        debug_assert!(size <= target_size);
+        debug_assert!(merged_data.values().fold(0u64, |acc, v| { acc + v.length }) <= target_size);
+        (merged_data, size)
     }
 
     /// Read bytes from disk into the pages buffer from a given map of disc references and a src file.
@@ -583,6 +559,54 @@ impl PageManager {
         Ok(cached)
     }
 
+    /// Writes merged data to the target layer.
+    fn write_merged_data(
+        &mut self,
+        merge_target: Table,
+        pages_buf: Vec<Vec<u8>>,
+        cached: Vec<(MemAddr, CachedRec)>,
+    ) -> io::Result<()> {
+        match merge_target {
+            Table::Level2 => {
+                let target_pages = &mut self.levels_pages[1];
+                let target_file = &mut self.lvl2_data;
+                let mut curr_page_buf = 0;
+                for page in target_pages.iter_mut() {
+                    if page.free_space > 0 && curr_page_buf + 1 <= pages_buf.len() {
+                        let page_buf = &pages_buf[curr_page_buf];
+                        #[cfg(unix)]
+                        {
+                            target_file.write_at(page_buf, page.offset)?;
+                        }
+                        page.free_space = 0;
+                        let mut w_cursor = page.offset;
+                        for (addr, rec) in
+                            cached.iter().filter(|(_, r)| r.page_num == curr_page_buf)
+                        {
+                            let rec = DiscRecordRef {
+                                type_id: rec.type_id,
+                                addr: DiscAddr(w_cursor),
+                                length: rec.length,
+                            };
+                            w_cursor += rec.length;
+                            page.key_addr.insert(*addr, rec);
+                        }
+                        curr_page_buf += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if curr_page_buf + 1 < pages_buf.len() {
+                    // no space left at lvl2, trigger a compaction from lvl2 to lvl3
+                    todo!()
+                }
+            }
+            Table::Level3 => {}
+            _ => unreachable!(),
+        }
+        Ok(())
+    }
+
     /// Return the amount of pages needed to fit the given amount of bytes.
     fn required_pages(target: u64) -> usize {
         if Self::PAGE_SIZE > target {
@@ -621,7 +645,7 @@ mod test {
         for _ in 0..iters {
             let k: u64 = rand::random();
             sample.extend(&k.to_be_bytes());
-            sample.extend((0..10).map(|_| rand::random::<u8>()));
+            sample.extend((0..16).map(|_| rand::random::<u8>()));
         }
         sample
     }
@@ -651,12 +675,54 @@ mod test {
 
     #[test]
     fn flush_data() -> io::Result<()> {
-        const NUM_RECS: usize = 500_000;
-        let mut rep = ReprStorageManager::new(Uuid::nil(), None, None)?;
+        const NUM_RECS: usize = 5_000;
+        let mut rep = ReprStorageManager::new(Uuid::nil(), None, Some(LVL1_TEST_SIZE))?;
         insert_rnd_data_in_storage(NUM_RECS, &mut rep)?;
 
         rep.flush()?;
         Ok(())
+    }
+
+    #[test]
+    fn merge_pages() {
+        let key_addr = BTreeMap::from_iter(vec![(
+            MemAddr(0),
+            DiscRecordRef {
+                type_id: BinType::GrMemb,
+                addr: DiscAddr(0),
+                length: 2048,
+            },
+        )]);
+        let mut key_addr2 = key_addr.clone();
+        key_addr2.insert(
+            MemAddr(4096),
+            DiscRecordRef {
+                type_id: BinType::GrMemb,
+                addr: DiscAddr(4096),
+                length: 2048,
+            },
+        );
+        let pages = &mut vec![
+            PageMeta {
+                offset: 0,
+                free_space: 0,
+                key_addr,
+            },
+            PageMeta {
+                offset: 4096,
+                free_space: 0,
+                key_addr: key_addr2,
+            },
+        ];
+
+        // should remove two different records, of 2048 size each
+        let (res, size) = PageManager::merge_pages(pages, 4096);
+        assert_eq!(res.len(), 2);
+        assert_eq!(
+            res.keys().collect::<Vec<_>>(),
+            vec![&MemAddr(0), &MemAddr(4096)]
+        );
+        assert_eq!(size, 4096);
     }
 
     #[test]
