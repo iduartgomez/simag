@@ -1,11 +1,13 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     convert::TryFrom,
     fs::{File, OpenOptions},
     io,
     iter::FromIterator,
+    marker::PhantomData,
     ops::Deref,
     path::{Path, PathBuf},
+    sync::atomic::{self, AtomicU64},
 };
 
 #[cfg(unix)]
@@ -19,15 +21,27 @@ use uuid::Uuid;
 /// In-memory address for a record.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash, Clone, Copy, Debug)]
 #[cfg_attr(test, derive(Arbitrary))]
-pub(super) struct MemAddr(u64);
+pub(super) struct MemAddr<T: MemAddrMapp>(u64, PhantomData<T>);
 
-impl From<u64> for MemAddr {
+pub(super) trait MemAddrMapp: Ord + PartialOrd + Eq + PartialEq + Clone {}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
+#[cfg_attr(test, derive(Arbitrary))]
+pub(super) struct NonMapped;
+impl MemAddrMapp for NonMapped {}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
+#[cfg_attr(test, derive(Arbitrary))]
+pub(super) struct Mapped;
+impl MemAddrMapp for Mapped {}
+
+impl From<u64> for MemAddr<NonMapped> {
     fn from(addr: u64) -> Self {
-        MemAddr(addr)
+        MemAddr(addr, PhantomData)
     }
 }
 
-impl Deref for MemAddr {
+impl<T: MemAddrMapp> Deref for MemAddr<T> {
     type Target = u64;
 
     fn deref(&self) -> &Self::Target {
@@ -69,9 +83,9 @@ pub(super) trait ToBinaryObject
 where
     Self: Sized,
 {
-    fn destruct(self) -> (MemAddr, Vec<u8>);
+    fn destruct(self) -> (MemAddr<NonMapped>, Vec<u8>);
     fn get_type() -> BinType;
-    fn build<T>(address: MemAddr, key: &str, data: &T) -> bincode::Result<Self>
+    fn build<T>(address: MemAddr<NonMapped>, key: &str, data: &T) -> bincode::Result<Self>
     where
         T: Serialize;
 }
@@ -82,14 +96,18 @@ macro_rules! binary_storage {
         #[cfg_attr(test, derive(Arbitrary))]
         pub(super) struct $bin {
             /// the current physical address, used to preserve relationships
-            address: MemAddr,
+            address: MemAddr<NonMapped>,
             /// the actual binary serialized content of the record:
             // [key_size: u64 as [u8], key as [u8], data as [u8]]
             record: Vec<u8>,
         }
 
         impl ToBinaryObject for $bin {
-            fn build<T: Serialize>(address: MemAddr, key: &str, data: &T) -> bincode::Result<Self> {
+            fn build<T: Serialize>(
+                address: MemAddr<NonMapped>,
+                key: &str,
+                data: &T,
+            ) -> bincode::Result<Self> {
                 // TODO: optimize this if possible to avoid copying unnecesarilly
                 let bin_key = bincode::serialize(key)?;
                 let mut record: Vec<u8> = (bin_key.len() as u64).to_le_bytes().to_vec();
@@ -99,7 +117,7 @@ macro_rules! binary_storage {
                 Ok($bin { address, record })
             }
 
-            fn destruct(self) -> (MemAddr, Vec<u8>) {
+            fn destruct(self) -> (MemAddr<NonMapped>, Vec<u8>) {
                 (self.address, self.record)
             }
 
@@ -114,6 +132,8 @@ binary_storage!(struct BinGrFuncRecord -> BinType::GrFunc);
 binary_storage!(struct BinGrMembRecord -> BinType::GrMemb);
 binary_storage!(struct BinLogSentRecord -> BinType::LogSent);
 
+static NEXT_MAPPED_MEM_ADDR: AtomicU64 = AtomicU64::new(0);
+
 /// A handle in memory of the on-disk storage for a given Representation.
 /// Allows for rebuilding of an agent from a binary blob as well as keeping the copy of data
 /// in the storage layer up to date. Each representation has it's own file for storing their
@@ -125,9 +145,13 @@ pub(super) struct ReprStorageManager {
     /// C0 in-memory tree, buffer for data waiting to be flushed to disk.
     /// This is only for record data, meaning records which hold a stable address in memory
     /// which is used as a key.
-    level0_map: BTreeMap<MemAddr, Record>,
+    level0_map: BTreeMap<MemAddr<Mapped>, Record>,
     buffer_size: u64,
     page_manager: PageManager,
+    /// Memory addresses are not stable over process executions, the reference stored on disc
+    /// is a map to the address on memory. This way references can be reconstructed over different
+    /// processes.
+    mem_addr_map: HashMap<MemAddr<NonMapped>, MemAddr<Mapped>>,
 }
 
 impl ReprStorageManager {
@@ -155,6 +179,7 @@ impl ReprStorageManager {
             level0_map: BTreeMap::new(),
             buffer_size: 0,
             page_manager: PageManager::new(file_dir, lvl1_size)?,
+            mem_addr_map: HashMap::new(),
         })
     }
 
@@ -166,14 +191,20 @@ impl ReprStorageManager {
         O: ToBinaryObject,
     {
         let (mem_addr, data) = rec.destruct();
-        let rec = Record::new(O::get_type(), mem_addr, data);
+        let mapped_addr = *self.mem_addr_map.entry(mem_addr).or_insert_with(|| {
+            MemAddr(
+                NEXT_MAPPED_MEM_ADDR.fetch_add(1, atomic::Ordering::SeqCst),
+                PhantomData,
+            )
+        });
+        let rec = Record::new(O::get_type(), mapped_addr, data);
         if self.buffer_size + rec.len() as u64 > PageManager::PAGE_SIZE {
             // should flush first
             self.flush()?;
             self.buffer_size = 0;
         }
         self.buffer_size += rec.len() as u64;
-        self.level0_map.insert(mem_addr, rec);
+        self.level0_map.insert(mapped_addr, rec);
         Ok(())
     }
 
@@ -213,7 +244,7 @@ impl TryFrom<&Path> for ReprStorageManager {
 /// A record prepared to be stored on disk.
 struct Record {
     type_id: BinType,
-    mem_addr: MemAddr,
+    mem_addr: MemAddr<Mapped>,
     data: Vec<u8>,
     /// computed lenth after encoding to bytes
     length: u64,
@@ -222,7 +253,7 @@ struct Record {
 impl Record {
     const HEADER_SIZE: usize = 17;
 
-    fn new(type_id: BinType, mem_addr: MemAddr, data: Vec<u8>) -> Self {
+    fn new(type_id: BinType, mem_addr: MemAddr<Mapped>, data: Vec<u8>) -> Self {
         let length = data.len() as u64 + Self::HEADER_SIZE as u64;
         Record {
             type_id,
@@ -254,7 +285,11 @@ impl Record {
     }
 
     #[inline(always)]
-    fn make_header(type_id: BinType, mem_addr: MemAddr, len: u64) -> [u8; Self::HEADER_SIZE] {
+    fn make_header(
+        type_id: BinType,
+        mem_addr: MemAddr<Mapped>,
+        len: u64,
+    ) -> [u8; Self::HEADER_SIZE] {
         let mut header = [0u8; 17];
         let addr_part = &mut header[0..8];
         addr_part.copy_from_slice((&*mem_addr).to_le_bytes().as_ref());
@@ -280,7 +315,7 @@ struct PageMeta {
     /// the shared memory address pointer and the value the underlying data.
     /// On pages we append the record to the log, and later on we can merge the data
     /// using the address as a key, fetching from the registered file disk address.
-    key_addr: BTreeMap<MemAddr, DiscRecordRef>,
+    key_addr: BTreeMap<MemAddr<Mapped>, DiscRecordRef>,
 }
 
 /// Manages pages and file synchronization with memory data for log record-like data.
@@ -386,7 +421,7 @@ impl PageManager {
     fn spill_to_disc(
         &mut self,
         mut buffer: Vec<u8>,
-        table_map: BTreeMap<MemAddr, DiscRecordRef>,
+        table_map: BTreeMap<MemAddr<Mapped>, DiscRecordRef>,
     ) -> io::Result<()> {
         let lvl1_pages = &mut self.levels_pages[0];
         let mut current_lvl1_page = self.current_page[0];
@@ -460,7 +495,7 @@ impl PageManager {
     fn merge_pages(
         src_pages: &mut Vec<PageMeta>,
         target_size: u64,
-    ) -> (BTreeMap<MemAddr, DiscRecordRef>, u64) {
+    ) -> (BTreeMap<MemAddr<Mapped>, DiscRecordRef>, u64) {
         // pages are sorted by insertion order, so don't need to do anything
         // just keep the last pointer per key
         let mut merged_data = BTreeMap::new();
@@ -516,9 +551,9 @@ impl PageManager {
     /// Read bytes from disk into the pages buffer from a given map of disc references and a src file.
     fn fetch_data(
         pages_buf: &mut Vec<Vec<u8>>,
-        src_refs: BTreeMap<MemAddr, DiscRecordRef>,
+        src_refs: BTreeMap<MemAddr<Mapped>, DiscRecordRef>,
         src: &mut File,
-    ) -> io::Result<Vec<(MemAddr, CachedRec)>> {
+    ) -> io::Result<Vec<(MemAddr<Mapped>, CachedRec)>> {
         let mut cached = Vec::with_capacity(src_refs.len());
         let mut page_num = 0;
         let mut r_cursor = 0usize;
@@ -564,7 +599,7 @@ impl PageManager {
         &mut self,
         merge_target: Table,
         pages_buf: Vec<Vec<u8>>,
-        cached: Vec<(MemAddr, CachedRec)>,
+        cached: Vec<(MemAddr<Mapped>, CachedRec)>,
     ) -> io::Result<()> {
         match merge_target {
             Table::Level2 => {
@@ -686,7 +721,7 @@ mod test {
     #[test]
     fn merge_pages() {
         let key_addr = BTreeMap::from_iter(vec![(
-            MemAddr(0),
+            MemAddr(0, PhantomData),
             DiscRecordRef {
                 type_id: BinType::GrMemb,
                 addr: DiscAddr(0),
@@ -695,7 +730,7 @@ mod test {
         )]);
         let mut key_addr2 = key_addr.clone();
         key_addr2.insert(
-            MemAddr(4096),
+            MemAddr(4096, PhantomData),
             DiscRecordRef {
                 type_id: BinType::GrMemb,
                 addr: DiscAddr(4096),
@@ -720,7 +755,7 @@ mod test {
         assert_eq!(res.len(), 2);
         assert_eq!(
             res.keys().collect::<Vec<_>>(),
-            vec![&MemAddr(0), &MemAddr(4096)]
+            vec![&MemAddr(0, PhantomData), &MemAddr(4096, PhantomData)]
         );
         assert_eq!(size, 4096);
     }

@@ -337,6 +337,7 @@ impl GroundedMemb {
         Self::compare_two_grounded_eq(val_lhs, val_rhs, op_lhs, op_rhs)
     }
 
+    // TODO: change for an Arbitrary impl
     #[cfg(test)]
     pub fn gen_mock() -> Self {
         GroundedMemb {
