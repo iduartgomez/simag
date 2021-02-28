@@ -377,7 +377,7 @@ impl Entity {
 mod serialization {
     use super::*;
     use crate::agent::kb::storage::{
-        BinGrFuncRecord, BinGrMembRecord, BinLogSentRecord, ToBinaryObject,
+        BinGrFuncRecord, BinGrMembRecord, BinLogSentRecord, BinMoveRecord, ToBinaryObject,
     };
     use bincode::Result;
     use std::ops::Deref;
@@ -387,7 +387,7 @@ mod serialization {
         pub classes: Vec<BinGrMembRecord>,
         pub relations: Vec<Vec<BinGrFuncRecord>>,
         beliefs: Vec<Vec<BinLogSentRecord>>,
-        move_beliefs: Vec<BinLogSentRecord>,
+        move_beliefs: Vec<BinMoveRecord>,
         location: BmsWrapper<RecordHistory>,
     }
 
@@ -434,7 +434,7 @@ mod serialization {
             lock.iter()
                 .map(|s| {
                     let address = Arc::as_ptr(s) as u64;
-                    BinLogSentRecord::build(address.into(), "", s.deref())
+                    BinMoveRecord::build(address.into(), "", s.deref())
                 })
                 .collect()
         };

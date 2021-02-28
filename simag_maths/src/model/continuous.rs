@@ -67,7 +67,7 @@ pub trait ContVar: Variable {
     fn push_observation(&mut self, obs: Self::Event);
 
     /// Conversion of a double float to the associated Event type.
-    fn float_into_event(f64) -> Self::Event;
+    fn float_into_event(float: f64) -> Self::Event;
 
     /// Get an obsevation value from the observations stack. Panics if it out of bound.
     fn get_obs_unchecked(&self, pos: usize) -> Self::Event;

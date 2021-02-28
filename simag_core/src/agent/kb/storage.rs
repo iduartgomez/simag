@@ -77,6 +77,7 @@ pub(super) enum BinType {
     LogSent = 0,
     GrMemb = 1,
     GrFunc = 2,
+    Movement = 3,
 }
 
 pub(super) trait ToBinaryObject
@@ -131,6 +132,7 @@ macro_rules! binary_storage {
 binary_storage!(struct BinGrFuncRecord -> BinType::GrFunc);
 binary_storage!(struct BinGrMembRecord -> BinType::GrMemb);
 binary_storage!(struct BinLogSentRecord -> BinType::LogSent);
+binary_storage!(struct BinMoveRecord -> BinType::Movement);
 
 static NEXT_MAPPED_MEM_ADDR: AtomicU64 = AtomicU64::new(0);
 

@@ -30,7 +30,7 @@ use crate::agent::lang::{
 };
 
 #[cfg(feature = "persistence")]
-use super::storage::ReprStorageManager;
+use super::{entity::EntityMetadata, storage::ReprStorageManager};
 #[cfg(feature = "persistence")]
 use std::sync::atomic::Ordering;
 
@@ -1045,24 +1045,53 @@ struct ReprSharedData {
 impl ReprSharedData {
     // TODO: this should be optimized and is a first naive implementation by:
     // 1. checking if state has indeed changed since last persistence first
-    // 2. perform incremental persistence over different time chunks to not starve
-    //    the main thread
+    // 2. perform incremental persistence over different time chunks to not starve the main thread
     #[cfg(feature = "persistence")]
     fn persist(&mut self) -> bincode::Result<()> {
         if self.config.persist.load(Ordering::SeqCst) {
             let entities: Result<Vec<_>, _> = self
                 .entities
-                .iter_mut()
+                .iter()
                 .map(|entity| entity.persist())
                 .collect();
             for mut ent in entities? {
-                ent.classes.drain(..).fold(Ok(()), |res, cls| match res {
-                    Err(err) => Err(err),
-                    Ok(()) => self.storage_layer.insert_rec(cls),
+                let mut metadata = EntityMetadata::new(&ent);
+                ent.classes.drain(..).fold(Ok(()), |res, bin| {
+                    self.add_to_storage(res, bin, &mut metadata)
                 })?;
+                ent.relations.drain(..).flatten().fold(Ok(()), |res, bin| {
+                    self.add_to_storage(res, bin, &mut metadata)
+                })?;
+                ent.beliefs.drain(..).flatten().fold(Ok(()), |res, bin| {
+                    self.add_to_storage(res, bin, &mut metadata)
+                })?;
+                ent.move_beliefs.drain(..).fold(Ok(()), |res, bin| {
+                    self.add_to_storage(res, bin, &mut metadata)
+                })?;
+                self.storage_layer.upsert_metada(metadata);
             }
         }
         Ok(())
+    }
+
+    #[cfg(feature = "persistence")]
+    fn add_to_storage<T>(
+        &mut self,
+        res: std::io::Result<()>,
+        bin: T,
+        metadata: &mut EntityMetadata,
+    ) -> std::io::Result<()>
+    where
+        T: super::storage::ToBinaryObject,
+    {
+        match res {
+            Err(err) => Err(err),
+            Ok(()) => {
+                let addr = self.storage_layer.insert_rec(bin)?;
+                metadata.stored_data.insert(addr);
+                Ok(())
+            }
+        }
     }
 }
 
