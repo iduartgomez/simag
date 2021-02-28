@@ -15,6 +15,9 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+#[cfg(feature = "persistence")]
+pub(super) use serialization::EntityMetadata;
+
 /// An entity is a singleton, the unique member of it's own class.
 ///
 /// Represents an object which can pertain to multiple classes or sets.
@@ -61,12 +64,12 @@ impl Entity {
     pub(in crate::agent::kb) fn new(name: String, svc_queue: Sender<BackgroundTask>) -> Entity {
         Entity {
             name,
+            location: BmsWrapper::<RecordHistory>::new(),
+            move_beliefs: RwLock::new(Vec::new()),
             classes: DashMap::new(),
             relations: DashMap::new(),
             beliefs: DashMap::new(),
             svc_queue,
-            move_beliefs: RwLock::new(Vec::new()),
-            location: BmsWrapper::<RecordHistory>::new(),
         }
     }
 
@@ -377,18 +380,44 @@ impl Entity {
 mod serialization {
     use super::*;
     use crate::agent::kb::storage::{
-        BinGrFuncRecord, BinGrMembRecord, BinLogSentRecord, BinMoveRecord, ToBinaryObject,
+        BinGrFuncRecord, BinGrMembRecord, BinLogSentRecord, BinMoveRecord, Mapped, MemAddr,
+        Metadata, NonMapped, ToBinaryObject,
     };
     use bincode::Result;
-    use std::ops::Deref;
+    use std::{collections::HashSet, ops::Deref};
+
+    pub(in crate::agent::kb) struct EntityMetadata {
+        key: MemAddr<NonMapped>,
+        pub stored_data: HashSet<MemAddr<Mapped>>,
+    }
+
+    impl EntityMetadata {
+        pub fn new(blob: &EntityBlob) -> Self {
+            EntityMetadata {
+                key: MemAddr::from(blob.name.as_ptr() as u64),
+                stored_data: HashSet::new(),
+            }
+        }
+    }
+
+    impl Metadata for EntityMetadata {
+        fn metadata_key(&self) -> MemAddr<NonMapped> {
+            self.key
+        }
+
+        fn mapped_objects(&self) -> Box<dyn Iterator<Item = MemAddr<Mapped>> + '_> {
+            Box::new(self.stored_data.iter().copied())
+        }
+    }
 
     /// Deserializable blob of data representing all the information to construct an Entity.
     pub(in crate::agent::kb) struct EntityBlob {
+        pub name: String,
+        pub location: BmsWrapper<RecordHistory>,
         pub classes: Vec<BinGrMembRecord>,
         pub relations: Vec<Vec<BinGrFuncRecord>>,
-        beliefs: Vec<Vec<BinLogSentRecord>>,
-        move_beliefs: Vec<BinMoveRecord>,
-        location: BmsWrapper<RecordHistory>,
+        pub beliefs: Vec<Vec<BinLogSentRecord>>,
+        pub move_beliefs: Vec<BinMoveRecord>,
     }
 
     pub(super) fn serialize(entity: &Entity) -> Result<EntityBlob> {
@@ -440,11 +469,12 @@ mod serialization {
         };
 
         let blob = EntityBlob {
+            name: entity.name.clone(),
+            location: entity.location.clone(),
             classes: classes?,
             relations: relations?,
             beliefs: beliefs?,
             move_beliefs: move_beliefs?,
-            location: entity.location.clone(),
         };
 
         Ok(blob)

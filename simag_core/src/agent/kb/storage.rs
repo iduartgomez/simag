@@ -2,6 +2,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     convert::TryFrom,
     fs::{File, OpenOptions},
+    hash::Hash,
     io,
     iter::FromIterator,
     marker::PhantomData,
@@ -18,19 +19,23 @@ use arbitrary::Arbitrary;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[path = "./disc_btree.rs"]
+mod index;
+use index::*;
+
 /// In-memory address for a record.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash, Clone, Copy, Debug)]
 #[cfg_attr(test, derive(Arbitrary))]
 pub(super) struct MemAddr<T: MemAddrMapp>(u64, PhantomData<T>);
 
-pub(super) trait MemAddrMapp: Ord + PartialOrd + Eq + PartialEq + Clone {}
+pub(super) trait MemAddrMapp: Ord + PartialOrd + Eq + PartialEq + Clone + Hash {}
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
 #[cfg_attr(test, derive(Arbitrary))]
 pub(super) struct NonMapped;
 impl MemAddrMapp for NonMapped {}
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
 #[cfg_attr(test, derive(Arbitrary))]
 pub(super) struct Mapped;
 impl MemAddrMapp for Mapped {}
@@ -70,7 +75,7 @@ impl Deref for DiscAddr {
 /// The amount of data to be fetched from a given position.
 type RecordLength = u64;
 
-/// Type of the record being stored, used to deserialize the data later.
+/// Type of the record being stored, used to deserialize the data on a later time.
 #[repr(u8)]
 #[derive(Clone, Copy)]
 pub(super) enum BinType {
@@ -142,18 +147,20 @@ static NEXT_MAPPED_MEM_ADDR: AtomicU64 = AtomicU64::new(0);
 /// own objects.
 ///
 /// Accurately rebuilds any shared objects, maintaining the underlying memory relationship
-/// and shared memory space.
+/// and shared memory space. The data inserted must be "addressable" on-memory and maintain
+/// an static address for the duration of the program.
 pub(super) struct ReprStorageManager {
     /// C0 in-memory tree, buffer for data waiting to be flushed to disk.
     /// This is only for record data, meaning records which hold a stable address in memory
     /// which is used as a key.
-    level0_map: BTreeMap<MemAddr<Mapped>, Record>,
+    c0: BTreeMap<MemAddr<Mapped>, Record>,
     buffer_size: u64,
     page_manager: PageManager,
     /// Memory addresses are not stable over process executions, the reference stored on disc
     /// is a map to the address on memory. This way references can be reconstructed over different
     /// processes.
     mem_addr_map: HashMap<MemAddr<NonMapped>, MemAddr<Mapped>>,
+    idx: Index,
 }
 
 impl ReprStorageManager {
@@ -178,17 +185,18 @@ impl ReprStorageManager {
         };
 
         Ok(ReprStorageManager {
-            level0_map: BTreeMap::new(),
+            c0: BTreeMap::new(),
             buffer_size: 0,
             page_manager: PageManager::new(file_dir, lvl1_size)?,
             mem_addr_map: HashMap::new(),
+            idx: Index::new(),
         })
     }
 
     /// Inserts a new record, if it exists the new record will be updated.
     ///
     /// Internally this does not flush to disk, but only stores the data in the record buffer.
-    pub fn insert_rec<O>(&mut self, rec: O) -> io::Result<()>
+    pub fn insert_rec<O>(&mut self, rec: O) -> io::Result<MemAddr<Mapped>>
     where
         O: ToBinaryObject,
     {
@@ -206,13 +214,13 @@ impl ReprStorageManager {
             self.buffer_size = 0;
         }
         self.buffer_size += rec.len() as u64;
-        self.level0_map.insert(mapped_addr, rec);
-        Ok(())
+        self.c0.insert(mapped_addr, rec);
+        Ok(mapped_addr)
     }
 
     pub fn flush(&mut self) -> io::Result<()> {
         let mut to_flush = BTreeMap::new();
-        std::mem::swap(&mut to_flush, &mut self.level0_map);
+        std::mem::swap(&mut to_flush, &mut self.c0);
         let mut buffer = Vec::with_capacity(PageManager::PAGE_SIZE as usize);
         let mut table_data = BTreeMap::new();
         let mut addr = 0u64;
@@ -220,18 +228,32 @@ impl ReprStorageManager {
             let len = rec.len() as u64;
             let type_id = rec.type_id();
             rec.append_to_buf(&mut buffer);
-            table_data.insert(
-                mem_addr,
-                DiscRecordRef {
-                    type_id,
-                    addr: DiscAddr::from(addr),
-                    length: len,
-                },
-            );
+            let dref = DiscRecordRef {
+                type_id,
+                addr: DiscAddr::from(addr),
+                length: len,
+            };
+            self.idx.insert(mem_addr, dref.clone());
+            table_data.insert(mem_addr, dref);
             addr += len;
         }
         self.page_manager.spill_to_disc(buffer, table_data)
     }
+
+    pub fn upsert_metada<M>(&mut self, metadata: M)
+    where
+        M: Metadata,
+    {
+        let key = metadata.metadata_key();
+        for mem_addr in metadata.mapped_objects() {
+            todo!()
+        }
+    }
+}
+
+pub(super) trait Metadata {
+    fn metadata_key(&self) -> MemAddr<NonMapped>;
+    fn mapped_objects(&self) -> Box<dyn Iterator<Item = MemAddr<Mapped>> + '_>;
 }
 
 impl TryFrom<&Path> for ReprStorageManager {
@@ -309,7 +331,7 @@ struct DiscRecordRef {
     length: RecordLength,
 }
 
-struct PageMeta {
+struct Page {
     offset: u64,
     /// Current free space of page.
     free_space: u64,
@@ -322,24 +344,24 @@ struct PageMeta {
 
 /// Manages pages and file synchronization with memory data for log record-like data.
 struct PageManager {
-    lvl1_data: File,
-    lvl2_data: File,
-    lvl3_data: Vec<File>,
-    levels_pages: [Vec<PageMeta>; 3],
+    c1_data: File,
+    c2_data: File,
+    c3_data: Vec<File>,
+    levels_pages: [Vec<Page>; 3],
     current_page: [usize; 3],
     config: PageManagerConfig,
 }
 
 struct PageManagerConfig {
     file_dir: PathBuf,
-    lvl1_size: u64,
-    lvl2_size: u64,
+    c1_size: u64,
+    c2_size: u64,
 }
 
 enum Table {
-    Level1,
-    Level2,
-    Level3,
+    C1,
+    C2,
+    C3,
 }
 
 struct CachedRec {
@@ -353,68 +375,68 @@ impl PageManager {
     /// All the pages must be then a multiple of this so they are written to block effitiently.
     const PAGE_SIZE: u64 = 1024 * 4;
 
-    /// The LEVEL0 tree is maintained in-memory.
+    /// The C0 tree is maintained in-memory.
     /// Max size for all the pages
-    const LEVEL1_SIZE: u64 = 1024 * 1024 * 8; // 8MB
-    const LEVEL2_SIZE: u64 = Self::LEVEL1_SIZE * 8; // 64 MB
-    const LEVEL3_MAX_FILE_SIZE: u64 = Self::LEVEL2_SIZE * 8;
+    const C1_SIZE: u64 = 1024 * 1024 * 8; // 8MB
+    const C2_SIZE: u64 = Self::C1_SIZE * 8; // 64 MB
+    const C3_MAX_FILE_SIZE: u64 = Self::C2_SIZE * 8;
 
-    fn new(file_dir: PathBuf, lvl1_size: Option<u64>) -> io::Result<PageManager> {
+    fn new(file_dir: PathBuf, c1_size: Option<u64>) -> io::Result<PageManager> {
         let config = {
-            let (lvl1_size, lvl2_size) = if let Some(lvl1_size) = lvl1_size {
+            let (c1_size, c2_size) = if let Some(c1_size) = c1_size {
                 // should be a multiple of page size and > 0
-                assert!(lvl1_size > 0);
-                assert_eq!(lvl1_size % Self::PAGE_SIZE, 0);
-                (lvl1_size, lvl1_size * 8)
+                assert!(c1_size > 0);
+                assert_eq!(c1_size % Self::PAGE_SIZE, 0);
+                (c1_size, c1_size * 8)
             } else {
-                (Self::LEVEL1_SIZE, Self::LEVEL2_SIZE)
+                (Self::C1_SIZE, Self::C2_SIZE)
             };
 
             PageManagerConfig {
                 file_dir,
-                lvl1_size,
-                lvl2_size,
+                c1_size,
+                c2_size,
             }
         };
 
-        let lvl1_num_pages = config.lvl1_size / Self::PAGE_SIZE;
-        let lvl2_num_pages = config.lvl2_size / Self::PAGE_SIZE;
+        let c1_num_pages = config.c1_size / Self::PAGE_SIZE;
+        let c2_num_pages = config.c2_size / Self::PAGE_SIZE;
 
-        let mut lvl1_offset = 0;
-        let lvl1_pages = Vec::from_iter((0..lvl1_num_pages).map(|_| {
-            let p = PageMeta {
-                offset: lvl1_offset,
+        let mut c1_offset = 0;
+        let c1_pages = Vec::from_iter((0..c1_num_pages).map(|_| {
+            let p = Page {
+                offset: c1_offset,
                 free_space: Self::PAGE_SIZE,
                 key_addr: BTreeMap::new(),
             };
-            lvl1_offset += Self::PAGE_SIZE;
+            c1_offset += Self::PAGE_SIZE;
             p
         }));
-        debug_assert_eq!(lvl1_pages.len() as u64, lvl1_num_pages);
+        debug_assert_eq!(c1_pages.len() as u64, c1_num_pages);
 
-        let mut lvl2_offset = 0;
-        let lvl2_pages = Vec::from_iter((0..lvl2_num_pages).map(|_| {
-            let p = PageMeta {
-                offset: lvl2_offset,
+        let mut c2_offset = 0;
+        let c2_pages = Vec::from_iter((0..c2_num_pages).map(|_| {
+            let p = Page {
+                offset: c2_offset,
                 free_space: Self::PAGE_SIZE * 10,
                 key_addr: BTreeMap::new(),
             };
-            lvl2_offset += Self::PAGE_SIZE;
+            c2_offset += Self::PAGE_SIZE;
             p
         }));
-        debug_assert_eq!(lvl2_pages.len() as u64, lvl2_num_pages);
+        debug_assert_eq!(c2_pages.len() as u64, c2_num_pages);
 
-        let lvl1_path = config.file_dir.join("simag.1.dat");
-        let lvl1_data = Self::open_dat_file(&lvl1_path)?;
+        let c1_path = config.file_dir.join("simag.1.dat");
+        let c1_data = Self::open_dat_file(&c1_path)?;
 
-        let lvl2_path = config.file_dir.join("simag.2.dat");
-        let lvl2_data = Self::open_dat_file(&lvl2_path)?;
+        let c2_path = config.file_dir.join("simag.2.dat");
+        let c2_data = Self::open_dat_file(&c2_path)?;
 
         Ok(PageManager {
-            lvl1_data,
-            lvl2_data,
-            lvl3_data: Vec::new(),
-            levels_pages: [lvl1_pages, lvl2_pages, Vec::new()],
+            c1_data,
+            c2_data,
+            c3_data: Vec::new(),
+            levels_pages: [c1_pages, c2_pages, Vec::new()],
             current_page: [0; 3],
             config,
         })
@@ -425,60 +447,60 @@ impl PageManager {
         mut buffer: Vec<u8>,
         table_map: BTreeMap<MemAddr<Mapped>, DiscRecordRef>,
     ) -> io::Result<()> {
-        let lvl1_pages = &mut self.levels_pages[0];
-        let mut current_lvl1_page = self.current_page[0];
-        let mut fits_in_lvl1 = true;
-        while lvl1_pages[current_lvl1_page].free_space < buffer.len() as u64 {
-            if current_lvl1_page + 1 < lvl1_pages.len() {
-                current_lvl1_page += 1;
+        let c1_size = self.levels_pages[0].len();
+        // let lvl1_pages = &mut self.levels_pages[0];
+        let mut current_c1_page = self.current_page[0];
+        let mut loop_guard = 0;
+        while self.levels_pages[0][current_c1_page].free_space < buffer.len() as u64 {
+            if loop_guard > (c1_size + (c1_size / 2)) {
+                unreachable!("something went wrong and pages are not being compacted properly");
+            }
+            loop_guard += 1;
+            if current_c1_page + 1 < c1_size {
+                current_c1_page += 1;
             } else {
-                fits_in_lvl1 = false;
-                break;
+                // lvl1 pages are full, merge to lvl 2
+                self.compact(Table::C1)?;
+                current_c1_page = 0;
             }
         }
+        self.current_page[0] = current_c1_page;
 
-        if fits_in_lvl1 {
-            let active_lvl1_page = &mut self.levels_pages[0][current_lvl1_page];
-            let buf_len = buffer.len() as u64;
-            if buf_len < active_lvl1_page.free_space {
-                // Fill with zeros the remaining until the page is full.
-                let remainder = active_lvl1_page.free_space - buf_len;
-                let remaining = vec![0; remainder as usize];
-                buffer.extend(remaining);
-            }
-
-            let offset = active_lvl1_page.offset + (Self::PAGE_SIZE - active_lvl1_page.free_space);
-            #[cfg(unix)]
-            {
-                self.lvl1_data.write_at(&buffer, offset)?;
-            }
-
-            for (addr, rec) in table_map {
-                active_lvl1_page.key_addr.insert(addr, rec);
-            }
-            active_lvl1_page.free_space -= buf_len;
-
-            return Ok(());
+        let active_lvl1_page = &mut self.levels_pages[0][current_c1_page];
+        let buf_len = buffer.len() as u64;
+        if buf_len < active_lvl1_page.free_space {
+            // Fill with zeros the remaining until the page is full.
+            let remainder = active_lvl1_page.free_space - buf_len;
+            let remaining = vec![0; remainder as usize];
+            buffer.extend(remaining);
         }
 
-        // lvl1 pages are full, merge to lvl 2
-        self.compact(Table::Level1)?;
+        let offset = active_lvl1_page.offset + (Self::PAGE_SIZE - active_lvl1_page.free_space);
+        #[cfg(unix)]
+        {
+            self.c1_data.write_at(&buffer, offset)?;
+        }
+
+        for (addr, rec) in table_map {
+            active_lvl1_page.key_addr.insert(addr, rec);
+        }
+        active_lvl1_page.free_space = 0;
         Ok(())
     }
 
     fn compact(&mut self, lvl: Table) -> io::Result<()> {
         let (merge_src_pages, merge_src_data, merge_target, target_size) = match lvl {
-            Table::Level1 => (
+            Table::C1 => (
                 &mut self.levels_pages[0],
-                &mut self.lvl1_data,
-                Table::Level2,
-                self.config.lvl1_size / 4,
+                &mut self.c1_data,
+                Table::C2,
+                self.config.c1_size / 4,
             ),
-            Table::Level2 => (
+            Table::C2 => (
                 &mut self.levels_pages[1],
-                &mut self.lvl2_data,
-                Table::Level3,
-                self.config.lvl2_size / 4,
+                &mut self.c2_data,
+                Table::C3,
+                self.config.c2_size / 4,
             ),
             _ => unreachable!(),
         };
@@ -495,7 +517,7 @@ impl PageManager {
     /// Merge a serie of pages targetting a max size for the merge.
     /// Returns a map of the memory addresses of the objects being merged and their location on disc.
     fn merge_pages(
-        src_pages: &mut Vec<PageMeta>,
+        src_pages: &mut Vec<Page>,
         target_size: u64,
     ) -> (BTreeMap<MemAddr<Mapped>, DiscRecordRef>, u64) {
         // pages are sorted by insertion order, so don't need to do anything
@@ -571,7 +593,6 @@ impl PageManager {
                     )?;
                 }
                 r_cursor += rec.length as usize;
-            // copied.push(*addr);
             } else {
                 page_num += 1;
                 r_cursor = 0;
@@ -604,9 +625,9 @@ impl PageManager {
         cached: Vec<(MemAddr<Mapped>, CachedRec)>,
     ) -> io::Result<()> {
         match merge_target {
-            Table::Level2 => {
+            Table::C2 => {
                 let target_pages = &mut self.levels_pages[1];
-                let target_file = &mut self.lvl2_data;
+                let target_file = &mut self.c2_data;
                 let mut curr_page_buf = 0;
                 for page in target_pages.iter_mut() {
                     if page.free_space > 0 && curr_page_buf + 1 <= pages_buf.len() {
@@ -638,7 +659,7 @@ impl PageManager {
                     todo!()
                 }
             }
-            Table::Level3 => {}
+            Table::C3 => {}
             _ => unreachable!(),
         }
         Ok(())
@@ -740,12 +761,12 @@ mod test {
             },
         );
         let pages = &mut vec![
-            PageMeta {
+            Page {
                 offset: 0,
                 free_space: 0,
                 key_addr,
             },
-            PageMeta {
+            Page {
                 offset: 4096,
                 free_space: 0,
                 key_addr: key_addr2,
