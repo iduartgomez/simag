@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::{collections::HashMap, pin::Pin};
 
 #[cfg(feature = "persistence")]
-use crate::agent::storage;
+use crate::storage;
 #[cfg(feature = "persistence")]
 use serde::{Deserialize, Serialize};
 

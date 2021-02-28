@@ -5,13 +5,11 @@
 
 #[macro_use]
 extern crate nom;
-extern crate chrono;
-extern crate float_cmp;
-extern crate num_cpus;
-extern crate rayon;
 
 mod agent;
 mod static_var_map;
+#[cfg(feature = "persistence")]
+mod storage;
 
 pub use self::agent::{Agent, Answer, QueryErr};
 

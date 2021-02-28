@@ -14,7 +14,7 @@ use parking_lot::RwLock;
 use std::{pin::Pin, str};
 
 #[cfg(feature = "persistence")]
-use crate::agent::storage;
+use crate::{agent::storage::*, storage};
 #[cfg(feature = "persistence")]
 use serde::{Deserialize, Serialize};
 
@@ -40,8 +40,8 @@ pub(in crate::agent) struct GroundedMemb {
     #[cfg_attr(
         feature = "persistence",
         serde(
-            serialize_with = "storage::ser_optional_bms",
-            deserialize_with = "storage::deser_optional_bms"
+            serialize_with = "ser_optional_bms",
+            deserialize_with = "deser_optional_bms"
         )
     )]
     pub bms: Option<Pin<Box<BmsWrapper<RecordHistory>>>>,

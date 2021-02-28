@@ -2,7 +2,7 @@
 use std::os::unix::prelude::FileExt;
 use std::{fs::File, io};
 
-use super::{DiscAddr, DiscRecordRef, Mapped, MemAddr};
+use super::{manager::DiscRecordRef, DiscAddr, Mapped, MemAddr};
 
 /// The index is composed by two different sections on disc:
 /// - The first sector contains metadata, that can be inserted and updated at any time.

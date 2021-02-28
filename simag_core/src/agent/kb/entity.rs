@@ -379,7 +379,7 @@ impl Entity {
 #[cfg(feature = "persistence")]
 mod serialization {
     use super::*;
-    use crate::agent::kb::storage::{
+    use crate::storage::{
         BinGrFuncRecord, BinGrMembRecord, BinLogSentRecord, BinMoveRecord, Mapped, MemAddr,
         Metadata, NonMapped, ToBinaryObject,
     };

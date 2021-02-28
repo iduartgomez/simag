@@ -30,7 +30,7 @@ use crate::agent::lang::{
 };
 
 #[cfg(feature = "persistence")]
-use super::{entity::EntityMetadata, storage::ReprStorageManager};
+use crate::{agent::kb::entity::EntityMetadata, storage::*};
 #[cfg(feature = "persistence")]
 use std::sync::atomic::Ordering;
 
@@ -106,7 +106,7 @@ impl Representation {
             config: rep.config.clone(),
             readers: rep.readers.clone(),
             bg_task_rcv,
-            storage_layer: ReprStorageManager::new(rep.id.clone(), None, None)?,
+            storage_layer: StorageManager::new(rep.id.clone(), None, None)?,
         };
         rep.threads.spawn(move || bg_thread(shared_data));
         Ok(rep)
@@ -1039,7 +1039,7 @@ struct ReprSharedData {
     readers: Arc<(Mutex<usize>, Condvar)>,
     bg_task_rcv: Receiver<BackgroundTask>,
     #[cfg(feature = "persistence")]
-    storage_layer: ReprStorageManager,
+    storage_layer: StorageManager,
 }
 
 impl ReprSharedData {
@@ -1082,7 +1082,7 @@ impl ReprSharedData {
         metadata: &mut EntityMetadata,
     ) -> std::io::Result<()>
     where
-        T: super::storage::ToBinaryObject,
+        T: ToBinaryObject,
     {
         match res {
             Err(err) => Err(err),

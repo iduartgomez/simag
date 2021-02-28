@@ -1,146 +1,24 @@
+#[cfg(unix)]
+use std::os::unix::prelude::FileExt;
 use std::{
     collections::{BTreeMap, HashMap},
     convert::TryFrom,
     fs::{File, OpenOptions},
-    hash::Hash,
     io,
     iter::FromIterator,
     marker::PhantomData,
-    ops::Deref,
     path::{Path, PathBuf},
     sync::atomic::{self, AtomicU64},
 };
 
-#[cfg(unix)]
-use std::os::unix::prelude::FileExt;
-
-#[cfg(test)]
-use arbitrary::Arbitrary;
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[path = "./disc_btree.rs"]
-mod index;
-use index::*;
-
-/// In-memory address for a record.
-#[derive(PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash, Clone, Copy, Debug)]
-#[cfg_attr(test, derive(Arbitrary))]
-pub(super) struct MemAddr<T: MemAddrMapp>(u64, PhantomData<T>);
-
-pub(super) trait MemAddrMapp: Ord + PartialOrd + Eq + PartialEq + Clone + Hash {}
-
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
-#[cfg_attr(test, derive(Arbitrary))]
-pub(super) struct NonMapped;
-impl MemAddrMapp for NonMapped {}
-
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
-#[cfg_attr(test, derive(Arbitrary))]
-pub(super) struct Mapped;
-impl MemAddrMapp for Mapped {}
-
-impl From<u64> for MemAddr<NonMapped> {
-    fn from(addr: u64) -> Self {
-        MemAddr(addr, PhantomData)
-    }
-}
-
-impl<T: MemAddrMapp> Deref for MemAddr<T> {
-    type Target = u64;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-/// File addresss from which to fetch data from (based on the length of the record).
-#[derive(Clone, Copy)]
-struct DiscAddr(u64);
-
-impl From<u64> for DiscAddr {
-    fn from(addr: u64) -> Self {
-        DiscAddr(addr)
-    }
-}
-
-impl Deref for DiscAddr {
-    type Target = u64;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-/// The amount of data to be fetched from a given position.
-type RecordLength = u64;
-
-/// Type of the record being stored, used to deserialize the data on a later time.
-#[repr(u8)]
-#[derive(Clone, Copy)]
-pub(super) enum BinType {
-    LogSent = 0,
-    GrMemb = 1,
-    GrFunc = 2,
-    Movement = 3,
-}
-
-pub(super) trait ToBinaryObject
-where
-    Self: Sized,
-{
-    fn destruct(self) -> (MemAddr<NonMapped>, Vec<u8>);
-    fn get_type() -> BinType;
-    fn build<T>(address: MemAddr<NonMapped>, key: &str, data: &T) -> bincode::Result<Self>
-    where
-        T: Serialize;
-}
-
-macro_rules! binary_storage {
-    ( struct $bin:ident -> $type:expr) => {
-        #[derive(Clone)]
-        #[cfg_attr(test, derive(Arbitrary))]
-        pub(super) struct $bin {
-            /// the current physical address, used to preserve relationships
-            address: MemAddr<NonMapped>,
-            /// the actual binary serialized content of the record:
-            // [key_size: u64 as [u8], key as [u8], data as [u8]]
-            record: Vec<u8>,
-        }
-
-        impl ToBinaryObject for $bin {
-            fn build<T: Serialize>(
-                address: MemAddr<NonMapped>,
-                key: &str,
-                data: &T,
-            ) -> bincode::Result<Self> {
-                // TODO: optimize this if possible to avoid copying unnecesarilly
-                let bin_key = bincode::serialize(key)?;
-                let mut record: Vec<u8> = (bin_key.len() as u64).to_le_bytes().to_vec();
-                record.extend(bin_key);
-                let record_data = &mut bincode::serialize::<T>(&data)?;
-                record.append(record_data);
-                Ok($bin { address, record })
-            }
-
-            fn destruct(self) -> (MemAddr<NonMapped>, Vec<u8>) {
-                (self.address, self.record)
-            }
-
-            fn get_type() -> BinType {
-                $type
-            }
-        }
-    };
-}
-
-binary_storage!(struct BinGrFuncRecord -> BinType::GrFunc);
-binary_storage!(struct BinGrMembRecord -> BinType::GrMemb);
-binary_storage!(struct BinLogSentRecord -> BinType::LogSent);
-binary_storage!(struct BinMoveRecord -> BinType::Movement);
+use super::{index::Index, BinType, DiscAddr, Mapped, MemAddr, NonMapped, ToBinaryObject};
 
 static NEXT_MAPPED_MEM_ADDR: AtomicU64 = AtomicU64::new(0);
 
+/// The amount of data to be fetched from a given position.
+type RecordLength = u64;
 /// A handle in memory of the on-disk storage for a given Representation.
 /// Allows for rebuilding of an agent from a binary blob as well as keeping the copy of data
 /// in the storage layer up to date. Each representation has it's own file for storing their
@@ -149,7 +27,7 @@ static NEXT_MAPPED_MEM_ADDR: AtomicU64 = AtomicU64::new(0);
 /// Accurately rebuilds any shared objects, maintaining the underlying memory relationship
 /// and shared memory space. The data inserted must be "addressable" on-memory and maintain
 /// an static address for the duration of the program.
-pub(super) struct ReprStorageManager {
+pub(crate) struct StorageManager {
     /// C0 in-memory tree, buffer for data waiting to be flushed to disk.
     /// This is only for record data, meaning records which hold a stable address in memory
     /// which is used as a key.
@@ -163,7 +41,7 @@ pub(super) struct ReprStorageManager {
     idx: Index,
 }
 
-impl ReprStorageManager {
+impl StorageManager {
     /// Create a new ReprStorage for the given representation, will be stored at the given directory
     /// if provided or in a temporary directory otherwise.
     pub fn new(id: Uuid, path: Option<&Path>, lvl1_size: Option<u64>) -> io::Result<Self> {
@@ -184,7 +62,7 @@ impl ReprStorageManager {
             p
         };
 
-        Ok(ReprStorageManager {
+        Ok(StorageManager {
             c0: BTreeMap::new(),
             buffer_size: 0,
             page_manager: PageManager::new(file_dir, lvl1_size)?,
@@ -246,17 +124,17 @@ impl ReprStorageManager {
     {
         let key = metadata.metadata_key();
         for mem_addr in metadata.mapped_objects() {
-            todo!()
+            // todo!()
         }
     }
 }
 
-pub(super) trait Metadata {
+pub(crate) trait Metadata {
     fn metadata_key(&self) -> MemAddr<NonMapped>;
     fn mapped_objects(&self) -> Box<dyn Iterator<Item = MemAddr<Mapped>> + '_>;
 }
 
-impl TryFrom<&Path> for ReprStorageManager {
+impl TryFrom<&Path> for StorageManager {
     type Error = bincode::Error;
 
     fn try_from(path: &Path) -> Result<Self, Self::Error> {
@@ -325,7 +203,7 @@ impl Record {
 }
 
 #[derive(Clone)]
-struct DiscRecordRef {
+pub(super) struct DiscRecordRef {
     type_id: BinType,
     addr: DiscAddr,
     length: RecordLength,
@@ -692,7 +570,7 @@ impl PageManager {
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use super::{super::*, *};
     use arbitrary::Unstructured;
     use rand::Rng;
 
@@ -708,7 +586,7 @@ mod test {
         sample
     }
 
-    fn insert_rnd_data_in_storage(num_recs: usize, rep: &mut ReprStorageManager) -> io::Result<()> {
+    fn insert_rnd_data_in_storage(num_recs: usize, rep: &mut StorageManager) -> io::Result<()> {
         let sample = raw_sample(num_recs);
         let mut unstr = Unstructured::new(&sample);
         let mut rng = rand::thread_rng();
@@ -734,7 +612,7 @@ mod test {
     #[test]
     fn flush_data() -> io::Result<()> {
         const NUM_RECS: usize = 5_000;
-        let mut rep = ReprStorageManager::new(Uuid::nil(), None, Some(LVL1_TEST_SIZE))?;
+        let mut rep = StorageManager::new(Uuid::nil(), None, Some(LVL1_TEST_SIZE))?;
         insert_rnd_data_in_storage(NUM_RECS, &mut rep)?;
 
         rep.flush()?;
