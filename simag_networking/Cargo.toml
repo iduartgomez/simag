@@ -13,7 +13,7 @@ dashmap = "4.0"
 ed25519-dalek = { version = "1.0", optional = true }
 env_logger = "0.8"
 futures_codec = "0.4"
-libp2p = { version = "0.33", features = [
+libp2p = { version = "0.35", features = [
     "deflate",
     "dns",
     "identify",
