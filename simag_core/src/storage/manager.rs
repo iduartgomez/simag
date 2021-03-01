@@ -1,9 +1,9 @@
 #[cfg(unix)]
-use std::os::unix::prelude::FileExt;
+use std::os::unix::fs::FileExt;
 use std::{
     collections::{BTreeMap, HashMap},
     convert::TryFrom,
-    fs::{File, OpenOptions},
+    fs::File,
     io,
     iter::FromIterator,
     marker::PhantomData,
@@ -13,7 +13,9 @@ use std::{
 
 use uuid::Uuid;
 
-use super::{index::Index, BinType, DiscAddr, Mapped, MemAddr, NonMapped, ToBinaryObject};
+use super::{
+    index::Index, open_dat_file, BinType, DiscAddr, Mapped, MemAddr, NonMapped, ToBinaryObject,
+};
 
 static NEXT_MAPPED_MEM_ADDR: AtomicU64 = AtomicU64::new(0);
 
@@ -65,9 +67,9 @@ impl StorageManager {
         Ok(StorageManager {
             c0: BTreeMap::new(),
             buffer_size: 0,
+            idx: Index::new(&file_dir)?,
             page_manager: PageManager::new(file_dir, lvl1_size)?,
             mem_addr_map: HashMap::new(),
-            idx: Index::new(),
         })
     }
 
@@ -111,7 +113,7 @@ impl StorageManager {
                 addr: DiscAddr::from(addr),
                 length: len,
             };
-            self.idx.insert(mem_addr, dref.clone());
+            self.idx.insert(mem_addr, dref.clone())?;
             table_data.insert(mem_addr, dref);
             addr += len;
         }
@@ -202,11 +204,45 @@ impl Record {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub(super) struct DiscRecordRef {
-    type_id: BinType,
-    addr: DiscAddr,
-    length: RecordLength,
+    pub type_id: BinType,
+    pub addr: DiscAddr,
+    pub length: RecordLength,
+}
+
+impl DiscRecordRef {
+    pub fn serialize(self) -> [u8; std::mem::size_of::<Self>()] {
+        let mut serialized = [0u8; std::mem::size_of::<Self>()];
+
+        let addr_part = &mut serialized[0..8];
+        addr_part.copy_from_slice((self.addr).to_le_bytes().as_ref());
+
+        serialized[8] = self.type_id as u8;
+
+        let len_part = &mut serialized[9..17];
+        len_part.copy_from_slice(self.length.to_le_bytes().as_ref());
+
+        serialized
+    }
+}
+
+impl From<&'_ [u8; std::mem::size_of::<DiscRecordRef>()]> for DiscRecordRef {
+    fn from(buf: &'_ [u8; std::mem::size_of::<DiscRecordRef>()]) -> Self {
+        let mut addr: [u8; std::mem::size_of::<u64>()] = [0u8; 8];
+        addr.copy_from_slice(&buf[0..8]);
+        let addr = u64::from_le_bytes(addr).into();
+
+        let mut length: [u8; std::mem::size_of::<u64>()] = [0u8; 8];
+        length.copy_from_slice(&buf[9..17]);
+        let length = u64::from_le_bytes(length);
+
+        DiscRecordRef {
+            type_id: BinType::from(buf[8]),
+            addr,
+            length,
+        }
+    }
 }
 
 struct Page {
@@ -305,10 +341,10 @@ impl PageManager {
         debug_assert_eq!(c2_pages.len() as u64, c2_num_pages);
 
         let c1_path = config.file_dir.join("simag.1.dat");
-        let c1_data = Self::open_dat_file(&c1_path)?;
+        let c1_data = open_dat_file(&c1_path)?;
 
         let c2_path = config.file_dir.join("simag.2.dat");
-        let c2_data = Self::open_dat_file(&c2_path)?;
+        let c2_data = open_dat_file(&c2_path)?;
 
         Ok(PageManager {
             c1_data,
@@ -347,7 +383,7 @@ impl PageManager {
         let active_lvl1_page = &mut self.levels_pages[0][current_c1_page];
         let buf_len = buffer.len() as u64;
         if buf_len < active_lvl1_page.free_space {
-            // Fill with zeros the remaining until the page is full.
+            // padd with zeros the the buffer to fully fill the page
             let remainder = active_lvl1_page.free_space - buf_len;
             let remaining = vec![0; remainder as usize];
             buffer.extend(remaining);
@@ -356,7 +392,7 @@ impl PageManager {
         let offset = active_lvl1_page.offset + (Self::PAGE_SIZE - active_lvl1_page.free_space);
         #[cfg(unix)]
         {
-            self.c1_data.write_at(&buffer, offset)?;
+            self.c1_data.write_all_at(&buffer, offset)?;
         }
 
         for (addr, rec) in table_map {
@@ -512,7 +548,7 @@ impl PageManager {
                         let page_buf = &pages_buf[curr_page_buf];
                         #[cfg(unix)]
                         {
-                            target_file.write_at(page_buf, page.offset)?;
+                            target_file.write_all_at(page_buf, page.offset)?;
                         }
                         page.free_space = 0;
                         let mut w_cursor = page.offset;
@@ -557,15 +593,6 @@ impl PageManager {
             (pages_amt + 1) as usize
         }
     }
-
-    fn open_dat_file(path: &Path) -> io::Result<File> {
-        OpenOptions::new()
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .create(true)
-            .open(path)
-    }
 }
 
 #[cfg(test)]
@@ -607,6 +634,21 @@ mod test {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn serialize_disc_rec_ref() {
+        let dref = DiscRecordRef {
+            type_id: BinType::GrFunc,
+            addr: 0.into(),
+            length: 10,
+        };
+
+        let serialized = dref.serialize();
+        let deser = DiscRecordRef::from(&serialized);
+        assert_eq!(deser.length, 10);
+        assert_eq!(deser.addr, 0.into());
+        assert_eq!(deser.type_id, BinType::GrFunc);
     }
 
     #[test]

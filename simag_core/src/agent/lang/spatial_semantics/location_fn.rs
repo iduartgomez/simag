@@ -122,31 +122,3 @@ impl<'a> std::convert::TryFrom<(&'a FuncDeclBorrowed<'a>, &'a mut ParseContext)>
         }
     }
 }
-
-#[cfg(feature = "persistence")]
-mod serialization {
-    use super::*;
-
-    // impl Serialize for BmsRecord {
-    //     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    //     where
-    //         S: serde::Serializer,
-    //     {
-    //         let mut record = serializer.serialize_struct("BmsRecord", 4)?;
-    //         record.serialize_field(REC_FIELDS[0], &self.time)?;
-    //         record.serialize_field(REC_FIELDS[1], &self.location)?;
-    //         record.serialize_field(REC_FIELDS[2], &self.value)?;
-    //         record.serialize_field(REC_FIELDS[3], &self.was_produced)?;
-    //         record.end()
-    //     }
-    // }
-
-    // impl<'de> Deserialize<'de> for BmsRecord {
-    //     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    //     where
-    //         D: serde::Deserializer<'de>,
-    //     {
-    //         todo!()
-    //     }
-    // }
-}

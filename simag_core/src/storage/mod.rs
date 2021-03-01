@@ -1,6 +1,12 @@
-#[cfg(unix)]
-use std::os::unix::prelude::FileExt;
-use std::{hash::Hash, marker::PhantomData, ops::Deref, pin::Pin};
+use std::{
+    fs::{File, OpenOptions},
+    hash::Hash,
+    io,
+    marker::PhantomData,
+    ops::Deref,
+    path::Path,
+    pin::Pin,
+};
 
 #[cfg(test)]
 use arbitrary::Arbitrary;
@@ -44,7 +50,7 @@ impl<T: MemAddrMapp> Deref for MemAddr<T> {
 }
 
 /// File addresss from which to fetch data from (based on the length of the record).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct DiscAddr(u64);
 
 impl From<u64> for DiscAddr {
@@ -63,12 +69,24 @@ impl Deref for DiscAddr {
 
 /// Type of the record being stored, used to deserialize the data on a later time.
 #[repr(u8)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum BinType {
     LogSent = 0,
     GrMemb = 1,
     GrFunc = 2,
     Movement = 3,
+}
+
+impl From<u8> for BinType {
+    fn from(byte: u8) -> BinType {
+        match byte {
+            0 => BinType::LogSent,
+            1 => BinType::GrMemb,
+            2 => BinType::GrFunc,
+            3 => BinType::Movement,
+            byte => panic!("cannot cast {} to BinType", byte),
+        }
+    }
 }
 
 pub(crate) trait ToBinaryObject
@@ -159,4 +177,13 @@ where
 {
     let val: T = Deserialize::deserialize(deserializer)?;
     Ok(Box::pin(val))
+}
+
+fn open_dat_file(path: &Path) -> io::Result<File> {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .create(true)
+        .open(path)
 }
