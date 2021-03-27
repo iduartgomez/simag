@@ -50,7 +50,8 @@ impl<T: MemAddrMapp> Deref for MemAddr<T> {
 }
 
 /// File addresss from which to fetch data from (based on the length of the record).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
+#[cfg_attr(test, derive(Arbitrary))]
 struct DiscAddr(u64);
 
 impl From<u64> for DiscAddr {
@@ -70,11 +71,13 @@ impl Deref for DiscAddr {
 /// Type of the record being stored, used to deserialize the data on a later time.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(test, derive(Arbitrary))]
 pub(super) enum BinType {
     LogSent = 0,
     GrMemb = 1,
     GrFunc = 2,
     Movement = 3,
+    Entity = 4,
 }
 
 impl From<u8> for BinType {
@@ -84,6 +87,7 @@ impl From<u8> for BinType {
             1 => BinType::GrMemb,
             2 => BinType::GrFunc,
             3 => BinType::Movement,
+            4 => BinType::Entity,
             byte => panic!("cannot cast {} to BinType", byte),
         }
     }

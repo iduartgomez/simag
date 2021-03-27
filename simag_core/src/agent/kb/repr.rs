@@ -1068,7 +1068,7 @@ impl ReprSharedData {
                 ent.move_beliefs.drain(..).fold(Ok(()), |res, bin| {
                     self.add_to_storage(res, bin, &mut metadata)
                 })?;
-                self.storage_layer.upsert_metada(metadata);
+                self.storage_layer.insert_metada(metadata);
             }
         }
         Ok(())

@@ -380,12 +380,14 @@ impl Entity {
 mod serialization {
     use super::*;
     use crate::storage::{
-        BinGrFuncRecord, BinGrMembRecord, BinLogSentRecord, BinMoveRecord, Mapped, MemAddr,
-        Metadata, NonMapped, ToBinaryObject,
+        BinGrFuncRecord, BinGrMembRecord, BinLogSentRecord, BinMoveRecord, BinType, Mapped,
+        MemAddr, Metadata, NonMapped, ToBinaryObject,
     };
     use bincode::Result;
+    use serde::{Deserialize, Serialize};
     use std::{collections::HashSet, ops::Deref};
 
+    #[derive(Debug, Serialize, Deserialize)]
     pub(in crate::agent::kb) struct EntityMetadata {
         key: MemAddr<NonMapped>,
         pub stored_data: HashSet<MemAddr<Mapped>>,
@@ -400,13 +402,17 @@ mod serialization {
         }
     }
 
-    impl Metadata for EntityMetadata {
+    impl<'de> Metadata<'de> for EntityMetadata {
         fn metadata_key(&self) -> MemAddr<NonMapped> {
             self.key
         }
 
         fn mapped_objects(&self) -> Box<dyn Iterator<Item = MemAddr<Mapped>> + '_> {
             Box::new(self.stored_data.iter().copied())
+        }
+
+        fn tag(&self) -> BinType {
+            BinType::Entity
         }
     }
 

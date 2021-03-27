@@ -11,12 +11,16 @@ use std::{
     sync::atomic::{self, AtomicU64},
 };
 
+#[cfg(test)]
+use arbitrary::Arbitrary;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{
     index::Index, open_dat_file, BinType, DiscAddr, Mapped, MemAddr, NonMapped, ToBinaryObject,
 };
 
+pub(super) const DISC_REC_REF_SIZE: usize = std::mem::size_of::<DiscRecordRef>();
 static NEXT_MAPPED_MEM_ADDR: AtomicU64 = AtomicU64::new(0);
 
 /// The amount of data to be fetched from a given position.
@@ -120,20 +124,19 @@ impl StorageManager {
         self.page_manager.spill_to_disc(buffer, table_data)
     }
 
-    pub fn upsert_metada<M>(&mut self, metadata: M)
+    /// Insert or update an object metadata.
+    pub fn insert_metada<'de, M>(&mut self, metadata: M)
     where
-        M: Metadata,
+        M: Metadata<'de>,
     {
-        let key = metadata.metadata_key();
-        for mem_addr in metadata.mapped_objects() {
-            // todo!()
-        }
+        self.idx.insert_metadata(metadata).unwrap();
     }
 }
 
-pub(crate) trait Metadata {
+pub(crate) trait Metadata<'de>: Serialize + Deserialize<'de> {
     fn metadata_key(&self) -> MemAddr<NonMapped>;
     fn mapped_objects(&self) -> Box<dyn Iterator<Item = MemAddr<Mapped>> + '_>;
+    fn tag(&self) -> BinType;
 }
 
 impl TryFrom<&Path> for StorageManager {
@@ -205,6 +208,7 @@ impl Record {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
+#[cfg_attr(test, derive(Arbitrary))]
 pub(super) struct DiscRecordRef {
     pub type_id: BinType,
     pub addr: DiscAddr,
@@ -228,7 +232,7 @@ impl DiscRecordRef {
 }
 
 impl From<&'_ [u8; std::mem::size_of::<DiscRecordRef>()]> for DiscRecordRef {
-    fn from(buf: &'_ [u8; std::mem::size_of::<DiscRecordRef>()]) -> Self {
+    fn from(buf: &'_ [u8; DISC_REC_REF_SIZE]) -> Self {
         let mut addr: [u8; std::mem::size_of::<u64>()] = [0u8; 8];
         addr.copy_from_slice(&buf[0..8]);
         let addr = u64::from_le_bytes(addr).into();
@@ -605,10 +609,11 @@ mod test {
 
     fn raw_sample(iters: usize) -> Vec<u8> {
         let mut sample = Vec::new();
+        let mut rng = rand::thread_rng();
         for _ in 0..iters {
             let k: u64 = rand::random();
-            sample.extend(&k.to_be_bytes());
-            sample.extend((0..16).map(|_| rand::random::<u8>()));
+            sample.extend(&k.to_le_bytes());
+            sample.extend((0..16).map(|_| rng.gen::<u8>()));
         }
         sample
     }
