@@ -26,9 +26,9 @@ impl Point {
     pub fn generate_uid(&self) -> Vec<u8> {
         let mut repr: Vec<u8> = Vec::with_capacity(std::mem::size_of::<i64>() * 3);
         repr.extend(b"point<");
-        repr.extend(&self.0.to_le_bytes());
-        repr.extend(&self.0.to_le_bytes());
-        repr.extend(&self.0.to_le_bytes());
+        repr.extend(std::array::IntoIter::new(self.0.to_le_bytes()));
+        repr.extend(std::array::IntoIter::new(self.0.to_le_bytes()));
+        repr.extend(std::array::IntoIter::new(self.0.to_le_bytes()));
         repr.push(b'>');
         repr
     }

@@ -61,7 +61,7 @@ pub(in crate::agent) struct Entity {
 }
 
 impl Entity {
-    pub(in crate::agent::kb) fn new(name: String, svc_queue: Sender<BackgroundTask>) -> Entity {
+    pub(super) fn new(name: String, svc_queue: Sender<BackgroundTask>) -> Entity {
         Entity {
             name,
             location: BmsWrapper::<RecordHistory>::new(),
@@ -74,16 +74,12 @@ impl Entity {
     }
 
     /// Updates this class location.
-    pub(in crate::agent::kb) fn with_location(
-        &self,
-        loc: Point,
-        was_produced: Option<(u64, Time)>,
-    ) {
+    pub(super) fn with_location(&self, loc: Point, was_produced: Option<(u64, Time)>) {
         self.location
             .add_new_record(None, Some(loc), None, was_produced);
     }
 
-    pub(in crate::agent::kb) fn belongs_to_class(
+    pub(super) fn belongs_to_class(
         &self,
         class_name: &str,
         interval: bool,
@@ -94,7 +90,7 @@ impl Entity {
         }
     }
 
-    pub(in crate::agent::kb) fn get_class_membership(
+    pub(super) fn get_class_membership(
         &self,
         compare: &FreeClassMembership,
     ) -> Vec<Arc<GroundedMemb>> {
@@ -111,7 +107,7 @@ impl Entity {
     }
 
     /// Add a new class membership for this class. Returns whether this was added or updated.
-    pub(in crate::agent::kb) fn add_or_updated_class_membership<T: ProofResContext>(
+    pub(super) fn add_or_updated_class_membership<T: ProofResContext>(
         &self,
         agent: &Representation,
         grounded: &Arc<GroundedMemb>,
@@ -183,10 +179,7 @@ impl Entity {
         }
     }
 
-    pub(in crate::agent::kb) fn has_relationship(
-        &self,
-        func: &GroundedFunc,
-    ) -> Option<Arc<GroundedFunc>> {
+    pub(super) fn has_relationship(&self, func: &GroundedFunc) -> Option<Arc<GroundedFunc>> {
         if let Some(relation_type) = self.relations.get(func.get_name()) {
             for rel in relation_type.value() {
                 if rel.comparable(func) {
@@ -197,7 +190,7 @@ impl Entity {
         None
     }
 
-    pub(in crate::agent::kb) fn get_relationships(
+    pub(super) fn get_relationships(
         &self,
         pos: usize,
         compare: &Predicate,
@@ -255,7 +248,7 @@ impl Entity {
     /// Adds a new relationship for the entity.
     /// Returns 'true' in case the relationship didn't exist previously,
     /// 'false' otherwise. If it already existed, it's value is updated.
-    pub(in crate::agent::kb) fn add_relationship<T: ProofResContext>(
+    pub(super) fn add_relationship<T: ProofResContext>(
         &self,
         agent: &Representation,
         func: &Arc<GroundedFunc>,
@@ -349,7 +342,7 @@ impl Entity {
         }
     }
 
-    pub(in crate::agent::kb) fn add_belief(&self, belief: Arc<LogSentence>, parent: &str) {
+    pub(super) fn add_belief(&self, belief: Arc<LogSentence>, parent: &str) {
         if let Some(mut ls) = self.beliefs.get_mut(parent) {
             ls.push(belief)
         } else {
@@ -357,7 +350,7 @@ impl Entity {
         }
     }
 
-    pub(in crate::agent::kb) fn add_move_belief(&self, belief: &Arc<LogSentence>) {
+    pub(super) fn add_move_belief(&self, belief: &Arc<LogSentence>) {
         self.move_beliefs.write().push(belief.clone());
     }
 

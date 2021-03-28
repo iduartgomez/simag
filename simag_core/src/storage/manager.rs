@@ -108,20 +108,24 @@ impl StorageManager {
         let mut buffer = Vec::with_capacity(PageManager::PAGE_SIZE as usize);
         let mut table_data = BTreeMap::new();
         let mut addr = 0u64;
-        for (mem_addr, rec) in to_flush.into_iter() {
+        let mut batch_insert = Vec::with_capacity(to_flush.len());
+        for (mem_addr, rec) in to_flush {
             let len = rec.len() as u64;
             let type_id = rec.type_id();
             rec.append_to_buf(&mut buffer);
             let dref = DiscRecordRef {
+                table: Table::C1,
                 type_id,
                 addr: DiscAddr::from(addr),
                 length: len,
             };
-            self.idx.insert(mem_addr, dref.clone())?;
+            batch_insert.push((mem_addr, dref.clone()));
             table_data.insert(mem_addr, dref);
             addr += len;
         }
-        self.page_manager.spill_to_disc(buffer, table_data)
+        self.idx.insert_batch(batch_insert.into_iter())?;
+        self.page_manager
+            .spill_to_disc(&mut self.idx, buffer, table_data)
     }
 
     /// Insert or update an object metadata.
@@ -130,6 +134,13 @@ impl StorageManager {
         M: Metadata<'de>,
     {
         self.idx.insert_metadata(metadata).unwrap();
+    }
+
+    pub fn load_from_disc(&mut self) {
+        // load in reverse order from higher lvl disc cache to lower lvl
+        let lvl3 = &self.page_manager.levels_pages[2];
+
+        todo!()
     }
 }
 
@@ -183,7 +194,7 @@ impl Record {
             ..
         } = self;
         let header = Self::make_header(type_id, mem_addr, data.len() as u64);
-        buffer.extend(&header);
+        buffer.extend(std::array::IntoIter::new(header));
         buffer.extend(data);
     }
 
@@ -210,6 +221,7 @@ impl Record {
 #[derive(Clone, PartialEq, Eq, Debug)]
 #[cfg_attr(test, derive(Arbitrary))]
 pub(super) struct DiscRecordRef {
+    pub(crate) table: Table,
     pub type_id: BinType,
     pub addr: DiscAddr,
     pub length: RecordLength,
@@ -222,10 +234,11 @@ impl DiscRecordRef {
         let addr_part = &mut serialized[0..8];
         addr_part.copy_from_slice((self.addr).to_le_bytes().as_ref());
 
-        serialized[8] = self.type_id as u8;
-
         let len_part = &mut serialized[9..17];
         len_part.copy_from_slice(self.length.to_le_bytes().as_ref());
+
+        serialized[8] = self.type_id as u8;
+        serialized[18] = self.table as u8;
 
         serialized
     }
@@ -242,6 +255,7 @@ impl From<&'_ [u8; std::mem::size_of::<DiscRecordRef>()]> for DiscRecordRef {
         let length = u64::from_le_bytes(length);
 
         DiscRecordRef {
+            table: Table::from(buf[18]),
             type_id: BinType::from(buf[8]),
             addr,
             length,
@@ -276,10 +290,24 @@ struct PageManagerConfig {
     c2_size: u64,
 }
 
-enum Table {
-    C1,
-    C2,
-    C3,
+#[repr(u8)]
+#[derive(Clone, PartialEq, Eq, Debug)]
+#[cfg_attr(test, derive(Arbitrary))]
+pub(super) enum Table {
+    C1 = 1,
+    C2 = 2,
+    C3 = 3,
+}
+
+impl From<u8> for Table {
+    fn from(val: u8) -> Self {
+        match val {
+            1 => Table::C1,
+            2 => Table::C2,
+            3 => Table::C3,
+            _ => unreachable!(),
+        }
+    }
 }
 
 struct CachedRec {
@@ -362,6 +390,7 @@ impl PageManager {
 
     fn spill_to_disc(
         &mut self,
+        idx: &mut Index,
         mut buffer: Vec<u8>,
         table_map: BTreeMap<MemAddr<Mapped>, DiscRecordRef>,
     ) -> io::Result<()> {
@@ -378,7 +407,7 @@ impl PageManager {
                 current_c1_page += 1;
             } else {
                 // lvl1 pages are full, merge to lvl 2
-                self.compact(Table::C1)?;
+                self.compact(idx, Table::C1)?;
                 current_c1_page = 0;
             }
         }
@@ -406,7 +435,7 @@ impl PageManager {
         Ok(())
     }
 
-    fn compact(&mut self, lvl: Table) -> io::Result<()> {
+    fn compact(&mut self, idx: &mut Index, lvl: Table) -> io::Result<()> {
         let (merge_src_pages, merge_src_data, merge_target, target_size) = match lvl {
             Table::C1 => (
                 &mut self.levels_pages[0],
@@ -429,7 +458,7 @@ impl PageManager {
         let mut pages_buf = vec![vec![0u8; Self::PAGE_SIZE as usize]; Self::required_pages(size)];
         debug_assert!(pages_buf.len() * pages_buf[0].len() == target_size as usize);
         let cached = Self::fetch_data(&mut pages_buf, merged_data, merge_src_data)?;
-        self.write_merged_data(merge_target, pages_buf, cached)
+        self.write_merged_data(idx, merge_target, pages_buf, cached)
     }
 
     /// Merge a serie of pages targetting a max size for the merge.
@@ -463,6 +492,8 @@ impl PageManager {
                 let mut keys_to_rm = vec![];
                 for (k, v) in page.key_addr.iter() {
                     if merged_data.contains_key(k) {
+                        // ignore keys that were previously merged to simplify;
+                        // leaving the most recent version in the previous cache lvl
                         continue;
                     }
                     let new_len = size + v.length;
@@ -472,7 +503,7 @@ impl PageManager {
                     keys_to_rm.push(*k);
                     size = new_len;
                 }
-                // TODO: need to consolidate the lingering empty space in this page
+                // TODO: need to consolidate the lingering now writable space in this page
                 for key in keys_to_rm {
                     if let Some(page) = page.key_addr.remove(&key) {
                         if let Some(prev_inserted) = merged_data.insert(key, page) {
@@ -538,6 +569,7 @@ impl PageManager {
     /// Writes merged data to the target layer.
     fn write_merged_data(
         &mut self,
+        idx: &mut Index,
         merge_target: Table,
         pages_buf: Vec<Vec<u8>>,
         cached: Vec<(MemAddr<Mapped>, CachedRec)>,
@@ -550,23 +582,35 @@ impl PageManager {
                 for page in target_pages.iter_mut() {
                     if page.free_space > 0 && curr_page_buf + 1 <= pages_buf.len() {
                         let page_buf = &pages_buf[curr_page_buf];
+                        // FIXME: if there is a failure here it leaves this page
+                        // in a potentially corrupted state; the correct operation should:
+                        // - append to an op log, cache in-memory the current content
+                        // - apply changes
+                        // - mark as succeded the on-disc op or rollback
+                        // - write to the idx the new address if everything went right
+                        // - mark as succeded the indexing op
+                        // - clean up the op log
                         #[cfg(unix)]
                         {
                             target_file.write_all_at(page_buf, page.offset)?;
                         }
                         page.free_space = 0;
                         let mut w_cursor = page.offset;
+                        let mut new_idx = Vec::with_capacity(page.key_addr.len());
                         for (addr, rec) in
                             cached.iter().filter(|(_, r)| r.page_num == curr_page_buf)
                         {
                             let rec = DiscRecordRef {
+                                table: Table::C2,
                                 type_id: rec.type_id,
                                 addr: DiscAddr(w_cursor),
                                 length: rec.length,
                             };
                             w_cursor += rec.length;
-                            page.key_addr.insert(*addr, rec);
+                            page.key_addr.insert(*addr, rec.clone());
+                            new_idx.push((*addr, rec));
                         }
+                        idx.insert_batch(new_idx.into_iter())?;
                         curr_page_buf += 1;
                     } else {
                         break;
@@ -612,7 +656,7 @@ mod test {
         let mut rng = rand::thread_rng();
         for _ in 0..iters {
             let k: u64 = rand::random();
-            sample.extend(&k.to_le_bytes());
+            sample.extend(std::array::IntoIter::new(k.to_le_bytes()));
             sample.extend((0..16).map(|_| rng.gen::<u8>()));
         }
         sample
@@ -644,6 +688,7 @@ mod test {
     #[test]
     fn serialize_disc_rec_ref() {
         let dref = DiscRecordRef {
+            table: Table::C1,
             type_id: BinType::GrFunc,
             addr: 0.into(),
             length: 10,
@@ -651,6 +696,7 @@ mod test {
 
         let serialized = dref.serialize();
         let deser = DiscRecordRef::from(&serialized);
+        assert_eq!(deser.table, Table::C1);
         assert_eq!(deser.length, 10);
         assert_eq!(deser.addr, 0.into());
         assert_eq!(deser.type_id, BinType::GrFunc);
@@ -671,6 +717,7 @@ mod test {
         let key_addr = BTreeMap::from_iter(vec![(
             MemAddr(0, PhantomData),
             DiscRecordRef {
+                table: Table::C1,
                 type_id: BinType::GrMemb,
                 addr: DiscAddr(0),
                 length: 2048,
@@ -680,6 +727,7 @@ mod test {
         key_addr2.insert(
             MemAddr(4096, PhantomData),
             DiscRecordRef {
+                table: Table::C1,
                 type_id: BinType::GrMemb,
                 addr: DiscAddr(4096),
                 length: 2048,

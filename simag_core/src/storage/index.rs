@@ -93,9 +93,7 @@ impl Index {
     }
 
     /// Insert or update an entry in the index.
-    // TODO: this could be a batched operation and write more than 1 rec at a time,
-    // since is only called when a whole page is flushed to disc.
-    pub fn insert(&mut self, key: MemAddr<Mapped>, value: DiscRecordRef) -> io::Result<()> {
+    fn insert(&mut self, key: MemAddr<Mapped>, value: DiscRecordRef) -> io::Result<()> {
         if self.idx_sector.capacity <= (self.idx_sector.offset + DISC_REC_REF_SIZE as u64) {
             // need to increase capacity as we would run out of space for the index
             self.increase_idx_capacity();
@@ -123,6 +121,36 @@ impl Index {
                 vac.insert(DiscAddr(next_addr));
                 self.idx_sector.offset = next_offset;
             }
+        }
+        Ok(())
+    }
+
+    pub fn insert_batch(
+        &mut self,
+        values: impl Iterator<Item = (MemAddr<Mapped>, DiscRecordRef)>,
+    ) -> io::Result<()> {
+        let mut new_values: Vec<u8> = Vec::with_capacity(values.size_hint().0 * RECORD_SIZE);
+        let mut next_offset = self.idx_sector.offset;
+        for (key, value) in values {
+            if self.idx.contains_key(&key) {
+                self.insert(key, value)?;
+            } else {
+                // FIXME: if there is a failure while writing to disc this could end up being
+                // in a inconsistent state
+                self.idx
+                    .insert(key, DiscAddr((*self.idx_sector.ptr) + next_offset));
+                next_offset += RECORD_SIZE as u64;
+                new_values.extend(std::array::IntoIter::new(
+                    (Record { key, value }).serialize(),
+                ));
+            }
+        }
+        let next_addr = *self.idx_sector.ptr + self.idx_sector.offset;
+        #[cfg(unix)]
+        {
+            self.file.write_all_at(&new_values, next_addr)?;
+            self.file
+                .write_all_at(&next_offset.to_le_bytes(), *self.idx_sector.ptr)?;
         }
         Ok(())
     }
@@ -177,6 +205,9 @@ impl Index {
         }
         Ok(())
     }
+
+    /// Get all the recorded data on disc
+    pub(super) fn fetch_all_from_disc(&self) {}
 }
 
 impl TryFrom<&Path> for Index {
@@ -273,7 +304,10 @@ mod test {
     use rand::Rng;
 
     use super::*;
-    use crate::storage::{manager::DiscRecordRef, BinType};
+    use crate::storage::{
+        manager::{DiscRecordRef, Table},
+        BinType,
+    };
 
     fn raw_sample(iters: usize) -> Vec<u8> {
         let mut rng = rand::thread_rng();
@@ -283,6 +317,7 @@ mod test {
     #[test]
     fn serialize_rec() {
         let value = DiscRecordRef {
+            table: Table::C1,
             type_id: BinType::GrFunc,
             addr: 1.into(),
             length: 10,

@@ -4,13 +4,11 @@ version = "0.0.1"
 authors = ["Ignacio Duart Gómez <iduartgomez@gmail.com>"]
 autobins = false
 edition = "2018"
+rust = "1.51"
 license = "Apache-2.0 OR MIT"
 default-run = "simag"
 
 [dependencies]
-once_cell = "1.5"
-
-# own deps:
 simag_core = { path = "./simag_core" }
 simag_networking = { path = "./simag_networking", optional = true }
 # simag_maths = { path = "simag_maths" }

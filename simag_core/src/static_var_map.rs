@@ -23,7 +23,7 @@ impl IdToken {
             .iter()
             .copied()
             .collect::<Vec<_>>();
-        uid.extend(self.key.to_le_bytes().iter());
+        uid.extend(std::array::IntoIter::new(self.key.to_le_bytes()));
         uid
     }
 }

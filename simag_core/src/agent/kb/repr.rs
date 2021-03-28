@@ -1,7 +1,9 @@
 use std::{
     collections::{HashMap, HashSet},
+    convert::TryFrom,
     iter::FromIterator,
     ops::Deref,
+    path::Path,
     rc::Rc,
     sync::{atomic::AtomicBool, Arc},
     time::Duration,
@@ -11,6 +13,7 @@ use std::{
 use crossbeam::channel::{Receiver, Sender};
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex};
+use uuid::Uuid;
 
 use crate::agent::kb::{
     bms::{build_declaration_bms, BmsWrapper, RecordHistory},
@@ -88,6 +91,21 @@ pub(crate) struct Representation {
     svc_queue: Sender<BackgroundTask>,
     threads: rayon::ThreadPool,
     readers: Arc<(Mutex<usize>, Condvar)>,
+}
+
+#[cfg(feature = "persistence")]
+impl TryFrom<&Path> for Representation {
+    type Error = std::io::Error;
+
+    /// Try to reconstruct a Representation object from on-disc storage.
+    ///
+    /// # Arguments
+    /// - path: path to the simAG data storage directory.
+    fn try_from(path: &Path) -> Result<Self, Self::Error> {
+        let mut storage_layer = StorageManager::new(Uuid::new_v4(), Some(path), None)?;
+
+        todo!()
+    }
 }
 
 impl Representation {
@@ -1130,7 +1148,9 @@ fn bg_thread(mut shared_data: ReprSharedData) {
                 }
                 if last_bg_exec.elapsed() > Representation::BG_SEC_TASK_FREQ {
                     #[cfg(feature = "persistence")]
-                    shared_data.persist().expect("failed to perform persist op");
+                    {
+                        shared_data.persist().expect("failed to perform persist op");
+                    }
                     last_bg_exec = Instant::now();
                 }
             }
@@ -1181,6 +1201,7 @@ pub(super) enum BackgroundTask {
     Shutdown,
 }
 
+// FIXME: review + write doc
 unsafe impl Send for BackgroundTask {}
 
 /// Error type for query failures.
