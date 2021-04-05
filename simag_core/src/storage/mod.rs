@@ -6,6 +6,7 @@ use std::{
     ops::Deref,
     path::Path,
     pin::Pin,
+    result::Result as StdResult,
 };
 
 #[cfg(test)]
@@ -16,7 +17,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 mod index;
 mod manager;
 
-pub(crate) use manager::{Metadata, StorageManager};
+pub(crate) use manager::{
+    Loadable, Metadata, MetadataKind, MetadataOwner, MetadataOwnerKind, StorageManager,
+};
 
 /// In-memory address for a record.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash, Clone, Copy, Debug)]
@@ -77,7 +80,6 @@ pub(super) enum BinType {
     GrMemb = 1,
     GrFunc = 2,
     Movement = 3,
-    Entity = 4,
 }
 
 impl From<u8> for BinType {
@@ -87,7 +89,6 @@ impl From<u8> for BinType {
             1 => BinType::GrMemb,
             2 => BinType::GrFunc,
             3 => BinType::Movement,
-            4 => BinType::Entity,
             byte => panic!("cannot cast {} to BinType", byte),
         }
     }
@@ -147,7 +148,7 @@ binary_storage!(struct BinGrMembRecord -> BinType::GrMemb);
 binary_storage!(struct BinLogSentRecord -> BinType::LogSent);
 binary_storage!(struct BinMoveRecord -> BinType::Movement);
 
-pub fn ser_locked<S, T>(val: &RwLock<T>, serializer: S) -> Result<S::Ok, S::Error>
+pub fn ser_locked<S, T>(val: &RwLock<T>, serializer: S) -> StdResult<S::Ok, S::Error>
 where
     S: serde::Serializer,
     T: serde::Serialize,
@@ -156,7 +157,7 @@ where
     val.serialize(serializer)
 }
 
-pub fn deser_locked<'de, D, T>(deserializer: D) -> Result<RwLock<T>, D::Error>
+pub fn deser_locked<'de, D, T>(deserializer: D) -> StdResult<RwLock<T>, D::Error>
 where
     D: Deserializer<'de>,
     T: Deserialize<'de>,
@@ -165,7 +166,7 @@ where
     Ok(RwLock::new(val))
 }
 
-pub(crate) fn ser_pinned<S, T>(val: &Pin<Box<T>>, serializer: S) -> Result<S::Ok, S::Error>
+pub(crate) fn ser_pinned<S, T>(val: &Pin<Box<T>>, serializer: S) -> StdResult<S::Ok, S::Error>
 where
     S: Serializer,
     T: Serialize,
@@ -174,7 +175,7 @@ where
     Ok(obj.serialize(serializer)?)
 }
 
-pub(crate) fn deser_pinned<'de, D, T>(deserializer: D) -> Result<Pin<Box<T>>, D::Error>
+pub(crate) fn deser_pinned<'de, D, T>(deserializer: D) -> StdResult<Pin<Box<T>>, D::Error>
 where
     D: Deserializer<'de>,
     T: Deserialize<'de>,
@@ -190,4 +191,16 @@ fn open_dat_file(path: &Path) -> io::Result<File> {
         .truncate(false)
         .create(true)
         .open(path)
+}
+
+type Result<T> = std::result::Result<T, StorageError>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum StorageError {
+    #[error("manager not found in metadata")]
+    ManagerNotFound,
+    #[error("serialization error")]
+    Serialization(#[from] bincode::Error),
+    #[error("i/o error")]
+    Io(#[from] io::Error),
 }

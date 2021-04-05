@@ -67,8 +67,6 @@ pub(crate) struct TableData<T>(DashMap<IdToken, Box<T>, NoOpHasher>)
 where
     T: 'static + ?Sized;
 
-// pub(crate) struct TableData<T: 'static + ?Sized>(&'static InnerTableData<T>);
-
 impl<T> TableData<T>
 where
     T: 'static + ?Sized,

@@ -1,13 +1,14 @@
 #[cfg(unix)]
 use std::os::unix::fs::FileExt;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     convert::TryFrom,
     fs::File,
     io,
     iter::FromIterator,
     marker::PhantomData,
     path::{Path, PathBuf},
+    result::Result as StdResult,
     sync::atomic::{self, AtomicU64},
 };
 
@@ -17,7 +18,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{
-    index::Index, open_dat_file, BinType, DiscAddr, Mapped, MemAddr, NonMapped, ToBinaryObject,
+    index::Index, open_dat_file, BinType, DiscAddr, Mapped, MemAddr, NonMapped, Result,
+    StorageError, ToBinaryObject,
 };
 
 pub(super) const DISC_REC_REF_SIZE: usize = std::mem::size_of::<DiscRecordRef>();
@@ -128,35 +130,130 @@ impl StorageManager {
             .spill_to_disc(&mut self.idx, buffer, table_data)
     }
 
-    /// Insert or update an object metadata.
-    pub fn insert_metada<'de, M>(&mut self, metadata: M)
+    pub fn load_from_disc<L>(&mut self, loadable: &mut L) -> Result<()>
     where
-        M: Metadata<'de>,
+        L: Loadable,
     {
-        self.idx.insert_metadata(metadata).unwrap();
+        use super::index::Record as DRef;
+        let records = self.idx.fetch_disc_refs()?;
+        let metadata_objs = self.idx.fetch_metadata()?;
+
+        for rec in records {
+            let DRef { key, value: dref } = rec;
+            let file = match dref.table {
+                Table::C1 => &self.page_manager.c1_data,
+                Table::C2 => &self.page_manager.c2_data,
+                Table::C3 => todo!(),
+            };
+
+            let mut data = Vec::with_capacity(dref.length as usize);
+            #[cfg(unix)]
+            file.read_exact_at(&mut data, *dref.addr)?;
+            let Record { type_id, data, .. } = Record::deserialize(data)?;
+            if type_id != dref.type_id {
+                let err: io::Error = io::ErrorKind::InvalidInput.into();
+                return Err(err.into());
+            }
+
+            let metadata = &metadata_objs[0];
+            let addr = loadable.load(metadata, dref.type_id, data).unwrap();
+            self.mem_addr_map.insert(addr, key);
+        }
+
+        Ok(())
     }
-
-    pub fn load_from_disc(&mut self) {
-        // load in reverse order from higher lvl disc cache to lower lvl
-        let lvl3 = &self.page_manager.levels_pages[2];
-
-        todo!()
-    }
-}
-
-pub(crate) trait Metadata<'de>: Serialize + Deserialize<'de> {
-    fn metadata_key(&self) -> MemAddr<NonMapped>;
-    fn mapped_objects(&self) -> Box<dyn Iterator<Item = MemAddr<Mapped>> + '_>;
-    fn tag(&self) -> BinType;
 }
 
 impl TryFrom<&Path> for StorageManager {
     type Error = bincode::Error;
 
-    fn try_from(path: &Path) -> Result<Self, Self::Error> {
+    fn try_from(path: &Path) -> StdResult<Self, Self::Error> {
         let _file = File::open(path)?;
         todo!()
     }
+}
+
+pub(crate) trait Loadable {
+    fn load(
+        &mut self,
+        metadata: &Metadata,
+        dtype: BinType,
+        data: Vec<u8>,
+    ) -> bincode::Result<MemAddr<NonMapped>>;
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct Metadata<'mg> {
+    owners: HashMap<MetadataOwner, MemAddr<Mapped>>,
+    /// A map of ptr from owners to owned
+    stored_data: HashMap<MemAddr<Mapped>, HashSet<MemAddr<Mapped>>>,
+    #[serde(skip_serializing, skip_deserializing)]
+    manager: Option<&'mg mut StorageManager>,
+}
+
+impl<'mg> Metadata<'mg> {
+    pub fn new(manager: &'mg mut StorageManager) -> Self {
+        Metadata {
+            owners: HashMap::new(),
+            stored_data: HashMap::new(),
+            manager: Some(manager),
+        }
+    }
+
+    pub fn register_owner(&mut self, owner: &impl MetadataOwnerKind) -> MetadataOwner {
+        let addr = owner.get_addr();
+        let kind = owner.get_kind();
+        MetadataOwner(addr, kind)
+    }
+
+    pub fn insert_metadata(self) -> Result<()> {
+        let Metadata {
+            owners,
+            stored_data,
+            manager,
+        } = self;
+
+        let manager = manager.ok_or_else(|| StorageError::ManagerNotFound)?;
+        let serialized = {
+            let md = Metadata {
+                owners,
+                stored_data,
+                manager: None,
+            };
+            bincode::serialize(&md)?
+        };
+        manager.idx.insert_metadata(serialized)?;
+        Ok(())
+    }
+
+    pub fn insert_rec<T>(&mut self, bin: T, owner: &MetadataOwner) -> io::Result<()>
+    where
+        T: ToBinaryObject,
+    {
+        if let Some(ref mut md) = self.manager {
+            let owner_addr = self.owners.entry(owner.clone()).or_insert_with(|| {
+                let mapped_owner_addr = NEXT_MAPPED_MEM_ADDR.fetch_add(1, atomic::Ordering::SeqCst);
+                MemAddr(mapped_owner_addr, PhantomData)
+            });
+            let owned_obj_addr = md.insert_rec(bin)?;
+            let owned_objs = self.stored_data.entry(*owner_addr).or_default();
+            owned_objs.insert(owned_obj_addr);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Hash, Eq, PartialEq, Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct MetadataOwner(MemAddr<NonMapped>, MetadataKind);
+
+#[derive(Hash, Eq, PartialEq, Debug, Serialize, Deserialize, Clone)]
+pub(crate) enum MetadataKind {
+    Entity,
+}
+
+pub(crate) trait MetadataOwnerKind {
+    fn get_kind(&self) -> MetadataKind;
+    fn get_addr(&self) -> MemAddr<NonMapped>;
 }
 
 /// A record prepared to be stored on disk.
@@ -215,6 +312,10 @@ impl Record {
         let len_part = &mut header[9..];
         len_part.copy_from_slice(len.to_le_bytes().as_ref());
         header
+    }
+
+    fn deserialize(data: Vec<u8>) -> bincode::Result<Self> {
+        todo!()
     }
 }
 

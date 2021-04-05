@@ -13,7 +13,6 @@ use std::{
 use crossbeam::channel::{Receiver, Sender};
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex};
-use uuid::Uuid;
 
 use crate::agent::kb::{
     bms::{build_declaration_bms, BmsWrapper, RecordHistory},
@@ -33,7 +32,7 @@ use crate::agent::lang::{
 };
 
 #[cfg(feature = "persistence")]
-use crate::{agent::kb::entity::EntityMetadata, storage::*};
+use crate::storage::*;
 #[cfg(feature = "persistence")]
 use std::sync::atomic::Ordering;
 
@@ -100,9 +99,9 @@ impl TryFrom<&Path> for Representation {
     /// Try to reconstruct a Representation object from on-disc storage.
     ///
     /// # Arguments
-    /// - path: path to the simAG data storage directory.
+    /// - path: path to the simag data storage directory.
     fn try_from(path: &Path) -> Result<Self, Self::Error> {
-        let mut storage_layer = StorageManager::new(Uuid::new_v4(), Some(path), None)?;
+        let repr = Self::new(1)?;
 
         todo!()
     }
@@ -1008,6 +1007,26 @@ impl Representation {
     }
 }
 
+#[cfg(feature = "persistence")]
+impl Loadable for Representation {
+    fn load(
+        &mut self,
+        metadata: &Metadata,
+        dtype: BinType,
+        data: Vec<u8>,
+    ) -> bincode::Result<MemAddr<NonMapped>> {
+        match dtype {
+            BinType::GrFunc => {
+                let deserialized: Arc<GroundedFunc> = Arc::new(bincode::deserialize(&data)?);
+                let heap_addr = (Arc::as_ptr(&deserialized) as u64).into();
+
+                Ok(heap_addr)
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
 #[cfg(not(feature = "persistence"))]
 impl Default for Representation {
     fn default() -> Self {
@@ -1072,43 +1091,42 @@ impl ReprSharedData {
                 .iter()
                 .map(|entity| entity.persist())
                 .collect();
+            let mut metadata = Metadata::new(&mut self.storage_layer);
             for mut ent in entities? {
-                let mut metadata = EntityMetadata::new(&ent);
+                let owner_token = metadata.register_owner(&ent);
+
                 ent.classes.drain(..).fold(Ok(()), |res, bin| {
-                    self.add_to_storage(res, bin, &mut metadata)
+                    Self::add_to_storage(res, bin, &mut metadata, &owner_token)
                 })?;
                 ent.relations.drain(..).flatten().fold(Ok(()), |res, bin| {
-                    self.add_to_storage(res, bin, &mut metadata)
+                    Self::add_to_storage(res, bin, &mut metadata, &owner_token)
                 })?;
                 ent.beliefs.drain(..).flatten().fold(Ok(()), |res, bin| {
-                    self.add_to_storage(res, bin, &mut metadata)
+                    Self::add_to_storage(res, bin, &mut metadata, &owner_token)
                 })?;
                 ent.move_beliefs.drain(..).fold(Ok(()), |res, bin| {
-                    self.add_to_storage(res, bin, &mut metadata)
+                    Self::add_to_storage(res, bin, &mut metadata, &owner_token)
                 })?;
-                self.storage_layer.insert_metada(metadata);
             }
+            metadata.insert_metadata();
         }
         Ok(())
     }
 
+    #[inline]
     #[cfg(feature = "persistence")]
     fn add_to_storage<T>(
-        &mut self,
         res: std::io::Result<()>,
         bin: T,
-        metadata: &mut EntityMetadata,
+        metadata: &mut Metadata,
+        owner: &MetadataOwner,
     ) -> std::io::Result<()>
     where
         T: ToBinaryObject,
     {
         match res {
             Err(err) => Err(err),
-            Ok(()) => {
-                let addr = self.storage_layer.insert_rec(bin)?;
-                metadata.stored_data.insert(addr);
-                Ok(())
-            }
+            Ok(()) => metadata.insert_rec(bin, owner),
         }
     }
 }

@@ -7,11 +7,12 @@ use std::{
     io,
     marker::PhantomData,
     path::Path,
+    result::Result as StdResult,
 };
 
 use super::{
     manager::{DiscRecordRef, DISC_REC_REF_SIZE},
-    open_dat_file, DiscAddr, Mapped, MemAddr, Metadata,
+    open_dat_file, DiscAddr, Mapped, MemAddr, Metadata, Result,
 };
 
 const RECORD_SIZE: usize = std::mem::size_of::<Record>();
@@ -65,15 +66,9 @@ impl Index {
         })
     }
 
-    pub fn insert_metadata<'de, M>(&mut self, metadata: M) -> bincode::Result<()>
-    where
-        M: Metadata<'de>,
-    {
-        let serialized = bincode::serialize(&metadata)?;
-
-        let mut header = [0; U64_SIZE + 1];
-        header[0] = metadata.tag() as u8;
-        (&mut header[1..]).copy_from_slice(&(serialized.len() as u64).to_le_bytes());
+    pub fn insert_metadata(&mut self, serialized: Vec<u8>) -> io::Result<()> {
+        let mut header = [0; U64_SIZE];
+        header.copy_from_slice(&(serialized.len() as u64).to_le_bytes());
 
         let offset = *self.metadata_sector.ptr + self.metadata_sector.offset;
         let new_offset = serialized.len() as u64 + header.len() as u64;
@@ -191,11 +186,13 @@ impl Index {
 
     fn load_idx(&mut self) -> io::Result<()> {
         let mut offset = [0u8; U64_SIZE];
+        #[cfg(unix)]
         self.file.read_exact_at(&mut offset, *self.idx_sector.ptr)?;
         self.idx_sector.offset = u64::from_le_bytes(offset);
 
         let idx_data_offset = *self.idx_sector.ptr + U64_SIZE as u64;
         let mut indexes = vec![0u8; (self.idx_sector.offset - U64_SIZE as u64) as usize];
+        #[cfg(unix)]
         self.file.read_exact_at(&mut indexes, idx_data_offset)?;
         // TODO: pending on stabilization of `array_chunks` this could be done more efficiently
         for (idx, f) in indexes.chunks(RECORD_SIZE).enumerate() {
@@ -206,14 +203,48 @@ impl Index {
         Ok(())
     }
 
-    /// Get all the recorded data on disc
-    pub(super) fn fetch_all_from_disc(&self) {}
+    /// Get all the recorded data references.
+    pub(super) fn fetch_disc_refs(&mut self) -> Result<Vec<Record>> {
+        let idx_data_offset = *self.idx_sector.ptr + U64_SIZE as u64;
+        let mut indexes = vec![0u8; (self.idx_sector.offset - U64_SIZE as u64) as usize];
+        #[cfg(unix)]
+        self.file.read_exact_at(&mut indexes, idx_data_offset)?;
+        let mut records = Vec::with_capacity(indexes.len() / RECORD_SIZE);
+        for f in indexes.chunks(RECORD_SIZE) {
+            let r = Record::try_from(f)?;
+            records.push(r);
+        }
+        Ok(records)
+    }
+
+    pub(super) fn fetch_metadata(&self) -> Result<Vec<Metadata>> {
+        let mut metadata = Vec::with_capacity(self.metadata_sector.capacity as usize - U64_SIZE);
+        #[cfg(unix)]
+        self.file
+            .read_exact_at(&mut metadata, *self.metadata_sector.ptr + U64_SIZE as u64)?;
+
+        let mut md_objs = Vec::new();
+        let mut offset = 0;
+        while offset < metadata.len() {
+            let mut size = [0; U64_SIZE];
+            size.copy_from_slice(&metadata[offset..U64_SIZE]);
+            let size = u64::from_le_bytes(size);
+
+            let data_pos = U64_SIZE + offset;
+            let metadata: Metadata =
+                bincode::deserialize(&metadata[data_pos..data_pos + size as usize])?;
+            md_objs.push(metadata);
+            offset = data_pos + size as usize;
+        }
+
+        Ok(md_objs)
+    }
 }
 
 impl TryFrom<&Path> for Index {
     type Error = std::io::Error;
 
-    fn try_from(path: &Path) -> Result<Self, Self::Error> {
+    fn try_from(path: &Path) -> StdResult<Self, Self::Error> {
         if path.join("simag.idx").exists() {
             let mut idx = Index::new(path)?;
             {
@@ -235,9 +266,9 @@ impl TryFrom<&Path> for Index {
     }
 }
 
-struct Record {
-    key: MemAddr<Mapped>,
-    value: DiscRecordRef,
+pub(super) struct Record {
+    pub key: MemAddr<Mapped>,
+    pub value: DiscRecordRef,
 }
 
 impl Record {

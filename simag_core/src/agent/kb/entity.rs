@@ -15,9 +15,6 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-#[cfg(feature = "persistence")]
-pub(super) use serialization::EntityMetadata;
-
 /// An entity is a singleton, the unique member of it's own class.
 ///
 /// Represents an object which can pertain to multiple classes or sets.
@@ -373,41 +370,11 @@ impl Entity {
 mod serialization {
     use super::*;
     use crate::storage::{
-        BinGrFuncRecord, BinGrMembRecord, BinLogSentRecord, BinMoveRecord, BinType, Mapped,
-        MemAddr, Metadata, NonMapped, ToBinaryObject,
+        BinGrFuncRecord, BinGrMembRecord, BinLogSentRecord, BinMoveRecord, MemAddr, MetadataKind,
+        MetadataOwnerKind, ToBinaryObject,
     };
     use bincode::Result;
-    use serde::{Deserialize, Serialize};
-    use std::{collections::HashSet, ops::Deref};
-
-    #[derive(Debug, Serialize, Deserialize)]
-    pub(in crate::agent::kb) struct EntityMetadata {
-        key: MemAddr<NonMapped>,
-        pub stored_data: HashSet<MemAddr<Mapped>>,
-    }
-
-    impl EntityMetadata {
-        pub fn new(blob: &EntityBlob) -> Self {
-            EntityMetadata {
-                key: MemAddr::from(blob.name.as_ptr() as u64),
-                stored_data: HashSet::new(),
-            }
-        }
-    }
-
-    impl<'de> Metadata<'de> for EntityMetadata {
-        fn metadata_key(&self) -> MemAddr<NonMapped> {
-            self.key
-        }
-
-        fn mapped_objects(&self) -> Box<dyn Iterator<Item = MemAddr<Mapped>> + '_> {
-            Box::new(self.stored_data.iter().copied())
-        }
-
-        fn tag(&self) -> BinType {
-            BinType::Entity
-        }
-    }
+    use std::ops::Deref;
 
     /// Deserializable blob of data representing all the information to construct an Entity.
     pub(in crate::agent::kb) struct EntityBlob {
@@ -417,6 +384,16 @@ mod serialization {
         pub relations: Vec<Vec<BinGrFuncRecord>>,
         pub beliefs: Vec<Vec<BinLogSentRecord>>,
         pub move_beliefs: Vec<BinMoveRecord>,
+    }
+
+    impl MetadataOwnerKind for EntityBlob {
+        fn get_kind(&self) -> MetadataKind {
+            MetadataKind::Entity
+        }
+
+        fn get_addr(&self) -> MemAddr<crate::storage::NonMapped> {
+            MemAddr::from(self.name.as_ptr() as u64)
+        }
     }
 
     pub(super) fn serialize(entity: &Entity) -> Result<EntityBlob> {
