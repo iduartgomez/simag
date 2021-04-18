@@ -149,15 +149,24 @@ impl StorageManager {
             let mut data = Vec::with_capacity(dref.length as usize);
             #[cfg(unix)]
             file.read_exact_at(&mut data, *dref.addr)?;
-            let Record { type_id, data, .. } = Record::deserialize(data)?;
+            let Record {
+                type_id,
+                data,
+                mem_addr,
+                ..
+            } = Record::deserialize(data)?;
             if type_id != dref.type_id {
-                let err: io::Error = io::ErrorKind::InvalidInput.into();
+                let err: io::Error = io::ErrorKind::InvalidData.into();
                 return Err(err.into());
             }
 
-            let metadata = &metadata_objs[0];
-            let addr = loadable.load(metadata, dref.type_id, data).unwrap();
-            self.mem_addr_map.insert(addr, key);
+            for md in &metadata_objs {
+                if let Some(owner) = md.stored_data.get(&mem_addr) {
+                    let addr = loadable.load(owner, mem_addr, dref.type_id, data).unwrap();
+                    self.mem_addr_map.insert(addr, key);
+                    break;
+                }
+            }
         }
 
         Ok(())
@@ -174,19 +183,21 @@ impl TryFrom<&Path> for StorageManager {
 }
 
 pub(crate) trait Loadable {
+    /// Loads to the implementing object the new in-memory instance from a previously mapped address.
     fn load(
         &mut self,
-        metadata: &Metadata,
+        owner_addr: &MemAddr<Mapped>,
+        owned_addr: MemAddr<Mapped>,
         dtype: BinType,
         data: Vec<u8>,
-    ) -> bincode::Result<MemAddr<NonMapped>>;
+    ) -> Result<MemAddr<NonMapped>>;
 }
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Metadata<'mg> {
     owners: HashMap<MetadataOwner, MemAddr<Mapped>>,
-    /// A map of ptr from owners to owned
-    stored_data: HashMap<MemAddr<Mapped>, HashSet<MemAddr<Mapped>>>,
+    /// A map of ptr from owned to owners
+    stored_data: HashMap<MemAddr<Mapped>, MemAddr<Mapped>>,
     #[serde(skip_serializing, skip_deserializing)]
     manager: Option<&'mg mut StorageManager>,
 }
@@ -231,13 +242,12 @@ impl<'mg> Metadata<'mg> {
         T: ToBinaryObject,
     {
         if let Some(ref mut md) = self.manager {
-            let owner_addr = self.owners.entry(owner.clone()).or_insert_with(|| {
+            let owner_addr = *self.owners.entry(owner.clone()).or_insert_with(|| {
                 let mapped_owner_addr = NEXT_MAPPED_MEM_ADDR.fetch_add(1, atomic::Ordering::SeqCst);
                 MemAddr(mapped_owner_addr, PhantomData)
             });
             let owned_obj_addr = md.insert_rec(bin)?;
-            let owned_objs = self.stored_data.entry(*owner_addr).or_default();
-            owned_objs.insert(owned_obj_addr);
+            self.stored_data.insert(owned_obj_addr, owner_addr);
         }
         Ok(())
     }

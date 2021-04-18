@@ -17,6 +17,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 mod index;
 mod manager;
 
+type Result<T> = std::result::Result<T, StorageError>;
+
 pub(crate) use manager::{
     Loadable, Metadata, MetadataKind, MetadataOwner, MetadataOwnerKind, StorageManager,
 };
@@ -148,6 +150,23 @@ binary_storage!(struct BinGrMembRecord -> BinType::GrMemb);
 binary_storage!(struct BinLogSentRecord -> BinType::LogSent);
 binary_storage!(struct BinMoveRecord -> BinType::Movement);
 
+const U64_SIZE: usize = std::mem::size_of::<u64>();
+
+/// Deserializes a chunk of bytes into a key-value pair of an instance of the expected type
+/// built from bytes and the assigned key to the object.
+pub fn get_from_metadata_storage<D>(data: Vec<u8>) -> Result<(String, D)>
+where
+    D: for<'a> Deserialize<'a>,
+{
+    let mut key_len = [0; U64_SIZE];
+    key_len.copy_from_slice(&data[0..U64_SIZE]);
+    let key_len = u64::from_le_bytes(key_len);
+    let data_start = U64_SIZE + key_len as usize;
+    let key: String = bincode::deserialize(&data[U64_SIZE..data_start])?;
+    let data: D = bincode::deserialize(&data[data_start..])?;
+    Ok((key, data))
+}
+
 pub fn ser_locked<S, T>(val: &RwLock<T>, serializer: S) -> StdResult<S::Ok, S::Error>
 where
     S: serde::Serializer,
@@ -193,8 +212,6 @@ fn open_dat_file(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
-type Result<T> = std::result::Result<T, StorageError>;
-
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
     #[error("manager not found in metadata")]
@@ -203,4 +220,20 @@ pub enum StorageError {
     Serialization(#[from] bincode::Error),
     #[error("i/o error")]
     Io(#[from] io::Error),
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn deser_to_bin_obj() -> Result<()> {
+        let data = [1i32; 5];
+        let ser = BinGrMembRecord::build(MemAddr(0, PhantomData), "test", &data)?;
+        let (_, v) = ser.destruct();
+        let (k, v) = get_from_metadata_storage::<[i32; 5]>(v)?;
+        assert_eq!(k, "test");
+        assert_eq!(v, [1i32; 5]);
+        Ok(())
+    }
 }

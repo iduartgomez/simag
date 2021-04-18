@@ -14,21 +14,24 @@ use crossbeam::channel::{Receiver, Sender};
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex};
 
-use crate::agent::kb::{
-    bms::{build_declaration_bms, BmsWrapper, RecordHistory},
-    class::*,
-    entity::Entity,
-    inference::{
-        meet_sent_requirements, ArgsProduct, GroundedResult, IExprResult, InfResults, Inference,
-        QueryInput,
-    },
-    VarAssignment,
-};
 use crate::agent::lang::{
     Assert, BuiltIns, ClassDecl, FreeClassMembership, FuncDecl, GrTerminalKind,
     GrTerminalKind::{Class as ClassTerm, Entity as EntityTerm},
     GroundedFunc, GroundedMemb, GroundedRef, LocFn, LogSentence, MoveFn, ParseErrF, ParseTree,
     Parser, Point, Predicate, ProofResContext, SentVarReq, Var,
+};
+use crate::{
+    agent::kb::{
+        bms::{build_declaration_bms, BmsWrapper, RecordHistory},
+        class::*,
+        entity::Entity,
+        inference::{
+            meet_sent_requirements, ArgsProduct, GroundedResult, IExprResult, InfResults,
+            Inference, QueryInput,
+        },
+        VarAssignment,
+    },
+    storage,
 };
 
 #[cfg(feature = "persistence")]
@@ -1007,19 +1010,38 @@ impl Representation {
     }
 }
 
+struct ReprLoader {
+    repr: Representation,
+    entities: HashMap<MemAddr<Mapped>, Entity>,
+    svc_queue: Sender<BackgroundTask>,
+}
+
 #[cfg(feature = "persistence")]
-impl Loadable for Representation {
+impl Loadable for ReprLoader {
     fn load(
         &mut self,
-        metadata: &Metadata,
+        owner: &MemAddr<Mapped>,
+        _owned: MemAddr<Mapped>,
         dtype: BinType,
         data: Vec<u8>,
-    ) -> bincode::Result<MemAddr<NonMapped>> {
+    ) -> Result<MemAddr<NonMapped>, StorageError> {
+        use std::collections::hash_map::Entry;
+
         match dtype {
             BinType::GrFunc => {
-                let deserialized: Arc<GroundedFunc> = Arc::new(bincode::deserialize(&data)?);
+                let (key, obj): (_, GroundedFunc) = get_from_metadata_storage(data)?;
+                let deserialized: Arc<GroundedFunc> = Arc::new(obj);
                 let heap_addr = (Arc::as_ptr(&deserialized) as u64).into();
-
+                match self.entities.entry(*owner) {
+                    Entry::Occupied(mut entry) => {
+                        let entity = entry.get_mut();
+                        entity.add_relationship::<IExprResult>(&self.repr, &deserialized, None);
+                    }
+                    Entry::Vacant(vac) => {
+                        let entity = vac.insert(Entity::new(key, self.svc_queue.clone()));
+                        entity.add_relationship::<IExprResult>(&self.repr, &deserialized, None);
+                    }
+                }
                 Ok(heap_addr)
             }
             _ => unreachable!(),
@@ -1084,7 +1106,7 @@ impl ReprSharedData {
     // 1. checking if state has indeed changed since last persistence first
     // 2. perform incremental persistence over different time chunks to not starve the main thread
     #[cfg(feature = "persistence")]
-    fn persist(&mut self) -> bincode::Result<()> {
+    fn persist(&mut self) -> Result<(), StorageError> {
         if self.config.persist.load(Ordering::SeqCst) {
             let entities: Result<Vec<_>, _> = self
                 .entities
@@ -1108,12 +1130,12 @@ impl ReprSharedData {
                     Self::add_to_storage(res, bin, &mut metadata, &owner_token)
                 })?;
             }
-            metadata.insert_metadata();
+            metadata.insert_metadata()?;
         }
         Ok(())
     }
 
-    #[inline]
+    #[inline(always)]
     #[cfg(feature = "persistence")]
     fn add_to_storage<T>(
         res: std::io::Result<()>,
