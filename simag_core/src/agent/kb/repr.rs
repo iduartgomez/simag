@@ -120,14 +120,7 @@ impl Representation {
     #[cfg(feature = "persistence")]
     pub fn new(threads: usize) -> std::io::Result<Representation> {
         let (rep, bg_task_rcv) = Self::internal_new(threads);
-        let shared_data = ReprSharedData {
-            entities: rep.entities.clone(),
-            classes: rep.classes.clone(),
-            config: rep.config.clone(),
-            readers: rep.readers.clone(),
-            bg_task_rcv,
-            storage_layer: StorageManager::new(rep.id.clone(), None, None)?,
-        };
+        let shared_data = ReprSharedData::new(&rep, bg_task_rcv)?;
         rep.threads.spawn(move || bg_thread(shared_data));
         Ok(rep)
     }
@@ -145,6 +138,11 @@ impl Representation {
         };
         rep.threads.spawn(move || bg_thread(shared_data));
         rep
+    }
+
+    #[cfg(feature = "persistence")]
+    pub fn load_from_disc(threads: usize) -> std::io::Result<Representation> {
+        ReprLoader::load(threads)
     }
 
     fn internal_new(threads: usize) -> (Self, Receiver<BackgroundTask>) {
@@ -1010,13 +1008,37 @@ impl Representation {
     }
 }
 
+#[cfg(feature = "persistence")]
 struct ReprLoader {
     repr: Representation,
     entities: HashMap<MemAddr<Mapped>, Entity>,
     svc_queue: Sender<BackgroundTask>,
 }
 
-#[cfg(feature = "persistence")]
+impl ReprLoader {
+    fn load(threads: usize) -> std::io::Result<Representation> {
+        let mut loader = {
+            let repr = Representation::new(threads)?;
+            ReprLoader {
+                svc_queue: repr.svc_queue.clone(),
+                repr,
+                entities: HashMap::new(),
+            }
+        };
+        let mut manager = StorageManager::new(uuid::Uuid::new_v4(), None, None).unwrap();
+        manager.load_from_disc(&mut loader).unwrap();
+        let ReprLoader {
+            mut repr, entities, ..
+        } = loader;
+        let final_entities = DashMap::new();
+        for (_, ent) in entities {
+            final_entities.insert(ent.name.clone(), ent);
+        }
+        repr.entities = InnerData(Arc::new(final_entities));
+        Ok(repr)
+    }
+}
+
 impl Loadable for ReprLoader {
     fn load(
         &mut self,
@@ -1102,6 +1124,18 @@ struct ReprSharedData {
 }
 
 impl ReprSharedData {
+    #[cfg(feature = "persistence")]
+    fn new(rep: &Representation, bg_task_rcv: Receiver<BackgroundTask>) -> std::io::Result<Self> {
+        Ok(ReprSharedData {
+            entities: rep.entities.clone(),
+            classes: rep.classes.clone(),
+            config: rep.config.clone(),
+            readers: rep.readers.clone(),
+            bg_task_rcv,
+            storage_layer: StorageManager::new(rep.id.clone(), None, None)?,
+        })
+    }
+
     // TODO: this should be optimized and is a first naive implementation by:
     // 1. checking if state has indeed changed since last persistence first
     // 2. perform incremental persistence over different time chunks to not starve the main thread

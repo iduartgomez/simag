@@ -19,6 +19,9 @@ pub struct Agent {
 }
 
 impl Agent {
+    /// # Panic
+    /// If the `persistence` cfg feature is enable will panic if there are any failures
+    /// while openning files.
     pub fn new(id: String) -> Agent {
         let threads = num_cpus::get();
         #[cfg(feature = "persistence")]
@@ -31,6 +34,16 @@ impl Agent {
             thread_manager: ThreadManager { threads },
             representation,
         }
+    }
+
+    pub fn load_from_disc(id: String) -> std::io::Result<Agent> {
+        let threads = num_cpus::get();
+        let representation = kb::repr::Representation::load_from_disc(threads)?;
+        Ok(Agent {
+            id,
+            thread_manager: ThreadManager { threads },
+            representation,
+        })
     }
 
     pub fn ask(&self, source: &str) -> Result<kb::repr::Answer, kb::repr::QueryErr> {
