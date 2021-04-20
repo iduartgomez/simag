@@ -402,3 +402,10 @@ impl HasBms for GroundedMemb {
         self.get_value()
     }
 }
+
+#[cfg(feature = "persistence")]
+impl storage::ToBinaryObject for GroundedMemb {
+    fn get_type() -> storage::BinType {
+        storage::BinType::GrMemb
+    }
+}

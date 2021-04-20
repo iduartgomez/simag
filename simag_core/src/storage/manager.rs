@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{
-    index::Index, open_dat_file, BinType, DiscAddr, Mapped, MemAddr, NonMapped, Result,
+    index::Index, open_dat_file, BinType, BinaryObj, DiscAddr, Mapped, MemAddr, NonMapped, Result,
     StorageError, ToBinaryObject,
 };
 
@@ -82,18 +82,19 @@ impl StorageManager {
     /// Inserts a new record, if it exists the new record will be updated.
     ///
     /// Internally this does not flush to disk, but only stores the data in the record buffer.
-    pub fn insert_rec<O>(&mut self, rec: O) -> io::Result<MemAddr<Mapped>>
-    where
-        O: ToBinaryObject,
-    {
-        let (mem_addr, data) = rec.destruct();
+    pub fn insert_rec(&mut self, rec: BinaryObj) -> io::Result<MemAddr<Mapped>> {
+        let BinaryObj {
+            address: mem_addr,
+            record: data,
+            ty,
+        } = rec;
         let mapped_addr = *self.mem_addr_map.entry(mem_addr).or_insert_with(|| {
             MemAddr(
                 NEXT_MAPPED_MEM_ADDR.fetch_add(1, atomic::Ordering::SeqCst),
                 PhantomData,
             )
         });
-        let rec = Record::new(O::get_type(), mapped_addr, data);
+        let rec = Record::new(ty, mapped_addr, data);
         if self.buffer_size + rec.len() as u64 > PageManager::PAGE_SIZE {
             // should flush first
             self.flush()?;
@@ -237,10 +238,7 @@ impl<'mg> Metadata<'mg> {
         Ok(())
     }
 
-    pub fn insert_rec<T>(&mut self, bin: T, owner: &MetadataOwner) -> io::Result<()>
-    where
-        T: ToBinaryObject,
-    {
+    pub fn insert_rec(&mut self, bin: BinaryObj, owner: &MetadataOwner) -> io::Result<()> {
         if let Some(ref mut md) = self.manager {
             let owner_addr = *self.owners.entry(owner.clone()).or_insert_with(|| {
                 let mapped_owner_addr = NEXT_MAPPED_MEM_ADDR.fetch_add(1, atomic::Ordering::SeqCst);
@@ -778,20 +776,8 @@ mod test {
         let mut unstr = Unstructured::new(&sample);
         let mut rng = rand::thread_rng();
         for _ in 0..num_recs {
-            match rng.gen_range(0..3) {
-                0 => {
-                    let rec: BinGrFuncRecord = unstr.arbitrary().unwrap();
-                    rep.insert_rec(rec)?;
-                }
-                1 => {
-                    let rec: BinGrMembRecord = unstr.arbitrary().unwrap();
-                    rep.insert_rec(rec)?;
-                }
-                _ => {
-                    let rec: BinLogSentRecord = unstr.arbitrary().unwrap();
-                    rep.insert_rec(rec)?;
-                }
-            }
+            let rec: BinaryObj = unstr.arbitrary().unwrap();
+            rep.insert_rec(rec)?;
         }
         Ok(())
     }

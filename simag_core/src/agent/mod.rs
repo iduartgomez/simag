@@ -36,6 +36,7 @@ impl Agent {
         }
     }
 
+    #[cfg(feature = "persistence")]
     pub fn load_from_disc(id: String) -> std::io::Result<Agent> {
         let threads = num_cpus::get();
         let representation = kb::repr::Representation::load_from_disc(threads)?;

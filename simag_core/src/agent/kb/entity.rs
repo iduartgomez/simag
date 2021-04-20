@@ -369,10 +369,7 @@ impl Entity {
 #[cfg(feature = "persistence")]
 mod serialization {
     use super::*;
-    use crate::storage::{
-        BinGrFuncRecord, BinGrMembRecord, BinLogSentRecord, BinMoveRecord, MemAddr, MetadataKind,
-        MetadataOwnerKind, ToBinaryObject,
-    };
+    use crate::storage::{BinaryObj, MemAddr, MetadataKind, MetadataOwnerKind, ToBinaryObject};
     use bincode::Result;
     use std::ops::Deref;
 
@@ -380,10 +377,10 @@ mod serialization {
     pub(in crate::agent::kb) struct EntityBlob {
         pub name: String,
         pub location: BmsWrapper<RecordHistory>,
-        pub classes: Vec<BinGrMembRecord>,
-        pub relations: Vec<Vec<BinGrFuncRecord>>,
-        pub beliefs: Vec<Vec<BinLogSentRecord>>,
-        pub move_beliefs: Vec<BinMoveRecord>,
+        pub classes: Vec<BinaryObj>,
+        pub relations: Vec<Vec<BinaryObj>>,
+        pub beliefs: Vec<Vec<BinaryObj>>,
+        pub move_beliefs: Vec<BinaryObj>,
     }
 
     impl MetadataOwnerKind for EntityBlob {
@@ -402,7 +399,7 @@ mod serialization {
             .iter()
             .map(|kv| {
                 let address = Arc::as_ptr(kv.value()) as u64;
-                BinGrMembRecord::build(address.into(), kv.key(), kv.value())
+                BinaryObj::build(address.into(), kv.key(), kv.value().deref())
             })
             .collect();
 
@@ -414,7 +411,7 @@ mod serialization {
                     .iter()
                     .map(|f| {
                         let address = Arc::as_ptr(f) as u64;
-                        BinGrFuncRecord::build(address.into(), kv.key(), f.deref())
+                        BinaryObj::build(address.into(), kv.key(), f.deref())
                     })
                     .collect()
             })
@@ -428,7 +425,7 @@ mod serialization {
                     .iter()
                     .map(|f| {
                         let address = Arc::as_ptr(f) as u64;
-                        BinLogSentRecord::build(address.into(), kv.key(), f.deref())
+                        BinaryObj::build(address.into(), kv.key(), f.deref())
                     })
                     .collect()
             })
@@ -439,7 +436,7 @@ mod serialization {
             lock.iter()
                 .map(|s| {
                     let address = Arc::as_ptr(s) as u64;
-                    BinMoveRecord::build(address.into(), "", s.deref())
+                    BinaryObj::build(address.into(), "", s.deref())
                 })
                 .collect()
         };

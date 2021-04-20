@@ -557,6 +557,13 @@ impl fmt::Display for LogSentence {
     }
 }
 
+#[cfg(feature = "persistence")]
+impl crate::storage::ToBinaryObject for LogSentence {
+    fn get_type() -> crate::storage::BinType {
+        crate::storage::BinType::LogSent
+    }
+}
+
 pub(in crate::agent) struct LhsPreds<'a> {
     preds: Vec<Vec<&'a Assert>>,
     index: Vec<(usize, bool)>,

@@ -96,59 +96,38 @@ impl From<u8> for BinType {
     }
 }
 
-pub(crate) trait ToBinaryObject
-where
-    Self: Sized,
-{
-    fn destruct(self) -> (MemAddr<NonMapped>, Vec<u8>);
+pub(crate) trait ToBinaryObject {
     fn get_type() -> BinType;
-    fn build<T>(address: MemAddr<NonMapped>, key: &str, data: &T) -> bincode::Result<Self>
+}
+
+#[cfg_attr(test, derive(Arbitrary))]
+pub(super) struct BinaryObj {
+    /// the current physical address, used to preserve relationships
+    pub address: MemAddr<NonMapped>,
+    /// the actual binary serialized content of the record:
+    // [key_size: u64 as [u8], key as [u8], data as [u8]]
+    pub record: Vec<u8>,
+    pub ty: BinType,
+}
+
+impl BinaryObj {
+    pub fn build<T>(address: MemAddr<NonMapped>, key: &str, data: &T) -> bincode::Result<Self>
     where
-        T: Serialize;
+        T: Serialize + ToBinaryObject,
+    {
+        // TODO: optimize this if possible to avoid copying unnecesarilly
+        let bin_key = bincode::serialize(key)?;
+        let mut record: Vec<u8> = (bin_key.len() as u64).to_le_bytes().to_vec();
+        record.extend(bin_key);
+        let record_data = &mut bincode::serialize::<T>(&data)?;
+        record.append(record_data);
+        Ok(BinaryObj {
+            address,
+            record,
+            ty: <T as ToBinaryObject>::get_type(),
+        })
+    }
 }
-
-macro_rules! binary_storage {
-    ( struct $bin:ident -> $type:expr) => {
-        #[derive(Clone)]
-        #[cfg_attr(test, derive(Arbitrary))]
-        pub(super) struct $bin {
-            /// the current physical address, used to preserve relationships
-            address: MemAddr<NonMapped>,
-            /// the actual binary serialized content of the record:
-            // [key_size: u64 as [u8], key as [u8], data as [u8]]
-            record: Vec<u8>,
-        }
-
-        impl ToBinaryObject for $bin {
-            fn build<T: Serialize>(
-                address: MemAddr<NonMapped>,
-                key: &str,
-                data: &T,
-            ) -> bincode::Result<Self> {
-                // TODO: optimize this if possible to avoid copying unnecesarilly
-                let bin_key = bincode::serialize(key)?;
-                let mut record: Vec<u8> = (bin_key.len() as u64).to_le_bytes().to_vec();
-                record.extend(bin_key);
-                let record_data = &mut bincode::serialize::<T>(&data)?;
-                record.append(record_data);
-                Ok($bin { address, record })
-            }
-
-            fn destruct(self) -> (MemAddr<NonMapped>, Vec<u8>) {
-                (self.address, self.record)
-            }
-
-            fn get_type() -> BinType {
-                $type
-            }
-        }
-    };
-}
-
-binary_storage!(struct BinGrFuncRecord -> BinType::GrFunc);
-binary_storage!(struct BinGrMembRecord -> BinType::GrMemb);
-binary_storage!(struct BinLogSentRecord -> BinType::LogSent);
-binary_storage!(struct BinMoveRecord -> BinType::Movement);
 
 const U64_SIZE: usize = std::mem::size_of::<u64>();
 
@@ -226,12 +205,17 @@ pub enum StorageError {
 mod test {
     use super::*;
 
+    impl ToBinaryObject for [i32; 5] {
+        fn get_type() -> BinType {
+            BinType::GrFunc
+        }
+    }
+
     #[test]
     fn deser_to_bin_obj() -> Result<()> {
         let data = [1i32; 5];
-        let ser = BinGrMembRecord::build(MemAddr(0, PhantomData), "test", &data)?;
-        let (_, v) = ser.destruct();
-        let (k, v) = get_from_metadata_storage::<[i32; 5]>(v)?;
+        let BinaryObj { record, .. } = BinaryObj::build(MemAddr(0, PhantomData), "test", &data)?;
+        let (k, v) = get_from_metadata_storage::<[i32; 5]>(record)?;
         assert_eq!(k, "test");
         assert_eq!(v, [1i32; 5]);
         Ok(())

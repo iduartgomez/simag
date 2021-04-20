@@ -294,3 +294,10 @@ impl std::fmt::Display for GroundedFunc {
         )
     }
 }
+
+#[cfg(feature = "persistence")]
+impl storage::ToBinaryObject for GroundedFunc {
+    fn get_type() -> storage::BinType {
+        storage::BinType::GrFunc
+    }
+}

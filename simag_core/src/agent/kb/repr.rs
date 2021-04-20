@@ -14,24 +14,21 @@ use crossbeam::channel::{Receiver, Sender};
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex};
 
+use crate::agent::kb::{
+    bms::{build_declaration_bms, BmsWrapper, RecordHistory},
+    class::*,
+    entity::Entity,
+    inference::{
+        meet_sent_requirements, ArgsProduct, GroundedResult, IExprResult, InfResults, Inference,
+        QueryInput,
+    },
+    VarAssignment,
+};
 use crate::agent::lang::{
     Assert, BuiltIns, ClassDecl, FreeClassMembership, FuncDecl, GrTerminalKind,
     GrTerminalKind::{Class as ClassTerm, Entity as EntityTerm},
     GroundedFunc, GroundedMemb, GroundedRef, LocFn, LogSentence, MoveFn, ParseErrF, ParseTree,
     Parser, Point, Predicate, ProofResContext, SentVarReq, Var,
-};
-use crate::{
-    agent::kb::{
-        bms::{build_declaration_bms, BmsWrapper, RecordHistory},
-        class::*,
-        entity::Entity,
-        inference::{
-            meet_sent_requirements, ArgsProduct, GroundedResult, IExprResult, InfResults,
-            Inference, QueryInput,
-        },
-        VarAssignment,
-    },
-    storage,
 };
 
 #[cfg(feature = "persistence")]
@@ -1015,6 +1012,7 @@ struct ReprLoader {
     svc_queue: Sender<BackgroundTask>,
 }
 
+#[cfg(feature = "persistence")]
 impl ReprLoader {
     fn load(threads: usize) -> std::io::Result<Representation> {
         let mut loader = {
@@ -1039,6 +1037,7 @@ impl ReprLoader {
     }
 }
 
+#[cfg(feature = "persistence")]
 impl Loadable for ReprLoader {
     fn load(
         &mut self,
@@ -1171,15 +1170,12 @@ impl ReprSharedData {
 
     #[inline(always)]
     #[cfg(feature = "persistence")]
-    fn add_to_storage<T>(
+    fn add_to_storage(
         res: std::io::Result<()>,
-        bin: T,
+        bin: BinaryObj,
         metadata: &mut Metadata,
         owner: &MetadataOwner,
-    ) -> std::io::Result<()>
-    where
-        T: ToBinaryObject,
-    {
+    ) -> std::io::Result<()> {
         match res {
             Err(err) => Err(err),
             Ok(()) => metadata.insert_rec(bin, owner),
