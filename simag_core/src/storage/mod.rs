@@ -17,7 +17,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 mod index;
 mod manager;
 
-type Result<T> = std::result::Result<T, StorageError>;
+pub(crate) type Result<T> = std::result::Result<T, StorageError>;
 
 pub(crate) use manager::{
     Loadable, Metadata, MetadataKind, MetadataOwner, MetadataOwnerKind, StorageManager,
@@ -197,6 +197,8 @@ pub enum StorageError {
     ManagerNotFound,
     #[error("serialization error")]
     Serialization(#[from] bincode::Error),
+    #[error("failed to write storage data to disc")]
+    FailedToWrite,
     #[error("i/o error")]
     Io(#[from] io::Error),
 }
@@ -207,6 +209,7 @@ mod test {
 
     impl ToBinaryObject for [i32; 5] {
         fn get_type() -> BinType {
+            // just for testing purpouses
             BinType::GrFunc
         }
     }

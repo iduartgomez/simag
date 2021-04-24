@@ -1,6 +1,7 @@
+#[cfg(feature = "persistence")]
+use std::sync::atomic::Ordering;
 use std::{
     collections::{HashMap, HashSet},
-    convert::TryFrom,
     iter::FromIterator,
     ops::Deref,
     path::Path,
@@ -13,6 +14,7 @@ use std::{
 use crossbeam::channel::{Receiver, Sender};
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex};
+use uuid::Uuid;
 
 use crate::agent::kb::{
     bms::{build_declaration_bms, BmsWrapper, RecordHistory},
@@ -32,9 +34,10 @@ use crate::agent::lang::{
 };
 
 #[cfg(feature = "persistence")]
-use crate::storage::*;
-#[cfg(feature = "persistence")]
-use std::sync::atomic::Ordering;
+use crate::storage::{
+    self, BinType, BinaryObj, Loadable, Mapped, MemAddr, Metadata, MetadataOwner, NonMapped,
+    StorageError, StorageManager,
+};
 
 // TODO: find better solution for self-referential borrows escaping self method scopes
 // this should remove the use of unsafe in this module which seems a little bit unnecessary?
@@ -83,28 +86,12 @@ impl<T> Deref for InnerData<T> {
 /// - classes -> Sets of objects (entities or subclasses) that share a common property.
 ///   This includes 'classes of relationships' and other 'functions'.
 pub(crate) struct Representation {
-    pub(super) id: uuid::Uuid,
-    config: ReprConfig,
+    pub(crate) config: ReprConfig,
     pub(in crate::agent) entities: InnerData<Entity>,
     pub(in crate::agent) classes: InnerData<Class>,
     svc_queue: Sender<BackgroundTask>,
     threads: rayon::ThreadPool,
     readers: Arc<(Mutex<usize>, Condvar)>,
-}
-
-#[cfg(feature = "persistence")]
-impl TryFrom<&Path> for Representation {
-    type Error = std::io::Error;
-
-    /// Try to reconstruct a Representation object from on-disc storage.
-    ///
-    /// # Arguments
-    /// - path: path to the simag data storage directory.
-    fn try_from(path: &Path) -> Result<Self, Self::Error> {
-        let repr = Self::new(1)?;
-
-        todo!()
-    }
 }
 
 impl Representation {
@@ -117,7 +104,7 @@ impl Representation {
     #[cfg(feature = "persistence")]
     pub fn new(threads: usize) -> std::io::Result<Representation> {
         let (rep, bg_task_rcv) = Self::internal_new(threads);
-        let shared_data = ReprSharedData::new(&rep, bg_task_rcv)?;
+        let shared_data = ReprSharedData::new(&rep, bg_task_rcv, None)?;
         rep.threads.spawn(move || bg_thread(shared_data));
         Ok(rep)
     }
@@ -126,20 +113,26 @@ impl Representation {
     pub fn new(threads: usize) -> Representation {
         let (rep, bg_task_rcv) = Self::internal_new(threads);
         #[allow(unused_mut, unused_variables)]
-        let mut shared_data = ReprSharedData {
-            entities: rep.entities.clone(),
-            classes: rep.classes.clone(),
-            config: rep.config.clone(),
-            readers: rep.readers.clone(),
-            bg_task_rcv,
-        };
+        let mut shared_data = ReprSharedData::new(&rep, bg_task_rcv);
         rep.threads.spawn(move || bg_thread(shared_data));
         rep
     }
 
+    /// Try to reconstruct a Representation object from on-disc storage.
+    ///
+    /// # Arguments
+    /// - path: path to the simag data storage directory
     #[cfg(feature = "persistence")]
-    pub fn load_from_disc(threads: usize) -> std::io::Result<Representation> {
-        ReprLoader::load(threads)
+    pub fn load_from_disc(threads: Option<usize>, path: &Path) -> std::io::Result<Representation> {
+        ReprLoader::load(threads, path)
+    }
+
+    /// Persists the current state to disc, updating any previously persisted state.
+    #[cfg(feature = "persistence")]
+    pub fn write_to_disc(&mut self) -> storage::Result<()> {
+        self.svc_queue
+            .send_timeout(BackgroundTask::ForcePersist, Duration::from_secs(1))
+            .map_err(|_| StorageError::FailedToWrite)
     }
 
     fn internal_new(threads: usize) -> (Self, Receiver<BackgroundTask>) {
@@ -157,7 +150,6 @@ impl Representation {
         // reserve at least one thread for the background thread
         (
             Representation {
-                id: uuid::Uuid::new_v4(),
                 config,
                 entities,
                 classes,
@@ -1014,16 +1006,22 @@ struct ReprLoader {
 
 #[cfg(feature = "persistence")]
 impl ReprLoader {
-    fn load(threads: usize) -> std::io::Result<Representation> {
+    fn load(threads: Option<usize>, path: &Path) -> std::io::Result<Representation> {
+        let threads = threads.unwrap_or_else(|| num_cpus::get());
         let mut loader = {
-            let repr = Representation::new(threads)?;
+            let repr = {
+                let (rep, bg_task_rcv) = Representation::internal_new(threads);
+                let shared_data = ReprSharedData::new(&rep, bg_task_rcv, Some(path))?;
+                rep.threads.spawn(move || bg_thread(shared_data));
+                rep
+            };
             ReprLoader {
                 svc_queue: repr.svc_queue.clone(),
                 repr,
                 entities: HashMap::new(),
             }
         };
-        let mut manager = StorageManager::new(uuid::Uuid::new_v4(), None, None).unwrap();
+        let mut manager = StorageManager::new(loader.repr.config.id, Some(path), None).unwrap();
         manager.load_from_disc(&mut loader).unwrap();
         let ReprLoader {
             mut repr, entities, ..
@@ -1045,12 +1043,12 @@ impl Loadable for ReprLoader {
         _owned: MemAddr<Mapped>,
         dtype: BinType,
         data: Vec<u8>,
-    ) -> Result<MemAddr<NonMapped>, StorageError> {
+    ) -> storage::Result<MemAddr<NonMapped>> {
         use std::collections::hash_map::Entry;
 
         match dtype {
             BinType::GrFunc => {
-                let (key, obj): (_, GroundedFunc) = get_from_metadata_storage(data)?;
+                let (key, obj): (_, GroundedFunc) = storage::get_from_metadata_storage(data)?;
                 let deserialized: Arc<GroundedFunc> = Arc::new(obj);
                 let heap_addr = (Arc::as_ptr(&deserialized) as u64).into();
                 match self.entities.entry(*owner) {
@@ -1098,9 +1096,10 @@ impl Drop for Representation {
 }
 
 #[derive(Clone)]
-struct ReprConfig {
+pub(crate) struct ReprConfig {
     #[cfg(feature = "persistence")]
     persist: Arc<AtomicBool>,
+    pub id: Uuid,
 }
 
 impl Default for ReprConfig {
@@ -1108,6 +1107,7 @@ impl Default for ReprConfig {
         ReprConfig {
             #[cfg(feature = "persistence")]
             persist: Arc::new(AtomicBool::new(false)),
+            id: Uuid::new_v4(),
         }
     }
 }
@@ -1124,47 +1124,64 @@ struct ReprSharedData {
 
 impl ReprSharedData {
     #[cfg(feature = "persistence")]
-    fn new(rep: &Representation, bg_task_rcv: Receiver<BackgroundTask>) -> std::io::Result<Self> {
+    fn new(
+        rep: &Representation,
+        bg_task_rcv: Receiver<BackgroundTask>,
+        path: Option<&Path>,
+    ) -> std::io::Result<Self> {
         Ok(ReprSharedData {
             entities: rep.entities.clone(),
             classes: rep.classes.clone(),
             config: rep.config.clone(),
             readers: rep.readers.clone(),
             bg_task_rcv,
-            storage_layer: StorageManager::new(rep.id.clone(), None, None)?,
+            storage_layer: StorageManager::new(rep.config.id.clone(), path, None)?,
         })
+    }
+
+    #[cfg(not(feature = "persistence"))]
+    fn new(rep: &Representation, bg_task_rcv: Receiver<BackgroundTask>) -> Self {
+        ReprSharedData {
+            entities: rep.entities.clone(),
+            classes: rep.classes.clone(),
+            config: rep.config.clone(),
+            readers: rep.readers.clone(),
+            bg_task_rcv,
+        }
     }
 
     // TODO: this should be optimized and is a first naive implementation by:
     // 1. checking if state has indeed changed since last persistence first
     // 2. perform incremental persistence over different time chunks to not starve the main thread
     #[cfg(feature = "persistence")]
-    fn persist(&mut self) -> Result<(), StorageError> {
-        if self.config.persist.load(Ordering::SeqCst) {
-            let entities: Result<Vec<_>, _> = self
-                .entities
-                .iter()
-                .map(|entity| entity.persist())
-                .collect();
-            let mut metadata = Metadata::new(&mut self.storage_layer);
-            for mut ent in entities? {
-                let owner_token = metadata.register_owner(&ent);
-
-                ent.classes.drain(..).fold(Ok(()), |res, bin| {
-                    Self::add_to_storage(res, bin, &mut metadata, &owner_token)
-                })?;
-                ent.relations.drain(..).flatten().fold(Ok(()), |res, bin| {
-                    Self::add_to_storage(res, bin, &mut metadata, &owner_token)
-                })?;
-                ent.beliefs.drain(..).flatten().fold(Ok(()), |res, bin| {
-                    Self::add_to_storage(res, bin, &mut metadata, &owner_token)
-                })?;
-                ent.move_beliefs.drain(..).fold(Ok(()), |res, bin| {
-                    Self::add_to_storage(res, bin, &mut metadata, &owner_token)
-                })?;
-            }
-            metadata.insert_metadata()?;
+    fn persist(&mut self) -> storage::Result<()> {
+        if !self.config.persist.load(Ordering::SeqCst) {
+            return Ok(());
         }
+        let entities: Result<Vec<_>, _> = self
+            .entities
+            .iter()
+            .map(|entity| entity.persist())
+            .collect();
+        let mut metadata = Metadata::new(&mut self.storage_layer);
+        for mut ent in entities? {
+            let owner_token = metadata.register_owner(&ent);
+
+            ent.classes.drain(..).fold(Ok(()), |res, bin| {
+                Self::add_to_storage(res, bin, &mut metadata, &owner_token)
+            })?;
+            ent.relations.drain(..).flatten().fold(Ok(()), |res, bin| {
+                Self::add_to_storage(res, bin, &mut metadata, &owner_token)
+            })?;
+            ent.beliefs.drain(..).flatten().fold(Ok(()), |res, bin| {
+                Self::add_to_storage(res, bin, &mut metadata, &owner_token)
+            })?;
+            ent.move_beliefs.drain(..).fold(Ok(()), |res, bin| {
+                Self::add_to_storage(res, bin, &mut metadata, &owner_token)
+            })?;
+        }
+        metadata.insert_metadata()?;
+        self.storage_layer.flush()?;
         Ok(())
     }
 
@@ -1183,6 +1200,7 @@ impl ReprSharedData {
     }
 }
 
+#[allow(unused_mut)]
 fn bg_thread(mut shared_data: ReprSharedData) {
     let (num_writers_lock, cvar) = &*shared_data.readers.clone();
     let mut time_slice = Instant::now() + Representation::BG_TASK_TIME_SLICE;
@@ -1203,7 +1221,7 @@ fn bg_thread(mut shared_data: ReprSharedData) {
         }
         let msg = shared_data.bg_task_rcv.try_recv();
         match msg {
-            Ok(msg) => match background_service(msg) {
+            Ok(msg) => match background_service(msg, &mut shared_data) {
                 Ok(()) => {}
                 Err(()) => {
                     std::mem::drop(num_writers);
@@ -1244,7 +1262,7 @@ fn bg_thread(mut shared_data: ReprSharedData) {
 
 /// Performs critical functions in the background service.
 #[inline(always)]
-fn background_service(msg: BackgroundTask) -> Result<(), ()> {
+fn background_service(msg: BackgroundTask, shared_data: &mut ReprSharedData) -> Result<(), ()> {
     use BackgroundTask::*;
 
     match msg {
@@ -1255,6 +1273,8 @@ fn background_service(msg: BackgroundTask) -> Result<(), ()> {
                 rec.compact_record_log();
             }
         }
+        #[cfg(feature = "persistence")]
+        ForcePersist => shared_data.persist().unwrap(),
         Shutdown => return Err(()),
     }
 
@@ -1268,6 +1288,8 @@ pub(super) enum BackgroundTask {
     /// It shouldn't be freed either cause the parent object won't be dropped until
     /// all the messages before receiving a shutdown signal have been processed.
     CompactBmsLog(*const BmsWrapper<RecordHistory>),
+    #[cfg(feature = "persistence")]
+    ForcePersist,
     Shutdown,
 }
 

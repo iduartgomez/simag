@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 use super::{
     index::Index, open_dat_file, BinType, BinaryObj, DiscAddr, Mapped, MemAddr, NonMapped, Result,
-    StorageError, ToBinaryObject,
+    StorageError,
 };
 
 pub(super) const DISC_REC_REF_SIZE: usize = std::mem::size_of::<DiscRecordRef>();
@@ -51,7 +51,8 @@ pub(crate) struct StorageManager {
 
 impl StorageManager {
     /// Create a new ReprStorage for the given representation, will be stored at the given directory
-    /// if provided or in a temporary directory otherwise.
+    /// if provided or in a temporary directory otherwise. If there is already any loaded data present
+    /// in the file system it will be loaded instead.
     pub fn new(id: Uuid, path: Option<&Path>, lvl1_size: Option<u64>) -> io::Result<Self> {
         let file_dir = if let Some(path) = path {
             let md = path.metadata()?;
@@ -73,7 +74,7 @@ impl StorageManager {
         Ok(StorageManager {
             c0: BTreeMap::new(),
             buffer_size: 0,
-            idx: Index::new(&file_dir)?,
+            idx: Index::load_or_create(&file_dir)?,
             page_manager: PageManager::new(file_dir, lvl1_size)?,
             mem_addr_map: HashMap::new(),
         })
@@ -774,7 +775,6 @@ mod test {
     fn insert_rnd_data_in_storage(num_recs: usize, rep: &mut StorageManager) -> io::Result<()> {
         let sample = raw_sample(num_recs);
         let mut unstr = Unstructured::new(&sample);
-        let mut rng = rand::thread_rng();
         for _ in 0..num_recs {
             let rec: BinaryObj = unstr.arbitrary().unwrap();
             rep.insert_rec(rec)?;

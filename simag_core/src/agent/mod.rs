@@ -1,3 +1,5 @@
+use std::path::Path;
+
 pub(self) mod config;
 mod kb;
 mod lang;
@@ -37,9 +39,9 @@ impl Agent {
     }
 
     #[cfg(feature = "persistence")]
-    pub fn load_from_disc(id: String) -> std::io::Result<Agent> {
+    pub fn load_from_disc(id: String, path: &Path) -> std::io::Result<Agent> {
         let threads = num_cpus::get();
-        let representation = kb::repr::Representation::load_from_disc(threads)?;
+        let representation = kb::repr::Representation::load_from_disc(Some(threads), path)?;
         Ok(Agent {
             id,
             thread_manager: ThreadManager { threads },

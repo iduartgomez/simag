@@ -37,13 +37,16 @@ impl Index {
     const METADATA_DEFAULT_SIZE: u64 = 1024 * 1024 * 10;
     const IDX_DEFAULT_SIZE: u64 = 200_000 * DISC_REC_REF_SIZE as u64;
 
-    pub fn new(path: &Path) -> io::Result<Self> {
+    pub fn load_or_create(path: &Path) -> io::Result<Self> {
+        let write_cap = !path.exists();
         #[allow(unused_mut)]
         let mut file = open_dat_file(&path.join("simag.idx"))?;
 
-        // write the default capacity for the metadata sector
-        #[cfg(unix)]
-        file.write_all_at(&Self::METADATA_DEFAULT_SIZE.to_le_bytes(), 0)?;
+        if write_cap {
+            // write the default capacity for the metadata sector
+            #[cfg(unix)]
+            file.write_all_at(&Self::METADATA_DEFAULT_SIZE.to_le_bytes(), 0)?;
+        }
 
         Ok(Index {
             file,
@@ -246,7 +249,7 @@ impl TryFrom<&Path> for Index {
 
     fn try_from(path: &Path) -> StdResult<Self, Self::Error> {
         if path.join("simag.idx").exists() {
-            let mut idx = Index::new(path)?;
+            let mut idx = Index::load_or_create(path)?;
             {
                 // read the current metadata capacity and update the idx sector
                 // offset to match the capacity.
@@ -366,13 +369,12 @@ mod test {
 
     #[test]
     fn write_and_load_index() -> io::Result<()> {
-        // this would trigger a resize:
-        // const TEST_SIZE: usize = (300_000, Index::IDX_DEFAULT_SIZE as usize * 2usize);
-
         // (num_keys, raw byte sample)
+        // this would trigger a resize:
+        // const TEST_SIZE: (usize, usize) = (300_000, Index::IDX_DEFAULT_SIZE as usize * 2usize);
         const TEST_SIZE: (usize, usize) = (10, 1000);
 
-        let mut idx = Index::new(&std::env::temp_dir())?;
+        let mut idx = Index::load_or_create(&std::env::temp_dir())?;
         let bytes = raw_sample(TEST_SIZE.1);
         let mut unstr = Unstructured::new(&bytes);
         // this insert sequence will trigger a resize

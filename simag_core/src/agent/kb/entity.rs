@@ -369,7 +369,7 @@ impl Entity {
 #[cfg(feature = "persistence")]
 mod serialization {
     use super::*;
-    use crate::storage::{BinaryObj, MemAddr, MetadataKind, MetadataOwnerKind, ToBinaryObject};
+    use crate::storage::{BinaryObj, MemAddr, MetadataKind, MetadataOwnerKind};
     use bincode::Result;
     use std::ops::Deref;
 
