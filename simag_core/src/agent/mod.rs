@@ -27,7 +27,8 @@ impl Agent {
     pub fn new(id: String) -> Agent {
         let threads = num_cpus::get();
         #[cfg(feature = "persistence")]
-        let representation = kb::repr::Representation::new(threads).unwrap();
+        let representation =
+            kb::repr::Representation::new(threads).expect("failed to create persist dir");
         #[cfg(not(feature = "persistence"))]
         let representation = kb::repr::Representation::new(threads);
 

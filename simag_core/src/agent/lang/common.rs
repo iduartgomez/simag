@@ -693,7 +693,7 @@ impl<'a> TryFrom<(&'a UnconstraintArg<'a>, &'a ParseContext)> for ConstraintValu
             UnconstraintArg::Keyword(b"time") => Ok(ConstraintValue::TimePayload(TimeFn::ThisTime)),
             UnconstraintArg::Keyword(b"location") => todo!(),
             UnconstraintArg::Keyword(kw) => Err(ParseErrF::ReservedKW(
-                str::from_utf8(kw).unwrap().to_owned(),
+                str::from_utf8(kw).expect("should be valid utf8").to_owned(),
             )),
         }
     }

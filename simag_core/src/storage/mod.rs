@@ -46,6 +46,12 @@ impl From<u64> for MemAddr<NonMapped> {
     }
 }
 
+impl From<u64> for MemAddr<Mapped> {
+    fn from(addr: u64) -> Self {
+        MemAddr(addr, PhantomData)
+    }
+}
+
 impl<T: MemAddrMapp> Deref for MemAddr<T> {
     type Target = u64;
 

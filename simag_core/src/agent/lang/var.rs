@@ -9,7 +9,7 @@ use super::{
 };
 use crate::{
     agent::kb::bms::{BmsWrapper, IsTimeData},
-    static_var_map::{IdToken, TableData, VariableMap},
+    var_map::{IdToken, TableData, VariableMap},
 };
 use once_cell::sync::Lazy;
 use std::{
@@ -82,7 +82,7 @@ impl<'a> std::convert::TryFrom<(&'a VarBorrowed<'a>, &'a ParseContext)> for Var 
             _ => return Err(ParseErrF::TypeUnsupported),
         };
 
-        let name = std::str::from_utf8(name).unwrap();
+        let name = std::str::from_utf8(name).expect("should be valid utf8");
         if super::reserved(name.as_bytes()) {
             return Err(ParseErrF::ReservedKW(name.to_owned()));
         }

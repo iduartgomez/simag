@@ -7,7 +7,7 @@
 extern crate nom;
 
 mod agent;
-mod static_var_map;
+mod var_map;
 #[cfg(feature = "persistence")]
 mod storage;
 

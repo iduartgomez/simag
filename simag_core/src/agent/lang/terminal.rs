@@ -19,7 +19,7 @@ impl<'a> Terminal {
         context: &mut ParseContext,
     ) -> Result<Terminal, ParseErrF> {
         let &TerminalBorrowed(slice) = other;
-        let name = str::from_utf8(slice).unwrap();
+        let name = str::from_utf8(slice).expect("should be valid utf8");
         if super::reserved(name.as_bytes()) {
             return Err(ParseErrF::ReservedKW(name.to_owned()));
         }
@@ -32,7 +32,7 @@ impl<'a> Terminal {
     }
 
     pub(super) fn from_slice(slice: &[u8], context: &ParseContext) -> Result<Terminal, ParseErrF> {
-        let name = str::from_utf8(slice).unwrap();
+        let name = str::from_utf8(slice).expect("should be valid utf8");
         if super::reserved(slice) {
             return Err(ParseErrF::ReservedKW(name.to_owned()));
         }

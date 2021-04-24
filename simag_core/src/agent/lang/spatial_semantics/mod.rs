@@ -53,7 +53,7 @@ impl TryFrom<&[u8]> for Point {
     type Error = ParseErrF;
 
     fn try_from(input: &[u8]) -> Result<Self, Self::Error> {
-        let input_str = std::str::from_utf8(input).unwrap();
+        let input_str = std::str::from_utf8(input).expect("should be valid utf8");
         Self::try_from(input_str)
     }
 }

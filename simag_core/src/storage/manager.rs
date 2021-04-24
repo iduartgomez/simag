@@ -54,7 +54,7 @@ impl StorageManager {
     /// if provided or in a temporary directory otherwise. If there is already any loaded data present
     /// in the file system it will be loaded instead.
     pub fn new(id: Uuid, path: Option<&Path>, lvl1_size: Option<u64>) -> io::Result<Self> {
-        let file_dir = if let Some(path) = path {
+        let (file_dir, idx) = if let Some(path) = path {
             let md = path.metadata()?;
             if !md.is_dir() {
                 return Err(io::ErrorKind::InvalidInput.into());
@@ -62,19 +62,22 @@ impl StorageManager {
             if md.permissions().readonly() {
                 return Err(io::ErrorKind::PermissionDenied.into());
             }
-            path.into()
+            let mut idx = Index::new(path)?;
+            idx.load_idx()?;
+            (path.into(), idx)
         } else {
             let p = std::env::temp_dir().join(format!("simag-{}", id));
             if !p.exists() {
                 std::fs::create_dir(&p)?;
             }
-            p
+            let idx = Index::new(&p)?;
+            (p, idx)
         };
 
         Ok(StorageManager {
             c0: BTreeMap::new(),
             buffer_size: 0,
-            idx: Index::load_or_create(&file_dir)?,
+            idx,
             page_manager: PageManager::new(file_dir, lvl1_size)?,
             mem_addr_map: HashMap::new(),
         })
@@ -148,7 +151,7 @@ impl StorageManager {
                 Table::C3 => todo!(),
             };
 
-            let mut data = Vec::with_capacity(dref.length as usize);
+            let mut data = vec![0; dref.length as usize];
             #[cfg(unix)]
             file.read_exact_at(&mut data, *dref.addr)?;
             let Record {
@@ -156,7 +159,7 @@ impl StorageManager {
                 data,
                 mem_addr,
                 ..
-            } = Record::deserialize(data)?;
+            } = Record::deserialize(data);
             if type_id != dref.type_id {
                 let err: io::Error = io::ErrorKind::InvalidData.into();
                 return Err(err.into());
@@ -323,8 +326,26 @@ impl Record {
         header
     }
 
-    fn deserialize(data: Vec<u8>) -> bincode::Result<Self> {
-        todo!()
+    fn deserialize(mut data: Vec<u8>) -> Self {
+        let header = data.drain(0..Self::HEADER_SIZE).collect::<Vec<_>>();
+        let mut mem_addr = [0u8; std::mem::size_of::<u64>()];
+        mem_addr.copy_from_slice(&header[0..8]);
+        let mem_addr = u64::from_le_bytes(mem_addr).into();
+        let type_id = BinType::from(header[8]);
+
+        if cfg!(debug_assertions) {
+            let mut len = [0u8; std::mem::size_of::<u64>()];
+            len.copy_from_slice(&header[9..]);
+            let len = u64::from_le_bytes(len);
+            assert_eq!(data.len() as u64, len);
+        }
+
+        Record {
+            length: data.len() as u64 + Self::HEADER_SIZE as u64,
+            data,
+            mem_addr,
+            type_id,
+        }
     }
 }
 

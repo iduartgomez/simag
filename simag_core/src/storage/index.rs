@@ -37,16 +37,13 @@ impl Index {
     const METADATA_DEFAULT_SIZE: u64 = 1024 * 1024 * 10;
     const IDX_DEFAULT_SIZE: u64 = 200_000 * DISC_REC_REF_SIZE as u64;
 
-    pub fn load_or_create(path: &Path) -> io::Result<Self> {
-        let write_cap = !path.exists();
+    pub fn new(path: &Path) -> io::Result<Self> {
         #[allow(unused_mut)]
         let mut file = open_dat_file(&path.join("simag.idx"))?;
 
-        if write_cap {
-            // write the default capacity for the metadata sector
-            #[cfg(unix)]
-            file.write_all_at(&Self::METADATA_DEFAULT_SIZE.to_le_bytes(), 0)?;
-        }
+        // write the default capacity for the metadata sector
+        #[cfg(unix)]
+        file.write_all_at(&Self::METADATA_DEFAULT_SIZE.to_le_bytes(), 0)?;
 
         Ok(Index {
             file,
@@ -187,16 +184,26 @@ impl Index {
         self.idx_sector.capacity *= 2;
     }
 
-    fn load_idx(&mut self) -> io::Result<()> {
-        let mut offset = [0u8; U64_SIZE];
+    pub(super) fn load_idx(&mut self) -> io::Result<()> {
+        let mut md_capacity = [0u8; U64_SIZE];
         #[cfg(unix)]
-        self.file.read_exact_at(&mut offset, *self.idx_sector.ptr)?;
-        self.idx_sector.offset = u64::from_le_bytes(offset);
+        self.file
+            .read_exact_at(&mut md_capacity, *self.metadata_sector.ptr)?;
+        self.metadata_sector.capacity = u64::from_le_bytes(md_capacity);
+
+        self.idx_sector.ptr = self.metadata_sector.capacity.into();
+        let mut idx_offset = [0u8; U64_SIZE];
+        #[cfg(unix)]
+        self.file
+            .read_exact_at(&mut idx_offset, *self.idx_sector.ptr)?;
+        self.idx_sector.offset = u64::from_le_bytes(idx_offset);
 
         let idx_data_offset = *self.idx_sector.ptr + U64_SIZE as u64;
-        let mut indexes = vec![0u8; (self.idx_sector.offset - U64_SIZE as u64) as usize];
+        let idx_size = (self.file.metadata()?.len() - idx_data_offset) as usize;
+        let mut indexes = vec![0u8; idx_size];
         #[cfg(unix)]
         self.file.read_exact_at(&mut indexes, idx_data_offset)?;
+
         // TODO: pending on stabilization of `array_chunks` this could be done more efficiently
         for (idx, f) in indexes.chunks(RECORD_SIZE).enumerate() {
             let Record { key, .. } = Record::try_from(f)?;
@@ -209,9 +216,10 @@ impl Index {
     /// Get all the recorded data references.
     pub(super) fn fetch_disc_refs(&mut self) -> Result<Vec<Record>> {
         let idx_data_offset = *self.idx_sector.ptr + U64_SIZE as u64;
-        let mut indexes = vec![0u8; (self.idx_sector.offset - U64_SIZE as u64) as usize];
+        let mut indexes = vec![0u8; self.idx.len() * RECORD_SIZE];
         #[cfg(unix)]
         self.file.read_exact_at(&mut indexes, idx_data_offset)?;
+
         let mut records = Vec::with_capacity(indexes.len() / RECORD_SIZE);
         for f in indexes.chunks(RECORD_SIZE) {
             let r = Record::try_from(f)?;
@@ -249,7 +257,7 @@ impl TryFrom<&Path> for Index {
 
     fn try_from(path: &Path) -> StdResult<Self, Self::Error> {
         if path.join("simag.idx").exists() {
-            let mut idx = Index::load_or_create(path)?;
+            let mut idx = Index::new(path)?;
             {
                 // read the current metadata capacity and update the idx sector
                 // offset to match the capacity.
@@ -374,7 +382,7 @@ mod test {
         // const TEST_SIZE: (usize, usize) = (300_000, Index::IDX_DEFAULT_SIZE as usize * 2usize);
         const TEST_SIZE: (usize, usize) = (10, 1000);
 
-        let mut idx = Index::load_or_create(&std::env::temp_dir())?;
+        let mut idx = Index::new(&std::env::temp_dir())?;
         let bytes = raw_sample(TEST_SIZE.1);
         let mut unstr = Unstructured::new(&bytes);
         // this insert sequence will trigger a resize

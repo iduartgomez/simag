@@ -290,7 +290,7 @@ impl TimeFn {
         if slice == b"now" {
             Ok(TimeFn::Now)
         } else {
-            let s = std::str::from_utf8(slice).unwrap();
+            let s = std::str::from_utf8(slice).expect("should be valid utf8");
             let time = get_time(s)?;
             match op {
                 Operator::Since => Ok(TimeFn::Since(time.with_timezone(&Utc))),

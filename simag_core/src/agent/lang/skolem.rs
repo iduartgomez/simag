@@ -50,7 +50,9 @@ impl<'a> TryFrom<(&SkolemBorrowed<'a>, &ParseContext)> for Skolem {
             _ => return Err(ParseErrF::TypeUnsupported),
         };
 
-        let name = std::str::from_utf8(name).unwrap().to_owned();
+        let name = std::str::from_utf8(name)
+            .expect("should be valid utf8")
+            .to_owned();
         if super::reserved(name.as_bytes()) {
             return Err(ParseErrF::ReservedKW(name));
         }

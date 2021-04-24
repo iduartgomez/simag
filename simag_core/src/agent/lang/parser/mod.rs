@@ -42,12 +42,11 @@ use rayon::prelude::*;
 pub(self) mod args;
 pub(self) mod assertion;
 pub(self) mod ast;
-#[cfg(test)]
-mod bench;
 pub(self) mod numbers;
 pub(self) mod operators;
 pub(self) mod scope;
 #[cfg(test)]
+#[path = "test/test.rs"]
 mod test;
 
 use super::ParseErrF;
@@ -213,7 +212,11 @@ impl<'a> PartialEq<&[u8]> for TerminalBorrowed<'a> {
 
 impl<'a> std::fmt::Debug for TerminalBorrowed<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "Term({})", str::from_utf8(self.0).unwrap())
+        write!(
+            f,
+            "Term({})",
+            str::from_utf8(self.0).expect("should be valid utf8")
+        )
     }
 }
 
@@ -298,11 +301,11 @@ impl<'a> fmt::Display for ParseErrB<'a> {
             ParseErrB::SyntaxError => "syntax error".to_string(),
             ParseErrB::NotScope(arr) => format!(
                 "syntax error, scope is invalid or not found:\n{}",
-                str::from_utf8(arr).unwrap()
+                str::from_utf8(arr).expect("should be valid utf8")
             ),
             ParseErrB::NotTerminal(_, arr) => format!(
                 "syntax error, illegal character in terminal position:\n{}",
-                str::from_utf8(arr).unwrap()
+                str::from_utf8(arr).expect("should be valid utf8")
             ),
             _ => todo!(),
         };

@@ -11,7 +11,7 @@ use std::{
     time::Instant,
 };
 
-use crossbeam::channel::{Receiver, Sender};
+use crossbeam::channel::{Receiver, SendError, Sender};
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex};
 use uuid::Uuid;
@@ -90,6 +90,7 @@ pub(crate) struct Representation {
     pub(in crate::agent) entities: InnerData<Entity>,
     pub(in crate::agent) classes: InnerData<Class>,
     svc_queue: Sender<BackgroundTask>,
+    bg_task_comm: Receiver<BTResult>,
     threads: rayon::ThreadPool,
     readers: Arc<(Mutex<usize>, Condvar)>,
 }
@@ -103,8 +104,8 @@ impl Representation {
 
     #[cfg(feature = "persistence")]
     pub fn new(threads: usize) -> std::io::Result<Representation> {
-        let (rep, bg_task_rcv) = Self::internal_new(threads);
-        let shared_data = ReprSharedData::new(&rep, bg_task_rcv, None)?;
+        let (rep, bg_task_rcv, svc_queue_rs) = Self::internal_new(threads);
+        let shared_data = ReprSharedData::new(&rep, bg_task_rcv, svc_queue_rs, None)?;
         rep.threads.spawn(move || bg_thread(shared_data));
         Ok(rep)
     }
@@ -121,6 +122,7 @@ impl Representation {
     /// Try to reconstruct a Representation object from on-disc storage.
     ///
     /// # Arguments
+    /// - threads: number of threads to use in the internal thread pool
     /// - path: path to the simag data storage directory
     #[cfg(feature = "persistence")]
     pub fn load_from_disc(threads: Option<usize>, path: &Path) -> std::io::Result<Representation> {
@@ -128,20 +130,28 @@ impl Representation {
     }
 
     /// Persists the current state to disc, updating any previously persisted state.
+    /// This function blocks until the operation has completed either successfully or failing.
     #[cfg(feature = "persistence")]
     pub fn write_to_disc(&mut self) -> storage::Result<()> {
         self.svc_queue
             .send_timeout(BackgroundTask::ForcePersist, Duration::from_secs(1))
-            .map_err(|_| StorageError::FailedToWrite)
+            .map_err(|_| StorageError::FailedToWrite)?;
+        match self.bg_task_comm.recv() {
+            Ok(BTResult::FlushCompleted) => Ok(()),
+            Ok(BTResult::FlushFailed(err)) => Err(err),
+            Ok(_) => Err(storage::StorageError::FailedToWrite),
+            Err(_err) => Err(storage::StorageError::ManagerNotFound),
+        }
     }
 
-    fn internal_new(threads: usize) -> (Self, Receiver<BackgroundTask>) {
+    fn internal_new(threads: usize) -> (Self, Receiver<BackgroundTask>, Sender<BTResult>) {
         #[cfg(any(test, debug_assertions))]
         {
             crate::agent::config::tracing::Logger::get_logger();
         }
 
         let (svc_th_msg_queue, bg_task_rcv) = crossbeam::channel::unbounded();
+        let (svc_queue_rs, bg_task_comm) = crossbeam::channel::unbounded();
         let entities = InnerData(Arc::new(DashMap::new()));
         let classes = InnerData(Arc::new(DashMap::new()));
         let config = ReprConfig::default();
@@ -158,9 +168,11 @@ impl Representation {
                     .build()
                     .unwrap(),
                 svc_queue: svc_th_msg_queue,
-                readers: readers,
+                bg_task_comm,
+                readers,
             },
             bg_task_rcv,
+            svc_queue_rs,
         )
     }
 
@@ -1010,8 +1022,8 @@ impl ReprLoader {
         let threads = threads.unwrap_or_else(|| num_cpus::get());
         let mut loader = {
             let repr = {
-                let (rep, bg_task_rcv) = Representation::internal_new(threads);
-                let shared_data = ReprSharedData::new(&rep, bg_task_rcv, Some(path))?;
+                let (rep, bg_task_rcv, svc_queue_rs) = Representation::internal_new(threads);
+                let shared_data = ReprSharedData::new(&rep, bg_task_rcv, svc_queue_rs, Some(path))?;
                 rep.threads.spawn(move || bg_thread(shared_data));
                 rep
             };
@@ -1118,6 +1130,7 @@ struct ReprSharedData {
     config: ReprConfig,
     readers: Arc<(Mutex<usize>, Condvar)>,
     bg_task_rcv: Receiver<BackgroundTask>,
+    svc_queue_rs: Sender<BTResult>,
     #[cfg(feature = "persistence")]
     storage_layer: StorageManager,
 }
@@ -1127,6 +1140,7 @@ impl ReprSharedData {
     fn new(
         rep: &Representation,
         bg_task_rcv: Receiver<BackgroundTask>,
+        svc_queue_rs: Sender<BTResult>,
         path: Option<&Path>,
     ) -> std::io::Result<Self> {
         Ok(ReprSharedData {
@@ -1135,6 +1149,7 @@ impl ReprSharedData {
             config: rep.config.clone(),
             readers: rep.readers.clone(),
             bg_task_rcv,
+            svc_queue_rs,
             storage_layer: StorageManager::new(rep.config.id.clone(), path, None)?,
         })
     }
@@ -1223,7 +1238,7 @@ fn bg_thread(mut shared_data: ReprSharedData) {
         match msg {
             Ok(msg) => match background_service(msg, &mut shared_data) {
                 Ok(()) => {}
-                Err(()) => {
+                Err(_disconnected) => {
                     std::mem::drop(num_writers);
                     break;
                 }
@@ -1262,7 +1277,10 @@ fn bg_thread(mut shared_data: ReprSharedData) {
 
 /// Performs critical functions in the background service.
 #[inline(always)]
-fn background_service(msg: BackgroundTask, shared_data: &mut ReprSharedData) -> Result<(), ()> {
+fn background_service(
+    msg: BackgroundTask,
+    shared_data: &mut ReprSharedData,
+) -> Result<(), SendError<BTResult>> {
     use BackgroundTask::*;
 
     match msg {
@@ -1274,8 +1292,15 @@ fn background_service(msg: BackgroundTask, shared_data: &mut ReprSharedData) -> 
             }
         }
         #[cfg(feature = "persistence")]
-        ForcePersist => shared_data.persist().unwrap(),
-        Shutdown => return Err(()),
+        ForcePersist => match shared_data.persist() {
+            Ok(()) => {
+                shared_data.svc_queue_rs.send(BTResult::FlushCompleted)?;
+            }
+            Err(err) => {
+                shared_data.svc_queue_rs.send(BTResult::FlushFailed(err))?;
+            }
+        },
+        Shutdown => return Err(SendError(BTResult::Disconnected)),
     }
 
     Ok(())
@@ -1291,6 +1316,15 @@ pub(super) enum BackgroundTask {
     #[cfg(feature = "persistence")]
     ForcePersist,
     Shutdown,
+}
+
+enum BTResult {
+    #[cfg(feature = "persistence")]
+    FlushCompleted,
+    #[cfg(feature = "persistence")]
+    FlushFailed(storage::StorageError),
+    /// The other side of the channel disconnected.
+    Disconnected,
 }
 
 // FIXME: review + write doc

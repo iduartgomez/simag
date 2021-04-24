@@ -42,7 +42,7 @@ struct NoOpHasher {
 
 impl Hasher for NoOpHasher {
     fn finish(&self) -> u64 {
-        self.key.unwrap()
+        self.key.expect("key should have been set")
     }
 
     fn write_u64(&mut self, i: u64) {

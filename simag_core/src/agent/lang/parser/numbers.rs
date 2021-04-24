@@ -35,27 +35,33 @@ pub(super) fn number(input: &[u8]) -> IResult<&[u8], Number> {
     if float && (input[0] == b'-') {
         Ok((
             &input[idx + 1..],
-            Number::SignedFloat(<f32>::from_str(str::from_utf8(&input[0..=idx]).unwrap()).unwrap()),
+            Number::SignedFloat(
+                <f32>::from_str(str::from_utf8(&input[0..=idx]).expect("should be valid utf8"))
+                    .unwrap(),
+            ),
         ))
     } else if !float && (input[0] == b'-') {
         Ok((
             &input[idx + 1..],
             Number::SignedInteger(
-                <i32>::from_str(str::from_utf8(&input[0..=idx]).unwrap()).unwrap(),
+                <i32>::from_str(str::from_utf8(&input[0..=idx]).expect("should be valid utf8"))
+                    .unwrap(),
             ),
         ))
     } else if float {
         Ok((
             &input[idx..],
             Number::UnsignedFloat(
-                <f32>::from_str(str::from_utf8(&input[0..idx]).unwrap()).unwrap(),
+                <f32>::from_str(str::from_utf8(&input[0..idx]).expect("should be valid utf8"))
+                    .unwrap(),
             ),
         ))
     } else {
         Ok((
             &input[idx..],
             Number::UnsignedInteger(
-                <u32>::from_str(str::from_utf8(&input[0..idx]).unwrap()).unwrap(),
+                <u32>::from_str(str::from_utf8(&input[0..idx]).expect("should be valid utf8"))
+                    .unwrap(),
             ),
         ))
     }
