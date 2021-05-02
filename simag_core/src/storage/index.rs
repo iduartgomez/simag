@@ -15,7 +15,7 @@ use super::{
     open_dat_file, DiscAddr, Mapped, MemAddr, Metadata, Result,
 };
 
-const RECORD_SIZE: usize = std::mem::size_of::<Record>();
+const RECORD_SIZE: usize = std::mem::size_of::<IdxRecord>();
 const U64_SIZE: usize = std::mem::size_of::<u64>();
 
 /// The index is composed by two different sections on disc:
@@ -94,7 +94,7 @@ impl Index {
             self.increase_idx_capacity();
         }
 
-        let rec = (Record { key, value }).serialize();
+        let rec = (IdxRecord { key, value }).serialize();
         match self.idx.entry(key) {
             Entry::Occupied(rec_addr) => {
                 let addr = rec_addr.get();
@@ -124,7 +124,8 @@ impl Index {
         &mut self,
         values: impl Iterator<Item = (MemAddr<Mapped>, DiscRecordRef)>,
     ) -> io::Result<()> {
-        let mut new_values: Vec<u8> = Vec::with_capacity(values.size_hint().0 * RECORD_SIZE);
+        let mut new_values: Vec<u8> =
+            Vec::with_capacity(values.size_hint().1.unwrap_or_default() * RECORD_SIZE);
         let mut next_offset = self.idx_sector.offset;
         for (key, value) in values {
             if self.idx.contains_key(&key) {
@@ -136,7 +137,7 @@ impl Index {
                     .insert(key, DiscAddr((*self.idx_sector.ptr) + next_offset));
                 next_offset += RECORD_SIZE as u64;
                 new_values.extend(std::array::IntoIter::new(
-                    (Record { key, value }).serialize(),
+                    (IdxRecord { key, value }).serialize(),
                 ));
             }
         }
@@ -147,6 +148,7 @@ impl Index {
             self.file
                 .write_all_at(&next_offset.to_le_bytes(), *self.idx_sector.ptr)?;
         }
+        self.idx_sector.offset = next_offset;
         Ok(())
     }
 
@@ -200,7 +202,7 @@ impl Index {
 
         // TODO: pending on stabilization of `array_chunks` this could be done more efficiently
         for (idx, f) in indexes.chunks(RECORD_SIZE).enumerate() {
-            let Record { key, .. } = Record::try_from(f)?;
+            let IdxRecord { key, .. } = IdxRecord::try_from(f)?;
             let disc_addr = idx_data_offset + (idx * RECORD_SIZE) as u64;
             self.idx.insert(key, disc_addr.into());
         }
@@ -208,7 +210,7 @@ impl Index {
     }
 
     /// Get all the recorded data references.
-    pub(super) fn fetch_disc_refs(&mut self) -> Result<Vec<Record>> {
+    pub(super) fn fetch_disc_refs(&mut self) -> Result<Vec<IdxRecord>> {
         let idx_data_offset = *self.idx_sector.ptr + U64_SIZE as u64;
         let mut indexes = vec![0u8; self.idx.len() * RECORD_SIZE];
         #[cfg(unix)]
@@ -216,7 +218,7 @@ impl Index {
 
         let mut records = Vec::with_capacity(indexes.len() / RECORD_SIZE);
         for f in indexes.chunks(RECORD_SIZE) {
-            let r = Record::try_from(f)?;
+            let r = IdxRecord::try_from(f)?;
             records.push(r);
         }
         Ok(records)
@@ -275,12 +277,13 @@ impl TryFrom<&Path> for Index {
     }
 }
 
-pub(super) struct Record {
+/// Holds a reference to a key.
+pub(super) struct IdxRecord {
     pub key: MemAddr<Mapped>,
     pub value: DiscRecordRef,
 }
 
-impl Record {
+impl IdxRecord {
     fn serialize(self) -> [u8; RECORD_SIZE] {
         let mut serialized = [0; RECORD_SIZE];
 
@@ -296,7 +299,7 @@ impl Record {
     }
 }
 
-impl TryFrom<&'_ [u8]> for Record {
+impl TryFrom<&'_ [u8]> for IdxRecord {
     type Error = io::Error;
 
     fn try_from(buf: &'_ [u8]) -> io::Result<Self> {
@@ -306,11 +309,11 @@ impl TryFrom<&'_ [u8]> for Record {
 
         let mut fixed = [0; RECORD_SIZE];
         fixed.copy_from_slice(buf);
-        Ok(Record::from(&fixed))
+        Ok(IdxRecord::from(&fixed))
     }
 }
 
-impl From<&'_ [u8; RECORD_SIZE]> for Record {
+impl From<&'_ [u8; RECORD_SIZE]> for IdxRecord {
     fn from(buf: &'_ [u8; RECORD_SIZE]) -> Self {
         let mut key: [u8; U64_SIZE] = [0u8; 8];
         key.copy_from_slice(&buf[0..8]);
@@ -320,7 +323,7 @@ impl From<&'_ [u8; RECORD_SIZE]> for Record {
         value.copy_from_slice(&buf[8..]);
         let value = DiscRecordRef::from(&value);
 
-        Record { key, value }
+        IdxRecord { key, value }
     }
 }
 
@@ -364,13 +367,13 @@ mod test {
             addr: 1.into(),
             length: 10,
         };
-        let rec = Record {
+        let rec = IdxRecord {
             key: MemAddr(0, PhantomData),
             value: value.clone(),
         };
 
         let serialized = rec.serialize();
-        let deser = Record::from(&serialized);
+        let deser = IdxRecord::from(&serialized);
         assert_eq!(deser.key, MemAddr(0, PhantomData));
         assert_eq!(deser.value, value);
     }

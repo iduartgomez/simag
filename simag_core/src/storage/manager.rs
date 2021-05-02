@@ -63,8 +63,7 @@ impl StorageManager {
                 if md.permissions().readonly() {
                     return Err(io::ErrorKind::PermissionDenied.into());
                 }
-                let mut idx = Index::try_from(path)?;
-                idx.load_idx()?;
+                let idx = Index::try_from(path)?;
                 (path.into(), idx)
             } else {
                 std::fs::create_dir(path)?;
@@ -145,12 +144,12 @@ impl StorageManager {
     where
         L: Loadable,
     {
-        use super::index::Record as DRef;
+        use super::index::IdxRecord;
         let records = self.idx.fetch_disc_refs()?;
         let metadata_objs = self.idx.fetch_metadata()?;
 
-        for rec in records {
-            let DRef { key, value: dref } = rec;
+        for (i, rec) in records.into_iter().enumerate() {
+            let IdxRecord { key, value: dref } = rec;
             let file = match dref.table {
                 Table::C1 => &self.page_manager.c1_data,
                 Table::C2 => &self.page_manager.c2_data,
@@ -165,7 +164,7 @@ impl StorageManager {
                 data,
                 mem_addr,
                 ..
-            } = Record::deserialize(data);
+            } = Record::deserialize(data, i);
             if type_id != dref.type_id {
                 let err: io::Error = io::ErrorKind::InvalidData.into();
                 return Err(err.into());
@@ -334,7 +333,7 @@ impl Record {
         header
     }
 
-    fn deserialize(mut data: Vec<u8>) -> Self {
+    fn deserialize(mut data: Vec<u8>, i: usize) -> Self {
         let header = data.drain(0..Self::HEADER_SIZE).collect::<Vec<_>>();
         let mut mem_addr = [0u8; std::mem::size_of::<u64>()];
         mem_addr.copy_from_slice(&header[0..8]);
@@ -347,8 +346,9 @@ impl Record {
             let len = u64::from_le_bytes(len);
             // assert_eq!(data.len() as u64, len);
             if data.len() != len as usize {
-                panic!(
-                    "unexpected bytes array length: {} != {}; data: {:?}",
+                eprintln!(
+                    "iter {}, unexpected bytes array length: {} != {}; data: {:?}",
+                    i,
                     data.len(),
                     len,
                     data
