@@ -185,13 +185,6 @@ impl Index {
     }
 
     pub(super) fn load_idx(&mut self) -> io::Result<()> {
-        let mut md_capacity = [0u8; U64_SIZE];
-        #[cfg(unix)]
-        self.file
-            .read_exact_at(&mut md_capacity, *self.metadata_sector.ptr)?;
-        self.metadata_sector.capacity = u64::from_le_bytes(md_capacity);
-
-        self.idx_sector.ptr = self.metadata_sector.capacity.into();
         let mut idx_offset = [0u8; U64_SIZE];
         #[cfg(unix)]
         self.file
@@ -200,6 +193,7 @@ impl Index {
 
         let idx_data_offset = *self.idx_sector.ptr + U64_SIZE as u64;
         let idx_size = (self.file.metadata()?.len() - idx_data_offset) as usize;
+        self.idx_sector.capacity = (idx_size + U64_SIZE) as u64;
         let mut indexes = vec![0u8; idx_size];
         #[cfg(unix)]
         self.file.read_exact_at(&mut indexes, idx_data_offset)?;
@@ -229,17 +223,21 @@ impl Index {
     }
 
     pub(super) fn fetch_metadata(&self) -> Result<Vec<Metadata>> {
-        let mut metadata = Vec::with_capacity(self.metadata_sector.capacity as usize - U64_SIZE);
+        let mut metadata = vec![0u8; self.metadata_sector.capacity as usize - U64_SIZE];
         #[cfg(unix)]
         self.file
             .read_exact_at(&mut metadata, *self.metadata_sector.ptr + U64_SIZE as u64)?;
 
         let mut md_objs = Vec::new();
         let mut offset = 0;
-        while offset < metadata.len() {
+        while offset + U64_SIZE < metadata.len() {
             let mut size = [0; U64_SIZE];
-            size.copy_from_slice(&metadata[offset..U64_SIZE]);
+            let new_chunk = &metadata[offset..offset + U64_SIZE];
+            size.copy_from_slice(new_chunk);
             let size = u64::from_le_bytes(size);
+            if size == 0 {
+                break;
+            }
 
             let data_pos = U64_SIZE + offset;
             let metadata: Metadata =
@@ -344,10 +342,12 @@ where
 mod test {
     use arbitrary::Unstructured;
     use rand::Rng;
+    use uuid::Uuid;
 
     use super::*;
     use crate::storage::{
         manager::{DiscRecordRef, Table},
+        test::tear_down,
         BinType,
     };
 
@@ -376,38 +376,44 @@ mod test {
     }
 
     #[test]
-    fn write_and_load_index() -> io::Result<()> {
-        // (num_keys, raw byte sample)
-        // this would trigger a resize:
-        // const TEST_SIZE: (usize, usize) = (300_000, Index::IDX_DEFAULT_SIZE as usize * 2usize);
-        const TEST_SIZE: (usize, usize) = (10, 1000);
+    fn write_and_load_index() -> Result<()> {
+        let dir = std::env::temp_dir().join(format!("simag-{}", Uuid::new_v4()));
+        std::fs::create_dir(&dir)?;
 
-        let mut idx = Index::new(&std::env::temp_dir())?;
-        let bytes = raw_sample(TEST_SIZE.1);
-        let mut unstr = Unstructured::new(&bytes);
-        // this insert sequence will trigger a resize
-        for _ in 0..TEST_SIZE.0 {
-            let key: MemAddr<Mapped> = unstr.arbitrary().unwrap();
-            let dref: DiscRecordRef = unstr.arbitrary().unwrap();
-            idx.insert(key, dref)?;
-        }
+        let test = || -> Result<()> {
+            // (num_keys, raw byte sample)
+            // this would trigger a resize:
+            // const TEST_SIZE: (usize, usize) = (300_000, Index::IDX_DEFAULT_SIZE as usize * 2usize);
+            const TEST_SIZE: (usize, usize) = (10, 1000);
 
-        let new_idx = Index::try_from(&*std::env::temp_dir())?;
-        assert_eq!(
-            new_idx.metadata_sector.capacity,
-            Index::METADATA_DEFAULT_SIZE
-        );
-        assert_eq!(new_idx.idx_sector.ptr, idx.idx_sector.ptr);
-        assert_eq!(new_idx.idx_sector.offset, idx.idx_sector.offset);
-        assert_eq!(new_idx.idx.len(), idx.idx.len());
+            let mut idx = Index::new(&dir)?;
+            let bytes = raw_sample(TEST_SIZE.1);
+            let mut unstr = Unstructured::new(&bytes);
+            // this insert sequence will trigger a resize
+            for _ in 0..TEST_SIZE.0 {
+                let key: MemAddr<Mapped> = unstr.arbitrary().unwrap();
+                let dref: DiscRecordRef = unstr.arbitrary().unwrap();
+                idx.insert(key, dref)?;
+            }
 
-        let idx_rand_kv: Vec<_> = idx.idx.iter().take(10).collect();
-        let mut new_disc_ref: Vec<_> = idx_rand_kv.iter().map(|a| new_idx.idx[&a.0]).collect();
-        new_disc_ref.sort();
-        let mut old_disc_ref = idx_rand_kv.into_iter().map(|a| *a.1).collect::<Vec<_>>();
-        old_disc_ref.sort();
-        assert_eq!(old_disc_ref, new_disc_ref);
+            let new_idx = Index::try_from(&*dir)?;
+            assert_eq!(
+                new_idx.metadata_sector.capacity,
+                Index::METADATA_DEFAULT_SIZE
+            );
+            assert_eq!(new_idx.idx_sector.ptr, idx.idx_sector.ptr);
+            assert_eq!(new_idx.idx_sector.offset, idx.idx_sector.offset);
+            assert_eq!(new_idx.idx.len(), idx.idx.len());
 
-        Ok(())
+            let idx_rand_kv: Vec<_> = idx.idx.iter().take(10).collect();
+            let mut new_disc_ref: Vec<_> = idx_rand_kv.iter().map(|a| new_idx.idx[&a.0]).collect();
+            new_disc_ref.sort();
+            let mut old_disc_ref = idx_rand_kv.into_iter().map(|a| *a.1).collect::<Vec<_>>();
+            old_disc_ref.sort();
+            assert_eq!(old_disc_ref, new_disc_ref);
+
+            Ok(())
+        };
+        tear_down(test, &dir)
     }
 }

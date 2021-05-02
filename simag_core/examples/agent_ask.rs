@@ -54,7 +54,6 @@ fn new_knowledge(agent: &mut Agent) {
 }
 
 fn old_knowledge(agent: Arc<Agent>, num_threads: usize, iters_per_reader: usize, capacity: f64) {
-    // load at 75% capacity
     let paralellism: usize = (num_threads as f64 * capacity) as usize;
     println!(
         "testing with {} parallel readers running in {} threads; {} asks each",

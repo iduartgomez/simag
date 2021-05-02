@@ -1,7 +1,7 @@
 #[cfg(unix)]
 use std::os::unix::fs::FileExt;
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     convert::TryFrom,
     fs::File,
     io,
@@ -50,23 +50,29 @@ pub(crate) struct StorageManager {
 }
 
 impl StorageManager {
-    /// Create a new ReprStorage for the given representation, will be stored at the given directory
+    /// Create a new StorageManager for the given representation, will be stored at the given directory
     /// if provided or in a temporary directory otherwise. If there is already any loaded data present
     /// in the file system it will be loaded instead.
-    pub fn new(id: Uuid, path: Option<&Path>, lvl1_size: Option<u64>) -> io::Result<Self> {
+    pub fn new(path: Option<&Path>, lvl1_size: Option<u64>) -> io::Result<Self> {
         let (file_dir, idx) = if let Some(path) = path {
-            let md = path.metadata()?;
-            if !md.is_dir() {
-                return Err(io::ErrorKind::InvalidInput.into());
+            if path.exists() {
+                let md = path.metadata()?;
+                if !md.is_dir() {
+                    return Err(io::ErrorKind::InvalidInput.into());
+                }
+                if md.permissions().readonly() {
+                    return Err(io::ErrorKind::PermissionDenied.into());
+                }
+                let mut idx = Index::try_from(path)?;
+                idx.load_idx()?;
+                (path.into(), idx)
+            } else {
+                std::fs::create_dir(path)?;
+                let idx = Index::new(&path)?;
+                (path.into(), idx)
             }
-            if md.permissions().readonly() {
-                return Err(io::ErrorKind::PermissionDenied.into());
-            }
-            let mut idx = Index::new(path)?;
-            idx.load_idx()?;
-            (path.into(), idx)
         } else {
-            let p = std::env::temp_dir().join(format!("simag-{}", id));
+            let p = std::env::temp_dir().join(format!("simag-{}", Uuid::new_v4()));
             if !p.exists() {
                 std::fs::create_dir(&p)?;
             }
@@ -238,6 +244,8 @@ impl<'mg> Metadata<'mg> {
             };
             bincode::serialize(&md)?
         };
+        // force a flush of any non-persisted data
+        manager.flush()?;
         manager.idx.insert_metadata(serialized)?;
         Ok(())
     }
@@ -337,7 +345,15 @@ impl Record {
             let mut len = [0u8; std::mem::size_of::<u64>()];
             len.copy_from_slice(&header[9..]);
             let len = u64::from_le_bytes(len);
-            assert_eq!(data.len() as u64, len);
+            // assert_eq!(data.len() as u64, len);
+            if data.len() != len as usize {
+                panic!(
+                    "unexpected bytes array length: {} != {}; data: {:?}",
+                    data.len(),
+                    len,
+                    data
+                );
+            }
         }
 
         Record {
@@ -776,11 +792,21 @@ impl PageManager {
 
 #[cfg(test)]
 mod test {
-    use super::{super::*, *};
     use arbitrary::Unstructured;
     use rand::Rng;
 
+    use super::*;
+    use crate::storage::test::tear_down;
+
     const LVL1_TEST_SIZE: u64 = 4096 * 4;
+
+    macro_rules! assert_or_err {
+        (io: $assertion:expr; $err:expr) => {{
+            if !$assertion {
+                return Err($err);
+            }
+        }};
+    }
 
     fn raw_sample(iters: usize) -> Vec<u8> {
         let mut sample = Vec::new();
@@ -793,14 +819,49 @@ mod test {
         sample
     }
 
-    fn insert_rnd_data_in_storage(num_recs: usize, rep: &mut StorageManager) -> io::Result<()> {
+    struct TestMdOwnwer;
+
+    impl MetadataOwnerKind for TestMdOwnwer {
+        fn get_kind(&self) -> MetadataKind {
+            MetadataKind::Entity
+        }
+
+        fn get_addr(&self) -> MemAddr<NonMapped> {
+            MemAddr::from(0)
+        }
+    }
+
+    fn insert_rnd_data_in_storage(
+        num_recs: usize,
+        storage: &mut StorageManager,
+    ) -> io::Result<Metadata> {
         let sample = raw_sample(num_recs);
         let mut unstr = Unstructured::new(&sample);
+        let mut md = Metadata::new(storage);
+        let owner = TestMdOwnwer;
+        let owner_token = md.register_owner(&owner);
         for _ in 0..num_recs {
             let rec: BinaryObj = unstr.arbitrary().unwrap();
-            rep.insert_rec(rec)?;
+            md.insert_rec(rec, &owner_token)?;
         }
-        Ok(())
+        Ok(md)
+    }
+
+    struct TestBinLoader {
+        obj: Option<Vec<u8>>,
+    }
+
+    impl Loadable for TestBinLoader {
+        fn load(
+            &mut self,
+            _owner_addr: &MemAddr<Mapped>,
+            _owned_addr: MemAddr<Mapped>,
+            _dtype: BinType,
+            data: Vec<u8>,
+        ) -> Result<MemAddr<NonMapped>> {
+            self.obj = Some(data);
+            Ok(MemAddr::from(0))
+        }
     }
 
     #[test]
@@ -821,13 +882,13 @@ mod test {
     }
 
     #[test]
-    fn flush_data() -> io::Result<()> {
-        const NUM_RECS: usize = 5_000;
-        let mut rep = StorageManager::new(Uuid::nil(), None, Some(LVL1_TEST_SIZE))?;
-        insert_rnd_data_in_storage(NUM_RECS, &mut rep)?;
-
-        rep.flush()?;
-        Ok(())
+    fn expected_buf_size() {
+        assert_eq!(PageManager::required_pages(PageManager::PAGE_SIZE / 2), 1);
+        assert_eq!(PageManager::required_pages(PageManager::PAGE_SIZE), 1);
+        assert_eq!(
+            PageManager::required_pages((PageManager::PAGE_SIZE as f64 * 1.5).round() as u64),
+            2
+        );
     }
 
     #[test]
@@ -875,12 +936,24 @@ mod test {
     }
 
     #[test]
-    fn expected_buf_size() {
-        assert_eq!(PageManager::required_pages(PageManager::PAGE_SIZE / 2), 1);
-        assert_eq!(PageManager::required_pages(PageManager::PAGE_SIZE), 1);
-        assert_eq!(
-            PageManager::required_pages((PageManager::PAGE_SIZE as f64 * 1.5).round() as u64),
-            2
-        );
+    fn flush_data() -> Result<()> {
+        let path = std::env::temp_dir().join(format!("simag-{}", Uuid::new_v4()));
+        let test = || -> Result<()> {
+            const NUM_RECS: usize = 5_000;
+            let inv_data_err: StorageError = io::Error::from(io::ErrorKind::InvalidInput).into();
+
+            let mut storage = StorageManager::new(Some(&path), Some(LVL1_TEST_SIZE))?;
+            let md = insert_rnd_data_in_storage(NUM_RECS, &mut storage)?;
+            // write to disc
+            md.insert_metadata()?;
+
+            // check there was written data actually
+            let mut storage = StorageManager::new(Some(&path), Some(LVL1_TEST_SIZE))?;
+            let mut loader = TestBinLoader { obj: None };
+            storage.load_from_disc(&mut loader)?;
+            assert_or_err!(io: loader.obj.is_some(); inv_data_err);
+            Ok(())
+        };
+        tear_down(test, &path)
     }
 }

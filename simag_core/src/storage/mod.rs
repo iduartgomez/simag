@@ -210,8 +210,17 @@ pub enum StorageError {
 }
 
 #[cfg(test)]
-mod test {
+pub(self) mod test {
     use super::*;
+
+    pub(super) fn tear_down<F>(test_fn: F, path: &Path) -> Result<()>
+    where
+        F: FnOnce() -> Result<()>,
+    {
+        let res = test_fn();
+        std::fs::remove_dir_all(path)?;
+        res
+    }
 
     impl ToBinaryObject for [i32; 5] {
         fn get_type() -> BinType {

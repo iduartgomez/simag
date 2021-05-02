@@ -1033,7 +1033,7 @@ impl ReprLoader {
                 entities: HashMap::new(),
             }
         };
-        let mut manager = StorageManager::new(loader.repr.config.id, Some(path), None).unwrap();
+        let mut manager = StorageManager::new(Some(path), None).unwrap();
         manager.load_from_disc(&mut loader).unwrap();
         let ReprLoader {
             mut repr, entities, ..
@@ -1150,7 +1150,7 @@ impl ReprSharedData {
             readers: rep.readers.clone(),
             bg_task_rcv,
             svc_queue_rs,
-            storage_layer: StorageManager::new(rep.config.id.clone(), path, None)?,
+            storage_layer: StorageManager::new(path, None)?,
         })
     }
 
@@ -1181,7 +1181,6 @@ impl ReprSharedData {
         let mut metadata = Metadata::new(&mut self.storage_layer);
         for mut ent in entities? {
             let owner_token = metadata.register_owner(&ent);
-
             ent.classes.drain(..).fold(Ok(()), |res, bin| {
                 Self::add_to_storage(res, bin, &mut metadata, &owner_token)
             })?;
@@ -1196,7 +1195,6 @@ impl ReprSharedData {
             })?;
         }
         metadata.insert_metadata()?;
-        self.storage_layer.flush()?;
         Ok(())
     }
 

@@ -1,16 +1,21 @@
 use std::{
     fs::read_dir,
-    io,
-    panic::{catch_unwind, UnwindSafe},
+    io::{self, Read},
     path::{Path, PathBuf},
 };
-
-use io::Read;
 
 use crate::{
     agent::{kb::repr::Representation, lang::GroundedMemb},
     storage::{self, *},
 };
+
+macro_rules! assert_or_err {
+    (io: $assertion:expr; $err:expr) => {{
+        if !$assertion {
+            return Err($err);
+        }
+    }};
+}
 
 struct TestBinLoader {
     obj: Option<GroundedMemb>,
@@ -19,14 +24,14 @@ struct TestBinLoader {
 impl Loadable for TestBinLoader {
     fn load(
         &mut self,
-        owner_addr: &MemAddr<Mapped>,
-        owned_addr: MemAddr<Mapped>,
+        _owner_addr: &MemAddr<Mapped>,
+        _owned_addr: MemAddr<Mapped>,
         dtype: BinType,
         data: Vec<u8>,
     ) -> Result<MemAddr<NonMapped>> {
         match dtype {
             BinType::GrMemb => {
-                let (key, obj): (_, GroundedMemb) = storage::get_from_metadata_storage(data)?;
+                let (_key, obj): (_, GroundedMemb) = storage::get_from_metadata_storage(data)?;
                 self.obj = Some(obj);
             }
             _ => return Err(StorageError::ManagerNotFound),
@@ -37,9 +42,9 @@ impl Loadable for TestBinLoader {
 
 fn tear_down<F>(test_fn: F) -> Result<()>
 where
-    F: FnOnce() -> Result<()> + UnwindSafe,
+    F: FnOnce() -> Result<()>,
 {
-    let res = catch_unwind(test_fn).unwrap_or_else(|_| Err(StorageError::FailedToWrite));
+    let res = test_fn();
     for e in read_dir(std::env::temp_dir())
         .unwrap()
         .filter_map(|e| e.ok())
@@ -51,11 +56,47 @@ where
     res
 }
 
+fn create_test_rep() -> Result<Representation> {
+    let no_data_err: StorageError = io::Error::from(io::ErrorKind::InvalidData).into();
+
+    let repr = Representation::default();
+    repr.tell("(professor[$Lucy,u=1])").unwrap();
+    assert_or_err!(io: !repr.classes.is_empty(); no_data_err);
+    Ok(repr)
+}
+
+fn flush_repr(repr: &mut Representation) -> Result<PathBuf> {
+    repr.enable_persistence();
+    repr.write_to_disc()?;
+    let path = std::env::temp_dir().join(format!("simag-{}", repr.config.id));
+    Ok(path)
+}
+
+fn get_written_data(path: &Path) -> io::Result<(Vec<u8>, Vec<u8>)> {
+    assert_or_err!(io: path.exists(); io::ErrorKind::NotFound.into());
+    let idx_file = path.join("simag.idx");
+    let dat_file = path.join("simag.1.dat");
+    assert_or_err!(io: idx_file.exists(); io::ErrorKind::NotFound.into());
+    assert_or_err!(io: dat_file.exists(); io::ErrorKind::NotFound.into());
+
+    let dat_content = std::fs::File::open(dat_file)?
+        .bytes()
+        .filter_map(|f| f.ok())
+        .collect::<Vec<_>>();
+
+    let idx_content = std::fs::File::open(idx_file)?
+        .bytes()
+        .filter_map(|f| f.ok())
+        .collect::<Vec<_>>();
+
+    Ok((dat_content, idx_content))
+}
+
 #[test]
 fn create_from_disc() -> Result<()> {
     fn test() -> Result<()> {
         // write the repr to disc
-        let mut repr = create_test_rep();
+        let mut repr = create_test_rep()?;
         let path = flush_repr(&mut repr)?;
 
         // try reading from persisted dir
@@ -69,53 +110,23 @@ fn create_from_disc() -> Result<()> {
 #[test]
 fn write_to_disc() -> Result<()> {
     fn test() -> Result<()> {
-        let mut repr = create_test_rep();
+        let no_data_err: StorageError = io::Error::from(io::ErrorKind::InvalidData).into();
+        let inv_data_err: StorageError = io::Error::from(io::ErrorKind::InvalidInput).into();
+
+        let mut repr = create_test_rep()?;
         let path = flush_repr(&mut repr)?;
         let (data, idx) = get_written_data(&path)?;
-        assert!(!data.is_empty());
-        assert!(data.iter().filter(|b| *b != &0u8).next().is_some());
-        assert!(!idx.is_empty());
-        assert!(idx.iter().filter(|b| *b != &0u8).next().is_some());
+        assert_or_err!(io: !data.is_empty(); no_data_err);
+        assert_or_err!(io: data.iter().filter(|b| *b != &0u8).next().is_some(); inv_data_err);
+        assert_or_err!(io: !idx.is_empty(); no_data_err);
+        assert_or_err!(io: idx.iter().filter(|b| *b != &0u8).next().is_some(); inv_data_err);
 
-        let mut storage = StorageManager::new(repr.config.id, Some(&path), None)?;
+        let mut storage = StorageManager::new(Some(&path), None)?;
         let mut loader = TestBinLoader { obj: None };
         storage.load_from_disc(&mut loader)?;
+        assert_or_err!(io: loader.obj.is_some(); inv_data_err);
 
         Ok(())
     }
     tear_down(test)
-}
-
-fn flush_repr(repr: &mut Representation) -> Result<PathBuf> {
-    repr.enable_persistence();
-    repr.write_to_disc()?;
-    let path = std::env::temp_dir().join(format!("simag-{}", repr.config.id));
-    Ok(path)
-}
-
-fn create_test_rep() -> Representation {
-    let repr = Representation::default();
-    repr.tell("(professor[$Lucy,u=1])").unwrap();
-    assert!(!repr.classes.is_empty());
-    repr
-}
-
-fn get_written_data(path: &Path) -> io::Result<(Vec<u8>, Vec<u8>)> {
-    assert!(path.exists());
-    let idx_file = path.join("simag.idx");
-    let dat_file = path.join("simag.1.dat");
-    assert!(idx_file.exists());
-    assert!(dat_file.exists());
-
-    let dat_content = std::fs::File::open(dat_file)?
-        .bytes()
-        .filter_map(|f| f.ok())
-        .collect::<Vec<_>>();
-
-    let idx_content = std::fs::File::open(idx_file)?
-        .bytes()
-        .filter_map(|f| f.ok())
-        .collect::<Vec<_>>();
-
-    Ok((dat_content, idx_content))
 }
