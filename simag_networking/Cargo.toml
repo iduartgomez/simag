@@ -12,7 +12,7 @@ crossbeam = "0.8"
 dashmap = "4.0"
 env_logger = "0.8"
 futures_codec = "0.4"
-libp2p = { version = "0.35", features = [
+libp2p = { version = "0.37", features = [
     "deflate",
     "dns",
     "identify",
