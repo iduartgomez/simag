@@ -333,13 +333,18 @@ impl Record {
         header
     }
 
-    fn deserialize(mut data: Vec<u8>, i: usize) -> Self {
+    #[inline(always)]
+    fn load_header(data: &mut Vec<u8>) -> (Vec<u8>, MemAddr<Mapped>, BinType) {
         let header = data.drain(0..Self::HEADER_SIZE).collect::<Vec<_>>();
         let mut mem_addr = [0u8; std::mem::size_of::<u64>()];
         mem_addr.copy_from_slice(&header[0..8]);
-        let mem_addr = u64::from_le_bytes(mem_addr).into();
+        let mem_addr: MemAddr<Mapped> = u64::from_le_bytes(mem_addr).into();
         let type_id = BinType::from(header[8]);
+        (header, mem_addr, type_id)
+    }
 
+    fn deserialize(mut data: Vec<u8>, i: usize) -> Self {
+        let (header, mem_addr, type_id) = Self::load_header(&mut data);
         if cfg!(debug_assertions) {
             let mut len = [0u8; std::mem::size_of::<u64>()];
             len.copy_from_slice(&header[9..]);
@@ -624,8 +629,7 @@ impl PageManager {
                 // the whole page can be swapped, empty all addresses
                 let mut page_addresses = BTreeMap::new();
                 // FIXME: this could potentially be a data loss since we haven't yet written anything to disc
-                // but are removing the info from disc locations, making them irrecoverable;
-                // fix when the key dict is persisted
+                // but are removing the info from disc locations, making them irrecoverable
                 std::mem::swap(&mut page_addresses, &mut page.key_addr);
                 for (addr, rec) in page_addresses {
                     size += rec.length;
@@ -796,17 +800,11 @@ mod test {
     use rand::Rng;
 
     use super::*;
-    use crate::storage::test::tear_down;
+    use crate::assert_or_err;
+    #[macro_use]
+    use crate::storage::test::*;
 
     const LVL1_TEST_SIZE: u64 = 4096 * 4;
-
-    macro_rules! assert_or_err {
-        (io: $assertion:expr; $err:expr) => {{
-            if !$assertion {
-                return Err($err);
-            }
-        }};
-    }
 
     fn raw_sample(iters: usize) -> Vec<u8> {
         let mut sample = Vec::new();
@@ -936,12 +934,52 @@ mod test {
     }
 
     #[test]
+    fn insert_and_flush_recs() -> Result<()> {
+        const NUM_ITERS: usize = 3;
+        const REC_SIZE: usize = Record::HEADER_SIZE + 3;
+        let path = std::env::temp_dir().join(format!("simag-{}", Uuid::new_v4()));
+        let test = || -> Result<()> {
+            let mut storage = StorageManager::new(Some(&path), Some(LVL1_TEST_SIZE))?;
+            for i in 0..NUM_ITERS {
+                let mut rec = BinaryObj {
+                    address: MemAddr::from(i as u64),
+                    record: vec![0u8, 1, 2],
+                    ty: BinType::GrFunc,
+                };
+                storage.insert_rec(rec.clone())?;
+                rec.address = MemAddr::from(i as u64 + 1);
+                storage.insert_rec(rec)?;
+                storage.flush()?;
+            }
+
+            use io::Read;
+            let mut data = Vec::new();
+            let mut f = File::open(path.join("simag.1.dat"))?;
+            f.read_to_end(&mut data)?;
+
+            assert_or_err!(io: data.len() == 4096 * NUM_ITERS; io::Error::from(io::ErrorKind::InvalidData));
+            for page in data.chunks(4096) {
+                let rec = page.iter().take(REC_SIZE).copied().collect();
+                let rec = Record::deserialize(rec, 0);
+                assert_or_err!(io: rec.length == REC_SIZE as u64);
+                assert_or_err!(io: rec.data == vec![0, 1, 2]);
+
+                let rec = page.iter().skip(REC_SIZE).take(REC_SIZE).copied().collect();
+                let rec = Record::deserialize(rec, 0);
+                assert_or_err!(io: rec.length == REC_SIZE as u64);
+                assert_or_err!(io: rec.data == vec![0, 1, 2]);
+            }
+
+            Ok(())
+        };
+        tear_down(test, &path)
+    }
+
+    #[test]
     fn flush_data() -> Result<()> {
         let path = std::env::temp_dir().join(format!("simag-{}", Uuid::new_v4()));
         let test = || -> Result<()> {
             const NUM_RECS: usize = 5_000;
-            let inv_data_err: StorageError = io::Error::from(io::ErrorKind::InvalidInput).into();
-
             let mut storage = StorageManager::new(Some(&path), Some(LVL1_TEST_SIZE))?;
             let md = insert_rnd_data_in_storage(NUM_RECS, &mut storage)?;
             // write to disc
@@ -951,7 +989,7 @@ mod test {
             let mut storage = StorageManager::new(Some(&path), Some(LVL1_TEST_SIZE))?;
             let mut loader = TestBinLoader { obj: None };
             storage.load_from_disc(&mut loader)?;
-            assert_or_err!(io: loader.obj.is_some(); inv_data_err);
+            assert_or_err!(io: loader.obj.is_some(); io::Error::from(io::ErrorKind::InvalidInput));
             Ok(())
         };
         tear_down(test, &path)

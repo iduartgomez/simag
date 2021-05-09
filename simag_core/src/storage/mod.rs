@@ -106,7 +106,7 @@ pub(crate) trait ToBinaryObject {
     fn get_type() -> BinType;
 }
 
-#[cfg_attr(test, derive(Arbitrary))]
+#[cfg_attr(test, derive(Clone, Arbitrary))]
 pub(super) struct BinaryObj {
     /// the current physical address, used to preserve relationships
     pub address: MemAddr<NonMapped>,
@@ -210,10 +210,22 @@ pub enum StorageError {
 }
 
 #[cfg(test)]
-pub(self) mod test {
+pub(crate) mod test {
     use super::*;
 
-    pub(super) fn tear_down<F>(test_fn: F, path: &Path) -> Result<()>
+    #[macro_export]
+    macro_rules! assert_or_err {
+        (io: $assertion:expr) => {{
+            assert_or_err!(io: $assertion; io::Error::from(io::ErrorKind::InvalidInput))
+        }};
+        (io: $assertion:expr; $err:expr) => {{
+            if !$assertion {
+                return Err($err.into());
+            }
+        }};
+    }
+
+    pub fn tear_down<F>(test_fn: F, path: &Path) -> Result<()>
     where
         F: FnOnce() -> Result<()>,
     {

@@ -112,9 +112,9 @@ impl Representation {
 
     #[cfg(not(feature = "persistence"))]
     pub fn new(threads: usize) -> Representation {
-        let (rep, bg_task_rcv) = Self::internal_new(threads);
+        let (rep, bg_task_rcv, svc_queue_rs) = Self::internal_new(threads);
         #[allow(unused_mut, unused_variables)]
-        let mut shared_data = ReprSharedData::new(&rep, bg_task_rcv);
+        let mut shared_data = ReprSharedData::new(&rep, bg_task_rcv, svc_queue_rs);
         rep.threads.spawn(move || bg_thread(shared_data));
         rep
     }
@@ -1155,13 +1155,18 @@ impl ReprSharedData {
     }
 
     #[cfg(not(feature = "persistence"))]
-    fn new(rep: &Representation, bg_task_rcv: Receiver<BackgroundTask>) -> Self {
+    fn new(
+        rep: &Representation,
+        bg_task_rcv: Receiver<BackgroundTask>,
+        svc_queue_rs: Sender<BTResult>,
+    ) -> Self {
         ReprSharedData {
             entities: rep.entities.clone(),
             classes: rep.classes.clone(),
             config: rep.config.clone(),
             readers: rep.readers.clone(),
             bg_task_rcv,
+            svc_queue_rs,
         }
     }
 
