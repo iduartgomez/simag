@@ -509,7 +509,7 @@ mod handler {
 mod protocol {
     use super::*;
     use crate::message::MessageCodec;
-    use futures_codec::Framed;
+    use asynchronous_codec::Framed;
     use libp2p::{core::UpgradeInfo, futures::prelude::*, InboundUpgrade, OutboundUpgrade};
     use std::io;
 

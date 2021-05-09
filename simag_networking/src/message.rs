@@ -1,7 +1,8 @@
-use futures_codec::{BytesMut, Decoder, Encoder};
+use std::{error::Error as StdError, io};
+
+use asynchronous_codec::{BytesMut, Decoder, Encoder};
 use libp2p::{core::PublicKey, identity::Keypair};
 use serde::{Deserialize, Serialize};
-use std::{error::Error as StdError, io};
 use unsigned_varint::codec::UviBytes;
 
 use crate::rpc::AgentRpc;

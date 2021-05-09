@@ -9,7 +9,7 @@ use crate::{
 use libp2p::{
     core::{muxing, transport, upgrade},
     deflate::DeflateConfig,
-    dns::DnsConfig,
+    dns::{DnsConfig, TokioDnsConfig},
     identify, identity,
     kad::{self, record::Key},
     mplex,
@@ -43,6 +43,7 @@ where
 {
     id: PeerId,
     key: identity::Keypair,
+    listen_on: Option<(IpAddr, u16)>,
     swarm: Mutex<Swarm<NetBehaviour>>,
     /// Pending queries made to the DHT awaiting for response. In case they have been executed
     /// due to commands from the handle the value will be set, otherwise it will be none.
@@ -79,6 +80,17 @@ where
 
         let sh = shared_handler.clone();
         GlobalExecutor::spawn(async move {
+            // If both an IP and listening port are set listen on that socket.
+            if let Some((ip, port)) = sh.listen_on {
+                let mut swarm = sh.swarm.lock().await;
+                let mut bootstrap_addr = Multiaddr::with_capacity(2);
+                bootstrap_addr.push(Protocol::from(ip));
+                bootstrap_addr.push(Protocol::Tcp(port));
+                swarm
+                    .listen_on(bootstrap_addr)
+                    .map_err(|_| NetworkError::IrrecoverableError)?;
+            }
+
             // set the main inbound connection event loop
             loop {
                 let mut swarm = sh.swarm.lock().await;
@@ -124,7 +136,9 @@ where
             }
             HandleCmd::PullResource { op_id: id, key } => {
                 let key_borrowed: &&[u8] = &key.borrow();
-                let qid = swarm.get_record(&Key::new(key_borrowed), kad::Quorum::One);
+                let qid = swarm
+                    .behaviour_mut()
+                    .get_record(&Key::new(key_borrowed), kad::Quorum::One);
                 self.sent_kad_queries
                     .lock()
                     .await
@@ -134,7 +148,7 @@ where
                 let msg = tokio::task::block_in_place(|| Message::build(&value, &self.key, true));
                 match msg {
                     Ok(msg) => {
-                        swarm.send_message(&peer, msg);
+                        swarm.behaviour_mut().send_message(&peer, msg);
                     }
                     Err(_) => {
                         log::error!("Failed building a message from data: {:?}", value);
@@ -168,7 +182,9 @@ where
             } => {
                 // get the group resource from network
                 let key_borrowed: &&[u8] = &group_key.borrow();
-                let qid = swarm.get_record(&Key::new(key_borrowed), kad::Quorum::Majority);
+                let qid = swarm
+                    .behaviour_mut()
+                    .get_record(&Key::new(key_borrowed), kad::Quorum::Majority);
                 self.sent_kad_queries.lock().await.insert(
                     qid,
                     Some(HandleCmd::ReqJoinGroup {
@@ -196,18 +212,17 @@ where
                     process_kad_msg(self, swarm, id, result).await?;
                 }
             }
-            NetEvent::Identify(identify::IdentifyEvent::Received {
-                peer_id,
-                mut observed_addr,
-                info,
-            }) => {
+            NetEvent::Identify(identify::IdentifyEvent::Received { peer_id, mut info }) => {
                 if info.protocol_version == CURRENT_IDENTIFY_PROTO_VERSION
                     && info.agent_version == CURRENT_AGENT_VERSION
                     && info.protocols.iter().any(|p| p == "/ipfs/kad/1.0.0")
                     && info.protocols.iter().any(|p| p == CHANNEL_PROTOCOL)
                 {
-                    observed_addr.push(Protocol::P2p(peer_id.clone().into()));
-                    swarm.add_address(&peer_id, observed_addr);
+                    info.observed_addr
+                        .push(Protocol::P2p(peer_id.clone().into()));
+                    swarm
+                        .behaviour_mut()
+                        .add_address(&peer_id, info.observed_addr);
                 }
             }
             NetEvent::Stream(channel::ChannelEvent::MessageReceived { msg, peer }) => {
@@ -258,9 +273,15 @@ where
         };
 
         let mut sent_kad_queries = self.sent_kad_queries.lock().await;
-        let qid = swarm.put_record(record, kad::Quorum::All).unwrap();
+        let qid = swarm
+            .behaviour_mut()
+            .put_record(record, kad::Quorum::All)
+            .unwrap();
         sent_kad_queries.insert(qid, None);
-        let qid = swarm.start_providing(Key::new(key)).unwrap();
+        let qid = swarm
+            .behaviour_mut()
+            .start_providing(Key::new(key))
+            .unwrap();
         sent_kad_queries.insert(qid, None);
 
         Ok(())
@@ -434,7 +455,7 @@ where
                         .await?;
                     let msg =
                         Message::rpc(AgentRpc::ReqGroupJoinAccepted { op_id, group_id }, None);
-                    swarm.send_message(peer, msg);
+                    swarm.behaviour_mut().send_message(peer, msg);
                 }
                 Err(reason) => {
                     let msg = Message::rpc(
@@ -445,7 +466,7 @@ where
                         },
                         None,
                     );
-                    swarm.send_message(peer, msg);
+                    swarm.behaviour_mut().send_message(peer, msg);
                 }
             }
         }
@@ -552,7 +573,9 @@ where
             .expect("there should be at least one always");
         let owner_key = ResourceIdentifier::unique(owner);
         let owner_key: &&[u8] = &owner_key.borrow();
-        let qid = swarm.get_record(&Key::new(owner_key), kad::Quorum::One);
+        let qid = swarm
+            .behaviour_mut()
+            .get_record(&Key::new(owner_key), kad::Quorum::One);
         // wait until getting a response to continue
         network.sent_kad_queries.lock().await.insert(
             qid,
@@ -585,7 +608,7 @@ where
             };
             managers_requested += 1;
             let msg = Message::rpc(rpc, Some(RPC_RESPONSE_TIME_OUT));
-            swarm.send_message(peer, msg);
+            swarm.behaviour_mut().send_message(peer, msg);
         }
 
         log::debug!("requested {} group managers to join", managers_requested);
@@ -652,7 +675,7 @@ where
         };
         managers_requested += 1;
         let msg = Message::rpc(rpc, Some(RPC_RESPONSE_TIME_OUT));
-        swarm.send_message(peer, msg);
+        swarm.behaviour_mut().send_message(peer, msg);
     }
 
     let state = JoinReq {
@@ -902,21 +925,12 @@ impl NetworkBuilder {
         let mut swarm = {
             let builder = SwarmBuilder::new(transport, behav, self.local_peer_id.clone())
                 .executor(Box::new(GlobalExecutor::new()));
-
             builder.build()
         };
 
-        // If both an IP and listening port are set listen on that socket.
-        if let (Some(ip), Some(port)) = (self.local_ip, self.local_port) {
-            let mut bootstrap_addr = Multiaddr::with_capacity(2);
-            bootstrap_addr.push(Protocol::from(ip));
-            bootstrap_addr.push(Protocol::Tcp(port));
-            Swarm::listen_on(&mut swarm, bootstrap_addr).unwrap();
-        }
-
         let mut sent_queries = HashMap::new();
         if !self.remote_providers.is_empty() {
-            let bootstrap_query = swarm.bootstrap();
+            let bootstrap_query = swarm.behaviour_mut().bootstrap();
             sent_queries.insert(bootstrap_query, None);
         }
 
@@ -924,6 +938,7 @@ impl NetworkBuilder {
         let (answ_send, answ_rcv) = channel(100);
 
         let network: Network<Message> = Network {
+            listen_on: self.local_ip.zip(self.local_port),
             key: self.local_key,
             swarm: Mutex::new(swarm),
             sent_kad_queries: Mutex::new(sent_queries),
@@ -959,7 +974,7 @@ impl NetworkBuilder {
                 )
             });
         Ok(
-            DnsConfig::new(tcp)?
+            TokioDnsConfig::system(tcp)?
                 .upgrade(upgrade::Version::V1)
                 .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
                 .multiplex(upgrade::SelectUpgrade::new(
@@ -983,13 +998,15 @@ impl NetworkBuilder {
             );
         }
 
+        let ident_config = identify::IdentifyConfig::new(
+            CURRENT_IDENTIFY_PROTO_VERSION.to_string(),
+            self.local_key.public(),
+        )
+        .with_agent_version(CURRENT_AGENT_VERSION.to_string());
+
         NetBehaviour {
             kad,
-            identify: identify::Identify::new(
-                CURRENT_IDENTIFY_PROTO_VERSION.to_owned(),
-                CURRENT_AGENT_VERSION.to_owned(),
-                self.local_key.public(),
-            ),
+            identify: identify::Identify::new(ident_config),
             streams: channel::Channel::new(),
         }
     }
