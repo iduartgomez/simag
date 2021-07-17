@@ -66,9 +66,7 @@ jobs:
           rust: stable
         Windows:
           vmImage: windows-2019
-          rust: stabl
-    pool:
-      vmImage: windows-2019
+          rust: stable
     continueOnError: "false"
     steps:
       - template: install-rust.yml@templates

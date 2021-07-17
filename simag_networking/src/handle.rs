@@ -1,14 +1,3 @@
-use crate::{
-    config::GlobalExecutor,
-    group::GroupSettings,
-    group::{Group, GroupPermits},
-    network::NetworkError,
-    rpc::{self, Resource, ResourceIdentifier},
-    Error, Result,
-};
-use dashmap::DashMap;
-use libp2p::{identity, PeerId};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     borrow::Borrow,
     collections::HashMap,
@@ -20,8 +9,22 @@ use std::{
     result::Result as StdResult,
     sync::Arc,
 };
+
+use dashmap::DashMap;
+use libp2p::{identity, PeerId};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender};
 use uuid::Uuid;
+
+use crate::{
+    agent::AgentPolicy,
+    config::GlobalExecutor,
+    group::GroupSettings,
+    group::{Group, GroupPermits},
+    network::NetworkError,
+    rpc::{self, Resource, ResourceIdentifier},
+    Error, Result,
+};
 
 /// A handle to a running network connection.
 pub struct NetworkHandle<M>
@@ -123,7 +126,7 @@ where
     /// agent and handle any communication from/to this agent. Operation is asynchronous.
     ///
     /// This will block the handle until the agent has been correctly registered or an error happens.
-    pub fn register_agent(&mut self, agent: &simag_core::Agent) -> OpId {
+    pub fn register_agent(&mut self, agent: &simag_core::Agent, config: AgentPolicy) -> OpId {
         // TODO: An agent can only be registered with a single node. If you try to register the same agent in
         // the same network more than once it will be an error.
 
@@ -132,6 +135,7 @@ where
         let msg = HandleCmd::RegisterAgent {
             op_id: id,
             agent_id,
+            config,
         };
         let sender = self.sender.clone();
         GlobalExecutor::spawn(async move {
@@ -139,6 +143,19 @@ where
             Ok::<_, ()>(())
         });
         id
+    }
+
+    /// Find an agent in the network and try to open a connection with it. Operation is asynchronous.
+    pub fn find_agent<ID: ToString>(&mut self, agent_id: ID) -> OpId {
+        let op_id = self.next_id();
+        let agent_id = agent_id.to_string();
+        let sender = self.sender.clone();
+        GlobalExecutor::spawn(async move {
+            let msg = HandleCmd::ConnectToAgent { agent_id, op_id };
+            sender.send(msg).await.map_err(|_| ())?;
+            Ok::<_, ()>(())
+        });
+        op_id
     }
 
     /// Create a resource of the group kind that belongs to the given agent, which will then be the original
@@ -167,13 +184,13 @@ where
             });
             group.with_permits(permits);
         }
-        let msg = HandleCmd::ProvideResource {
-            op_id,
-            key,
-            value: Resource::new_group(group),
-        };
         let sender = self.sender.clone();
         GlobalExecutor::spawn(async move {
+            let msg = HandleCmd::ProvideResource {
+                op_id,
+                key,
+                value: Resource::new_group(group),
+            };
             sender.send(msg).await.map_err(|_| ())?;
             Ok::<_, ()>(())
         });
@@ -208,14 +225,14 @@ where
         if let Some(permits) = permits {
             group.with_permits(permits);
         }
-        let msg = HandleCmd::ReqJoinGroup {
-            op_id,
-            group_key,
-            agent_id,
-            group,
-        };
         let sender = self.sender.clone();
         GlobalExecutor::spawn(async move {
+            let msg = HandleCmd::ReqJoinGroup {
+                op_id,
+                group_key,
+                agent_id,
+                group,
+            };
             sender.send(msg).await.map_err(|_| ())?;
             Ok::<_, ()>(())
         });
@@ -562,7 +579,13 @@ pub(crate) enum HandleCmd<M> {
     /// send a serialized message
     SendMessage { op_id: OpId, value: M, peer: PeerId },
     /// register a peer as the manager of an agent
-    RegisterAgent { op_id: OpId, agent_id: String },
+    RegisterAgent {
+        op_id: OpId,
+        agent_id: String,
+        config: AgentPolicy,
+    },
+    /// try to open a channel to the specified agent
+    ConnectToAgent { agent_id: String, op_id: OpId },
     /// instruct the network handler to send a request
     /// for an agent joining a group
     ReqJoinGroup {
@@ -572,8 +595,9 @@ pub(crate) enum HandleCmd<M> {
         group: Group,
         // state: RequestState,
     },
-    /// awaiting peer information to try connect
-    AwaitingReqJoinGroup {
+    /// No manager was found in the local cache. Awaiting peer information for managers
+    /// so a connection attempt can be initialized.
+    FindGroupManager {
         op_id: OpId,
         group_key: ResourceIdentifier,
         agent_id: Uuid,

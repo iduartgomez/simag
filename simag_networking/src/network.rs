@@ -1,11 +1,8 @@
-use crate::{
-    channel::{self, CHANNEL_PROTOCOL},
-    config::{GlobalExecutor, CONF, PEER_TIMEOUT_SECS},
-    group::{Group, GroupError, GroupManager, GroupPermits, GroupSettings},
-    handle::{HandleAnsw, HandleCmd, NetworkHandle, OpId},
-    message::Message,
-    rpc::{AgentRpc, Resource, ResourceIdentifier, ResourceKind},
+use std::{
+    borrow::Borrow, collections::HashMap, convert::TryFrom, fmt::Debug, net::IpAddr, sync::Arc,
+    time::Duration,
 };
+
 use libp2p::{
     core::{muxing, transport, upgrade},
     deflate::DeflateConfig,
@@ -20,15 +17,21 @@ use libp2p::{
     yamux, Multiaddr, PeerId, Swarm, Transport,
 };
 use serde::{de::DeserializeOwned, Serialize};
-use std::{
-    borrow::Borrow, collections::HashMap, convert::TryFrom, fmt::Debug, net::IpAddr, sync::Arc,
-    time::Duration,
-};
 use tokio::sync::{
     mpsc::{channel, Receiver, Sender},
     Mutex,
 };
 use uuid::Uuid;
+
+use crate::{
+    agent::AgentPolicy,
+    channel::{self, CHANNEL_PROTOCOL},
+    config::{GlobalExecutor, CONF},
+    group::{Group, GroupError, GroupManager, GroupPermits, GroupSettings},
+    handle::{HandleAnsw, HandleCmd, NetworkHandle, OpId},
+    message::Message,
+    rpc::{AgentRpc, Resource, ResourceIdentifier, ResourceKind},
+};
 
 const CURRENT_AGENT_VERSION: &str = "simag/0.1.0";
 const CURRENT_IDENTIFY_PROTO_VERSION: &str = "ipfs/0.1.0";
@@ -50,6 +53,8 @@ where
     sent_kad_queries: Mutex<HashMap<kad::QueryId, Option<HandleCmd<M>>>>,
     /// A map from agent identifiers to peers which own that agent.
     agent_owners: Mutex<HashMap<uuid::Uuid, PeerId>>,
+    /// Local storage of agent configurations set on this peer. Used to check against connection petition.
+    agent_configurations: Mutex<HashMap<ResourceIdentifier, AgentPolicy>>,
     /// The queue for sending the results of the handle commands.
     handle_answ_queue: Mutex<Sender<Result<HandleAnsw<M>, NetworkError>>>,
     /// A copy of the sending end of the channel to be used internally to make callbacks
@@ -163,12 +168,15 @@ where
                 self.return_answ(Ok(answ)).await?;
             }
             HandleCmd::RegisterAgent {
-                op_id: id,
+                op_id,
                 agent_id,
+                config,
             } => {
                 let (key, mut res) = Resource::agent(agent_id, self.id.clone());
                 res.as_peer(self.id.clone());
-                Swarm::external_addresses(&*swarm).for_each(|a| res.with_address(a.addr.clone()));
+                Swarm::external_addresses(&*swarm).for_each(|a| {
+                    res.with_address(a.addr.clone());
+                });
                 self.provide_value(swarm, key, Resource::new_agent(res))
                     .await?;
                 let answ = HandleAnsw::AgentRegistered { op_id: id, key };
@@ -195,7 +203,7 @@ where
                     }),
                 );
             }
-            HandleCmd::AwaitingReqJoinGroup { .. } => todo!(),
+            HandleCmd::FindGroupManager { .. } => todo!(),
             HandleCmd::IsRunning => {} // will get an answer from the channel, so is active
         }
         Ok(())
@@ -360,7 +368,7 @@ where
                 return Ok(());
             }
         }
-        Some(Some(HandleCmd::AwaitingReqJoinGroup {
+        Some(Some(HandleCmd::FindGroupManager {
             op_id,
             group_key,
             group,
@@ -579,7 +587,7 @@ where
         // wait until getting a response to continue
         network.sent_kad_queries.lock().await.insert(
             qid,
-            Some(HandleCmd::AwaitingReqJoinGroup {
+            Some(HandleCmd::FindGroupManager {
                 op_id,
                 group_key,
                 agent_id,
@@ -945,6 +953,7 @@ impl NetworkBuilder {
             id: self.local_peer_id,
             handle_answ_queue: Mutex::new(answ_send),
             agent_owners: Mutex::new(HashMap::new()),
+            agent_configurations: Mutex::new(HashMap::new()),
             cmd_callback_queue: query_send.clone(),
             rpc_state: Mutex::new(HashMap::new()),
         };

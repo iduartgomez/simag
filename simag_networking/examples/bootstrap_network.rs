@@ -1,5 +1,5 @@
 use simag_core::Agent;
-use simag_networking::*;
+use simag_networking::{agent::AgentPolicy, *};
 use std::{collections::HashMap, net::Ipv4Addr};
 
 const ENCONDED_KEY1: &[u8] = include_bytes!("key1");
@@ -51,7 +51,7 @@ fn main() {
     // #1 This is the id that must be provided to other nodes that want to join the network.
     println!("This network encoded peer id is: {}", network.get_peer_id());
     let agent = Agent::new("agent_01".to_owned());
-    let op_id = network.register_agent(&agent);
+    let op_id = network.register_agent(&agent, AgentPolicy::default());
     let ag_key = loop {
         match network.op_result(op_id) {
             Err(Error::OpError(HandleError::AwaitingResponse(_))) => {}
