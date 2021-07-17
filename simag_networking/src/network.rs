@@ -1,34 +1,38 @@
-use crate::{
-    channel::{self, CHANNEL_PROTOCOL},
-    config::{GlobalExecutor, CONF, PEER_TIMEOUT_SECS},
-    group::{Group, GroupError, GroupManager, GroupPermits, GroupSettings},
-    handle::{HandleAnsw, HandleCmd, NetworkHandle, OpId},
-    message::Message,
-    rpc::{AgentRpc, Resource, ResourceIdentifier, ResourceKind},
+use std::{
+    borrow::Borrow, collections::HashMap, convert::TryFrom, fmt::Debug, net::IpAddr, sync::Arc,
+    time::Duration,
 };
+
 use libp2p::{
     core::{muxing, transport, upgrade},
     deflate::DeflateConfig,
     dns::{DnsConfig, TokioDnsConfig},
+    futures::StreamExt,
     identify, identity,
     kad::{self, record::Key},
     mplex,
     multiaddr::Protocol,
     noise,
-    swarm::SwarmBuilder,
+    swarm::{SwarmBuilder, SwarmEvent},
     tcp::TokioTcpConfig,
     yamux, Multiaddr, PeerId, Swarm, Transport,
 };
 use serde::{de::DeserializeOwned, Serialize};
-use std::{
-    borrow::Borrow, collections::HashMap, convert::TryFrom, fmt::Debug, net::IpAddr, sync::Arc,
-    time::Duration,
-};
 use tokio::sync::{
     mpsc::{channel, Receiver, Sender},
     Mutex,
 };
 use uuid::Uuid;
+
+use crate::{
+    agent::AgentPolicy,
+    channel::{self, CHANNEL_PROTOCOL},
+    config::{GlobalExecutor, CONF},
+    group::{Group, GroupError, GroupManager, GroupPermits, GroupSettings},
+    handle::{HandleAnsw, HandleCmd, NetworkHandle, OpId},
+    message::Message,
+    rpc::{AgentRpc, Resource, ResourceIdentifier, ResourceKind},
+};
 
 const CURRENT_AGENT_VERSION: &str = "simag/0.1.0";
 const CURRENT_IDENTIFY_PROTO_VERSION: &str = "ipfs/0.1.0";
@@ -50,6 +54,8 @@ where
     sent_kad_queries: Mutex<HashMap<kad::QueryId, Option<HandleCmd<M>>>>,
     /// A map from agent identifiers to peers which own that agent.
     agent_owners: Mutex<HashMap<uuid::Uuid, PeerId>>,
+    /// Local storage of agent configurations set on this peer. Used to check against connection petition.
+    agent_configurations: Mutex<HashMap<ResourceIdentifier, AgentPolicy>>,
     /// The queue for sending the results of the handle commands.
     handle_answ_queue: Mutex<Sender<Result<HandleAnsw<M>, NetworkError>>>,
     /// A copy of the sending end of the channel to be used internally to make callbacks
@@ -96,7 +102,7 @@ where
                 let mut swarm = sh.swarm.lock().await;
                 let get_next = tokio::time::timeout(Duration::from_nanos(10), swarm.next());
                 // unlock the swarm to allow the thread handling commands to send messages, time to time
-                if let Ok(event) = get_next.await {
+                if let Ok(Some(SwarmEvent::Behaviour(event))) = get_next.await {
                     match sh.process_event(event, &mut *swarm).await {
                         Ok(_) => {}
                         Err(err) => {
@@ -163,15 +169,18 @@ where
                 self.return_answ(Ok(answ)).await?;
             }
             HandleCmd::RegisterAgent {
-                op_id: id,
+                op_id,
                 agent_id,
+                config,
             } => {
                 let (key, mut res) = Resource::agent(agent_id, self.id.clone());
                 res.as_peer(self.id.clone());
-                Swarm::external_addresses(&*swarm).for_each(|a| res.with_address(a.addr.clone()));
+                Swarm::external_addresses(&*swarm).for_each(|a| {
+                    res.with_address(a.addr.clone());
+                });
                 self.provide_value(swarm, key, Resource::new_agent(res))
                     .await?;
-                let answ = HandleAnsw::AgentRegistered { op_id: id, key };
+                let answ = HandleAnsw::AgentRegistered { op_id, key };
                 self.return_answ(Ok(answ)).await?;
             }
             HandleCmd::ReqJoinGroup {
@@ -195,8 +204,9 @@ where
                     }),
                 );
             }
-            HandleCmd::AwaitingReqJoinGroup { .. } => todo!(),
+            HandleCmd::FindGroupManager { .. } => todo!(),
             HandleCmd::IsRunning => {} // will get an answer from the channel, so is active
+            HandleCmd::ConnectToAgent { agent_id, op_id } => todo!(),
         }
         Ok(())
     }
@@ -208,7 +218,7 @@ where
     ) -> Result<(), NetworkError> {
         match event {
             NetEvent::KademliaEvent(event) => {
-                if let kad::KademliaEvent::QueryResult { result, id, .. } = event {
+                if let kad::KademliaEvent::OutboundQueryCompleted { result, id, .. } = event {
                     process_kad_msg(self, swarm, id, result).await?;
                 }
             }
@@ -360,7 +370,7 @@ where
                 return Ok(());
             }
         }
-        Some(Some(HandleCmd::AwaitingReqJoinGroup {
+        Some(Some(HandleCmd::FindGroupManager {
             op_id,
             group_key,
             group,
@@ -579,7 +589,7 @@ where
         // wait until getting a response to continue
         network.sent_kad_queries.lock().await.insert(
             qid,
-            Some(HandleCmd::AwaitingReqJoinGroup {
+            Some(HandleCmd::FindGroupManager {
                 op_id,
                 group_key,
                 agent_id,
@@ -945,6 +955,7 @@ impl NetworkBuilder {
             id: self.local_peer_id,
             handle_answ_queue: Mutex::new(answ_send),
             agent_owners: Mutex::new(HashMap::new()),
+            agent_configurations: Mutex::new(HashMap::new()),
             cmd_callback_queue: query_send.clone(),
             rpc_state: Mutex::new(HashMap::new()),
         };

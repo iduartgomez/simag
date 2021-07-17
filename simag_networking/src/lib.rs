@@ -1,5 +1,6 @@
 //! Support networking library for the simAG framework
 
+pub mod agent;
 mod channel;
 mod config;
 pub(crate) mod group;

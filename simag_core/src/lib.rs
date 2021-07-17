@@ -7,9 +7,9 @@
 extern crate nom;
 
 mod agent;
-mod var_map;
 #[cfg(feature = "persistence")]
 mod storage;
+mod var_map;
 
 pub use self::agent::{Agent, Answer, QueryErr};
 

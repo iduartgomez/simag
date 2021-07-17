@@ -266,10 +266,22 @@ where
 impl<'a> std::fmt::Debug for UnconstraintArg<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            UnconstraintArg::Terminal(r) => write!(f, "Arg::Term({})", str::from_utf8(r).expect("should be valid utf8")),
-            UnconstraintArg::String(r) => write!(f, "Arg::Str({})", str::from_utf8(r).expect("should be valid utf8")),
+            UnconstraintArg::Terminal(r) => write!(
+                f,
+                "Arg::Term({})",
+                str::from_utf8(r).expect("should be valid utf8")
+            ),
+            UnconstraintArg::String(r) => write!(
+                f,
+                "Arg::Str({})",
+                str::from_utf8(r).expect("should be valid utf8")
+            ),
             UnconstraintArg::Keyword(r) => {
-                write!(f, "Arg::Keyword({})", str::from_utf8(r).expect("should be valid utf8"))
+                write!(
+                    f,
+                    "Arg::Keyword({})",
+                    str::from_utf8(r).expect("should be valid utf8")
+                )
             }
         }
     }

@@ -1,8 +1,9 @@
 use crate::{
+    agent::Agent,
     group::{Group, GroupError, GroupSettings},
     handle::OpId,
 };
-use libp2p::{Multiaddr, PeerId};
+use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Borrow,
@@ -67,6 +68,7 @@ impl Resource {
             agent_id: uid,
             peer: Some(peer_id),
             addr: Vec::with_capacity(1),
+            ..Default::default()
         };
         (key, res)
     }
@@ -201,47 +203,4 @@ impl TryFrom<u8> for AgentKeyKind {
 pub(crate) enum ResourceKind {
     Agent(Agent),
     Group(Group),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Agent {
-    addr: Vec<Multiaddr>,
-    #[serde(serialize_with = "custom_ser::ser_peer")]
-    #[serde(deserialize_with = "custom_ser::de_peer")]
-    pub peer: Option<PeerId>,
-    agent_id: Uuid,
-}
-
-impl Agent {
-    pub fn as_peer(&mut self, peer: PeerId) {
-        self.peer = Some(peer);
-    }
-
-    pub fn with_address(&mut self, addr: Multiaddr) {
-        self.addr.push(addr);
-    }
-}
-
-mod custom_ser {
-    use super::*;
-    use serde::{Deserializer, Serializer};
-
-    pub(super) fn ser_peer<S: Serializer>(
-        peer: &Option<PeerId>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        let as_bytes = if let Some(peer) = peer {
-            Some(peer.to_bytes())
-        } else {
-            None
-        };
-        as_bytes.serialize(serializer)
-    }
-
-    pub(super) fn de_peer<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Option<PeerId>, D::Error> {
-        let peer: Option<Vec<u8>> = Deserialize::deserialize(deserializer)?;
-        Ok(peer.map(|data| PeerId::from_bytes(&data).unwrap()))
-    }
 }

@@ -3,6 +3,7 @@ name = "simag_networking"
 version = "0.0.1"
 authors = ["Ignacio Duart Gómez <iduartgomez@gmail.com>"]
 edition = "2018"
+rust = "1.51"
 
 [dependencies]
 # async-trait = "0.1.40"
@@ -12,7 +13,7 @@ config = "0.11"
 crossbeam = "0.8"
 dashmap = "4.0"
 env_logger = "0.9"
-libp2p = { version = "0.38", features = [
+libp2p = { version = "0.39", features = [
     "deflate",
     "identify",
     "kad",
