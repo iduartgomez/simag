@@ -3,6 +3,7 @@ name = "simag_networking"
 version = "0.0.1"
 authors = ["Ignacio Duart Gómez <iduartgomez@gmail.com>"]
 edition = "2018"
+rust = "1.51"
 
 [dependencies]
 # async-trait = "0.1.40"

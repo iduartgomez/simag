@@ -244,11 +244,6 @@ where
         todo!()
     }
 
-    /// Find an agent in the network and try to open a connection with it. Operation is asynchronous.
-    pub fn find_agent(&mut self, agent_id: &str) -> OpId {
-        todo!()
-    }
-
     /// Send a message to the given peer. Operation is asynchronous.
     pub fn send_message(&mut self, value: M, peer: PeerId) -> OpId {
         let id = self.next_id();

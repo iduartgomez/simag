@@ -7,12 +7,13 @@ use libp2p::{
     core::{muxing, transport, upgrade},
     deflate::DeflateConfig,
     dns::{DnsConfig, TokioDnsConfig},
+    futures::StreamExt,
     identify, identity,
     kad::{self, record::Key},
     mplex,
     multiaddr::Protocol,
     noise,
-    swarm::SwarmBuilder,
+    swarm::{SwarmBuilder, SwarmEvent},
     tcp::TokioTcpConfig,
     yamux, Multiaddr, PeerId, Swarm, Transport,
 };
@@ -101,7 +102,7 @@ where
                 let mut swarm = sh.swarm.lock().await;
                 let get_next = tokio::time::timeout(Duration::from_nanos(10), swarm.next());
                 // unlock the swarm to allow the thread handling commands to send messages, time to time
-                if let Ok(event) = get_next.await {
+                if let Ok(Some(SwarmEvent::Behaviour(event))) = get_next.await {
                     match sh.process_event(event, &mut *swarm).await {
                         Ok(_) => {}
                         Err(err) => {
@@ -179,7 +180,7 @@ where
                 });
                 self.provide_value(swarm, key, Resource::new_agent(res))
                     .await?;
-                let answ = HandleAnsw::AgentRegistered { op_id: id, key };
+                let answ = HandleAnsw::AgentRegistered { op_id, key };
                 self.return_answ(Ok(answ)).await?;
             }
             HandleCmd::ReqJoinGroup {
@@ -205,6 +206,7 @@ where
             }
             HandleCmd::FindGroupManager { .. } => todo!(),
             HandleCmd::IsRunning => {} // will get an answer from the channel, so is active
+            HandleCmd::ConnectToAgent { agent_id, op_id } => todo!(),
         }
         Ok(())
     }
@@ -216,7 +218,7 @@ where
     ) -> Result<(), NetworkError> {
         match event {
             NetEvent::KademliaEvent(event) => {
-                if let kad::KademliaEvent::QueryResult { result, id, .. } = event {
+                if let kad::KademliaEvent::OutboundQueryCompleted { result, id, .. } = event {
                     process_kad_msg(self, swarm, id, result).await?;
                 }
             }

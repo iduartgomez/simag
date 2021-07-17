@@ -44,7 +44,7 @@ jobs:
     steps:
       - template: install-rust.yml@templates
         parameters:
-          rust: stable
+          rust: 1.51
       - script: sudo apt-get install libxcb-shape0-dev libxcb-xfixes0-dev
         displayName: Install depedencies
       - script: cargo check --workspace --features simag_networking,repl
