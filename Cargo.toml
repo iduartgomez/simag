@@ -5,7 +5,7 @@ authors = ["Ignacio Duart Gómez <iduartgomez@gmail.com>"]
 autobins = false
 edition = "2018"
 rust = "1.51"
-license = "Apache-2.0 OR MIT"
+license = "MPL-2.0"
 default-run = "simag"
 
 [dependencies]

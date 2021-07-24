@@ -11,7 +11,7 @@ use std::{
 };
 
 use dashmap::DashMap;
-use libp2p::{identity, PeerId};
+use libp2p::{identity, kad::QueryId, PeerId};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender};
 use uuid::Uuid;
@@ -76,34 +76,29 @@ where
     /// - register_agent
     /// - find_agent.
     pub fn op_result(&mut self, op_id: OpId) -> Result<Option<ResourceIdentifier>> {
-        match self.pending.remove(&op_id) {
+        let answ = match self.pending.get_mut(&op_id) {
             None => Err(HandleError::OpNotFound(op_id).into()),
-            Some((_, PendingCmd { cmd, answ: None })) => {
-                // no answer received, insert back into the pending cmd map.
-                self.pending.insert(op_id, PendingCmd { cmd, answ: None });
-                Err(HandleError::AwaitingResponse(op_id).into())
-            }
-            Some((
-                _,
-                PendingCmd {
-                    answ: Some(answ), ..
-                },
-            )) => match answ {
-                HandleAnsw::ReqJoinGroupAccepted { group_id, .. } => {
+            Some(mut pend_cmd) => match pend_cmd.value_mut().answ.as_mut() {
+                None => return Err(HandleError::AwaitingResponse(op_id).into()),
+                Some(HandleAnsw::ReqJoinGroupAccepted { group_id, .. }) => {
                     Ok(Some(ResourceIdentifier::group(&group_id)))
                 }
-                HandleAnsw::ReqJoinGroupDenied {
+                Some(HandleAnsw::ReqJoinGroupDenied {
                     group_id, reason, ..
-                } => Err(Error::GroupError { group_id, reason }),
-                HandleAnsw::AgentRegistered { key, .. } | HandleAnsw::GotRecord { key, .. } => {
-                    Ok(Some(key))
-                }
-                HandleAnsw::HasShutdown { .. }
-                | HandleAnsw::KeyAdded { .. }
-                | HandleAnsw::PropagateGroupChange { .. } => Ok(None),
-                HandleAnsw::RcvMsg { .. } => unreachable!(),
+                }) => Err(Error::GroupError {
+                    group_id: *group_id,
+                    reason: reason.clone(),
+                }),
+                Some(HandleAnsw::AgentRegistered { key, .. })
+                | Some(HandleAnsw::AgentFound { key, .. }) => Ok(Some(*key)),
+                Some(HandleAnsw::HasShutdown { .. })
+                | Some(HandleAnsw::PropagateGroupChange { .. }) => Ok(None),
+                Some(HandleAnsw::AwaitingRegistration { op_id, qid }) => Ok(None),
+                Some(HandleAnsw::RcvMsg { .. }) => unreachable!(),
             },
-        }
+        };
+        self.pending.remove(&op_id);
+        answ
     }
 
     /// Get all the received messages from a given peer.
@@ -138,6 +133,13 @@ where
             config,
         };
         let sender = self.sender.clone();
+        self.pending.insert(
+            id,
+            PendingCmd {
+                cmd: SentCmd::RegisterAgent,
+                answ: None,
+            },
+        );
         GlobalExecutor::spawn(async move {
             sender.send(msg).await.map_err(|_| ())?;
             Ok::<_, ()>(())
@@ -150,6 +152,13 @@ where
         let op_id = self.next_id();
         let agent_id = agent_id.to_string();
         let sender = self.sender.clone();
+        self.pending.insert(
+            op_id,
+            PendingCmd {
+                cmd: SentCmd::FindAgent,
+                answ: None,
+            },
+        );
         GlobalExecutor::spawn(async move {
             let msg = HandleCmd::ConnectToAgent { agent_id, op_id };
             sender.send(msg).await.map_err(|_| ())?;
@@ -185,12 +194,9 @@ where
             group.with_permits(permits);
         }
         let sender = self.sender.clone();
+        // FIXME: register op as pending
         GlobalExecutor::spawn(async move {
-            let msg = HandleCmd::ProvideResource {
-                op_id,
-                key,
-                value: Resource::new_group(group),
-            };
+            let msg = HandleCmd::RegisterGroup { op_id, key, group };
             sender.send(msg).await.map_err(|_| ())?;
             Ok::<_, ()>(())
         });
@@ -200,8 +206,8 @@ where
     /// Request joining to a given group, will return the network identifier of the group in case
     /// this agent is allowed to join the group. Operation is asynchronous.
     ///
-    /// The petitioner must pass the settings used to evaluate if are compatible with the settings
-    /// set by the owners of the group.
+    /// The petitioner must pass the settings used to evaluate if joining is possible when comparing
+    /// with the settings set by the owners of the group.
     ///
     /// Optionally request a set of group permits, otherwise read permits will be requested.
     /// The agent only will be allowed to join if the permits are legal for this agent.
@@ -226,6 +232,7 @@ where
             group.with_permits(permits);
         }
         let sender = self.sender.clone();
+        // FIXME: register op as pending
         GlobalExecutor::spawn(async move {
             let msg = HandleCmd::ReqJoinGroup {
                 op_id,
@@ -261,50 +268,6 @@ where
                 value,
                 peer,
             };
-            sender.send(msg).await.map_err(|_| ())?;
-            Ok::<_, ()>(())
-        });
-        id
-    }
-
-    /// Request a key to the network. The result can be fetched asynchronously. Operation is asynchronous.
-    pub fn get(&mut self, key: ResourceIdentifier) -> OpId {
-        let id = self.next_id();
-        let key_bytes: &[u8] = &key.borrow();
-        self.pending.insert(
-            id,
-            PendingCmd {
-                cmd: SentCmd::PullContent(key_bytes.to_owned()),
-                answ: None,
-            },
-        );
-        let msg = HandleCmd::PullResource { op_id: id, key };
-        let sender = self.sender.clone();
-        GlobalExecutor::spawn(async move {
-            sender.send(msg).await.map_err(|_| ())?;
-            Ok::<_, ()>(())
-        });
-        id
-    }
-
-    /// Set this peer as a provider for a certain key and value pair. Operation is asynchronous.
-    pub fn put(&mut self, key: ResourceIdentifier, value: Resource) -> OpId {
-        let id = self.next_id();
-        let key_bytes: &[u8] = &key.borrow();
-        self.pending.insert(
-            id,
-            PendingCmd {
-                cmd: SentCmd::AddedKey(key_bytes.to_owned()),
-                answ: None,
-            },
-        );
-        let msg = HandleCmd::ProvideResource {
-            op_id: id,
-            key,
-            value,
-        };
-        let sender = self.sender.clone();
-        GlobalExecutor::spawn(async move {
             sender.send(msg).await.map_err(|_| ())?;
             Ok::<_, ()>(())
         });
@@ -424,24 +387,6 @@ where
                         e.answ = Some(HandleAnsw::HasShutdown { op_id: id, answ });
                     });
                 }
-                HandleAnsw::KeyAdded { op_id: id } => {
-                    if let Some((
-                        _,
-                        PendingCmd {
-                            cmd: SentCmd::AddedKey(key),
-                            ..
-                        },
-                    )) = pending.remove(&id)
-                    {
-                        log::debug!(
-                            "Added key: {:?}",
-                            ResourceIdentifier::try_from(&*key).unwrap()
-                        );
-                    }
-                }
-                HandleAnsw::GotRecord { key, .. } => {
-                    // self.stats.key_stats.entry(key).or_default().times_received += 1;
-                }
                 HandleAnsw::RcvMsg { peer, msg } => {
                     log::debug!("Received streaming msg from {}: {:?}", peer, msg);
 
@@ -471,6 +416,13 @@ where
                         });
                     });
                 }
+                HandleAnsw::AgentFound { op_id, key } => {
+                    pending.alter(&op_id, |_, mut e| {
+                        e.answ = Some(HandleAnsw::AgentFound { op_id, key });
+                        e
+                    });
+                }
+                HandleAnsw::AwaitingRegistration { qid, op_id } => {}
             }
         }
 
@@ -552,6 +504,8 @@ enum SentCmd {
     PullContent(Vec<u8>),
     ShutDown,
     SentMsg,
+    RegisterAgent,
+    FindAgent,
 }
 
 #[derive(Debug)]
@@ -559,15 +513,10 @@ pub(crate) enum HandleCmd<M> {
     /// query the network about current status
     IsRunning,
     /// put a resource in this node
-    ProvideResource {
+    RegisterGroup {
         op_id: OpId,
         key: ResourceIdentifier,
-        value: Resource,
-    },
-    /// pull a resource in this node
-    PullResource {
-        op_id: OpId,
-        key: ResourceIdentifier,
+        group: Group,
     },
     /// issue a shutdown command
     Shutdown(OpId),
@@ -598,6 +547,12 @@ pub(crate) enum HandleCmd<M> {
         agent_id: Uuid,
         group: Group,
     },
+    /// Awaiting publish confirmation by the kad DHT of a rss.
+    AwaitingRegistration {
+        op_id: OpId,
+        key: ResourceIdentifier,
+        resource: Resource,
+    },
 }
 
 /// The answer of an operation.
@@ -610,16 +565,9 @@ where
         op_id: OpId,
         key: ResourceIdentifier,
     },
-    GotRecord {
-        op_id: OpId,
-        key: ResourceIdentifier,
-    },
     HasShutdown {
         op_id: OpId,
         answ: bool,
-    },
-    KeyAdded {
-        op_id: OpId,
     },
     /// Propagate a change in the configuration or composition of a group.
     PropagateGroupChange {
@@ -637,6 +585,14 @@ where
     RcvMsg {
         peer: PeerId,
         msg: M,
+    },
+    AgentFound {
+        op_id: OpId,
+        key: ResourceIdentifier,
+    },
+    AwaitingRegistration {
+        op_id: OpId,
+        qid: QueryId,
     },
 }
 
@@ -656,8 +612,6 @@ pub enum HandleError {
     OpFailed,
     #[error("operation `{0}` not found")]
     OpNotFound(OpId),
-    #[error("network op still running")]
-    OpRunning,
     #[error("manager not found for op `{0}`")]
     ManagerNotFound(OpId),
     #[error("unexpected response")]

@@ -27,12 +27,11 @@ fn main() {
         .unwrap();
     println!("This network encoded peer id is: {}", network.get_peer_id());
     let query = network.find_agent("agent_01");
-    network.send_message("Read my awesome message!".to_string(), peer_id);
     // get the async result of the find agent query
     let ag_key = loop {
         match network.op_result(query) {
             Ok(Some(res)) => break res,
-            Err(Error::OpError(HandleError::OpRunning)) => {}
+            Err(Error::OpError(HandleError::AwaitingResponse(_))) => {}
             Err(err) => panic!("{}", err),
             Ok(_) => unreachable!(),
         }
@@ -40,6 +39,7 @@ fn main() {
 
     let mut cnt: HashMap<_, usize> = HashMap::new();
     let mut served = false;
+    // network.send_message("Read my awesome message!".to_string(), peer_id);
     while network.running() {
         if let Some(stats) = network.stats.for_key(&ag_key) {
             if stats.times_received > 0 && !served {
@@ -57,10 +57,6 @@ fn main() {
                     network.send_message("Hai back!".to_string(), peer.clone());
                 } else {
                     // network.shutdown().unwrap();
-                }
-
-                if *current_amount % 2 == 0 {
-                    network.get(ag_key);
                 }
             }
         }

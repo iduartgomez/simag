@@ -801,7 +801,6 @@ mod test {
 
     use super::*;
     use crate::assert_or_err;
-    #[macro_use]
     use crate::storage::test::*;
 
     const LVL1_TEST_SIZE: u64 = 4096 * 4;
