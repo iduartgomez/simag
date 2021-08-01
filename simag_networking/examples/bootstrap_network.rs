@@ -2,8 +2,8 @@ use simag_core::Agent;
 use simag_networking::{agent::AgentPolicy, *};
 use std::{collections::HashMap, net::Ipv4Addr};
 
-const ENCONDED_KEY1: &[u8] = include_bytes!("key1");
-const ENCONDED_KEY2: &[u8] = include_bytes!("key2");
+const ENCODED_KEY1: &[u8] = include_bytes!("key1");
+const _ENCODED_KEY2: &[u8] = include_bytes!("key2");
 
 /// A Base58 enconded peer ID. Only used for testing pourpouses.
 const KEY1_ID: &str = "12D3KooWS5RYnqsFRNrUABJFa3sj9YdYS7KsX8qLY6yrkfSTyZDv";
@@ -21,24 +21,17 @@ fn main() {
     std::env::set_var("SIMAG_LOCAL_PEER_KEY_FILE", secret_file.to_str().unwrap());
     */
     // or while bootstrapping the network as an explicit optional parameter like below.
-    let mut network = if std::env::args().nth(1).is_none() {
-        NetworkBuilder::configure_network()
-            .with_key(Keypair::decode(&mut ENCONDED_KEY1.to_vec()).unwrap())
-            .with_ip(Ipv4Addr::LOCALHOST)
-            .with_port(7800)
-            .build::<String>()
-            .unwrap()
-    } else {
+    let mut network = {
         let provider = Provider::new()
             .listening_ip(Ipv4Addr::LOCALHOST)
             .listening_port(7800)
             .with_identifier(KEY1_ID.parse().unwrap());
         NetworkBuilder::configure_network()
-            .with_key(Keypair::decode(&mut ENCONDED_KEY2.to_vec()).unwrap())
+            .with_key(Keypair::decode(&mut ENCODED_KEY1.to_vec()).unwrap())
             .with_ip(Ipv4Addr::LOCALHOST)
-            .with_port(7801)
+            .with_port(7800)
             .add_provider(provider)
-            .build()
+            .build::<String>()
             .unwrap()
     };
 

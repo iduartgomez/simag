@@ -37,6 +37,7 @@ use crate::{
 const CURRENT_AGENT_VERSION: &str = "simag/0.1.0";
 const CURRENT_IDENTIFY_PROTO_VERSION: &str = "ipfs/0.1.0";
 const HANDLE_TIMEOUT_SECS: u64 = 5;
+const PEER_DISCONNECT_SECS: u64 = 300;
 
 /// A prepared network connection not yet running.
 /// This can be either the preparation of a network bootstrap node or a new peer
@@ -52,6 +53,8 @@ where
     /// Pending queries made to the DHT awaiting for response. In case they have been executed
     /// due to commands from the handle the value will be set, otherwise it will be none.
     sent_kad_queries: Mutex<HashMap<kad::QueryId, Option<HandleCmd<M>>>>,
+    /// Ops which returned an unexpected result query result but may return at a later time successfully.
+    dangling_ops: Mutex<Vec<HandleCmd<M>>>,
     /// A map from agent identifiers to peers which own that agent.
     agent_owners: Mutex<HashMap<uuid::Uuid, PeerId>>,
     /// Local storage of agent configurations set on this peer. Used to check against connection petition.
@@ -100,9 +103,10 @@ where
             // set the main inbound connection event loop
             loop {
                 let mut swarm = sh.swarm.lock().await;
-                let get_next = tokio::time::timeout(Duration::from_nanos(10), swarm.next());
+                let get_next =
+                    tokio::time::timeout(Duration::from_nanos(100), swarm.select_next_some());
                 // unlock the swarm to allow the thread handling commands to send messages, time to time
-                if let Ok(Some(SwarmEvent::Behaviour(event))) = get_next.await {
+                if let Ok(SwarmEvent::Behaviour(event)) = get_next.await {
                     match sh.process_event(event, &mut *swarm).await {
                         Ok(_) => {}
                         Err(err) => {
@@ -131,7 +135,11 @@ where
     async fn process_handle_cmd(self: Arc<Self>, cmd: HandleCmd<M>) -> Result<(), NetworkError> {
         let swarm = &mut *self.swarm.lock().await;
         match cmd {
-            HandleCmd::RegisterGroup { op_id, key, group } => {
+            HandleCmd::RegisterGroup {
+                op_id,
+                group_key: key,
+                group,
+            } => {
                 let qid = self
                     .provide_value(swarm, key, Resource::new_group(group), op_id)
                     .await?;
@@ -198,7 +206,7 @@ where
                 let key_borrowed: &&[u8] = &ag_id.borrow();
                 let qid = swarm
                     .behaviour_mut()
-                    .get_record(&Key::new(key_borrowed), kad::Quorum::Majority);
+                    .get_record(&Key::new(key_borrowed), kad::Quorum::One);
                 self.sent_kad_queries
                     .lock()
                     .await
@@ -225,6 +233,16 @@ where
             NetEvent::KademliaEvent(event) => match event {
                 kad::KademliaEvent::OutboundQueryCompleted { result, id, .. } => {
                     process_kad_msg(self, swarm, id, result).await?;
+                }
+                kad::KademliaEvent::InboundRequestServed {
+                    request: kad::InboundRequest::GetRecord { .. },
+                } => {
+                    log::info!("Request to get a record inbound")
+                }
+                kad::KademliaEvent::InboundRequestServed {
+                    request: kad::InboundRequest::PutRecord {},
+                } => {
+                    log::info!("Request to put record inbound");
                 }
                 _ => {}
             },
@@ -300,7 +318,7 @@ where
             qid,
             Some(HandleCmd::AwaitingRegistration {
                 op_id,
-                key,
+                rss_key: key,
                 resource,
             }),
         );
@@ -324,18 +342,37 @@ where
             Ok(())
         }
     }
+
+    async fn find_dangling_op(
+        self: &Arc<Self>,
+        key: Key,
+    ) -> Result<Option<HandleCmd<M>>, NetworkError> {
+        let mut ops = self.dangling_ops.lock().await;
+        if let Some(idx) = ops.iter().position(|cmd| {
+            if let HandleCmd::AwaitingRegistration { rss_key, .. } = cmd {
+                key.as_ref() == rss_key.as_ref()
+            } else {
+                false
+            }
+        }) {
+            Ok(Some(ops.remove(idx)))
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 async fn process_kad_msg<M>(
     nt: &Arc<Network<M>>,
     swarm: &mut Swarm<NetBehaviour>,
-    id: kad::QueryId,
+    query_id: kad::QueryId,
     result: kad::QueryResult,
 ) -> Result<(), NetworkError>
 where
     M: DeserializeOwned + Serialize + Send + Sync + Debug + 'static,
 {
-    match nt.sent_kad_queries.lock().await.remove(&id) {
+    let ev_reg_cmd = { nt.sent_kad_queries.lock().await.remove(&query_id) };
+    match ev_reg_cmd {
         Some(Some(HandleCmd::ReqJoinGroup {
             op_id,
             group_key,
@@ -399,7 +436,7 @@ where
                             }
                         }
                     } else {
-                        log::error!("received unexpected response while retrieving the managers for group `{}` from agent `{}`", group.id, agent_id);
+                        log::error!("Received unexpected response while retrieving the managers for {} from agent `{}`", group_key, agent_id);
                         nt.return_answ(Err(NetworkError::UnexpectedResponse(op_id)))
                             .await?;
                         return Ok(());
@@ -430,8 +467,11 @@ where
                         if let Resource(ResourceKind::Agent(agent)) = bincode::deserialize(&value)?
                         {
                             let key = agent.identifier();
-                            nt.return_answ(Ok(HandleAnsw::AgentFound { op_id, key }))
-                                .await?;
+                            nt.return_answ(Ok(HandleAnsw::AgentFound {
+                                op_id,
+                                rss_key: key,
+                            }))
+                            .await?;
 
                             // register the agent owner
                             nt.agent_owners.lock().await.insert(
@@ -461,35 +501,35 @@ where
                         }
                     }
                 }
-                kad::QueryResult::GetRecord(Err(err)) => {
-                    log::error!("{:?}", err);
-                }
                 _other => {}
             }
         }
-        Some(None) => match result {
-            kad::QueryResult::StartProviding(Ok(kad::AddProviderOk { key })) => {
-                log::debug!("Started providing rec {:?}", key);
-            }
-            kad::QueryResult::RepublishProvider(Ok(kad::AddProviderOk { key })) => {
-                log::debug!("Republished providing rec {:?}", key);
-            }
-            kad::QueryResult::StartProviding(Err(kad::AddProviderError::Timeout { key })) => {
-                log::error!("Timed out while trying to provide rec {:?}", key);
-            }
-            kad::QueryResult::RepublishProvider(Err(kad::AddProviderError::Timeout { key })) => {
-                log::error!("Timed out while republishing provider rec {:?}", key);
-            }
+        Some(Some(HandleCmd::AwaitingRegistration { op_id, rss_key, .. })) => match result {
             kad::QueryResult::PutRecord(Ok(kad::PutRecordOk { key })) => {
-                log::debug!("Succesfully published rec {:?}", key);
-                // let answ = HandleAnsw::AgentRegistered { op_id, key };
-                // self.return_answ(Ok(answ)).await?;
+                log::info!("Succesfully published rec {}", rss_key);
+                if let Some(HandleCmd::AwaitingRegistration { op_id, rss_key, .. }) =
+                    nt.find_dangling_op(key).await?
+                {
+                    if rss_key.is_agent() {
+                        nt.return_answ(Ok(HandleAnsw::AgentRegistered { op_id, rss_key }))
+                            .await?;
+                    }
+                } else {
+                    if let Some(_cmd) = nt.sent_kad_queries.lock().await.remove(&query_id) {
+                        if rss_key.is_agent() {
+                            nt.return_answ(Ok(HandleAnsw::AgentRegistered { op_id, rss_key }))
+                                .await?;
+                        }
+                    }
+                }
             }
-            kad::QueryResult::PutRecord(Err(kad::PutRecordError::QuorumFailed { key, .. })) => {
+            kad::QueryResult::PutRecord(Err(kad::PutRecordError::QuorumFailed { .. })) => {
                 log::error!(
-                    "Failed publishing rec {:?}, didn't reach quorum approval",
-                    key
+                    "Failed publishing {}, didn't reach quorum approval",
+                    rss_key
                 );
+                nt.return_answ(Ok(HandleAnsw::AgentRegistered { op_id, rss_key }))
+                    .await?;
             }
             kad::QueryResult::PutRecord(Err(kad::PutRecordError::Timeout { key, .. })) => {
                 log::error!("Timed out while publishing rec {:?}", key);
@@ -513,7 +553,44 @@ where
             }
             _ => {}
         },
-        Some(_) | None => {}
+        Some(_) | None => match result {
+            kad::QueryResult::StartProviding(Err(kad::AddProviderError::Timeout { key })) => {
+                log::error!("Timed out while trying to provide rec {:?}", key);
+            }
+            kad::QueryResult::RepublishProvider(Err(kad::AddProviderError::Timeout { key })) => {
+                log::error!("Timed out while republishing provider rec {:?}", key);
+            }
+            kad::QueryResult::RepublishProvider(Ok(kad::AddProviderOk { key })) => {
+                log::info!("Republished providing rec {:?}", key);
+            }
+            kad::QueryResult::PutRecord(Ok(kad::PutRecordOk { key })) => {
+                log::info!("Successfully put rec {:?} with {:?}", key, &query_id);
+                if let Some(HandleCmd::AwaitingRegistration { op_id, rss_key, .. }) =
+                    nt.find_dangling_op(key).await?
+                {
+                    if rss_key.is_agent() {
+                        nt.return_answ(Ok(HandleAnsw::AgentRegistered { op_id, rss_key }))
+                            .await?;
+                    }
+                } else {
+                    if let Some(Some(HandleCmd::AwaitingRegistration { op_id, rss_key, .. })) =
+                        nt.sent_kad_queries.lock().await.remove(&query_id)
+                    {
+                        if rss_key.is_agent() {
+                            nt.return_answ(Ok(HandleAnsw::AgentRegistered { op_id, rss_key }))
+                                .await?;
+                        }
+                    }
+                };
+            }
+            kad::QueryResult::PutRecord(Err(kad::PutRecordError::Timeout { .. })) => {
+                log::info!("put err t/o");
+            }
+            kad::QueryResult::PutRecord(Err(kad::PutRecordError::QuorumFailed { key, .. })) => {
+                log::error!("failed putting key {:?}", key);
+            }
+            _ => {}
+        },
     }
 
     Ok(())
@@ -548,7 +625,7 @@ where
             let mut manager = GroupManager::new();
             match manager.request_joining(agent_id, group_id, &*settings, permits) {
                 Ok(_) => {
-                    nt.return_answ(Ok(HandleAnsw::PropagateGroupChange { group_id }))
+                    nt.return_answ(Ok(HandleAnsw::PropagateGroupChange { op_id, group_id }))
                         .await?;
                     let msg =
                         Message::rpc(AgentRpc::ReqGroupJoinAccepted { op_id, group_id }, None);
@@ -710,7 +787,7 @@ where
             swarm.behaviour_mut().send_message(peer, msg);
         }
 
-        log::debug!("requested {} group managers to join", managers_requested);
+        log::debug!("Requested {} group managers to join", managers_requested);
         let managers_total = group_managers.len();
         let state = JoinReq {
             op_id,
@@ -890,6 +967,13 @@ impl Provider {
         }
     }
 
+    pub fn decode_peer_id<T: AsMut<[u8]>>(mut bytes: T) -> PeerId {
+        PeerId::from_public_key(
+            identity::Keypair::Ed25519(identity::ed25519::Keypair::decode(bytes.as_mut()).unwrap())
+                .public(),
+        )
+    }
+
     /// IP which will be assigned to this node.
     pub fn listening_ip<T: Into<IpAddr>>(mut self, ip: T) -> Self {
         if let Some(addr) = &mut self.addr {
@@ -1028,7 +1112,13 @@ impl NetworkBuilder {
         };
 
         let mut sent_queries = HashMap::new();
-        if !self.remote_providers.is_empty() {
+        if self
+            .remote_providers
+            .iter()
+            .filter(|p| Some(&self.local_peer_id) != p.identifier.as_ref())
+            .next()
+            .is_some()
+        {
             let bootstrap_query = swarm.behaviour_mut().bootstrap();
             sent_queries.insert(bootstrap_query, None);
         }
@@ -1041,6 +1131,7 @@ impl NetworkBuilder {
             key: self.local_key,
             swarm: Mutex::new(swarm),
             sent_kad_queries: Mutex::new(sent_queries),
+            dangling_ops: Mutex::new(Vec::new()),
             id: self.local_peer_id,
             handle_answ_queue: Mutex::new(answ_send),
             agent_owners: Mutex::new(HashMap::new()),
@@ -1073,22 +1164,23 @@ impl NetworkBuilder {
                     upgrade::Version::V1,
                 )
             });
-        Ok(
-            TokioDnsConfig::system(tcp)?
-                .upgrade(upgrade::Version::V1)
-                .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
-                .multiplex(upgrade::SelectUpgrade::new(
-                    yamux::YamuxConfig::default(),
-                    mplex::MplexConfig::default(),
-                ))
-                .map(|(peer, muxer), _| (peer, muxing::StreamMuxerBox::new(muxer)))
-                .boxed(), // .timeout(std::time::Duration::from_secs(PEER_TIMEOUT_SECS)))
-        )
+        Ok(TokioDnsConfig::system(tcp)?
+            .upgrade(upgrade::Version::V1)
+            .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
+            .multiplex(upgrade::SelectUpgrade::new(
+                yamux::YamuxConfig::default(),
+                mplex::MplexConfig::default(),
+            ))
+            .timeout(std::time::Duration::from_secs(PEER_DISCONNECT_SECS))
+            .map(|(peer, muxer), _| (peer, muxing::StreamMuxerBox::new(muxer)))
+            .boxed())
     }
 
     fn config_behaviour(&self) -> NetBehaviour {
         let store = kad::store::MemoryStore::new(self.local_peer_id.clone());
-        let mut kad = kad::Kademlia::new(self.local_peer_id.clone(), store);
+        let mut config = kad::KademliaConfig::default();
+        config.set_connection_idle_timeout(Duration::from_secs(PEER_DISCONNECT_SECS));
+        let mut kad = kad::Kademlia::with_config(self.local_peer_id.clone(), store, config);
 
         for remote_bootstrap in &self.remote_providers {
             // There is already at least one existing node in the network. Add it to the table and query for bootstrapping.

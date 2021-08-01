@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     borrow::Borrow,
     convert::{TryFrom, TryInto},
-    fmt::Debug,
+    fmt::{Debug, Display},
 };
 use uuid::Uuid;
 
@@ -44,7 +44,7 @@ pub(crate) fn agent_id_from_str<ID: AsRef<str>>(id: ID) -> Uuid {
 }
 
 /// A `Resource` in a simag network is ...
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Resource(pub(crate) ResourceKind);
 
 impl Resource {
@@ -109,12 +109,30 @@ pub struct ResourceIdentifier {
 impl Debug for ResourceIdentifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AgentKey")
-            .field("kind", &AgentKeyKind::try_from(self.key[0]).unwrap())
+            .field("kind", &ResourceKeyKind::try_from(self.key[0]).unwrap())
             .field(
                 "id",
                 &Uuid::from_u128(u128::from_be_bytes(self.key[1..].try_into().unwrap())),
             )
             .finish()
+    }
+}
+
+impl Display for ResourceIdentifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+        let kind =
+            if let ResourceKeyKind::UniqueId = ResourceKeyKind::try_from(self.key[0]).unwrap() {
+                "Agent"
+            } else {
+                "Group"
+            };
+        write!(
+            f,
+            "{}(\"{}\")",
+            kind,
+            &Uuid::from_u128(u128::from_be_bytes(self.key[1..].try_into().unwrap()))
+        )?;
+        Ok(())
     }
 }
 
@@ -125,7 +143,7 @@ impl ResourceIdentifier {
     /// This key represents a group resource kind.
     pub(crate) fn group(id: &Uuid) -> ResourceIdentifier {
         let id = id.as_u128().to_be_bytes();
-        let kind = AgentKeyKind::GroupId as u8;
+        let kind = ResourceKeyKind::GroupId as u8;
         let mut key = [0; Self::KEY_SIZE + Self::KIND_SIZE];
         (&mut key[1..]).copy_from_slice(&id);
         key[0] = kind;
@@ -135,7 +153,7 @@ impl ResourceIdentifier {
     /// This key represents a unique agent.
     pub(crate) fn unique(id: &Uuid) -> ResourceIdentifier {
         let id = id.as_u128().to_be_bytes();
-        let kind = AgentKeyKind::UniqueId as u8;
+        let kind = ResourceKeyKind::UniqueId as u8;
         let mut key = [0; Self::KEY_SIZE + Self::KIND_SIZE];
         (&mut key[1..]).copy_from_slice(&id);
         key[0] = kind;
@@ -152,10 +170,20 @@ impl ResourceIdentifier {
     pub(crate) fn get_group_id(&self) -> Result<Uuid, ()> {
         todo!()
     }
+
+    pub fn is_agent(&self) -> bool {
+        self.key[0] == (ResourceKeyKind::UniqueId as u8)
+    }
 }
 
 impl Borrow<[u8]> for ResourceIdentifier {
     fn borrow(&self) -> &[u8] {
+        &self.key
+    }
+}
+
+impl AsRef<[u8]> for ResourceIdentifier {
+    fn as_ref(&self) -> &[u8] {
         &self.key
     }
 }
@@ -167,7 +195,7 @@ impl TryFrom<&[u8]> for ResourceIdentifier {
             return Err(std::io::ErrorKind::InvalidInput.into());
         }
         // validate the kind byte
-        let _kind = AgentKeyKind::try_from(slice[0])?;
+        let _kind = ResourceKeyKind::try_from(slice[0])?;
         // validate that is a valid uuid
         let _uuid = Uuid::from_u128(u128::from_be_bytes(
             slice[1..]
@@ -183,23 +211,23 @@ impl TryFrom<&[u8]> for ResourceIdentifier {
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
 #[repr(u8)]
-enum AgentKeyKind {
+enum ResourceKeyKind {
     UniqueId = 0,
     GroupId = 1,
 }
 
-impl TryFrom<u8> for AgentKeyKind {
+impl TryFrom<u8> for ResourceKeyKind {
     type Error = std::io::Error;
-    fn try_from(variant: u8) -> std::io::Result<AgentKeyKind> {
+    fn try_from(variant: u8) -> std::io::Result<ResourceKeyKind> {
         match variant {
-            0 => Ok(AgentKeyKind::UniqueId),
-            1 => Ok(AgentKeyKind::GroupId),
+            0 => Ok(ResourceKeyKind::UniqueId),
+            1 => Ok(ResourceKeyKind::GroupId),
             _ => Err(std::io::ErrorKind::InvalidInput.into()),
         }
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) enum ResourceKind {
     Agent(Agent),
     Group(Group),

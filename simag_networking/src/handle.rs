@@ -1,7 +1,5 @@
 use std::{
-    borrow::Borrow,
     collections::HashMap,
-    convert::TryFrom,
     fmt::{Debug, Display},
     fs::File,
     hash::Hash,
@@ -61,7 +59,7 @@ where
             sender,
             local_key,
             pending,
-            next_msg_id: 0,
+            next_msg_id: 1, // 0 value is reserved
             is_dead: false,
             stats: NetworkStats::default(),
             rcv_msg,
@@ -89,11 +87,14 @@ where
                     group_id: *group_id,
                     reason: reason.clone(),
                 }),
-                Some(HandleAnsw::AgentRegistered { key, .. })
-                | Some(HandleAnsw::AgentFound { key, .. }) => Ok(Some(*key)),
+                Some(HandleAnsw::AgentRegistered { rss_key, .. }) => Ok(Some(*rss_key)),
+                Some(HandleAnsw::AgentFound { rss_key, .. }) => {
+                    log::info!("Found agent {}", rss_key);
+                    Ok(Some(*rss_key))
+                }
                 Some(HandleAnsw::HasShutdown { .. })
                 | Some(HandleAnsw::PropagateGroupChange { .. }) => Ok(None),
-                Some(HandleAnsw::AwaitingRegistration { op_id, qid }) => Ok(None),
+                Some(HandleAnsw::AwaitingRegistration { .. }) => Ok(None),
                 Some(HandleAnsw::RcvMsg { .. }) => unreachable!(),
             },
         };
@@ -196,7 +197,11 @@ where
         let sender = self.sender.clone();
         // FIXME: register op as pending
         GlobalExecutor::spawn(async move {
-            let msg = HandleCmd::RegisterGroup { op_id, key, group };
+            let msg = HandleCmd::RegisterGroup {
+                op_id,
+                group_key: key,
+                group,
+            };
             sender.send(msg).await.map_err(|_| ())?;
             Ok::<_, ()>(())
         });
@@ -253,9 +258,9 @@ where
 
     /// Send a message to the given peer. Operation is asynchronous.
     pub fn send_message(&mut self, value: M, peer: PeerId) -> OpId {
-        let id = self.next_id();
+        let op_id = self.next_id();
         self.pending.insert(
-            id,
+            op_id,
             PendingCmd {
                 cmd: SentCmd::SentMsg,
                 answ: None,
@@ -263,15 +268,11 @@ where
         );
         let sender = self.sender.clone();
         GlobalExecutor::spawn(async move {
-            let msg = HandleCmd::<M>::SendMessage {
-                op_id: id,
-                value,
-                peer,
-            };
+            let msg = HandleCmd::<M>::SendMessage { op_id, value, peer };
             sender.send(msg).await.map_err(|_| ())?;
             Ok::<_, ()>(())
         });
-        id
+        op_id
     }
 
     /// Get this peer id encoded as a Base58 string.
@@ -392,12 +393,13 @@ where
 
                     rcv_msg.entry(peer).or_default().push(msg);
                 }
-                HandleAnsw::AgentRegistered { op_id: id, key } => {
-                    pending.entry(id).and_modify(|e| {
-                        e.answ = Some(HandleAnsw::AgentRegistered { op_id: id, key });
+                HandleAnsw::AgentRegistered { op_id, rss_key } => {
+                    log::info!("Registered {} with {:?}", rss_key, op_id);
+                    pending.entry(op_id).and_modify(|e| {
+                        e.answ = Some(HandleAnsw::AgentRegistered { op_id, rss_key });
                     });
                 }
-                HandleAnsw::PropagateGroupChange { group_id } => todo!(),
+                HandleAnsw::PropagateGroupChange { op_id, group_id } => todo!(),
                 HandleAnsw::ReqJoinGroupAccepted { op_id, group_id } => {
                     pending.entry(op_id).and_modify(|e| {
                         e.answ = Some(HandleAnsw::ReqJoinGroupAccepted { op_id, group_id });
@@ -416,13 +418,19 @@ where
                         });
                     });
                 }
-                HandleAnsw::AgentFound { op_id, key } => {
+                HandleAnsw::AgentFound {
+                    op_id,
+                    rss_key: key,
+                } => {
                     pending.alter(&op_id, |_, mut e| {
-                        e.answ = Some(HandleAnsw::AgentFound { op_id, key });
+                        e.answ = Some(HandleAnsw::AgentFound {
+                            op_id,
+                            rss_key: key,
+                        });
                         e
                     });
                 }
-                HandleAnsw::AwaitingRegistration { qid, op_id } => {}
+                HandleAnsw::AwaitingRegistration { .. } => {}
             }
         }
 
@@ -515,12 +523,13 @@ pub(crate) enum HandleCmd<M> {
     /// put a resource in this node
     RegisterGroup {
         op_id: OpId,
-        key: ResourceIdentifier,
+        group_key: ResourceIdentifier,
         group: Group,
     },
     /// issue a shutdown command
     Shutdown(OpId),
     /// send a serialized message
+    /// M should be heap allocated ideally to avoid large enum sizes
     SendMessage { op_id: OpId, value: M, peer: PeerId },
     /// register a peer as the manager of an agent
     RegisterAgent {
@@ -550,9 +559,46 @@ pub(crate) enum HandleCmd<M> {
     /// Awaiting publish confirmation by the kad DHT of a rss.
     AwaitingRegistration {
         op_id: OpId,
-        key: ResourceIdentifier,
+        rss_key: ResourceIdentifier,
         resource: Resource,
     },
+}
+
+impl<M: DeserializeOwned> HandleCmd<M> {
+    fn get_op_id(&self) -> OpId {
+        use self::HandleCmd::*;
+        match self {
+            IsRunning => OpId::IS_RUNNING,
+            RegisterGroup { op_id, .. } => *op_id,
+            Shutdown(op_id) => *op_id,
+            SendMessage { op_id, .. } => *op_id,
+            RegisterAgent { op_id, .. } => *op_id,
+            ConnectToAgent { op_id, .. } => *op_id,
+            ReqJoinGroup { op_id, .. } => *op_id,
+            FindGroupManager { op_id, .. } => *op_id,
+            AwaitingRegistration { op_id, .. } => *op_id,
+        }
+    }
+}
+
+impl<M: DeserializeOwned> PartialEq for HandleCmd<M> {
+    fn eq(&self, other: &Self) -> bool {
+        self.get_op_id() == other.get_op_id()
+    }
+}
+
+impl<M: DeserializeOwned> Eq for HandleCmd<M> {}
+
+impl<M: DeserializeOwned> PartialOrd for HandleCmd<M> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.get_op_id().partial_cmp(&other.get_op_id())
+    }
+}
+
+impl<M: DeserializeOwned> Ord for HandleCmd<M> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.get_op_id().cmp(&other.get_op_id())
+    }
 }
 
 /// The answer of an operation.
@@ -563,7 +609,7 @@ where
 {
     AgentRegistered {
         op_id: OpId,
-        key: ResourceIdentifier,
+        rss_key: ResourceIdentifier,
     },
     HasShutdown {
         op_id: OpId,
@@ -571,6 +617,7 @@ where
     },
     /// Propagate a change in the configuration or composition of a group.
     PropagateGroupChange {
+        op_id: OpId,
         group_id: Uuid,
     },
     ReqJoinGroupAccepted {
@@ -582,18 +629,55 @@ where
         group_id: Uuid,
         reason: crate::group::GroupError,
     },
+    /// The operation id of received messages is always considered OpId::RCV_MSG.
     RcvMsg {
         peer: PeerId,
         msg: M,
     },
     AgentFound {
         op_id: OpId,
-        key: ResourceIdentifier,
+        rss_key: ResourceIdentifier,
     },
     AwaitingRegistration {
         op_id: OpId,
         qid: QueryId,
     },
+}
+
+impl<M: DeserializeOwned> HandleAnsw<M> {
+    fn get_op_id(&self) -> OpId {
+        use self::HandleAnsw::*;
+        match self {
+            AgentRegistered { op_id, .. } => *op_id,
+            HasShutdown { op_id, .. } => *op_id,
+            PropagateGroupChange { op_id, .. } => *op_id,
+            ReqJoinGroupAccepted { op_id, .. } => *op_id,
+            ReqJoinGroupDenied { op_id, .. } => *op_id,
+            RcvMsg { .. } => OpId::RCV_MSG,
+            AgentFound { op_id, .. } => *op_id,
+            AwaitingRegistration { op_id, .. } => *op_id,
+        }
+    }
+}
+
+impl<M: DeserializeOwned> PartialEq for HandleAnsw<M> {
+    fn eq(&self, other: &Self) -> bool {
+        self.get_op_id() == other.get_op_id()
+    }
+}
+
+impl<M: DeserializeOwned> Eq for HandleAnsw<M> {}
+
+impl<M: DeserializeOwned> PartialOrd for HandleAnsw<M> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.get_op_id().partial_cmp(&other.get_op_id())
+    }
+}
+
+impl<M: DeserializeOwned> Ord for HandleAnsw<M> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.get_op_id().cmp(&other.get_op_id())
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -620,8 +704,13 @@ pub enum HandleError {
 
 /// An identifier for an operation executed asynchronously. Used to fetch the results
 /// of such operation in an asynchronous fashion.
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct OpId(usize);
+
+impl OpId {
+    const RCV_MSG: OpId = OpId(0);
+    const IS_RUNNING: OpId = OpId(0);
+}
 
 impl Display for OpId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
