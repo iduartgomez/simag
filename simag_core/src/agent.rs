@@ -25,7 +25,11 @@ impl Agent {
     /// If the `persistence` cfg feature is enable will panic if there are any failures
     /// while openning files.
     pub fn new(id: String) -> Agent {
-        let threads = num_cpus::get();
+        let threads = if cfg!(debug_assertions) {
+            1
+        } else {
+            num_cpus::get()
+        };
         #[cfg(feature = "persistence")]
         let representation =
             kb::repr::Representation::new(threads).expect("failed to create persist dir");

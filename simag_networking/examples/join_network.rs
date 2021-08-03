@@ -1,5 +1,5 @@
 use simag_networking::*;
-use std::{collections::HashMap, net::Ipv4Addr};
+use std::net::Ipv4Addr;
 
 /// A Base58 enconded peer ID. Only used for testing pourpouses. The corresponding secret key can be found in
 /// the examples directory and is used in the bootstrap network example.
@@ -37,9 +37,9 @@ fn main() {
         }
     };
 
-    let mut cnt: HashMap<_, usize> = HashMap::new();
     let mut served = false;
-    // network.send_message("Read my awesome message!".to_string(), peer_id);
+    let mut last_amount = 0;
+    network.send_message("Read my awesome message!".to_string(), peer_id);
     while network.running() {
         if let Some(stats) = network.stats.for_key(&ag_key) {
             if stats.times_received > 0 && !served {
@@ -49,15 +49,16 @@ fn main() {
         }
 
         for (peer, amount) in network.stats.received_messages().to_owned() {
-            let current_amount = cnt.entry(peer.clone()).or_default();
-            if *current_amount < amount {
+            if last_amount == amount {
+                continue;
+            }
+            last_amount = amount;
+            if amount < 10 {
                 println!("Received {} messages from #{}", amount, peer);
-                *current_amount += 1;
-                if *current_amount < 10 {
-                    network.send_message("Hai back!".to_string(), peer.clone());
-                } else {
-                    // network.shutdown().unwrap();
-                }
+                network.send_message("Hai back!".to_string(), peer.clone());
+            } else {
+                println!("The end");
+                network.shutdown().unwrap();
             }
         }
     }

@@ -36,7 +36,7 @@ pub(super) mod tracing {
         env_logger::builder()
             .format_module_path(true)
             .format_timestamp_nanos()
-            .target(env_logger::Target::Stderr)
+            .target(env_logger::Target::Stdout)
             .filter(None, CONF.log_level)
             .try_init();
 

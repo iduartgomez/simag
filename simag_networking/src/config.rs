@@ -99,13 +99,12 @@ impl GlobalExecutor {
         if tokio::runtime::Handle::try_current().is_ok() {
             None
         } else {
-            Some(
-                tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .thread_name("simag-nw-exec")
-                    .build()
-                    .expect("failed to build tokio runtime"),
-            )
+            let mut builder = tokio::runtime::Builder::new_multi_thread();
+            builder.enable_all().thread_name("simag-nw-exec");
+            if cfg!(debug_assertions) {
+                builder.worker_threads(2).max_blocking_threads(2);
+            }
+            Some(builder.build().expect("failed to build tokio runtime"))
         }
     }
 
@@ -160,7 +159,7 @@ pub(super) mod tracing {
         env_logger::builder()
             .format_module_path(true)
             .format_timestamp_nanos()
-            .target(env_logger::Target::Stderr)
+            .target(env_logger::Target::Stdout)
             .filter(None, log::LevelFilter::Debug)
             .try_init();
 

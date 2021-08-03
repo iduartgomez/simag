@@ -54,8 +54,8 @@ fn main() {
     };
     network.create_group("group_01", &["agent_01"], None, Settings {});
 
-    let mut cnt: HashMap<_, usize> = HashMap::new();
     let mut served = false;
+    let mut last_amount = 0;
     while network.running() {
         if let Some(stats) = network.stats.for_key(&ag_key) {
             if stats.times_served > 0 && !served {
@@ -65,16 +65,17 @@ fn main() {
         }
 
         for (peer, amount) in network.stats.received_messages().to_owned() {
-            let current_amount = cnt.entry(peer.clone()).or_default();
-            if *current_amount < amount {
-                println!("Received {} messages from #{}", amount, peer);
-                if *current_amount < 9 {
-                    network.send_message("Hai there!".to_string(), peer.clone());
-                } else {
-                    network.send_message("Goooodbyyye!".to_string(), peer.clone());
-                    println!("Sent goodbye message")
-                }
-                *current_amount += 1;
+            if last_amount == amount {
+                continue;
+            }
+            last_amount = amount;
+            println!("Received {} messages from #{}", amount, peer);
+            if amount <= 9 {
+                network.send_message("Hai there!".to_string(), peer.clone());
+            } else {
+                network.send_message("Goooodbyyye!".to_string(), peer.clone());
+                println!("Sent goodbye message");
+                network.shutdown().unwrap();
             }
         }
     }

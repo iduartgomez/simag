@@ -1,11 +1,18 @@
 use std::{
-    borrow::Borrow, collections::HashMap, convert::TryFrom, fmt::Debug, net::IpAddr, sync::Arc,
+    borrow::Borrow,
+    convert::TryFrom,
+    fmt::Debug,
+    net::IpAddr,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 
+use dashmap::DashMap;
 use libp2p::{
     core::{muxing, transport, upgrade},
-    deflate::DeflateConfig,
     dns::TokioDnsConfig,
     futures::StreamExt,
     identify, identity,
@@ -34,10 +41,15 @@ use crate::{
     rpc::{agent_id_from_str, AgentRpc, Resource, ResourceIdentifier, ResourceKind},
 };
 
-const CURRENT_AGENT_VERSION: &str = "simag/0.1.0";
-const CURRENT_IDENTIFY_PROTO_VERSION: &str = "ipfs/0.1.0";
+const CURRENT_AGENT_VER: &str = "simag/0.1.0";
+const CURRENT_IDENTIFY_PROTOC_VER: &str = "id/0.1.0";
+const CURRENT_KAD_PROTOC_VER: &str = "/ipfs/kad/1.0.0";
 const HANDLE_TIMEOUT_SECS: u64 = 5;
 const PEER_DISCONNECT_SECS: u64 = 300;
+/// Seconds to wait for an RPC response.
+const RPC_RESPONSE_TIME_OUT_SECS: u16 = 60;
+
+static KILL_HANDLER: AtomicBool = AtomicBool::new(false);
 
 /// A prepared network connection not yet running.
 /// This can be either the preparation of a network bootstrap node or a new peer
@@ -52,20 +64,20 @@ where
     swarm: Mutex<Swarm<NetBehaviour>>,
     /// Pending queries made to the DHT awaiting for response. In case they have been executed
     /// due to commands from the handle the value will be set, otherwise it will be none.
-    sent_kad_queries: Mutex<HashMap<kad::QueryId, Option<HandleCmd<M>>>>,
+    sent_kad_queries: DashMap<kad::QueryId, Option<HandleCmd<M>>>,
     /// Ops which returned an unexpected result query result but may return at a later time successfully.
     dangling_ops: Mutex<Vec<HandleCmd<M>>>,
     /// A map from agent identifiers to peers which own that agent.
-    agent_owners: Mutex<HashMap<uuid::Uuid, PeerId>>,
+    agent_owners: DashMap<uuid::Uuid, PeerId>,
     /// Local storage of agent configurations set on this peer. Used to check against connection petition.
-    agent_configurations: Mutex<HashMap<ResourceIdentifier, AgentPolicy>>,
+    agent_configurations: DashMap<ResourceIdentifier, AgentPolicy>,
     /// The queue for sending the results of the handle commands.
-    handle_answ_queue: Mutex<Sender<Result<HandleAnsw<M>, NetworkError>>>,
+    handle_answ_queue: Sender<Result<HandleAnsw<M>, NetworkError>>,
     /// A copy of the sending end of the channel to be used internally to make callbacks
     /// to it's own command queue.
     cmd_callback_queue: Sender<HandleCmd<M>>,
     /// Some RPC require maintaining aa state while ongoing.
-    rpc_state: Mutex<HashMap<OpId, OpState>>,
+    rpc_state: DashMap<OpId, OpState>,
 }
 
 enum OpState {
@@ -101,7 +113,7 @@ where
             }
 
             // set the main inbound connection event loop
-            loop {
+            while !KILL_HANDLER.load(Ordering::SeqCst) {
                 let mut swarm = sh.swarm.lock().await;
                 let get_next =
                     tokio::time::timeout(Duration::from_nanos(100), swarm.select_next_some());
@@ -123,10 +135,17 @@ where
 
         GlobalExecutor::spawn(async move {
             // set the command handling event loop
-            loop {
-                if let Some(cmd) = query_rcv.recv().await {
-                    let sh = shared_handler.clone();
-                    tokio::spawn(sh.process_handle_cmd(cmd));
+            while !KILL_HANDLER.load(Ordering::SeqCst) {
+                let f = tokio::time::timeout(Duration::from_millis(100), query_rcv.recv());
+                // timeout time to time to check if the handle still is alive as well to see
+                // if from an other thread a kill handle signal was sent
+                match f.await {
+                    Ok(Some(cmd)) => {
+                        let sh = shared_handler.clone();
+                        tokio::spawn(sh.process_handle_cmd(cmd));
+                    }
+                    Ok(None) => break,
+                    Err(_) => {}
                 }
             }
         });
@@ -153,8 +172,7 @@ where
             } => {
                 let (key, mut res) = Resource::agent(agent_id, self.id.clone());
                 res.as_peer(self.id.clone());
-                let mut config_store = self.agent_configurations.lock().await;
-                config_store.insert(key, config);
+                self.agent_configurations.insert(key, config);
                 Swarm::external_addresses(&*swarm).for_each(|a| {
                     res.with_address(a.addr.clone());
                 });
@@ -187,7 +205,7 @@ where
                 let qid = swarm
                     .behaviour_mut()
                     .get_record(&Key::new(key_borrowed), kad::Quorum::Majority);
-                self.sent_kad_queries.lock().await.insert(
+                self.sent_kad_queries.insert(
                     qid,
                     Some(HandleCmd::ReqJoinGroup {
                         op_id,
@@ -208,12 +226,11 @@ where
                     .behaviour_mut()
                     .get_record(&Key::new(key_borrowed), kad::Quorum::One);
                 self.sent_kad_queries
-                    .lock()
-                    .await
                     .insert(qid, Some(HandleCmd::ConnectToAgent { op_id, agent_id }));
             }
             HandleCmd::IsRunning => {} // will get an answer from the channel, so is active
             HandleCmd::Shutdown(id) => {
+                KILL_HANDLER.store(true, Ordering::SeqCst);
                 let answ = HandleAnsw::HasShutdown {
                     op_id: id,
                     answ: true,
@@ -234,22 +251,12 @@ where
                 kad::KademliaEvent::OutboundQueryCompleted { result, id, .. } => {
                     process_kad_msg(self, swarm, id, result).await?;
                 }
-                kad::KademliaEvent::InboundRequestServed {
-                    request: kad::InboundRequest::GetRecord { .. },
-                } => {
-                    log::info!("Request to get a record inbound")
-                }
-                kad::KademliaEvent::InboundRequestServed {
-                    request: kad::InboundRequest::PutRecord {},
-                } => {
-                    log::info!("Request to put record inbound");
-                }
                 _ => {}
             },
             NetEvent::Identify(identify::IdentifyEvent::Received { peer_id, mut info }) => {
-                if info.protocol_version == CURRENT_IDENTIFY_PROTO_VERSION
-                    && info.agent_version == CURRENT_AGENT_VERSION
-                    && info.protocols.iter().any(|p| p == "/ipfs/kad/1.0.0")
+                if info.protocol_version == CURRENT_IDENTIFY_PROTOC_VER
+                    && info.agent_version == CURRENT_AGENT_VER
+                    && info.protocols.iter().any(|p| p == CURRENT_KAD_PROTOC_VER)
                     && info.protocols.iter().any(|p| p == CHANNEL_PROTOCOL)
                 {
                     info.observed_addr
@@ -304,17 +311,16 @@ where
             expires: None,
         };
 
-        let mut sent_kad_queries = self.sent_kad_queries.lock().await;
         let qid = swarm
             .behaviour_mut()
             .start_providing(Key::new(key_borrow))
             .unwrap();
-        sent_kad_queries.insert(qid, None);
+        self.sent_kad_queries.insert(qid, None);
         let qid = swarm
             .behaviour_mut()
             .put_record(record, kad::Quorum::One)
             .unwrap();
-        sent_kad_queries.insert(
+        self.sent_kad_queries.insert(
             qid,
             Some(HandleCmd::AwaitingRegistration {
                 op_id,
@@ -331,8 +337,8 @@ where
         self: &Arc<Self>,
         answ: Result<HandleAnsw<M>, NetworkError>,
     ) -> Result<(), NetworkError> {
-        let sender = self.handle_answ_queue.lock().await;
-        let answ = sender
+        let answ = self
+            .handle_answ_queue
             .send_timeout(answ, Duration::from_secs(HANDLE_TIMEOUT_SECS))
             .await;
         if answ.is_err() {
@@ -371,7 +377,7 @@ async fn process_kad_msg<M>(
 where
     M: DeserializeOwned + Serialize + Send + Sync + Debug + 'static,
 {
-    let ev_reg_cmd = { nt.sent_kad_queries.lock().await.remove(&query_id) };
+    let ev_reg_cmd = { nt.sent_kad_queries.remove(&query_id).map(|r| r.1) };
     match ev_reg_cmd {
         Some(Some(HandleCmd::ReqJoinGroup {
             op_id,
@@ -424,10 +430,9 @@ where
                     })
                     .await??;
                     if let ResourceKind::Agent(ag) = msg.0 {
-                        let ag_owners = &mut *nt.agent_owners.lock().await;
                         match ag.peer {
                             Some(peer) => {
-                                ag_owners.insert(agent_id, peer);
+                                nt.agent_owners.insert(agent_id, peer);
                             }
                             None => {
                                 nt.return_answ(Err(NetworkError::ManagerNotFound(op_id)))
@@ -474,7 +479,7 @@ where
                             .await?;
 
                             // register the agent owner
-                            nt.agent_owners.lock().await.insert(
+                            nt.agent_owners.insert(
                                 agent.agent_id,
                                 agent
                                     .peer
@@ -515,7 +520,7 @@ where
                             .await?;
                     }
                 } else {
-                    if let Some(_cmd) = nt.sent_kad_queries.lock().await.remove(&query_id) {
+                    if let Some(_cmd) = nt.sent_kad_queries.remove(&query_id) {
                         if rss_key.is_agent() {
                             nt.return_answ(Ok(HandleAnsw::AgentRegistered { op_id, rss_key }))
                                 .await?;
@@ -574,7 +579,7 @@ where
                     }
                 } else {
                     if let Some(Some(HandleCmd::AwaitingRegistration { op_id, rss_key, .. })) =
-                        nt.sent_kad_queries.lock().await.remove(&query_id)
+                        nt.sent_kad_queries.remove(&query_id).map(|r| r.1)
                     {
                         if rss_key.is_agent() {
                             nt.return_answ(Ok(HandleAnsw::AgentRegistered { op_id, rss_key }))
@@ -596,6 +601,9 @@ where
     Ok(())
 }
 
+/// Processes an RPC message and returns the appropiate return message to the network handle
+/// depending on the king of message received.
+///
 /// ## Arguments
 /// - peer: the peer which sent the message peer: &PeerId,
 async fn process_rpc_msg<M>(
@@ -646,7 +654,7 @@ where
         }
         AgentRpc::ReqGroupJoinAccepted { op_id, group_id } => {
             // if the state was already dropped it means an other manager answered first
-            if let Some(_) = nt.rpc_state.lock().await.remove(&op_id) {
+            if let Some(_) = nt.rpc_state.remove(&op_id) {
                 // TODO: set open channel for pub/sub within the group topics
                 nt.return_answ(Ok(HandleAnsw::ReqJoinGroupAccepted { op_id, group_id }))
                     .await?;
@@ -658,7 +666,7 @@ where
             reason,
         } => {
             // if the state was already dropped it means an other manager answered first
-            if let Some(_) = nt.rpc_state.lock().await.remove(&op_id) {
+            if let Some(_) = nt.rpc_state.remove(&op_id) {
                 nt.return_answ(Ok(HandleAnsw::ReqJoinGroupDenied {
                     op_id,
                     group_id,
@@ -690,9 +698,6 @@ impl Into<OpState> for JoinReq {
         OpState::ReqJoinGroup(self)
     }
 }
-
-/// Seconds to wait for a response.
-const RPC_RESPONSE_TIME_OUT: u16 = 60;
 
 /// Will send a request to join if managing peers have been locally cached.
 /// Otherwise will query the network to find any group managing peers.
@@ -730,11 +735,10 @@ where
 
     // request joining to owners, owners will propagate the change in membership,
     // if accepted, across nodes which belong to the group
-    let mapped_owners = network.agent_owners.lock().await;
     let mut group_managers = Vec::with_capacity(group.owners.len());
     for owner in group.owners.iter() {
-        if let Some(peer) = mapped_owners.get(owner) {
-            group_managers.push(peer.clone());
+        if let Some(peer) = network.agent_owners.get(owner) {
+            group_managers.push(peer.value().clone());
         }
     }
 
@@ -751,7 +755,7 @@ where
             .behaviour_mut()
             .get_record(&Key::new(owner_key), kad::Quorum::One);
         // wait until getting a response to continue
-        network.sent_kad_queries.lock().await.insert(
+        network.sent_kad_queries.insert(
             qid,
             Some(HandleCmd::FindGroupManager {
                 op_id,
@@ -769,7 +773,7 @@ where
             managers_total: 0,
             settings: group.settings.box_cloned(),
         };
-        network.rpc_state.lock().await.insert(op_id, state.into());
+        network.rpc_state.insert(op_id, state.into());
     } else {
         let mut managers_requested = 0;
         // TODO: only requests the first 10, if nothing returns will fail,
@@ -783,7 +787,7 @@ where
                 settings: ori_group.settings.box_cloned(),
             };
             managers_requested += 1;
-            let msg = Message::rpc(rpc, Some(RPC_RESPONSE_TIME_OUT));
+            let msg = Message::rpc(rpc, Some(RPC_RESPONSE_TIME_OUT_SECS));
             swarm.behaviour_mut().send_message(peer, msg);
         }
 
@@ -798,7 +802,7 @@ where
             managers_total,
             settings: group.settings.box_cloned(),
         };
-        network.rpc_state.lock().await.insert(op_id, state.into());
+        network.rpc_state.insert(op_id, state.into());
     }
 
     Ok(())
@@ -812,7 +816,7 @@ async fn retry_req_join_group<M>(
 where
     M: Serialize + DeserializeOwned + Send + Sync + Debug + 'static,
 {
-    let mut states = network.rpc_state.lock().await;
+    let states = &network.rpc_state;
     let JoinReq {
         op_id,
         agent_id,
@@ -821,7 +825,7 @@ where
         mut managers_requested,
         managers_total,
         settings,
-    } = match states.remove(&op_id) {
+    } = match states.remove(&op_id).map(|r| r.1) {
         Some(OpState::ReqJoinGroup(req)) => req,
         None => {
             // this means that a response was already received from an other request
@@ -850,7 +854,7 @@ where
             settings: settings.box_cloned(),
         };
         managers_requested += 1;
-        let msg = Message::rpc(rpc, Some(RPC_RESPONSE_TIME_OUT));
+        let msg = Message::rpc(rpc, Some(RPC_RESPONSE_TIME_OUT_SECS));
         swarm.behaviour_mut().send_message(peer, msg);
     }
 
@@ -886,6 +890,8 @@ pub enum NetworkError {
     SerializationError(#[from] Box<bincode::ErrorKind>),
     #[error("unexpected response")]
     UnexpectedResponse(OpId),
+    #[error("received a shutdown signal from the handle")]
+    ShutdownSignal,
 }
 
 #[derive(libp2p::NetworkBehaviour)]
@@ -1111,7 +1117,7 @@ impl NetworkBuilder {
             builder.build()
         };
 
-        let mut sent_queries = HashMap::new();
+        let sent_queries = DashMap::new();
         if self
             .remote_providers
             .iter()
@@ -1130,14 +1136,14 @@ impl NetworkBuilder {
             listen_on: self.local_ip.zip(self.local_port),
             key: self.local_key,
             swarm: Mutex::new(swarm),
-            sent_kad_queries: Mutex::new(sent_queries),
+            sent_kad_queries: sent_queries,
             dangling_ops: Mutex::new(Vec::new()),
             id: self.local_peer_id,
-            handle_answ_queue: Mutex::new(answ_send),
-            agent_owners: Mutex::new(HashMap::new()),
-            agent_configurations: Mutex::new(HashMap::new()),
+            handle_answ_queue: answ_send,
+            agent_owners: DashMap::new(),
+            agent_configurations: DashMap::new(),
             cmd_callback_queue: query_send.clone(),
-            rpc_state: Mutex::new(HashMap::new()),
+            rpc_state: DashMap::new(),
         };
         network.run_event_loop(query_rcv);
         Ok(NetworkHandle::new(
@@ -1156,14 +1162,17 @@ impl NetworkBuilder {
 
         let tcp = TokioTcpConfig::new()
             .nodelay(true)
-            .and_then(|conn, endpoint| {
-                upgrade::apply(
-                    conn,
-                    DeflateConfig::default(),
-                    endpoint,
-                    upgrade::Version::V1,
-                )
-            });
+            // FIXME: there seems to be a problem with the deflate upgrade 
+            // that repeteadly allocates more space on the heap until OOM
+            // .and_then(|conn, endpoint| {
+            //     upgrade::apply(
+            //         conn,
+            //         DeflateConfig::default(),
+            //         endpoint,
+            //         upgrade::Version::V1,
+            //     )
+            // });
+            ;
         Ok(TokioDnsConfig::system(tcp)?
             .upgrade(upgrade::Version::V1)
             .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
@@ -1191,10 +1200,10 @@ impl NetworkBuilder {
         }
 
         let ident_config = identify::IdentifyConfig::new(
-            CURRENT_IDENTIFY_PROTO_VERSION.to_string(),
+            CURRENT_IDENTIFY_PROTOC_VER.to_string(),
             self.local_key.public(),
         )
-        .with_agent_version(CURRENT_AGENT_VERSION.to_string());
+        .with_agent_version(CURRENT_AGENT_VER.to_string());
 
         NetBehaviour {
             kad,

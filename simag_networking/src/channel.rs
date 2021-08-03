@@ -171,7 +171,10 @@ impl NetworkBehaviour for Channel {
                 || (conn.outbound_request() && event.outbound_request());
             if same_type {
                 if let ChannelHandlerEvent::OutOpenChannel { flushing: true, .. } = conn {
-                    panic!("tried to replace an outbound channel while flushing apending message");
+                    let err_msg: &str =
+                        "tried to replace an outbound channel while flushing apending message";
+                    log::error!("{}", err_msg);
+                    panic!("{}", err_msg);
                 }
                 // replace the existing connection for the new one
                 event = std::mem::replace(conn, event);

@@ -5,7 +5,7 @@ use std::{
     hash::Hash,
     io::Write,
     result::Result as StdResult,
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use dashmap::DashMap;
@@ -34,8 +34,9 @@ where
     local_key: identity::ed25519::Keypair,
     pending: Arc<DashMap<OpId, PendingCmd<M>>>,
     next_msg_id: usize,
-    is_dead: bool,
-    rcv_msg: Arc<DashMap<PeerId, Vec<M>>>,
+    /// a flag attribute to indicate in the background network is alive or not
+    network_is_dead: bool,
+    msg_buf: Arc<DashMap<PeerId, Vec<M>>>,
 }
 
 impl<M> NetworkHandle<M>
@@ -49,20 +50,22 @@ where
         local_key: identity::ed25519::Keypair,
     ) -> Self {
         let pending = Arc::new(DashMap::new());
-        let rcv_msg = Arc::new(DashMap::new());
+        let msg_buf = Arc::new(DashMap::new());
+        let net_stats = Arc::new(Mutex::new(Vec::new()));
         GlobalExecutor::spawn(Self::process_answer_buffer(
             rcv,
             pending.clone(),
-            rcv_msg.clone(),
+            msg_buf.clone(),
+            net_stats.clone(),
         ));
         NetworkHandle {
             sender,
             local_key,
             pending,
             next_msg_id: 1, // 0 value is reserved
-            is_dead: false,
-            stats: NetworkStats::default(),
-            rcv_msg,
+            network_is_dead: false,
+            stats: NetworkStats::new(net_stats),
+            msg_buf,
         }
     }
 
@@ -105,15 +108,8 @@ where
     /// Get all the received messages from a given peer.
     pub fn received_messages(&mut self, peer: PeerId) -> Vec<M> {
         let mut new_msgs = vec![];
-        if let Some(mut msgs) = self.rcv_msg.get_mut(&peer) {
+        if let Some(mut msgs) = self.msg_buf.get_mut(&peer) {
             std::mem::swap(&mut *msgs, &mut new_msgs);
-            let stats = if let Some(stats) = self.stats.rcv_msgs.iter_mut().find(|p| p.0 == peer) {
-                &mut stats.1
-            } else {
-                self.stats.rcv_msgs.push((peer.clone(), 0));
-                &mut self.stats.rcv_msgs.last_mut().unwrap().1
-            };
-            *stats = *stats + new_msgs.len();
         }
         new_msgs
     }
@@ -256,7 +252,7 @@ where
         todo!()
     }
 
-    /// Send a message to the given peer. Operation is asynchronous.
+    /// Send a message to the given peer directly. Operation is asynchronous.
     pub fn send_message(&mut self, value: M, peer: PeerId) -> OpId {
         let op_id = self.next_id();
         self.pending.insert(
@@ -291,7 +287,7 @@ where
 
     /// Returns whether the network connection is running or has shutdown.
     pub fn running(&mut self) -> bool {
-        if self.is_dead {
+        if self.network_is_dead {
             return false;
         }
 
@@ -301,18 +297,18 @@ where
             .unwrap_or_else(|err| match err {
                 TrySendError::Full(_) => true,
                 TrySendError::Closed(_) => {
-                    self.is_dead = true;
+                    self.network_is_dead = true;
                     false
                 }
             })
     }
 
-    /// Commands the network to shutdown asynchronously, returns inmediately if the network has shutdown
-    /// or if it already had disconnected for any reason.
+    /// Commands the network to shutdown, returns inmediately if the network has shutdown
+    /// or if it already had disconnected for any reason or blocking otherwise.
     ///
-    /// The network may not shutdown inmediately if still is listening and waiting for any events.
+    /// The network may not shutdown inmediately if still is processing any commands.
     pub fn shutdown(&mut self) -> Result<bool> {
-        if self.is_dead {
+        if self.network_is_dead {
             // was previously marked as dead
             return Err(HandleError::Disconnected.into());
         }
@@ -323,19 +319,10 @@ where
 
         let msg_id = self.next_id();
         let msg = HandleCmd::Shutdown(msg_id);
-        match self.sender.try_send(msg) {
+        match self.sender.blocking_send(msg) {
             Ok(()) => {}
-            Err(TrySendError::Full(_msg)) => {
-                self.pending.insert(
-                    msg_id,
-                    PendingCmd {
-                        cmd: SentCmd::ShutDown,
-                        answ: None,
-                    },
-                );
-            }
-            Err(TrySendError::Closed(_)) => {
-                self.is_dead = true;
+            Err(_err) => {
+                self.network_is_dead = true;
                 return Err(HandleError::Disconnected.into());
             }
         }
@@ -367,7 +354,7 @@ where
             {
                 if answ {
                     // one of all the sent shutdown commands was successful, not the conn is dead
-                    self.is_dead = true;
+                    self.network_is_dead = true;
                     has_shutdown = true;
                 }
             }
@@ -378,7 +365,8 @@ where
     async fn process_answer_buffer(
         mut rcv: Receiver<StdResult<HandleAnsw<M>, NetworkError>>,
         pending: Arc<DashMap<OpId, PendingCmd<M>>>,
-        rcv_msg: Arc<DashMap<PeerId, Vec<M>>>,
+        msg_buf: Arc<DashMap<PeerId, Vec<M>>>,
+        net_stats: Arc<Mutex<Vec<(PeerId, usize)>>>,
     ) -> Result<()> {
         while let Some(answ_res) = rcv.recv().await {
             let msg = answ_res?;
@@ -390,8 +378,14 @@ where
                 }
                 HandleAnsw::RcvMsg { peer, msg } => {
                     log::debug!("Received streaming msg from {}: {:?}", peer, msg);
-
-                    rcv_msg.entry(peer).or_default().push(msg);
+                    msg_buf.entry(peer).or_default().push(msg);
+                    let stats = &mut *net_stats.lock().unwrap();
+                    if let Ok(idx) = stats.binary_search_by_key(&peer, |&(p, _)| p) {
+                        stats[idx].1 += 1;
+                    } else {
+                        stats.push((peer, 1));
+                        stats.sort_by_key(|e| e.0);
+                    }
                 }
                 HandleAnsw::AgentRegistered { op_id, rss_key } => {
                     log::info!("Registered {} with {:?}", rss_key, op_id);
@@ -462,25 +456,24 @@ where
 
 pub struct NetworkStats {
     key_stats: HashMap<ResourceIdentifier, KeyStats>,
-    rcv_msgs: Vec<(PeerId, usize)>,
-}
-
-impl Default for NetworkStats {
-    fn default() -> Self {
-        NetworkStats {
-            key_stats: HashMap::new(),
-            rcv_msgs: Vec::new(),
-        }
-    }
+    msg_stats: Arc<Mutex<Vec<(PeerId, usize)>>>,
 }
 
 impl NetworkStats {
+    fn new(msg_stats: Arc<Mutex<Vec<(PeerId, usize)>>>) -> Self {
+        NetworkStats {
+            key_stats: HashMap::new(),
+            msg_stats,
+        }
+    }
+
     pub fn for_key(&self, key: &ResourceIdentifier) -> Option<&KeyStats> {
         self.key_stats.get(key)
     }
 
-    pub fn received_messages(&self) -> &[(PeerId, usize)] {
-        &self.rcv_msgs
+    pub fn received_messages(&self) -> Vec<(PeerId, usize)> {
+        let stats = self.msg_stats.lock().unwrap();
+        stats.clone()
     }
 }
 

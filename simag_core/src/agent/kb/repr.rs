@@ -165,6 +165,7 @@ impl Representation {
                 classes,
                 threads: rayon::ThreadPoolBuilder::new()
                     .num_threads(threads + 1)
+                    .thread_name(|idx| format!("simag-ag-exec-{}", idx))
                     .build()
                     .unwrap(),
                 svc_queue: svc_th_msg_queue,
