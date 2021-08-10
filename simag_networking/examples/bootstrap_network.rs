@@ -1,13 +1,14 @@
 use simag_core::Agent;
 use simag_networking::{agent::AgentPolicy, *};
-use std::{collections::HashMap, net::Ipv4Addr};
+use std::{
+    net::Ipv4Addr,
+    time::{Duration, Instant},
+};
 
-const ENCODED_KEY1: &[u8] = include_bytes!("key1");
-const _ENCODED_KEY2: &[u8] = include_bytes!("key2");
+const ENCODED_KEY1: &[u8] = include_bytes!("../tests/key1");
 
 /// A Base58 enconded peer ID. Only used for testing pourpouses.
 const KEY1_ID: &str = "12D3KooWS5RYnqsFRNrUABJFa3sj9YdYS7KsX8qLY6yrkfSTyZDv";
-const _KEY2_ID: &str = "12D3KooWSZSxbBFhZoy7butAGwcySE8oKXcvzcTSZYPM2XiPD8yA";
 
 fn main() {
     // Optionally provide the secret key file. If it's not provided a new key and identifier
@@ -56,7 +57,9 @@ fn main() {
 
     let mut served = false;
     let mut last_amount = 0;
-    while network.running() {
+    let mut time_since_last_msg = Duration::new(0, 0);
+    'main: while network.running() {
+        let t0 = Instant::now();
         if let Some(stats) = network.stats.for_key(&ag_key) {
             if stats.times_served > 0 && !served {
                 println!("Served a resource at least once");
@@ -65,17 +68,28 @@ fn main() {
         }
 
         for (peer, amount) in network.stats.received_messages().to_owned() {
-            if last_amount == amount {
+            if time_since_last_msg > Duration::from_secs(1) {
+                if let Err(_) = network.shutdown() {
+                    println!("Peer timed out! ({} secs)", time_since_last_msg.as_secs());
+                    break 'main;
+                } else {
+                    continue;
+                }
+            } else if last_amount == amount {
+                time_since_last_msg += Instant::now() - t0;
                 continue;
             }
+            time_since_last_msg = Duration::new(0, 0);
+
             last_amount = amount;
-            println!("Received {} messages from #{}", amount, peer);
             if amount <= 9 {
                 network.send_message("Hai there!".to_string(), peer.clone());
+                println!("Received {} messages from #{}", amount, peer);
             } else {
                 network.send_message("Goooodbyyye!".to_string(), peer.clone());
                 println!("Sent goodbye message");
-                network.shutdown().unwrap();
+                println!("Received {} messages from #{}", amount, peer);
+                let _ = network.shutdown();
             }
         }
     }

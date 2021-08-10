@@ -1,5 +1,8 @@
 use simag_networking::*;
-use std::net::Ipv4Addr;
+use std::{
+    net::Ipv4Addr,
+    time::{Duration, Instant},
+};
 
 /// A Base58 enconded peer ID. Only used for testing pourpouses. The corresponding secret key can be found in
 /// the examples directory and is used in the bootstrap network example.
@@ -40,7 +43,9 @@ fn main() {
     let mut served = false;
     let mut last_amount = 0;
     network.send_message("Read my awesome message!".to_string(), peer_id);
-    while network.running() {
+    let mut time_since_last_msg = Duration::new(0, 0);
+    'main: while network.running() {
+        let t0 = Instant::now();
         if let Some(stats) = network.stats.for_key(&ag_key) {
             if stats.times_received > 0 && !served {
                 println!("Received a resource at least once");
@@ -49,16 +54,27 @@ fn main() {
         }
 
         for (peer, amount) in network.stats.received_messages().to_owned() {
-            if last_amount == amount {
+            if time_since_last_msg > Duration::from_secs(1) {
+                if let Err(_) = network.shutdown() {
+                    println!("Peer timed out! ({} secs)", time_since_last_msg.as_secs());
+                    break 'main;
+                } else {
+                    continue;
+                }
+            } else if last_amount == amount {
+                time_since_last_msg += Instant::now() - t0;
                 continue;
             }
+            time_since_last_msg = Duration::new(0, 0);
+
             last_amount = amount;
-            if amount < 10 {
-                println!("Received {} messages from #{}", amount, peer);
+            if amount <= 9 {
                 network.send_message("Hai back!".to_string(), peer.clone());
+                println!("Received {} messages from #{}", amount, peer);
             } else {
-                println!("The end");
-                network.shutdown().unwrap();
+                network.send_message("Byeeee!".to_string(), peer.clone());
+                println!("Received {} messages from #{}", amount, peer);
+                let _ = network.shutdown();
             }
         }
     }

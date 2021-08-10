@@ -113,7 +113,7 @@ where
             }
 
             // set the main inbound connection event loop
-            while !KILL_HANDLER.load(Ordering::SeqCst) {
+            while !KILL_HANDLER.load(Ordering::Relaxed) {
                 let mut swarm = sh.swarm.lock().await;
                 let get_next =
                     tokio::time::timeout(Duration::from_nanos(100), swarm.select_next_some());
@@ -135,7 +135,7 @@ where
 
         GlobalExecutor::spawn(async move {
             // set the command handling event loop
-            while !KILL_HANDLER.load(Ordering::SeqCst) {
+            while !KILL_HANDLER.load(Ordering::Relaxed) {
                 let f = tokio::time::timeout(Duration::from_millis(100), query_rcv.recv());
                 // timeout time to time to check if the handle still is alive as well to see
                 // if from an other thread a kill handle signal was sent
@@ -230,7 +230,7 @@ where
             }
             HandleCmd::IsRunning => {} // will get an answer from the channel, so is active
             HandleCmd::Shutdown(id) => {
-                KILL_HANDLER.store(true, Ordering::SeqCst);
+                KILL_HANDLER.store(true, Ordering::Relaxed);
                 let answ = HandleAnsw::HasShutdown {
                     op_id: id,
                     answ: true,
