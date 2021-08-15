@@ -6,6 +6,7 @@ use std::{
     io::Write,
     result::Result as StdResult,
     sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 use dashmap::DashMap;
@@ -15,7 +16,7 @@ use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender};
 use uuid::Uuid;
 
 use crate::{
-    agent::AgentPolicy,
+    agent::{AgentId, AgentPolicy},
     config::GlobalExecutor,
     group::GroupSettings,
     group::{Group, GroupPermits},
@@ -105,6 +106,37 @@ where
         answ
     }
 
+    /// Blocks the current thread until a resource key is returned from a previous operation.
+    /// Returns error in case time out is reached (if provided) or the result of the op
+    /// is an error.
+    ///
+    /// # Panic
+    /// Panics if the provided operation does not return a resource key.
+    pub fn get_resource_key(
+        &mut self,
+        op_id: OpId,
+        time_out: Option<Duration>,
+    ) -> Result<ResourceIdentifier> {
+        let start_time = Instant::now();
+        loop {
+            match time_out {
+                Some(time_out) => {
+                    let diff = Instant::now() - start_time;
+                    if diff > time_out {
+                        break Err(HandleError::TimeOut(op_id).into());
+                    }
+                }
+                None => {}
+            }
+            match self.op_result(op_id) {
+                Err(Error::OpError(HandleError::AwaitingResponse(_))) => {}
+                Ok(Some(key)) => return Ok(key),
+                Err(err) => return Err(err),
+                Ok(None) => panic!("Wrong OpId provided"),
+            }
+        }
+    }
+
     /// Get all the received messages from a given peer.
     pub fn received_messages(&mut self, peer: PeerId) -> Vec<M> {
         let mut new_msgs = vec![];
@@ -122,7 +154,7 @@ where
         // TODO: An agent can only be registered with a single node. If you try to register the same agent in
         // the same network more than once it will be an error.
 
-        let agent_id = agent.id().to_string();
+        let agent_id = AgentId::from(agent.id());
         let id = self.next_id();
         let msg = HandleCmd::RegisterAgent {
             op_id: id,
@@ -145,10 +177,9 @@ where
     }
 
     /// Find an agent in the network and try to open a connection with it. Operation is asynchronous.
-    pub fn find_agent<ID: ToString>(&mut self, agent_id: ID) -> OpId {
+    pub fn find_agent<ID: Into<AgentId>>(&mut self, agent_id: ID) -> OpId {
         let op_id = self.next_id();
-        let agent_id = agent_id.to_string();
-        let sender = self.sender.clone();
+        let agent_id = agent_id.into();
         self.pending.insert(
             op_id,
             PendingCmd {
@@ -156,8 +187,32 @@ where
                 answ: None,
             },
         );
+        let sender = self.sender.clone();
         GlobalExecutor::spawn(async move {
             let msg = HandleCmd::ConnectToAgent { agent_id, op_id };
+            sender.send(msg).await.map_err(|_| ())?;
+            Ok::<_, ()>(())
+        });
+        op_id
+    }
+
+    pub fn send_message_to_agent<ID: Into<AgentId>>(&mut self, agent_id: ID, value: M) -> OpId {
+        let op_id = self.next_id();
+        let agent_id = agent_id.into();
+        self.pending.insert(
+            op_id,
+            PendingCmd {
+                cmd: SentCmd::SentMsg,
+                answ: None,
+            },
+        );
+        let sender = self.sender.clone();
+        GlobalExecutor::spawn(async move {
+            let msg = HandleCmd::<M>::SendMessageToAg {
+                op_id,
+                value,
+                agent_id,
+            };
             sender.send(msg).await.map_err(|_| ())?;
             Ok::<_, ()>(())
         });
@@ -215,18 +270,19 @@ where
     ///
     /// ## Arguments
     /// - agent_id: identifier of the agent making the request.
-    pub fn join_group<C>(
+    pub fn join_group<C, AID>(
         &mut self,
         group_id: &str,
-        agent_id: &str,
+        agent_id: AID,
         permits: Option<GroupPermits>,
         settings: C,
     ) -> OpId
     where
         C: GroupSettings,
+        AID: Into<AgentId>,
     {
         let op_id = self.next_id();
-        let agent_id = rpc::agent_id_from_str(agent_id);
+        let agent_id = agent_id.into();
         // unknown owners, this information is to be completed after fecthing the initial info
         let (group_key, mut group) = Resource::group(Vec::<String>::new(), group_id, settings);
         if let Some(permits) = permits {
@@ -527,17 +583,23 @@ pub(crate) enum HandleCmd<M> {
     /// register a peer as the manager of an agent
     RegisterAgent {
         op_id: OpId,
-        agent_id: String,
+        agent_id: AgentId,
         config: AgentPolicy,
     },
     /// try to open a channel to the specified agent
-    ConnectToAgent { agent_id: String, op_id: OpId },
+    ConnectToAgent { agent_id: AgentId, op_id: OpId },
+    /// enroute a message to a given agent
+    SendMessageToAg {
+        agent_id: AgentId,
+        value: M,
+        op_id: OpId,
+    },
     /// instruct the network handler to send a request
     /// for an agent joining a group
     ReqJoinGroup {
         op_id: OpId,
         group_key: ResourceIdentifier,
-        agent_id: Uuid,
+        agent_id: AgentId,
         group: Group,
         // state: RequestState,
     },
@@ -546,7 +608,7 @@ pub(crate) enum HandleCmd<M> {
     FindGroupManager {
         op_id: OpId,
         group_key: ResourceIdentifier,
-        agent_id: Uuid,
+        agent_id: AgentId,
         group: Group,
     },
     /// Awaiting publish confirmation by the kad DHT of a rss.
@@ -567,6 +629,7 @@ impl<M: DeserializeOwned> HandleCmd<M> {
             SendMessage { op_id, .. } => *op_id,
             RegisterAgent { op_id, .. } => *op_id,
             ConnectToAgent { op_id, .. } => *op_id,
+            SendMessageToAg { op_id, .. } => *op_id,
             ReqJoinGroup { op_id, .. } => *op_id,
             FindGroupManager { op_id, .. } => *op_id,
             AwaitingRegistration { op_id, .. } => *op_id,
@@ -693,6 +756,8 @@ pub enum HandleError {
     ManagerNotFound(OpId),
     #[error("unexpected response")]
     UnexpectedResponse(OpId),
+    #[error("op `{0}` timed out")]
+    TimeOut(OpId),
 }
 
 /// An identifier for an operation executed asynchronously. Used to fetch the results

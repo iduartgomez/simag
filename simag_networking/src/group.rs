@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, collections::HashMap, fmt::Debug, iter::FromIterator};
 use uuid::Uuid;
 
-use crate::rpc::agent_id_from_str;
+use crate::{agent::AgentId, rpc::agent_id_from_str};
 
 pub(crate) struct GroupManager {
     groups: HashMap<Uuid, Group>,
@@ -17,7 +17,7 @@ impl GroupManager {
 
     pub fn request_joining(
         &mut self,
-        agent_id: Uuid,
+        agent_id: AgentId,
         group_id: Uuid,
         petitioner_settings: &dyn GroupSettings,
         permits: GroupPermits,
@@ -45,7 +45,11 @@ impl GroupManager {
 pub trait GroupSettings: Debug + Send + Sync + 'static {
     /// Takes an inbound instance of settings and evaluates if are compatible with this set of
     /// settings.
-    fn is_allowed_to_join(&self, agent_id: Uuid, petitioner_settings: &dyn GroupSettings) -> bool;
+    fn is_allowed_to_join(
+        &self,
+        agent_id: AgentId,
+        petitioner_settings: &dyn GroupSettings,
+    ) -> bool;
     fn box_cloned(&self) -> Box<dyn GroupSettings>;
 }
 
@@ -99,8 +103,8 @@ impl Group {
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct GroupPermits {
-    pub(crate) read: BTreeSet<Uuid>,
-    pub(crate) write: BTreeSet<Uuid>,
+    pub(crate) read: BTreeSet<AgentId>,
+    pub(crate) write: BTreeSet<AgentId>,
 }
 
 impl GroupPermits {
@@ -124,14 +128,14 @@ impl GroupPermits {
 
     /// Grant/request read permit for this agent.
     pub fn read(&mut self, agent: &str) -> &mut Self {
-        let uid = agent_id_from_str(agent);
+        let uid = AgentId::from(agent);
         self.read.insert(uid);
         self
     }
 
     /// Grant/request write permit for this agent.
     pub fn write(&mut self, agent: &str) -> &mut Self {
-        let uid = agent_id_from_str(agent);
+        let uid = AgentId::from(agent);
         self.write.insert(uid);
         self
     }

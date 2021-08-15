@@ -8,6 +8,8 @@ mod handle;
 mod message;
 mod network;
 mod rpc;
+#[cfg(test)]
+mod tests;
 
 use network::NetworkError;
 

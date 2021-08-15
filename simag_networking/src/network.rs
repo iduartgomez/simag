@@ -32,7 +32,7 @@ use tokio::sync::{
 use uuid::Uuid;
 
 use crate::{
-    agent::AgentPolicy,
+    agent::{AgentId, AgentPolicy},
     channel::{self, CHANNEL_PROTOCOL},
     config::{GlobalExecutor, CONF},
     group::{Group, GroupError, GroupManager, GroupPermits, GroupSettings},
@@ -76,7 +76,7 @@ where
     /// A copy of the sending end of the channel to be used internally to make callbacks
     /// to it's own command queue.
     cmd_callback_queue: Sender<HandleCmd<M>>,
-    /// Some RPC require maintaining aa state while ongoing.
+    /// Some RPC require maintaining a state while ongoing.
     rpc_state: DashMap<OpId, OpState>,
 }
 
@@ -220,13 +220,20 @@ where
                 log::error!("FindGroupManager cannot be sent by the handle!");
             }
             HandleCmd::ConnectToAgent { agent_id, op_id } => {
-                let ag_id = ResourceIdentifier::unique(&agent_id_from_str(&agent_id));
+                let ag_id = ResourceIdentifier::unique(&agent_id.0);
                 let key_borrowed: &&[u8] = &ag_id.borrow();
                 let qid = swarm
                     .behaviour_mut()
                     .get_record(&Key::new(key_borrowed), kad::Quorum::One);
                 self.sent_kad_queries
                     .insert(qid, Some(HandleCmd::ConnectToAgent { op_id, agent_id }));
+            }
+            HandleCmd::SendMessageToAg {
+                agent_id,
+                value,
+                op_id,
+            } => {
+                todo!()
             }
             HandleCmd::IsRunning => {} // will get an answer from the channel, so is active
             HandleCmd::Shutdown(id) => {
@@ -432,7 +439,7 @@ where
                     if let ResourceKind::Agent(ag) = msg.0 {
                         match ag.peer {
                             Some(peer) => {
-                                nt.agent_owners.insert(agent_id, peer);
+                                nt.agent_owners.insert(agent_id.0, peer);
                             }
                             None => {
                                 nt.return_answ(Err(NetworkError::ManagerNotFound(op_id)))
@@ -441,7 +448,7 @@ where
                             }
                         }
                     } else {
-                        log::error!("Received unexpected response while retrieving the managers for {} from agent `{}`", group_key, agent_id);
+                        log::error!("Received unexpected response while retrieving the managers for {} from agent `{}`", group_key, agent_id.0);
                         nt.return_answ(Err(NetworkError::UnexpectedResponse(op_id)))
                             .await?;
                         return Ok(());
@@ -683,7 +690,7 @@ where
 struct JoinReq {
     op_id: OpId,
     /// Identifier of the agent making the request.
-    agent_id: Uuid,
+    agent_id: AgentId,
     group_key: ResourceIdentifier,
     group_managers: Vec<PeerId>,
     /// Number of managers contacted so far to request access.
@@ -712,7 +719,7 @@ async fn init_req_to_join_group<M>(
     network: &Arc<Network<M>>,
     swarm: &mut Swarm<NetBehaviour>,
     op_id: OpId,
-    agent_id: Uuid,
+    agent_id: AgentId,
     record: kad::PeerRecord,
     expected_key: ResourceIdentifier,
     ori_group: Group,

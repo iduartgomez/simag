@@ -1,5 +1,5 @@
 use crate::{
-    agent::Agent,
+    agent::{Agent, AgentId},
     group::{Group, GroupError, GroupSettings},
     handle::OpId,
 };
@@ -19,7 +19,7 @@ pub(crate) enum AgentRpc {
     ReqGroupJoin {
         op_id: OpId,
         group_id: Uuid,
-        agent_id: Uuid,
+        agent_id: AgentId,
         /// (read, write)
         permits: (bool, bool),
         /// the settings of the petitioner
@@ -58,14 +58,10 @@ impl Resource {
 
     /// Create a resource of agent kind. Returns both the identifier (key) and the resource
     /// handle.
-    pub(crate) fn agent<ID: AsRef<str>>(
-        agent_id: ID,
-        peer_id: PeerId,
-    ) -> (ResourceIdentifier, Agent) {
-        let uid = agent_id_from_str(agent_id);
-        let key = ResourceIdentifier::unique(&uid);
+    pub(crate) fn agent(agent_id: AgentId, peer_id: PeerId) -> (ResourceIdentifier, Agent) {
+        let key = ResourceIdentifier::unique(&agent_id.0);
         let res = Agent {
-            agent_id: uid,
+            agent_id: agent_id.0,
             peer: Some(peer_id),
             addr: Vec::with_capacity(1),
             ..Default::default()

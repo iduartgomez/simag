@@ -4,7 +4,7 @@ use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::rpc::ResourceIdentifier;
+use crate::rpc::{agent_id_from_str, ResourceIdentifier};
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Agent {
@@ -28,6 +28,18 @@ impl Agent {
 
     pub fn identifier(&self) -> ResourceIdentifier {
         ResourceIdentifier::unique(&self.agent_id)
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Serialize, Deserialize)]
+pub struct AgentId(pub(crate) Uuid);
+
+impl<T> From<T> for AgentId
+where
+    T: AsRef<str>,
+{
+    fn from(id: T) -> Self {
+        AgentId(agent_id_from_str(id))
     }
 }
 
