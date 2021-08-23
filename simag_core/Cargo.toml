@@ -14,7 +14,7 @@ dashmap = { version = "4.0" }
 env_logger = "0.9"
 float-cmp = "0.8"
 thiserror = "1.0"
-nom = "6.1"
+nom = "7.0"
 num_cpus = "1.13"
 log = "0.4"
 once_cell = "1.7"
