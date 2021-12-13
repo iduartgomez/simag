@@ -10,7 +10,7 @@ persistence = ["serde", "bincode"]
 [dependencies]
 bincode = { version = "1.3", optional = true }
 crossbeam = "0.8"
-dashmap = { version = "4.0" }
+dashmap = { version = "5.0" }
 env_logger = "0.9"
 float-cmp = "0.8"
 thiserror = "1.0"
