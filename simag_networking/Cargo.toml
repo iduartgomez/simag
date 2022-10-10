@@ -34,7 +34,7 @@ typetag = "0.1"
 tokio = { version = "1.8", features = ["macros", "rt-multi-thread", "sync", "time"] }
 tokio-util = { version = "0.6", features = ["codec"] }
 unsigned-varint = { version = "0.7", features = ["codec"] }
-uuid = { version = "0.8.1", features = ["v5", "serde"]}
+uuid = { version = "1.2.1", features = ["v5", "serde"]}
 
 # internal:
 simag_core = { path = "../simag_core" }
